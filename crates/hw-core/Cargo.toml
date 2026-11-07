@@ -10,3 +10,4 @@ workspace = true
 
 [dependencies]
 glam = { workspace = true }
+libm = { workspace = true }

@@ -2,6 +2,7 @@
 //! and IDs. Pure Rust, no Engine, so the server and tools can use it anywhere.
 
 pub mod coords;
+pub mod det;
 pub mod ids;
 pub mod seed;
 

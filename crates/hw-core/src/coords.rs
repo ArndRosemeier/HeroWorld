@@ -7,6 +7,7 @@
 //! a [`LocalFrame`]: a flat tangent frame (f32-friendly near its origin) whose
 //! axes follow Engine's convention.
 
+use crate::det;
 use glam::{DVec3, Vec3};
 
 /// Mean radius of the home planet, in metres (Earth-like on purpose).
@@ -44,8 +45,8 @@ impl LatLon {
 
     /// The unit vector from the planet centre through this point.
     pub fn to_unit(self) -> DVec3 {
-        let (sl, cl) = self.lat.sin_cos();
-        let (so, co) = self.lon.sin_cos();
+        let (sl, cl) = det::sin_cos(self.lat);
+        let (so, co) = det::sin_cos(self.lon);
         DVec3::new(cl * so, sl, cl * co)
     }
 
@@ -55,7 +56,10 @@ impl LatLon {
         if len == 0.0 {
             return Self::new(0.0, 0.0);
         }
-        Self::new((d.y / len).clamp(-1.0, 1.0).asin(), d.x.atan2(d.z))
+        Self::new(
+            det::asin((d.y / len).clamp(-1.0, 1.0)),
+            det::atan2(d.x, d.z),
+        )
     }
 }
 
@@ -92,7 +96,7 @@ impl PlanetPos {
     pub fn surface_distance(self, other: PlanetPos, planet: &Planet) -> f64 {
         let (a, b) = (self.up(), other.up());
         // atan2 of cross and dot stays accurate for tiny and near-antipodal angles.
-        let angle = a.cross(b).length().atan2(a.dot(b));
+        let angle = det::atan2(a.cross(b).length(), a.dot(b));
         angle * planet.radius
     }
 }

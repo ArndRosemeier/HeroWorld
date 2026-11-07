@@ -28,7 +28,9 @@ file; when they change, re-export the snapshot here.
   and predicts only the local hero. No gameplay logic in client rendering code.
 - **Same seed, same world.** Generation is deterministic: derive every random choice from the
   world seed with path-keyed hashing (`hw-core`), never from unseeded randomness, `HashMap`
-  iteration order, time or thread scheduling. Bump `WORLD_VERSION` when a change alters what
+  iteration order, time or thread scheduling. Use `hw_core::det` for `sin`, `cos`, `atan2`
+  and the like: std's versions can round differently per platform, and co-op players each
+  generate the world themselves. Bump `WORLD_VERSION` when a change alters what
   an existing seed produces.
 - **No "+Y is up" assumption** in world code: the planet is round. Positions are f64 from the
   planet centre; local frames give an up vector.
