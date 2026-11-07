@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.004 (2026-11-07)
+
+- Housekeeping only: nothing changes in the game.
+
 ## 0.003 (2026-11-07)
 
 - Houses have real roofs now: tiled gables and hips, slate and zinc mansards, with chimneys and dormer windows.
