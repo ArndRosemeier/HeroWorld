@@ -4,6 +4,7 @@ description = "The game client on Engine: rendering, input, camera, UI, predicti
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+default-run = "heroworld"
 
 [lints]
 workspace = true
