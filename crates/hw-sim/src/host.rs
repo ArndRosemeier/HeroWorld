@@ -5,7 +5,6 @@
 //! join with a hello and play by sending input every tick.
 
 use crate::{Sim, TICK_HZ};
-use glam::DVec3;
 use hw_core::Seed;
 use hw_net::{ClientMsg, PlayerId, ServerEvent, ServerMsg, ServerSocket};
 use std::collections::BTreeMap;
@@ -39,8 +38,13 @@ pub struct Host {
 impl Host {
     /// A host for single player: no socket.
     pub fn new(seed: Seed) -> Self {
+        Self::with_sim(Sim::new(seed))
+    }
+
+    /// A host around an existing simulation.
+    pub fn with_sim(sim: Sim) -> Self {
         Self {
-            sim: Sim::new(seed),
+            sim,
             socket: None,
             players: BTreeMap::new(),
             next_player: 1,
@@ -79,8 +83,8 @@ impl Host {
                 remote,
             },
         );
-        // Simple spawn rule for now: a row near the civic centre.
-        let at = DVec3::new(id.0 as f64 * 3.0, crate::GROUND_Y + 1.0, 30.0);
+        // Simple spawn rule for now: a row along the central street.
+        let at = self.sim.spawn_point(id.0 as u32);
         self.sim.spawn_hero(id, at);
         Some(id)
     }

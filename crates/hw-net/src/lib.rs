@@ -15,7 +15,7 @@ pub use protocol::{ClientMsg, EntityState, InputState, PlayerId, ServerMsg};
 pub use transport::{ClientSocket, ServerEvent, ServerSocket};
 
 /// Protocol version. Server and client must match exactly to play together.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Port a host listens on unless told otherwise.
 pub const DEFAULT_PORT: u16 = 7777;

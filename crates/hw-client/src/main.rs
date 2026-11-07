@@ -3,18 +3,20 @@
 //! Milestone 0: fly over a generated city. Buildings around a focus point
 //! can be cut open to show their rooms.
 //!
-//! Controls: right mouse + move to look, WASD to fly, Space/E up, Ctrl/Q
-//! down, Shift fast. C toggles the cut-open view, F moves the cut-open area
-//! to where you look, Z/X lower and raise the cut floor. Your hero (the red
-//! figure) runs with I/J/K/L and jumps with U.
+//! Controls: you play your hero in third person. Hold the right mouse button
+//! (or press P to lock the pointer) and move the mouse to look, WASD to run,
+//! Space to jump, R/T to zoom in and out (all the way in is first person).
+//! Tab switches to a free-flying camera and back. C cuts buildings open
+//! around where you look (F moves the cut there), Z/X pick the floor.
 //!
 //! By default the server runs inside the game (single player). `HW_HOST=1`
 //! also opens it to friends on UDP port 7777; `HW_JOIN=host:port` joins
 //! someone else's world instead.
 //!
 //! Environment: `HW_SEED` (world seed, default 1); `HW_NAME`; `HW_VIEW` =
-//! `overview`, `street`, `cutaway` or `heroes` picks the starting camera
-//! (handy with `ENGINE_SCREENSHOT`); `HW_CUT_LEVEL` the floor shown cut open.
+//! `hero` (default), `overview`, `street` or `cutaway` picks the starting
+//! camera (handy with `ENGINE_SCREENSHOT`); `HW_CUT_LEVEL` the floor shown
+//! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests).
 
 mod citymesh;
 mod session;
@@ -24,7 +26,9 @@ use engine::prelude::*;
 use glam::{DVec2, Vec3};
 use hw_core::Seed;
 use hw_gen::building::BuildingPlan;
-use hw_gen::city::{CityParams, CityPlan};
+use hw_gen::city::CityPlan;
+use hw_sim::collision::{Obstacles, BODY_HEIGHT};
+use hw_sim::GeneratedCity;
 use session::Session;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -45,13 +49,9 @@ struct City {
 }
 
 impl City {
-    fn new(seed: Seed) -> Self {
-        let plan = CityPlan::generate(seed, &CityParams::default());
-        let buildings: Vec<BuildingPlan> = plan
-            .buildings
-            .iter()
-            .map(|(_, site)| BuildingPlan::generate(site))
-            .collect();
+    fn new(generated: &GeneratedCity) -> Self {
+        let plan = generated.plan.clone();
+        let buildings = generated.buildings.clone();
         let mut by_cell = vec![Vec::new(); plan.cells.len()];
         for (i, (lot, _)) in plan.buildings.iter().enumerate() {
             by_cell[plan.blocks[plan.lots[*lot].block].cell].push(i);
@@ -62,7 +62,7 @@ impl City {
             buildings,
             by_cell,
             cell_entities: vec![None; cells],
-            cut_on: true,
+            cut_on: false,
             cut_focus: DVec2::ZERO,
             cut_level: 1,
         }
@@ -135,38 +135,85 @@ impl City {
     }
 }
 
+/// The camera that follows the hero: orbit angles and distance.
+struct HeroCamera {
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+}
+
+impl HeroCamera {
+    const MAX_DISTANCE: f32 = 14.0;
+
+    fn update(&mut self, world: &mut World, frame: &Frame, target: Vec3, solids: &Obstacles) {
+        let input = &frame.input;
+        if input.mouse_down(MouseButton::Right) || world.pointer_lock() {
+            let (yaw, pitch) = input.look_delta(0.15);
+            self.yaw = (self.yaw + yaw).rem_euclid(360.0);
+            self.pitch = (self.pitch + pitch).clamp(-80.0, 80.0);
+        }
+        let zoom = input.axis(Key::R, Key::T) * frame.dt.min(0.1) * 12.0;
+        self.distance = (self.distance + zoom).clamp(0.0, Self::MAX_DISTANCE);
+        let head = target + Vec3::Y * (BODY_HEIGHT as f32 - 0.15);
+        let dir = Camera::direction(self.yaw, self.pitch);
+        // Pull the camera in front of walls between it and the hero.
+        let wanted = self.distance;
+        let mut d = wanted;
+        let step = 0.25;
+        let mut t = 0.3;
+        while t < wanted {
+            let p = head - dir * t;
+            let floor = solids.floor_under(DVec2::new(p.x as f64, p.z as f64), f64::MAX);
+            if (p.y as f64) < floor + 0.2 {
+                d = (t - step).max(0.0);
+                break;
+            }
+            t += step;
+        }
+        let eye = if d < 0.4 { head } else { head - dir * d };
+        world.look_first_person(eye, self.yaw, self.pitch);
+    }
+}
+
 fn main() -> EngineResult<()> {
-    let seed = std::env::var("HW_SEED")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1u64);
-    let view = std::env::var("HW_VIEW").unwrap_or_else(|_| "overview".into());
+    let env_num = |name: &str| std::env::var(name).ok().and_then(|s| s.parse::<u64>().ok());
+    let view = std::env::var("HW_VIEW").unwrap_or_else(|_| "hero".into());
     let name = std::env::var("HW_NAME").unwrap_or_else(|_| "Hero".into());
-    let mut session = match std::env::var("HW_JOIN") {
-        Ok(addr) => Session::join(&addr, &name)
-            .map_err(|e| EngineError::InvalidValue(format!("cannot join {addr}: {e}")))?,
+    let auto_walk = std::env::var_os("HW_WALK").is_some();
+    let io = |e: std::io::Error| EngineError::InvalidValue(e.to_string());
+
+    // A joining player learns the world seed from the host first.
+    let (mut session, generated) = match std::env::var("HW_JOIN") {
+        Ok(addr) => {
+            let (mut session, seed) = Session::join(&addr, &name).map_err(io)?;
+            let generated = GeneratedCity::generate(Seed(seed));
+            session.attach_city(&generated);
+            (session, generated)
+        }
         Err(_) => {
-            let host = std::env::var_os("HW_HOST").is_some();
-            Session::single(Seed(seed), &name, host)
-                .map_err(|e| EngineError::InvalidValue(format!("cannot open port: {e}")))?
+            let seed = Seed(env_num("HW_SEED").unwrap_or(1));
+            let generated = GeneratedCity::generate(seed);
+            let open = std::env::var_os("HW_HOST").is_some();
+            (
+                Session::single(seed, &generated, &name, open).map_err(io)?,
+                generated,
+            )
         }
     };
-    // A joining player builds the city once the host has said which world it is.
-    let seed = session.wait_for_seed().unwrap_or(seed);
-    let mut city = City::new(Seed(seed));
-    if let Some(level) = std::env::var("HW_CUT_LEVEL")
-        .ok()
-        .and_then(|s| s.parse().ok())
-    {
-        city.cut_level = level;
+    let solids = generated.obstacles.clone();
+    let mut city = City::new(&generated);
+    if view == "cutaway" {
+        city.cut_on = true;
+    }
+    if let Some(level) = env_num("HW_CUT_LEVEL") {
+        city.cut_level = level as u32;
     }
     println!(
-        "HeroWorld seed {seed}: {} buildings. Right mouse to look, WASD to fly, C cut-open, F focus, Z/X floor.",
+        "HeroWorld: {} buildings. Right mouse to look, WASD to run, Space to jump, Tab for the free camera.",
         city.buildings.len()
     );
-    let mut camera = match view.as_str() {
+    let mut fly = match view.as_str() {
         "street" => FlyCamera::new((-60.0, 6.0, 140.0), 160.0, 8.0),
-        "heroes" => FlyCamera::new((-4.0, 6.0, 48.0), 160.0, -14.0),
         "cutaway" => {
             let f = city.cut_focus.as_vec2();
             FlyCamera::new((f.x - 55.0, 70.0, f.y + 55.0), 135.0, -45.0)
@@ -174,8 +221,15 @@ fn main() -> EngineResult<()> {
         _ => FlyCamera::new((-900.0, 700.0, 900.0), 135.0, -30.0),
     }
     .with_speed(40.0);
-    camera.fast = 8.0;
+    fly.fast = 8.0;
+    let mut flying = view != "hero";
+    let mut hero_cam = HeroCamera {
+        yaw: 30.0,
+        pitch: -12.0,
+        distance: 7.0,
+    };
     let mut hero_entities: BTreeMap<hw_core::NetId, EntityId> = BTreeMap::new();
+    let mut facings: BTreeMap<hw_core::NetId, f32> = BTreeMap::new();
     let mut tick_clock = 0.0f64;
 
     Engine::run("HeroWorld", move |world, frame| {
@@ -187,52 +241,75 @@ fn main() -> EngineResult<()> {
                 city.build_cell(world, c);
             }
         }
+        let input = &frame.input;
+        if input.pressed(Key::Tab) {
+            flying = !flying;
+            if flying {
+                // Start the free camera where the hero camera was.
+                fly.yaw_deg = hero_cam.yaw;
+                fly.pitch_deg = hero_cam.pitch;
+            }
+        }
+        if input.pressed(Key::P) {
+            let locked = world.pointer_lock();
+            world.set_pointer_lock(!locked);
+        }
+
+        // Cut-open view.
         let mut changed: BTreeSet<usize> = BTreeSet::new();
-        if frame.input.pressed(Key::C) {
+        if input.pressed(Key::C) {
             city.cut_on = !city.cut_on;
             changed.extend(city.cells_near(city.cut_focus));
         }
-        if frame.input.pressed(Key::F) {
-            if let Some(hit) = ground_hit(camera.position, camera.forward()) {
+        let look_from = world.camera().eye();
+        let look_dir = (world.camera().target() - look_from).normalize_or_zero();
+        if input.pressed(Key::F) {
+            if let Some(hit) = ground_hit(look_from, look_dir) {
                 changed.extend(city.cells_near(city.cut_focus));
                 city.cut_focus = DVec2::new(hit.x as f64, hit.z as f64);
                 city.cut_on = true;
                 changed.extend(city.cells_near(city.cut_focus));
             }
         }
-        if frame.input.pressed(Key::Z) && city.cut_level > 0 {
+        if input.pressed(Key::Z) && city.cut_level > 0 {
             city.cut_level -= 1;
             changed.extend(city.cells_near(city.cut_focus));
         }
-        if frame.input.pressed(Key::X) && city.cut_level < 40 {
+        if input.pressed(Key::X) && city.cut_level < 40 {
             city.cut_level += 1;
             changed.extend(city.cells_near(city.cut_focus));
         }
         for c in changed {
             city.build_cell(world, c);
         }
-        camera.update(world, frame);
-        camera.position = camera.position.max(Vec3::new(f32::MIN, 1.8, f32::MIN));
+
+        // Hero input, relative to where the camera faces.
+        let mut hero_input = hw_net::InputState::default();
+        if !flying {
+            let mut dir = input.move_dir_xz(hero_cam.yaw);
+            if auto_walk {
+                dir = Camera::facing_xz(hero_cam.yaw);
+            }
+            hero_input.move_x = dir.x;
+            hero_input.move_z = dir.z;
+            hero_input.jump = input.down(Key::Space);
+        }
 
         // Fixed ticks for the game, however fast frames come.
-        let key = |k: Key| if frame.input.down(k) { 1.0f32 } else { 0.0 };
-        let input = hw_net::InputState {
-            move_x: key(Key::L) - key(Key::J),
-            move_z: key(Key::K) - key(Key::I),
-            jump: frame.input.down(Key::U),
-        };
         tick_clock += frame.dt as f64;
         let mut ticks = 0;
         while tick_clock >= hw_sim::DT && ticks < 5 {
             tick_clock -= hw_sim::DT;
             ticks += 1;
-            session.tick(input);
+            session.tick(hero_input);
         }
         if ticks == 5 {
             tick_clock = 0.0;
         }
-        // Show heroes where the server says they are (smoothing comes later).
-        let heroes = session.entities();
+
+        // Draw heroes.
+        let heroes = session.entities(frame.dt as f64);
+        facings.retain(|id, _| heroes.iter().any(|h| h.id == *id));
         hero_entities.retain(|id, e| {
             let keep = heroes.iter().any(|h| h.id == *id);
             if !keep {
@@ -240,15 +317,33 @@ fn main() -> EngineResult<()> {
             }
             keep
         });
+        let mine = session.my_hero();
         for h in &heroes {
-            let place = Place::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32);
+            let vel = Vec3::from_array(h.vel);
+            // Face where you run; keep the last heading when standing.
+            let facing = facings.entry(h.id).or_insert(0.0);
+            if vel.x.abs() + vel.z.abs() > 0.3 {
+                *facing = vel.x.atan2(vel.z).to_degrees();
+            }
+            let facing = *facing;
+            let place =
+                Place::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32).with_yaw_deg(facing);
             match hero_entities.get(&h.id) {
                 Some(&e) => world.set_place(e, place)?,
                 None => {
-                    let mine = session.my_hero() == Some(h.id);
-                    let e = world.place(citymesh::hero_mesh(mine), place)?;
+                    let e = world.place(citymesh::hero_mesh(mine == Some(h.id)), place)?;
                     hero_entities.insert(h.id, e);
                 }
+            }
+        }
+
+        // Camera.
+        let me = session.my_position(&heroes);
+        match (flying, me) {
+            (false, Some(p)) => hero_cam.update(world, frame, p.as_vec3(), &solids),
+            _ => {
+                fly.update(world, frame);
+                fly.position = fly.position.max(Vec3::new(f32::MIN, 1.8, f32::MIN));
             }
         }
         Ok(())

@@ -5,24 +5,34 @@
 //! The state lives in a `bevy_ecs` world and advances in fixed ticks
 //! ([`TICK_HZ`]). [`host::Host`] puts a network socket around it.
 
+pub mod collision;
 pub mod host;
+pub mod predict;
 
 use bevy_ecs::prelude::*;
-use glam::DVec3;
+use collision::{Body, Obstacles};
+use glam::{DVec2, DVec3};
 use hw_core::{NetId, NetIdAllocator, Seed};
+use hw_gen::building::BuildingPlan;
+use hw_gen::city::{CityParams, CityPlan};
 use hw_net::{EntityState, InputState, PlayerId};
+use std::sync::Arc;
 
 /// Simulation ticks per second.
 pub const TICK_HZ: u32 = 30;
 /// Seconds per tick.
 pub const DT: f64 = 1.0 / TICK_HZ as f64;
 
-/// Ground height in the city's local frame until terrain exists (top of
-/// streets and sidewalks).
+/// Height of open ground in the city's local frame until terrain exists (top
+/// of streets and sidewalks).
 pub const GROUND_Y: f64 = 0.26;
+/// Where buildings stand (top of the block ground).
+pub const BUILDING_BASE: f64 = 0.22;
 /// A normal person's top running speed (m/s) and acceleration.
 pub const RUN_SPEED: f64 = 7.0;
 pub const RUN_ACCEL: f64 = 40.0;
+/// Steering in the air is weaker.
+pub const AIR_ACCEL: f64 = 12.0;
 pub const GRAVITY: f64 = 20.0;
 pub const JUMP_SPEED: f64 = 7.5;
 
@@ -30,11 +40,9 @@ pub const JUMP_SPEED: f64 = 7.5;
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Net(pub NetId);
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Position(pub DVec3);
-
+/// Where a moving entity is, how fast it goes, whether it stands on something.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Default)]
-pub struct Velocity(pub DVec3);
+pub struct Motion(pub Body);
 
 /// A player's hero.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,32 +54,123 @@ pub struct Hero {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Default)]
 pub struct Control(pub InputState);
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Default)]
-pub struct Grounded(pub bool);
-
 #[derive(Resource)]
 struct Ids(NetIdAllocator);
+
+/// The solid city, shared with anything else that needs it.
+#[derive(Resource, Clone)]
+pub struct Solids(pub Arc<Obstacles>);
+
+/// The city every machine generates from the seed, with its building plans
+/// and collision.
+pub struct GeneratedCity {
+    pub plan: CityPlan,
+    pub buildings: Vec<BuildingPlan>,
+    pub obstacles: Arc<Obstacles>,
+}
+
+impl GeneratedCity {
+    pub fn generate(seed: Seed) -> Self {
+        let plan = CityPlan::generate(seed, &CityParams::default());
+        let buildings: Vec<BuildingPlan> = plan
+            .buildings
+            .iter()
+            .map(|(_, s)| BuildingPlan::generate(s))
+            .collect();
+        let obstacles = Arc::new(Obstacles::from_city(
+            &plan,
+            &buildings,
+            GROUND_Y,
+            BUILDING_BASE,
+        ));
+        Self {
+            plan,
+            buildings,
+            obstacles,
+        }
+    }
+
+    /// Spawn points on the street closest to the civic centre.
+    pub fn spawn_line(&self) -> (DVec2, DVec2) {
+        let street = self.plan.streets.iter().min_by(|a, b| {
+            a.distance_to(DVec2::ZERO)
+                .total_cmp(&b.distance_to(DVec2::ZERO))
+        });
+        match street {
+            Some(s) => ((s.a + s.b) * 0.5, (s.b - s.a).normalize_or(DVec2::X)),
+            None => (DVec2::ZERO, DVec2::X),
+        }
+    }
+}
+
+/// One tick of a hero's movement. The server and client prediction both run
+/// exactly this, so they agree.
+pub fn step_hero(body: &mut Body, input: InputState, solids: &Obstacles) {
+    let want = DVec3::new(input.move_x as f64, 0.0, input.move_z as f64) * RUN_SPEED;
+    let horizontal = DVec3::new(body.vel.x, 0.0, body.vel.z);
+    let delta = want - horizontal;
+    let accel = if body.grounded { RUN_ACCEL } else { AIR_ACCEL };
+    let max = accel * DT;
+    body.vel += if delta.length() > max {
+        delta.normalize() * max
+    } else {
+        delta
+    };
+    if input.jump && body.grounded {
+        body.vel.y = JUMP_SPEED;
+    }
+    body.vel.y -= GRAVITY * DT;
+    solids.move_body(body, DT);
+}
 
 /// The server's simulation state.
 pub struct Sim {
     pub world: World,
     pub seed: Seed,
     pub tick: u64,
+    spawn: (DVec2, DVec2),
     schedule: Schedule,
 }
 
 impl Sim {
+    /// A simulation of the city generated from `seed`.
     pub fn new(seed: Seed) -> Self {
+        Self::for_city(seed, &GeneratedCity::generate(seed))
+    }
+
+    /// A simulation of a city already generated (the client shares its copy).
+    pub fn for_city(seed: Seed, city: &GeneratedCity) -> Self {
+        let mut sim = Self::with_solids(seed, city.obstacles.clone());
+        sim.spawn = city.spawn_line();
+        sim
+    }
+
+    /// A simulation with the given solids (tests use flat ground).
+    pub fn with_solids(seed: Seed, solids: Arc<Obstacles>) -> Self {
         let mut world = World::new();
         world.insert_resource(Ids(NetIdAllocator::new()));
+        world.insert_resource(Solids(solids));
         let mut schedule = Schedule::default();
-        schedule.add_systems((control_heroes, integrate).chain());
+        schedule.add_systems(move_heroes);
         Self {
             world,
             seed,
             tick: 0,
+            spawn: (DVec2::ZERO, DVec2::X),
             schedule,
         }
+    }
+
+    pub fn solids(&self) -> Arc<Obstacles> {
+        self.world.resource::<Solids>().0.clone()
+    }
+
+    /// Where the `k`-th player appears: in a row along the central street.
+    pub fn spawn_point(&self, k: u32) -> DVec3 {
+        let (mid, dir) = self.spawn;
+        let offset = (k as f64 - 1.0) * 2.5 * if k.is_multiple_of(2) { 1.0 } else { -1.0 };
+        let p = mid + dir * offset;
+        DVec3::new(p.x, GROUND_Y + 0.5, p.y)
     }
 
     /// Advance the simulation by one fixed tick.
@@ -85,11 +184,13 @@ impl Sim {
         let id = self.world.resource_mut::<Ids>().0.allocate();
         self.world.spawn((
             Net(id),
-            Position(at),
-            Velocity::default(),
+            Motion(Body {
+                pos: at,
+                vel: DVec3::ZERO,
+                grounded: false,
+            }),
             Hero { owner },
             Control::default(),
-            Grounded(false),
         ));
         id
     }
@@ -127,24 +228,29 @@ impl Sim {
             .map(|(n, _)| n.0)
     }
 
-    pub fn position(&mut self, id: NetId) -> Option<DVec3> {
+    pub fn body(&mut self, id: NetId) -> Option<Body> {
         self.world
-            .query::<(&Net, &Position)>()
+            .query::<(&Net, &Motion)>()
             .iter(&self.world)
             .find(|(n, _)| n.0 == id)
-            .map(|(_, p)| p.0)
+            .map(|(_, m)| m.0)
+    }
+
+    pub fn position(&mut self, id: NetId) -> Option<DVec3> {
+        self.body(id).map(|b| b.pos)
     }
 
     /// The state of every replicated entity, sorted by ID.
     pub fn snapshot(&mut self) -> Vec<EntityState> {
         let mut out: Vec<EntityState> = self
             .world
-            .query::<(&Net, &Position, &Velocity, Option<&Hero>)>()
+            .query::<(&Net, &Motion, Option<&Hero>)>()
             .iter(&self.world)
-            .map(|(n, p, v, h)| EntityState {
+            .map(|(n, m, h)| EntityState {
                 id: n.0,
-                pos: p.0.to_array(),
-                vel: v.0.as_vec3().to_array(),
+                pos: m.0.pos.to_array(),
+                vel: m.0.vel.as_vec3().to_array(),
+                grounded: m.0.grounded,
                 owner: h.map(|h| h.owner),
             })
             .collect();
@@ -153,39 +259,9 @@ impl Sim {
     }
 }
 
-/// Turns input into velocity: run towards the wanted direction, jump when on
-/// the ground.
-fn control_heroes(mut q: Query<(&Control, &mut Velocity, &Grounded)>) {
-    for (control, mut vel, grounded) in &mut q {
-        let input = control.0;
-        let want = DVec3::new(input.move_x as f64, 0.0, input.move_z as f64) * RUN_SPEED;
-        let horizontal = DVec3::new(vel.0.x, 0.0, vel.0.z);
-        let delta = want - horizontal;
-        let max = RUN_ACCEL * DT;
-        let step = if delta.length() > max {
-            delta.normalize() * max
-        } else {
-            delta
-        };
-        vel.0 += step;
-        if input.jump && grounded.0 {
-            vel.0.y = JUMP_SPEED;
-        }
-    }
-}
-
-/// Gravity, motion, and the ground.
-fn integrate(mut q: Query<(&mut Position, &mut Velocity, &mut Grounded)>) {
-    for (mut pos, mut vel, mut grounded) in &mut q {
-        vel.0.y -= GRAVITY * DT;
-        pos.0 += vel.0 * DT;
-        if pos.0.y <= GROUND_Y {
-            pos.0.y = GROUND_Y;
-            vel.0.y = vel.0.y.max(0.0);
-            grounded.0 = true;
-        } else {
-            grounded.0 = false;
-        }
+fn move_heroes(solids: Res<Solids>, mut q: Query<(&Control, &mut Motion)>) {
+    for (control, mut motion) in &mut q {
+        step_hero(&mut motion.0, control.0, &solids.0);
     }
 }
 
@@ -193,9 +269,13 @@ fn integrate(mut q: Query<(&mut Position, &mut Velocity, &mut Grounded)>) {
 mod tests {
     use super::*;
 
+    fn flat_sim(seed: u64) -> Sim {
+        Sim::with_solids(Seed(seed), Arc::new(Obstacles::flat(GROUND_Y)))
+    }
+
     #[test]
     fn steps_count_ticks() {
-        let mut sim = Sim::new(Seed(1));
+        let mut sim = flat_sim(1);
         for _ in 0..3 {
             sim.step();
         }
@@ -204,7 +284,7 @@ mod tests {
 
     #[test]
     fn a_hero_runs_where_told_and_lands() {
-        let mut sim = Sim::new(Seed(1));
+        let mut sim = flat_sim(1);
         let p = PlayerId(1);
         let id = sim.spawn_hero(p, DVec3::new(0.0, 5.0, 0.0));
         sim.set_input(
@@ -227,7 +307,7 @@ mod tests {
 
     #[test]
     fn jumping_needs_ground() {
-        let mut sim = Sim::new(Seed(1));
+        let mut sim = flat_sim(1);
         let p = PlayerId(1);
         let id = sim.spawn_hero(p, DVec3::new(0.0, GROUND_Y, 0.0));
         sim.step();
@@ -252,7 +332,7 @@ mod tests {
     #[test]
     fn same_inputs_same_result() {
         let run = || {
-            let mut sim = Sim::new(Seed(4));
+            let mut sim = flat_sim(4);
             for k in 1..=3u16 {
                 sim.spawn_hero(PlayerId(k), DVec3::new(k as f64 * 3.0, 0.3, 0.0));
             }
@@ -276,8 +356,29 @@ mod tests {
     }
 
     #[test]
+    fn heroes_spawn_on_open_street_in_the_city() {
+        let mut sim = Sim::new(Seed(3));
+        for k in 1..=10u16 {
+            let id = sim.spawn_hero(PlayerId(k), sim.spawn_point(k as u32));
+            let _ = id;
+        }
+        for _ in 0..TICK_HZ {
+            sim.step();
+        }
+        for e in sim.snapshot() {
+            assert!(e.grounded, "hero {:?} not standing", e.id);
+            assert!(
+                (e.pos[1] - GROUND_Y).abs() < 1e-9,
+                "hero {:?} at height {}",
+                e.id,
+                e.pos[1]
+            );
+        }
+    }
+
+    #[test]
     fn removing_a_hero() {
-        let mut sim = Sim::new(Seed(1));
+        let mut sim = flat_sim(1);
         sim.spawn_hero(PlayerId(1), DVec3::ZERO);
         sim.spawn_hero(PlayerId(2), DVec3::ZERO);
         sim.remove_hero(PlayerId(1));

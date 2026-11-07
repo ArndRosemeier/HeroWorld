@@ -44,8 +44,9 @@ impl Connection {
         })
     }
 
-    /// Call once per client tick with the current input.
-    pub fn update(&mut self, input: InputState) {
+    /// Call once per client tick with the current input. Returns the
+    /// sequence number the input went out with, once connected.
+    pub fn update(&mut self, input: InputState) -> Option<u32> {
         for msg in self.socket.poll() {
             match msg {
                 ServerMsg::Welcome {
@@ -91,9 +92,11 @@ impl Connection {
                     seq: self.seq,
                     input,
                 });
+                return Some(self.seq);
             }
             ConnState::Rejected(_) => {}
         }
+        None
     }
 
     /// Our hero's ID once connected.

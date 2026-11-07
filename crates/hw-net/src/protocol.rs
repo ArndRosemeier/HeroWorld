@@ -33,6 +33,8 @@ pub struct EntityState {
     /// Position in the city's local frame (f64: precise anywhere in the city).
     pub pos: [f64; 3],
     pub vel: [f32; 3],
+    /// Standing on something (needed to replay movement exactly).
+    pub grounded: bool,
     /// The player who controls it, if it is a hero.
     pub owner: Option<PlayerId>,
 }
@@ -65,7 +67,7 @@ pub enum ServerMsg {
 
 /// Most entities that fit in one snapshot packet.
 pub const MAX_SNAPSHOT_ENTITIES: usize = (MAX_PACKET - 32) / ENTITY_BYTES;
-const ENTITY_BYTES: usize = 4 + 24 + 12 + 2;
+const ENTITY_BYTES: usize = 4 + 24 + 12 + 1 + 2;
 
 fn header(w: &mut Writer, kind: u8) {
     w.buf.extend_from_slice(&MAGIC);
@@ -163,6 +165,7 @@ impl ServerMsg {
                     for v in e.vel {
                         w.f32(v);
                     }
+                    w.bool(e.grounded);
                     w.u16(e.owner.map_or(0, |p| p.0));
                 }
             }
@@ -192,6 +195,7 @@ impl ServerMsg {
                     let id = NetId(r.u32()?);
                     let pos = [r.f64()?, r.f64()?, r.f64()?];
                     let vel = [r.f32()?, r.f32()?, r.f32()?];
+                    let grounded = r.bool()?;
                     let owner = match r.u16()? {
                         0 => None,
                         p => Some(PlayerId(p)),
@@ -200,6 +204,7 @@ impl ServerMsg {
                         id,
                         pos,
                         vel,
+                        grounded,
                         owner,
                     });
                 }
@@ -249,12 +254,14 @@ mod tests {
                     id: NetId(3),
                     pos: [1.0, 2.0, -3.5],
                     vel: [0.5, 0.0, 0.0],
+                    grounded: true,
                     owner: Some(PlayerId(1)),
                 },
                 EntityState {
                     id: NetId(4),
                     pos: [100.25, 0.0, 9.0],
                     vel: [0.0; 3],
+                    grounded: false,
                     owner: None,
                 },
             ],
@@ -305,6 +312,7 @@ mod tests {
                 id: NetId(1),
                 pos: [0.0; 3],
                 vel: [0.0; 3],
+                grounded: false,
                 owner: None,
             };
             MAX_SNAPSHOT_ENTITIES + 10
