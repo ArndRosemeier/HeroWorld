@@ -27,7 +27,7 @@ All ten are in Engine `main`, each with an example (listed in Engine's `run_exam
 
 Notes:
 
-- Crowds: far people use the character simplified to about 5% of its triangles (67.6k to 4.1k vertices for the Actors sample), or `CrowdProfile::far_model` with an export of Actors' "Crowd" level. The 60 fps target with 1,000 people has not been measured on a real GPU yet (the cloud machine renders in software).
+- Crowds: far people use the character simplified to about 5% of its triangles (67.6k to 4.1k vertices for the Actors sample), or `CrowdProfile::far_model` with an export of Actors' "Crowd" level. Measured on an RTX 5070 at 2560×1440: 1,000 people run at 169 fps walking through the crowd and 189 fps with everyone in view; 3,000 people run at 117 fps.
 - Reflections: a little hatching shows at the bottom of curved chrome where screen-space rays run out; probes cover the rest.
 
 ## Priorities
