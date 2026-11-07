@@ -75,6 +75,26 @@ pub struct Obstacles {
     grid: BTreeMap<(i64, i64), Vec<u32>>,
     /// Height of open ground.
     pub ground: f64,
+    /// Rivers and sea: open ground there is the water surface.
+    water: Option<Arc<WaterMap>>,
+}
+
+/// Where the open ground is water, and the bridges over it.
+#[derive(Debug)]
+struct WaterMap {
+    water: hw_gen::water::CityWater,
+    /// Deck centre line ends and half width.
+    bridges: Vec<(DVec2, DVec2, f64)>,
+}
+
+impl WaterMap {
+    fn is_water(&self, p: DVec2) -> bool {
+        self.water.is_water(p)
+            && !self
+                .bridges
+                .iter()
+                .any(|(a, b, w)| hw_gen::water::segment_distance(p, *a, *b) <= *w)
+    }
 }
 
 /// A body that moves through the city: feet position, velocity.
@@ -116,6 +136,14 @@ impl Obstacles {
     /// standing on `base`.
     pub fn from_city(city: &CityPlan, plans: &[BuildingPlan], ground: f64, base: f64) -> Self {
         let mut out = Self::flat(ground);
+        out.water = Some(Arc::new(WaterMap {
+            water: city.water.clone(),
+            bridges: city
+                .bridges
+                .iter()
+                .map(|b| (b.a, b.b, city.streets[b.street as usize].reach()))
+                .collect(),
+        }));
         for (_, p) in city.buildings.iter().zip(plans) {
             let corners = p.site.corners();
             out.insert(Collider {
@@ -271,9 +299,18 @@ impl Obstacles {
         })
     }
 
+    /// Height of the open ground at `p`: the water surface over rivers and
+    /// the sea (bridges excepted).
+    pub fn ground_at(&self, p: DVec2) -> f64 {
+        match &self.water {
+            Some(w) if w.is_water(p) => hw_gen::water::WATER_LEVEL,
+            _ => self.ground,
+        }
+    }
+
     /// Height of whatever is under `p` (x, z) no higher than `max_y`.
     pub fn floor_under(&self, p: DVec2, max_y: f64) -> f64 {
-        let mut best = self.ground;
+        let mut best = self.ground_at(p);
         for s in self.near(p, 0.0) {
             let l = s.to_local(p);
             if l.x >= s.min.x && l.x <= s.max.x && l.y >= s.min.y && l.y <= s.max.y && s.y1 <= max_y
@@ -356,6 +393,14 @@ impl Obstacles {
                 if into < 0.0 {
                     body.vel -= n3 * into;
                 }
+            }
+            // Quay walls: the bank stands too high to step onto from the water.
+            let q = DVec2::new(next.x, next.z);
+            if self.ground_at(q) > body.pos.y.max(next.y) + STEP {
+                next.x = body.pos.x;
+                next.z = body.pos.z;
+                body.vel.x = 0.0;
+                body.vel.z = 0.0;
             }
             // Ceilings stop a rising body.
             if body.vel.y > 0.0 {
@@ -493,6 +538,46 @@ fn minus(r: Rect, hole: Option<Rect>) -> Vec<Rect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rivers_are_water_and_their_banks_too_high_to_step_onto() {
+        let city = CityPlan::generate(hw_core::Seed(1), &hw_gen::city::CityParams::default());
+        let o = Obstacles::from_city(&city, &[], 0.0, 0.0);
+        let river = &city.water.rivers[0];
+        let (a, b) = (
+            river.pts[river.pts.len() / 2],
+            river.pts[river.pts.len() / 2 + 1],
+        );
+        let dir = (b - a).normalize();
+        let side = dir.perp();
+        // Mid-river, away from any bridge.
+        let mut mid = a.lerp(b, 0.5);
+        for k in 0..40 {
+            let p = a.lerp(b, k as f64 / 40.0);
+            if o.ground_at(p) < 0.0 {
+                mid = p;
+                break;
+            }
+        }
+        assert_eq!(o.ground_at(mid), hw_gen::water::WATER_LEVEL);
+        let bank = mid + side * (river.width * 0.5 + 5.0);
+        assert_eq!(o.ground_at(bank), 0.0);
+        // Swim towards the bank: the quay wall stops the body.
+        let mut body = Body {
+            pos: DVec3::new(mid.x, hw_gen::water::WATER_LEVEL, mid.y),
+            vel: DVec3::new(side.x, 0.0, side.y) * 5.0,
+            grounded: true,
+        };
+        for _ in 0..200 {
+            body.vel = DVec3::new(side.x, body.vel.y - 9.8 / 30.0, side.y) * 1.0;
+            body.vel.x *= 5.0;
+            body.vel.z *= 5.0;
+            o.move_body(&mut body, 1.0 / 30.0);
+        }
+        assert!(body.pos.y < -3.0, "climbed the quay: {:?}", body.pos);
+        let reached = DVec2::new(body.pos.x, body.pos.z).distance(mid);
+        assert!(reached < river.width * 0.5 + 1.0, "went {reached} m");
+    }
 
     fn one_box() -> Obstacles {
         let mut o = Obstacles::flat(0.0);

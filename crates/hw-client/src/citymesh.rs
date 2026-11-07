@@ -9,7 +9,8 @@ use engine::prelude::*;
 use glam::{DVec2, DVec3, Vec3};
 use hw_gen::building::{BuildingPlan, Door, RoomKind};
 use hw_gen::city::{BlockUse, CityPlan, DistrictKind, StreetClass};
-use hw_gen::geom::Rect;
+use hw_gen::geom::{EdgeTag, Poly, Rect};
+use hw_gen::water::{self, WATER_LEVEL};
 
 /// Heights of the ground layers (m). Carriageways sit above sidewalks where
 /// they overlap at junctions.
@@ -19,6 +20,12 @@ const STREET_TOP: f64 = 0.26;
 /// instead of fighting with them.
 const BOULEVARD_TOP: f64 = 0.28;
 pub const BLOCK_TOP: f64 = 0.22;
+/// Sand on a beach, below the promenade.
+const SAND_TOP: f64 = 0.08;
+/// Depth of rivers and the sea near the shore (m).
+pub const RIVER_DEPTH: f64 = 3.0;
+/// The depth that vertex alpha 1 stands for in the water material.
+pub const WATER_DEPTH_SCALE: f64 = 9.0;
 /// Wall thickness inside cut-open buildings.
 const WALL: f64 = 0.25;
 /// Height of walls on the cut floor.
@@ -330,6 +337,21 @@ impl Palette {
     fn boulevard() -> Color {
         rgb(70, 72, 78)
     }
+    fn sand() -> Color {
+        rgb(226, 206, 150)
+    }
+    fn quay() -> Color {
+        rgb(150, 142, 128)
+    }
+    fn bridge() -> Color {
+        rgb(176, 160, 136)
+    }
+    fn riverbed() -> Color {
+        rgb(70, 74, 60)
+    }
+    pub fn water() -> Color {
+        rgb(40, 92, 118)
+    }
     fn sidewalk() -> Color {
         rgb(196, 190, 176)
     }
@@ -375,20 +397,81 @@ impl Palette {
     }
 }
 
-/// Ground plane, streets, sidewalks, plazas, parks and block grounds.
-pub fn ground_mesh(plan: &CityPlan) -> Mesh {
+/// Land, quays, beaches, streets, bridges, plazas, parks and block grounds,
+/// then the river bed and the water, as named meshes (the water takes
+/// Engine's water material).
+pub fn ground_mesh(plan: &CityPlan) -> Vec<(String, Mesh)> {
     let mut b = MeshBuilder::new();
-    let r = plan.params.radius + 600.0;
-    b.mesh
-        .add_box(
-            (0.0, -0.5, 0.0),
-            (r as f32 * 2.0, 1.0, r as f32 * 2.0),
-            Palette::grass(),
-        )
-        .expect("ground");
-    for s in &plan.streets {
+    let bed = WATER_LEVEL - RIVER_DEPTH;
+    let sea_side = |p: DVec2| plan.water.is_water(p);
+    // The land down to the water's edge, with quay walls into the water and
+    // beaches sloping into the sea.
+    for land in &plan.land {
+        let top: Vec<DVec3> = land.pts.iter().map(|p| DVec3::new(p.x, 0.0, p.y)).collect();
+        b.polygon(&top, DVec3::Y, Palette::grass());
+        for i in 0..land.len() {
+            let (p, q) = land.edge(i);
+            let out = -land.inward(i);
+            if !sea_side((p + q) * 0.5 + out * 0.5) {
+                continue;
+            }
+            let o = DVec3::new(out.x, 0.0, out.y);
+            let (p3, q3) = (DVec3::new(p.x, 0.0, p.y), DVec3::new(q.x, 0.0, q.y));
+            let on_coast = plan
+                .water
+                .coast
+                .as_ref()
+                .is_some_and(|c| c.land_distance((p + q) * 0.5).abs() < 1.0);
+            if on_coast {
+                // Sand sloping under the sea.
+                let run = o * 14.0 + DVec3::Y * (bed - 0.5);
+                b.quad(
+                    [p3, q3, q3 + run, p3 + run],
+                    o + DVec3::Y * 2.0,
+                    Palette::sand(),
+                );
+            } else {
+                let down = DVec3::Y * bed;
+                b.quad([p3, q3, q3 + down, p3 + down], o, Palette::quay());
+            }
+        }
+    }
+    // Promenades along the rivers; beaches and promenades along the coast.
+    // Strips of neighbouring reaches overlap at bends, so they are drawn as
+    // tops at their own heights, with sides only where a quay meets the
+    // river (the beach runs on down into the sea).
+    let slab = |b: &mut MeshBuilder, poly: &Poly, y: f64, color: Color, sides: bool| {
+        let top: Vec<DVec3> = poly.pts.iter().map(|p| DVec3::new(p.x, y, p.y)).collect();
+        b.polygon(&top, DVec3::Y, color);
+        for i in 0..poly.len() {
+            let (p, q) = poly.edge(i);
+            let out = -poly.inward(i);
+            if sides && sea_side((p + q) * 0.5 + out * 0.5) {
+                let o = DVec3::new(out.x, 0.0, out.y);
+                let (p0, q0) = (DVec3::new(p.x, 0.0, p.y), DVec3::new(q.x, 0.0, q.y));
+                b.quad([p0, q0, q0 + DVec3::Y * y, p0 + DVec3::Y * y], o, color);
+            }
+        }
+    };
+    for (strip, street) in &plan.waterfront {
+        let st = &plan.streets[*street as usize];
+        if st.class == StreetClass::Shore {
+            let dir = (st.b - st.a).normalize_or_zero();
+            let n = dir.perp();
+            let at = st.a + n * (water::SHORE_WIDTH - water::PROMENADE_WIDTH);
+            if let Some(sand) = strip.clip(at, -n, EdgeTag::Inner) {
+                slab(&mut b, &sand, SAND_TOP, Palette::sand(), false);
+            }
+            if let Some(walk) = strip.clip(at, n, EdgeTag::Inner) {
+                slab(&mut b, &walk, SIDEWALK_TOP, Palette::sidewalk(), false);
+            }
+        } else {
+            slab(&mut b, strip, SIDEWALK_TOP, Palette::sidewalk(), true);
+        }
+    }
+    for s in plan.streets.iter().filter(|s| !s.class.is_water()) {
         let dir = (s.b - s.a).normalize_or_zero();
-        if dir == DVec2::ZERO {
+        if dir == DVec2::ZERO || s.a.distance(s.b) < 1.0 {
             continue;
         }
         let u = DVec3::new(dir.x, 0.0, dir.y);
@@ -415,14 +498,24 @@ pub fn ground_mesh(plan: &CityPlan) -> Mesh {
             color,
         );
         if s.class == StreetClass::Boulevard {
-            // Planted median.
-            b.oriented_box(
-                DVec3::new(mid.x, top + 0.15, mid.y),
-                u,
-                DVec3::new((len * 0.5 - s.width * 0.6).max(1.0), 0.15, 1.8),
-                Palette::park(),
-            );
+            // Planted median, except on bridges.
+            for (a, z) in median_spans(plan, s) {
+                let (m, half) = ((a + z) * 0.5, (z - a) * 0.5);
+                if half < 1.0 {
+                    continue;
+                }
+                let c = s.a + dir * m;
+                b.oriented_box(
+                    DVec3::new(c.x, top + 0.15, c.y),
+                    u,
+                    DVec3::new(half, 0.15, 1.8),
+                    Palette::park(),
+                );
+            }
         }
+    }
+    for br in &plan.bridges {
+        bridge(&mut b, plan, br);
     }
     for blk in &plan.blocks {
         let kind = plan.districts[blk.district].kind;
@@ -433,7 +526,145 @@ pub fn ground_mesh(plan: &CityPlan) -> Mesh {
         };
         b.prism(&blk.poly.pts, 0.0, BLOCK_TOP, color);
     }
+    vec![
+        ("ground".into(), b.finish()),
+        ("riverbed".into(), riverbed(plan)),
+        ("water".into(), water_mesh(plan)),
+    ]
+}
+
+/// Water surface and bed reach this far from the centre (m); the land of
+/// the plan reaches a little further.
+fn water_radius(plan: &CityPlan) -> f64 {
+    plan.params.radius + 900.0
+}
+
+/// One sheet at `y` under all the land: a disc, and with a coast the open
+/// sea beyond it out to the horizon.
+fn sheet(b: &mut MeshBuilder, plan: &CityPlan, y: f64, color: Color) {
+    let r = water_radius(plan);
+    let disc: Vec<DVec2> = (0..72)
+        .map(|i| {
+            let a = std::f64::consts::TAU * i as f64 / 72.0;
+            DVec2::new(r * a.cos(), r * a.sin())
+        })
+        .collect();
+    let disc = Poly::new(disc, EdgeTag::Inner);
+    let to3 = |p: &Poly| -> Vec<DVec3> { p.pts.iter().map(|q| DVec3::new(q.x, y, q.y)).collect() };
+    match &plan.water.coast {
+        None => b.polygon(&to3(&disc), DVec3::Y, color),
+        Some(c) => {
+            // Split where the whole coast lies further out, so the two
+            // pieces never overlap (the water is see-through).
+            let n = c.seaward;
+            let cut = c.pts.iter().map(|p| p.dot(n)).fold(f64::MAX, f64::min) - 50.0;
+            if let Some(inner) = disc.clip(n * cut, -n, EdgeTag::Inner) {
+                b.polygon(&to3(&inner), DVec3::Y, color);
+            }
+            let far = 20_000.0;
+            let t = n.perp();
+            let sea = Poly::new(
+                vec![
+                    n * cut - t * far,
+                    n * cut + t * far,
+                    n * far + t * far,
+                    n * far - t * far,
+                ],
+                EdgeTag::Inner,
+            );
+            b.polygon(&to3(&sea), DVec3::Y, color);
+        }
+    }
+}
+
+fn water_mesh(plan: &CityPlan) -> Mesh {
+    let mut b = MeshBuilder::new();
+    // Vertex alpha carries the depth for Engine's water shader.
+    let depth = (RIVER_DEPTH / WATER_DEPTH_SCALE).clamp(0.0, 1.0);
+    let c = Palette::water().with_alpha(depth as f32);
+    sheet(&mut b, plan, WATER_LEVEL, c);
     b.finish()
+}
+
+fn riverbed(plan: &CityPlan) -> Mesh {
+    let mut b = MeshBuilder::new();
+    sheet(&mut b, plan, WATER_LEVEL - RIVER_DEPTH, Palette::riverbed());
+    b.finish()
+}
+
+/// Parts of a boulevard (as distances from `a`) not on a bridge.
+fn median_spans(plan: &CityPlan, s: &hw_gen::city::Street) -> Vec<(f64, f64)> {
+    let len = s.a.distance(s.b);
+    let dir = (s.b - s.a) / len.max(1e-9);
+    let mut cuts: Vec<(f64, f64)> = plan
+        .bridges
+        .iter()
+        .filter(|br| plan.streets[br.street as usize] == *s)
+        .map(|br| {
+            let (x, y) = ((br.a - s.a).dot(dir), (br.b - s.a).dot(dir));
+            (x.min(y) - 4.0, x.max(y) + 4.0)
+        })
+        .collect();
+    cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut out = Vec::new();
+    let mut t = s.width * 0.6;
+    for (a, z) in cuts {
+        if a > t {
+            out.push((t, a));
+        }
+        t = t.max(z);
+    }
+    if len - s.width * 0.6 > t {
+        out.push((t, len - s.width * 0.6));
+    }
+    out
+}
+
+/// The stonework of a bridge: a deck slab under the road, parapets and
+/// piers standing on the river bed. The road itself is the boulevard.
+fn bridge(b: &mut MeshBuilder, plan: &CityPlan, br: &hw_gen::city::Bridge) {
+    let s = &plan.streets[br.street as usize];
+    let dir = (br.b - br.a).normalize_or_zero();
+    if dir == DVec2::ZERO {
+        return;
+    }
+    let u = DVec3::new(dir.x, 0.0, dir.y);
+    let v = DVec2::new(-dir.y, dir.x);
+    let len = br.a.distance(br.b);
+    let mid = (br.a + br.b) * 0.5;
+    let half_w = s.reach();
+    let stone = Palette::bridge();
+    // Deck: under the road, a little wider.
+    // Its top stays 2 cm under the ground, where it runs onto the banks.
+    b.oriented_box(
+        DVec3::new(mid.x, -0.72, mid.y),
+        u,
+        DVec3::new(len * 0.5, 0.7, half_w + 0.4),
+        stone,
+    );
+    // Parapets on the sidewalks' outer edge.
+    for side in [-1.0, 1.0] {
+        let c = mid + v * side * (half_w - 0.25);
+        b.oriented_box(
+            DVec3::new(c.x, SIDEWALK_TOP + 0.5, c.y),
+            u,
+            DVec3::new(len * 0.5, 0.5, 0.25),
+            stone,
+        );
+    }
+    // Piers every 25 m or so, from the bed to the deck.
+    let bed = WATER_LEVEL - RIVER_DEPTH;
+    let n = (len / 25.0).floor() as usize;
+    for k in 1..n.max(1) {
+        let c = br.a + dir * (len * k as f64 / n.max(1) as f64);
+        let h = -1.4 - bed;
+        b.oriented_box(
+            DVec3::new(c.x, bed + h * 0.5, c.y),
+            u,
+            DVec3::new(1.6, h * 0.5, half_w + 0.2),
+            stone,
+        );
+    }
 }
 
 /// How to draw one building.
@@ -468,10 +699,11 @@ pub fn add_building(
     if let Look::Cut { .. } = look {
         let f = &plan.floors[shown_floors];
         let y = base + f.elevation;
-        // Room floors, coloured by use.
+        // Room floors, coloured by use. Each stops 1 mm short of its
+        // neighbours: shared edges, rounded in city space, would overlap.
         for room in &f.rooms {
             let c = room.rect.center();
-            let s = room.rect.size();
+            let s = room.rect.size() - glam::DVec2::splat(0.002);
             b.oriented_box(
                 to_city(c.x, y + 0.15, c.y),
                 u,

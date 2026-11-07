@@ -10,7 +10,7 @@
 //! spots on a map of the city.
 
 use hw_client::buildingmesh::Detail;
-use hw_client::zfight::{self, hex, source_name, Clash};
+use hw_client::zfight::{self, hex, Clash};
 use hw_core::Seed;
 use hw_sim::GeneratedCity;
 use std::fmt::Write as _;
@@ -32,58 +32,46 @@ fn main() {
         }
     }
     let city = GeneratedCity::generate(Seed(seed));
-    let tris = zfight::city(&city, cut, detail);
-    let clashes = zfight::find(&tris, &zfight::city_options());
-    let (same, differ): (Vec<Clash>, Vec<Clash>) = clashes.iter().partition(|c| c.same_color);
+    let report = zfight::city(&city, cut, detail).run();
     println!(
-        "seed {seed}{}{}: {} triangles, {} fighting pairs ({:.1} m²), {} doubled faces of one colour ({:.1} m²)",
-        cut.map(|l| format!(", cut at floor {l}")).unwrap_or_default(),
-        if detail == Detail::Far { ", far detail" } else { "" },
-        tris.len(),
-        differ.len(),
-        differ.iter().map(|c| c.area).sum::<f64>().abs(),
-        same.len(),
-        same.iter().map(|c| c.area).sum::<f64>().abs(),
+        "seed {seed}{}{}: {}",
+        cut.map(|l| format!(", cut at floor {l}"))
+            .unwrap_or_default(),
+        if detail == Detail::Far {
+            ", far detail"
+        } else {
+            ""
+        },
+        report.summary(25)
     );
-    let report = |title: &str, list: &[Clash]| {
-        let spots = zfight::spots(list, 10.0);
-        if spots.is_empty() {
-            return;
-        }
-        println!("\n{title} ({} spots, worst first):", spots.len());
-        for s in spots.iter().take(25) {
+    if all {
+        let doubled: Vec<Clash> = report.doubled().copied().collect();
+        let spots = engine::zfight::spots(&doubled, 10.0);
+        println!("\nDoubled (same look, {} spots, worst first):", spots.len());
+        for c in spots.iter().take(25) {
             println!(
-                "  {:>9.2} m²  at ({:.1}, {:.2}, {:.1})  facing ({:.2}, {:.2}, {:.2})  {} vs {}  [{} / {}]  gap {:.3} m",
-                s.area,
-                s.at.x,
-                s.at.y,
-                s.at.z,
-                s.normal.x,
-                s.normal.y,
-                s.normal.z,
-                hex(s.colors[0]),
-                hex(s.colors[1]),
-                source_name(s.sources[0]),
-                source_name(s.sources[1]),
-                s.gap
+                "  {:>8.2} m²  at ({:.1}, {:.2}, {:.1})  {}  [{} / {}]",
+                c.area,
+                c.at.x,
+                c.at.y,
+                c.at.z,
+                hex(c.colors[0]),
+                report.source_name(c.sources[0]),
+                report.source_name(c.sources[1])
             );
         }
-    };
-    report("Fighting", &differ);
-    if all {
-        report("Doubled (same colour)", &same);
     }
     if let Some(path) = svg {
-        std::fs::write(&path, map(&city, &differ)).expect("write svg");
+        std::fs::write(&path, map(&city, &report.spots(10.0))).expect("write svg");
         println!("\nmap: {path}");
     }
-    if !differ.is_empty() {
+    if !report.is_clean() {
         std::process::exit(1);
     }
 }
 
 /// The city's blocks in grey, spots in magenta sized by area.
-fn map(city: &GeneratedCity, clashes: &[Clash]) -> String {
+fn map(city: &GeneratedCity, spots: &[Clash]) -> String {
     let r = city.plan.params.radius + 100.0;
     let mut s = String::new();
     let _ = write!(
@@ -111,7 +99,7 @@ fn map(city: &GeneratedCity, clashes: &[Clash]) -> String {
             pts.join(" ")
         );
     }
-    for c in zfight::spots(clashes, 10.0) {
+    for c in spots {
         let rad = 3.0 + c.area.sqrt() * 2.0;
         let _ = write!(
             s,

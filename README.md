@@ -24,7 +24,7 @@ HW_JOIN=192.168.1.20:7777 cargo run -p hw-client   # join a friend
 cargo run -p hw-sim --bin hw-headless
 scripts/check.sh           # what must pass before a push
 cargo run --release -p hw-client --bin zfight -- 1 --svg screenshots/zfight.svg   # find z-fighting in a city
-HW_ZFIGHT=1 cargo run -p hw-client                 # ...or see it in the game as magenta posts
+ENGINE_ZFIGHT=1 cargo run -p hw-client             # ...or see it in the game as magenta posts
 ```
 
 Crates and rules for contributors (and coding agents): [AGENTS.md](AGENTS.md).

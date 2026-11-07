@@ -21,16 +21,18 @@
 //! `hero` (default), `inside`, `sky`, `overview`, `street` or `cutaway` picks the starting
 //! camera (handy with `ENGINE_SCREENSHOT`); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
-//! `HW_ZFIGHT=1` marks z-fighting with magenta posts (the `zfight` tool
+//! `ENGINE_ZFIGHT=1` marks z-fighting with magenta posts (the `zfight` tool
 //! checks a whole city without the game).
 
 mod session;
 
 use engine::prelude::*;
+use engine::texture::WaterMaterialDesc;
+use engine::world::SurfaceMaterialRef;
 use glam::{DVec2, Vec3};
 use hw_client::buildingmesh::Detail;
+use hw_client::citymesh::WATER_DEPTH_SCALE;
 use hw_client::citymesh::{self, add_building, ground_hit, ground_mesh, Look, MeshBuilder};
-use hw_client::zfight;
 use hw_core::Seed;
 use hw_gen::building::BuildingPlan;
 use hw_gen::city::CityPlan;
@@ -61,8 +63,6 @@ struct City {
     cut_level: u32,
     /// The building and floor our hero is in: drawn open at that floor.
     inside: Option<hw_sim::collision::Inside>,
-    /// `HW_ZFIGHT=1`: mark z-fighting with magenta posts.
-    mark_zfighting: bool,
     /// Centre and radius of each cell's buildings.
     cell_bounds: Vec<(DVec2, f64)>,
     /// Cells drawn in near detail.
@@ -87,7 +87,6 @@ impl City {
             cut_focus: DVec2::ZERO,
             cut_level: 1,
             inside: None,
-            mark_zfighting: std::env::var_os("HW_ZFIGHT").is_some(),
             cell_bounds: Vec::new(),
             near: BTreeSet::new(),
         }
@@ -208,14 +207,9 @@ impl City {
         if b.is_empty() {
             return;
         }
-        let mut mesh = b.finish();
-        if self.mark_zfighting {
-            let n = zfight::mark(&mut mesh);
-            if n > 0 {
-                println!("z-fighting: {n} spots in cell {cell}");
-            }
-        }
-        self.cell_entities[cell].push(world.spawn(mesh));
+        let id = world.spawn(b.finish());
+        world.set_name(id, format!("cell {cell}"));
+        self.cell_entities[cell].push(id);
     }
 }
 
@@ -258,7 +252,9 @@ impl HeroCamera {
             let p = head - dir * t;
             let q = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
             let hidden = open_above.is_some_and(|y| q.y > y);
-            if !hidden && (solids.solid_at(q) || q.y < solids.ground + 0.2) {
+            if !hidden
+                && (solids.solid_at(q) || q.y < solids.ground_at(glam::DVec2::new(q.x, q.z)) + 0.2)
+            {
                 d = (t - step).max(0.0);
                 break;
             }
@@ -364,14 +360,23 @@ fn main() -> EngineResult<()> {
         if frame.first {
             world.set_view_distance(6000.0)?;
             world.set_physical_sky(Some(PhysicalSky::at_hour(10.5)));
-            let mut ground = ground_mesh(&city.plan);
-            if city.mark_zfighting {
-                println!(
-                    "z-fighting: {} spots on the ground",
-                    zfight::mark(&mut ground)
-                );
+            let water = world.create_water_material(WaterMaterialDesc {
+                shallow: rgb(70, 140, 150),
+                deep: rgb(16, 52, 76),
+                depth_scale_m: WATER_DEPTH_SCALE as f32,
+                wave_length_m: 7.0,
+                wave_steepness: 0.3,
+                wave_speed_m_s: 0.8,
+                foam_width_m: 0.0,
+                glint: 1.0,
+            })?;
+            for (name, mesh) in ground_mesh(&city.plan) {
+                let id = world.spawn(mesh);
+                if name == "water" {
+                    world.set_entity_material(id, Some(SurfaceMaterialRef::Water(water)))?;
+                }
+                world.set_name(id, name);
             }
-            world.spawn(ground);
             for c in 0..city.plan.cells.len() {
                 city.build_cell(world, c);
             }

@@ -866,12 +866,19 @@ fn entrance(c: &mut Ctx, w: &Wall, f: &Floor, t: (f64, f64), head: f64) {
             _ => shade(look.trim, 0.8),
         };
         let y = top;
-        wall_box(c, w, (t0 - 1.2, t1 + 1.2), (y, y + 0.28), (0.0, 2.6), color);
+        wall_box(
+            c,
+            w,
+            (t0 - 0.45, t1 + 0.45),
+            (y, y + 0.28),
+            (0.0, 2.6),
+            color,
+        );
         c.surf(Surf::Glow);
         wall_box(
             c,
             w,
-            (t0 - 1.2, t1 + 1.2),
+            (t0 - 0.45, t1 + 0.45),
             (y + 0.28, y + 0.46),
             (2.45, 2.6),
             col([255, 240, 200]),
