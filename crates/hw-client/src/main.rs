@@ -6,6 +6,8 @@
 //! Controls: you play your hero in third person. Hold the right mouse button
 //! (or press P to lock the pointer) and move the mouse to look, WASD to run,
 //! Space to jump, R/T to zoom in and out (all the way in is first person).
+//! V to fly: steer with WASD and the camera, Space climbs, Ctrl sinks,
+//! Shift goes faster; V again drops you.
 //! Buildings are open: walk in through a door, and in the lift (the core in
 //! the middle) hold Space to rise and Ctrl to sink; step out at any floor.
 //! Tab switches to a free-flying camera and back. C cuts buildings open
@@ -16,16 +18,18 @@
 //! someone else's world instead.
 //!
 //! Environment: `HW_SEED` (world seed, default 1); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `overview`, `street` or `cutaway` picks the starting
+//! `hero` (default), `inside`, `sky`, `overview`, `street` or `cutaway` picks the starting
 //! camera (handy with `ENGINE_SCREENSHOT`); `HW_CUT_LEVEL` the floor shown
-//! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests).
+//! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
+//! `HW_ZFIGHT=1` marks z-fighting with magenta posts (the `zfight` tool
+//! checks a whole city without the game).
 
-mod citymesh;
 mod session;
 
-use citymesh::{add_building, ground_hit, ground_mesh, Look, MeshBuilder};
 use engine::prelude::*;
 use glam::{DVec2, Vec3};
+use hw_client::citymesh::{self, add_building, ground_hit, ground_mesh, Look, MeshBuilder};
+use hw_client::zfight;
 use hw_core::Seed;
 use hw_gen::building::BuildingPlan;
 use hw_gen::city::CityPlan;
@@ -50,6 +54,8 @@ struct City {
     cut_level: u32,
     /// The building and floor our hero is in: drawn open at that floor.
     inside: Option<hw_sim::collision::Inside>,
+    /// `HW_ZFIGHT=1`: mark z-fighting with magenta posts.
+    mark_zfighting: bool,
 }
 
 impl City {
@@ -70,6 +76,7 @@ impl City {
             cut_focus: DVec2::ZERO,
             cut_level: 1,
             inside: None,
+            mark_zfighting: std::env::var_os("HW_ZFIGHT").is_some(),
         }
         .focused_on_centre()
     }
@@ -143,6 +150,12 @@ impl City {
             let kind =
                 self.plan.districts[self.plan.blocks[self.plan.lots[lot].block].district].kind;
             add_building(&mut b, &self.buildings[i], kind, self.look_of(i));
+        }
+        if self.mark_zfighting && !b.is_empty() {
+            let n = zfight::mark(&mut b.mesh);
+            if n > 0 {
+                println!("z-fighting: {n} spots in cell {cell}");
+            }
         }
         if !b.is_empty() {
             self.cell_entities[cell] = Some(world.spawn(b.mesh));
@@ -234,7 +247,7 @@ fn main() -> EngineResult<()> {
         city.cut_level = level as u32;
     }
     println!(
-        "HeroWorld: {} buildings. Right mouse to look, WASD to run, Space to jump, Tab for the free camera.",
+        "HeroWorld: {} buildings. Right mouse to look, WASD to run, Space to jump, V to fly, Tab for the free camera.",
         city.buildings.len()
     );
     let mut hero_cam_yaw = 30.0f32;
@@ -248,7 +261,7 @@ fn main() -> EngineResult<()> {
     }
     .with_speed(40.0);
     fly.fast = 8.0;
-    let mut flying = view != "hero" && view != "inside";
+    let mut flying = !matches!(view.as_str(), "hero" | "inside" | "sky");
     if view == "inside" {
         // Start in the lobby of the tallest tower near the centre.
         let tower = (0..city.buildings.len())
@@ -271,20 +284,38 @@ fn main() -> EngineResult<()> {
             hero_cam_yaw = along.x.atan2(along.y).to_degrees() as f32;
         }
     }
+    if view == "sky" {
+        // Hovering above the city centre (with HW_FLY or V held on).
+        session.teleport(glam::DVec3::new(-40.0, 260.0, 40.0));
+        hero_cam_yaw = 135.0;
+    }
     let mut hero_cam = HeroCamera {
         yaw: hero_cam_yaw,
-        pitch: if view == "inside" { -35.0 } else { -12.0 },
+        pitch: match view.as_str() {
+            "inside" => -35.0,
+            "sky" => -22.0,
+            _ => -12.0,
+        },
         distance: 7.0,
     };
     let mut hero_entities: BTreeMap<hw_core::NetId, EntityId> = BTreeMap::new();
     let mut facings: BTreeMap<hw_core::NetId, f32> = BTreeMap::new();
     let mut tick_clock = 0.0f64;
+    // The hero's flight toggle (V); sent with every input.
+    let mut hero_flies = std::env::var_os("HW_FLY").is_some() || view == "sky";
 
     Engine::run("HeroWorld", move |world, frame| {
         if frame.first {
             world.set_view_distance(6000.0)?;
             world.set_physical_sky(Some(PhysicalSky::at_hour(10.5)));
-            world.spawn(ground_mesh(&city.plan));
+            let mut ground = ground_mesh(&city.plan);
+            if city.mark_zfighting {
+                println!(
+                    "z-fighting: {} spots on the ground",
+                    zfight::mark(&mut ground)
+                );
+            }
+            world.spawn(ground);
             for c in 0..city.plan.cells.len() {
                 city.build_cell(world, c);
             }
@@ -334,14 +365,29 @@ fn main() -> EngineResult<()> {
         // Hero input, relative to where the camera faces.
         let mut hero_input = hw_net::InputState::default();
         if !flying {
+            if input.pressed(Key::V) {
+                hero_flies = !hero_flies;
+            }
             let mut dir = input.move_dir_xz(hero_cam.yaw);
             if auto_walk {
                 dir = Camera::facing_xz(hero_cam.yaw);
             }
+            if hero_flies {
+                // Forward follows the camera up and down, so you fly where you look.
+                let flat = Camera::facing_xz(hero_cam.yaw);
+                let ahead = dir.dot(flat);
+                dir = dir - flat * ahead
+                    // The camera looks down at the hero a little; level that out.
+                    + Camera::direction(hero_cam.yaw, hero_cam.pitch + 12.0) * ahead;
+                dir = dir.clamp_length_max(1.0);
+            }
             hero_input.move_x = dir.x;
+            hero_input.move_y = if hero_flies { dir.y } else { 0.0 };
             hero_input.move_z = dir.z;
             hero_input.jump = input.down(Key::Space);
             hero_input.descend = input.down(Key::Ctrl);
+            hero_input.fly = hero_flies;
+            hero_input.boost = input.down(Key::Shift);
         }
 
         // Fixed ticks for the game, however fast frames come.

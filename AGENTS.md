@@ -50,6 +50,10 @@ Playing together on one machine: `HW_HOST=1 cargo run -p hw-client` in one windo
 `HW_JOIN=127.0.0.1:7777 cargo run -p hw-client` in another (or `cargo run -p hw-sim --bin
 hw-headless` as the host). `crates/hw-sim/tests/join_over_udp.rs` tests the same.
 
+Z-fighting: `cargo run --release -p hw-client --bin zfight -- <seed> [--cut N]` lists faces that fight
+(where, which colours, which building); `tests/no_zfighting.rs` in hw-client keeps the city clean, and
+`HW_ZFIGHT=1` marks spots in the game. Fix overlaps in the geometry, never by loosening the check.
+
 Run `check.sh` before every push. For client changes also take a screenshot and look at it.
 On Linux the client needs `libasound2-dev`, and headless screenshots need `xvfb`,
 `libxkbcommon-x11-0` and `mesa-vulkan-drivers`.

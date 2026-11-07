@@ -23,10 +23,12 @@ HW_HOST=1 cargo run -p hw-client                   # host for friends on UDP 777
 HW_JOIN=192.168.1.20:7777 cargo run -p hw-client   # join a friend
 cargo run -p hw-sim --bin hw-headless
 scripts/check.sh           # what must pass before a push
+cargo run --release -p hw-client --bin zfight -- 1 --svg screenshots/zfight.svg   # find z-fighting in a city
+HW_ZFIGHT=1 cargo run -p hw-client                 # ...or see it in the game as magenta posts
 ```
 
 Crates and rules for contributors (and coding agents): [AGENTS.md](AGENTS.md).
 
 ## Controls
 
-WASD run, Space jump (in a lift: rise; Ctrl sinks), right mouse (or P to lock the pointer) look, R/T zoom (all the way in is first person), Tab free camera, C cut buildings open, F move the cut to where you look, Z/X choose the floor.
+WASD run, Space jump (in a lift: rise; Ctrl sinks), V fly (steer with WASD and the camera, Space/Ctrl climb and sink, Shift faster), right mouse (or P to lock the pointer) look, R/T zoom (all the way in is first person), Tab free camera, C cut buildings open, F move the cut to where you look, Z/X choose the floor.

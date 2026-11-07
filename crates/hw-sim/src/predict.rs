@@ -218,7 +218,11 @@ mod tests {
                 move_x: if t < 60 { 1.0 } else { 0.0 },
                 move_z: if t >= 40 { 1.0 } else { 0.0 },
                 jump: t % 25 == 0,
-                descend: false,
+                // Take off, climb, then drop back down.
+                fly: (70..100).contains(&t),
+                move_y: if (70..85).contains(&t) { 0.6 } else { 0.0 },
+                boost: (80..90).contains(&t),
+                ..Default::default()
             };
             let seq = t + 1;
             to_server.push_back((seq, input));

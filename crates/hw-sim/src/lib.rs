@@ -37,6 +37,15 @@ pub const GRAVITY: f64 = 20.0;
 pub const JUMP_SPEED: f64 = 7.5;
 /// Vertical speed in a lift shaft.
 pub const LIFT_SPEED: f64 = 5.0;
+/// Flight: cruising speed, with boost, and how quickly it is reached.
+pub const FLY_SPEED: f64 = 22.0;
+pub const FLY_BOOST_SPEED: f64 = 60.0;
+pub const FLY_ACCEL: f64 = 35.0;
+pub const FLY_BOOST_ACCEL: f64 = 70.0;
+/// Climb or sink speed from jump/descend while flying (doubled with boost).
+pub const FLY_CLIMB: f64 = 10.0;
+/// Highest a flier can go for now (the sky above the city).
+pub const FLY_CEILING: f64 = 900.0;
 
 /// Every replicated entity has one.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,6 +117,15 @@ impl GeneratedCity {
 /// One tick of a hero's movement. The server and client prediction both run
 /// exactly this, so they agree.
 pub fn step_hero(body: &mut Body, input: InputState, solids: &Obstacles) {
+    if input.fly {
+        fly_step(body, input);
+        solids.move_body(body, DT);
+        if body.pos.y > FLY_CEILING {
+            body.pos.y = FLY_CEILING;
+            body.vel.y = body.vel.y.min(0.0);
+        }
+        return;
+    }
     let want = DVec3::new(input.move_x as f64, 0.0, input.move_z as f64) * RUN_SPEED;
     let horizontal = DVec3::new(body.vel.x, 0.0, body.vel.z);
     let delta = want - horizontal;
@@ -135,6 +153,42 @@ pub fn step_hero(body: &mut Body, input: InputState, solids: &Obstacles) {
         body.vel.y -= GRAVITY * DT;
     }
     solids.move_body(body, DT);
+}
+
+/// Flight: no gravity; the velocity turns toward where the hero steers
+/// (move in three dimensions, plus jump/descend to climb or sink) and comes
+/// to a hover when nothing is held.
+fn fly_step(body: &mut Body, input: InputState) {
+    let (speed, accel, climb) = if input.boost {
+        (FLY_BOOST_SPEED, FLY_BOOST_ACCEL, FLY_CLIMB * 2.0)
+    } else {
+        (FLY_SPEED, FLY_ACCEL, FLY_CLIMB)
+    };
+    let steer = DVec3::new(
+        input.move_x as f64,
+        input.move_y as f64,
+        input.move_z as f64,
+    );
+    let mut want = steer * speed;
+    if input.jump {
+        want.y += climb;
+    }
+    if input.descend {
+        want.y -= climb;
+    }
+    let delta = want - body.vel;
+    // Braking is quicker than speeding up, so a flier stops where wanted.
+    let a = if want.length_squared() < body.vel.length_squared() * 0.5 {
+        accel * 1.5
+    } else {
+        accel
+    };
+    let max = a * DT;
+    body.vel += if delta.length() > max {
+        delta.normalize() * max
+    } else {
+        delta
+    };
 }
 
 /// The server's simulation state.
@@ -321,6 +375,7 @@ mod tests {
                 move_z: 0.0,
                 jump: false,
                 descend: false,
+                ..Default::default()
             },
         );
         for _ in 0..TICK_HZ * 2 {
@@ -374,6 +429,7 @@ mod tests {
                             move_z: a.sin(),
                             jump: t % 20 == 0,
                             descend: false,
+                            ..Default::default()
                         },
                     );
                 }

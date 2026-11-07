@@ -23,9 +23,16 @@ pub struct InputState {
     /// Wanted horizontal movement in the local frame (x east, z south), length ≤ 1.
     pub move_x: f32,
     pub move_z: f32,
+    /// Up or down while flying; (move_x, move_y, move_z) has length ≤ 1.
+    pub move_y: f32,
     pub jump: bool,
-    /// Go down (in a lift; later in flight).
+    /// Go down (in a lift or in flight).
     pub descend: bool,
+    /// Flying (the client keeps the toggle and sends it every tick, so a lost
+    /// packet cannot lose a key press).
+    pub fly: bool,
+    /// Faster flight.
+    pub boost: bool,
 }
 
 /// One entity in a snapshot.
@@ -98,8 +105,11 @@ impl ClientMsg {
                 w.u32(*seq)
                     .f32(input.move_x)
                     .f32(input.move_z)
-                    .bool(input.jump)
-                    .bool(input.descend);
+                    .f32(input.move_y)
+                    .u8(input.jump as u8
+                        | (input.descend as u8) << 1
+                        | (input.fly as u8) << 2
+                        | (input.boost as u8) << 3);
             }
             ClientMsg::Bye => header(&mut w, 3),
         }
@@ -112,20 +122,26 @@ impl ClientMsg {
             1 => ClientMsg::Hello { name: r.str()? },
             2 => {
                 let seq = r.u32()?;
-                let (x, z) = (r.f32()?, r.f32()?);
-                let len = (x * x + z * z).sqrt();
-                let (move_x, move_z) = if len > 1.0 {
-                    (x / len, z / len)
-                } else {
-                    (x, z)
-                };
+                let (x, z, y) = (r.f32()?, r.f32()?, r.f32()?);
+                if !(x.is_finite() && y.is_finite() && z.is_finite()) {
+                    return Err(WireError);
+                }
+                let len = (x * x + y * y + z * z).sqrt();
+                let k = if len > 1.0 { 1.0 / len } else { 1.0 };
+                let bits = r.u8()?;
+                if bits >> 4 != 0 {
+                    return Err(WireError);
+                }
                 ClientMsg::Input {
                     seq,
                     input: InputState {
-                        move_x,
-                        move_z,
-                        jump: r.bool()?,
-                        descend: r.bool()?,
+                        move_x: x * k,
+                        move_y: y * k,
+                        move_z: z * k,
+                        jump: bits & 1 != 0,
+                        descend: bits & 2 != 0,
+                        fly: bits & 4 != 0,
+                        boost: bits & 8 != 0,
                     },
                 }
             }
@@ -239,8 +255,11 @@ mod tests {
                 input: InputState {
                     move_x: 0.6,
                     move_z: -0.8,
+                    move_y: 0.0,
                     jump: true,
                     descend: false,
+                    fly: true,
+                    boost: false,
                 },
             },
             ClientMsg::Bye,
@@ -301,8 +320,11 @@ mod tests {
             input: InputState {
                 move_x: 3.0,
                 move_z: 4.0,
+                move_y: 0.0,
                 jump: false,
                 descend: true,
+                fly: false,
+                boost: true,
             },
         };
         let ClientMsg::Input { input, .. } = ClientMsg::decode(&m.encode()).unwrap() else {

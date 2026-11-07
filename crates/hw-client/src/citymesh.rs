@@ -15,11 +15,16 @@ use hw_gen::geom::Rect;
 
 /// Heights of the ground layers (m). Carriageways sit above sidewalks where
 /// they overlap at junctions.
-const SIDEWALK_TOP: f64 = 0.22;
+const SIDEWALK_TOP: f64 = 0.24;
 const STREET_TOP: f64 = 0.26;
+/// Boulevards sit a little higher, so they cover side streets at junctions
+/// instead of fighting with them.
+const BOULEVARD_TOP: f64 = 0.28;
 const BLOCK_TOP: f64 = 0.22;
 /// How far windows stand out of the wall, against z-fighting.
 const GLASS_OFFSET: f64 = 0.05;
+/// Thickness of roof slabs (and of terraces where a storey steps back).
+const ROOF_SLAB: f64 = 0.3;
 /// Wall thickness inside cut-open buildings.
 const WALL: f64 = 0.25;
 /// Height of walls on the cut floor.
@@ -293,21 +298,21 @@ pub fn ground_mesh(plan: &CityPlan) -> Mesh {
             DVec3::new(len * 0.5 + reach, SIDEWALK_TOP * 0.5, reach),
             Palette::sidewalk(),
         );
-        let color = if s.class == StreetClass::Boulevard {
-            Palette::boulevard()
+        let (color, top) = if s.class == StreetClass::Boulevard {
+            (Palette::boulevard(), BOULEVARD_TOP)
         } else {
-            Palette::asphalt()
+            (Palette::asphalt(), STREET_TOP)
         };
         b.oriented_box(
-            DVec3::new(mid.x, STREET_TOP * 0.5, mid.y),
+            DVec3::new(mid.x, top * 0.5, mid.y),
             u,
-            DVec3::new(len * 0.5 + s.width * 0.5, STREET_TOP * 0.5, s.width * 0.5),
+            DVec3::new(len * 0.5 + s.width * 0.5, top * 0.5, s.width * 0.5),
             color,
         );
         if s.class == StreetClass::Boulevard {
             // Planted median.
             b.oriented_box(
-                DVec3::new(mid.x, STREET_TOP + 0.15, mid.y),
+                DVec3::new(mid.x, top + 0.15, mid.y),
                 u,
                 DVec3::new((len * 0.5 - s.width * 0.6).max(1.0), 0.15, 1.8),
                 Palette::park(),
@@ -358,7 +363,9 @@ pub fn add_building(b: &mut MeshBuilder, plan: &BuildingPlan, kind: DistrictKind
         while j + 1 < shown_floors && plan.floors[j + 1].outline == outline {
             j += 1;
         }
-        let y0 = plan.floors[i].elevation;
+        // Above the first run, start on top of the roof slab below, so the
+        // two never share a face.
+        let y0 = plan.floors[i].elevation + if i > 0 { ROOF_SLAB } else { 0.0 };
         let y1 = plan.floors[j].elevation + plan.floors[j].height;
         let c = outline.center();
         let s = outline.size();
@@ -373,9 +380,9 @@ pub fn add_building(b: &mut MeshBuilder, plan: &BuildingPlan, kind: DistrictKind
         let under_cut = matches!(look, Look::Cut { .. }) && j + 1 == shown_floors;
         if !under_cut {
             b.oriented_box(
-                to_city(c.x, base + y1 + 0.15, c.y),
+                to_city(c.x, base + y1 + ROOF_SLAB * 0.5, c.y),
                 u,
-                DVec3::new(s.x * 0.5 + 0.3, 0.15, s.y * 0.5 + 0.3),
+                DVec3::new(s.x * 0.5 + 0.3, ROOF_SLAB * 0.5, s.y * 0.5 + 0.3),
                 Palette::roof(kind),
             );
         }
@@ -435,71 +442,140 @@ pub fn add_building(b: &mut MeshBuilder, plan: &BuildingPlan, kind: DistrictKind
                 Palette::room_floor(room.kind),
             );
         }
-        // Walls: every room edge, with gaps for doors. Shared walls are drawn
-        // from both rooms at the same place, which is harmless.
-        for (ri, room) in f.rooms.iter().enumerate() {
-            let doors: Vec<&Door> = f
-                .doors
-                .iter()
-                .filter(|d| d.a == ri || d.b == Some(ri))
-                .collect();
-            let outer = f.outline;
-            for (p, q) in rect_edges(&room.rect) {
-                let along_x = (p.y - q.y).abs() < 1e-9;
-                let exterior = on_outline(p, q, &outer);
-                let color = if exterior {
-                    facade
-                } else {
-                    Palette::inner_wall()
-                };
-                let mut gaps: Vec<(f64, f64)> = doors
-                    .iter()
-                    .filter(|d| d.along_x == along_x && on_segment(d.at, p, q))
-                    .map(|d| {
-                        let t = if along_x { d.at.x } else { d.at.y };
-                        (t - d.size.x * 0.5, t + d.size.x * 0.5)
-                    })
-                    .collect();
-                // Windows on outside walls show as gaps too (cut below the sill
-                // they would be wall, so keep it simple: wall up to the sill).
-                gaps.sort_by(|a, c| a.0.total_cmp(&c.0));
-                let (t0, t1) = if along_x {
-                    (p.x.min(q.x), p.x.max(q.x))
-                } else {
-                    (p.y.min(q.y), p.y.max(q.y))
-                };
-                let mut t = t0;
-                let fixed = if along_x { p.y } else { p.x };
-                let mut pieces = Vec::new();
-                for (g0, g1) in gaps {
-                    if g0 > t {
-                        pieces.push((t, g0.min(t1)));
-                    }
-                    t = t.max(g1);
+        draw_cut_walls(b, f, y, facade, &|x, y, z| to_city(x, y, z), u);
+    }
+}
+
+/// One wall line on the cut floor: along x (at z = `fixed`) or along z.
+#[derive(Clone, Copy, PartialEq)]
+struct WallLine {
+    along_x: bool,
+    fixed: f64,
+}
+
+/// Walls of the cut-open floor, each drawn once: the outside walls as one
+/// run per side (corners covered by the sides along x), the inside walls
+/// merged per line and stopped at the outside walls, all with door gaps.
+/// Nothing overlaps, so nothing z-fights.
+fn draw_cut_walls(
+    b: &mut MeshBuilder,
+    f: &hw_gen::building::Floor,
+    y: f64,
+    facade: Color,
+    to_city: &dyn Fn(f64, f64, f64) -> DVec3,
+    u: DVec3,
+) {
+    let o = f.outline;
+    let h = WALL * 0.5;
+    let e = 1e-6;
+    let on = |line: WallLine, d: &Door| {
+        d.along_x == line.along_x
+            && ((if line.along_x { d.at.y } else { d.at.x }) - line.fixed).abs() < e
+    };
+    let gaps = |line: WallLine| -> Vec<(f64, f64)> {
+        let mut g: Vec<(f64, f64)> = f
+            .doors
+            .iter()
+            .filter(|d| on(line, d))
+            .map(|d| {
+                let t = if line.along_x { d.at.x } else { d.at.y };
+                (t - d.size.x * 0.5, t + d.size.x * 0.5)
+            })
+            .collect();
+        g.sort_by(|a, c| a.0.total_cmp(&c.0));
+        g
+    };
+    let mut draw = |line: WallLine, spans: &[(f64, f64)], height: f64, color: Color| {
+        for &(t0, t1) in spans {
+            let mut t = t0;
+            let mut pieces = Vec::new();
+            for (g0, g1) in gaps(line) {
+                if g1 <= t0 || g0 >= t1 {
+                    continue;
                 }
-                if t < t1 {
-                    pieces.push((t, t1));
+                if g0 > t {
+                    pieces.push((t, g0));
                 }
-                let height = if exterior {
-                    CUT_WALL_HEIGHT + 0.4
+                t = t.max(g1);
+            }
+            if t < t1 {
+                pieces.push((t, t1));
+            }
+            for (a, z) in pieces {
+                if z - a < 0.05 {
+                    continue;
+                }
+                let m = (a + z) * 0.5;
+                let (cx, cz, half) = if line.along_x {
+                    (m, line.fixed, DVec3::new((z - a) * 0.5, height * 0.5, h))
                 } else {
-                    CUT_WALL_HEIGHT
+                    (line.fixed, m, DVec3::new(h, height * 0.5, (z - a) * 0.5))
                 };
-                for (a, z) in pieces {
-                    if z - a < 0.05 {
-                        continue;
-                    }
-                    let m = (a + z) * 0.5;
-                    let (cx, cz) = if along_x { (m, fixed) } else { (fixed, m) };
-                    let half = if along_x {
-                        DVec3::new((z - a) * 0.5, height * 0.5, WALL * 0.5)
-                    } else {
-                        DVec3::new(WALL * 0.5, height * 0.5, (z - a) * 0.5)
-                    };
-                    b.oriented_box(to_city(cx, y + 0.3 + height * 0.5, cz), u, half, color);
-                }
+                b.oriented_box(to_city(cx, y + 0.3 + height * 0.5, cz), u, half, color);
             }
         }
+    };
+
+    // Outside walls: sides along x span the corners, sides along z fit between.
+    let outer_h = CUT_WALL_HEIGHT + 0.4;
+    for fixed in [o.min.y, o.max.y] {
+        let line = WallLine {
+            along_x: true,
+            fixed,
+        };
+        draw(line, &[(o.min.x - h, o.max.x + h)], outer_h, facade);
+    }
+    for fixed in [o.min.x, o.max.x] {
+        let line = WallLine {
+            along_x: false,
+            fixed,
+        };
+        draw(line, &[(o.min.y + h, o.max.y - h)], outer_h, facade);
+    }
+
+    // Inside walls: room edges off the outline, merged per line.
+    let mut lines: Vec<(WallLine, Vec<(f64, f64)>)> = Vec::new();
+    for room in &f.rooms {
+        for (p, q) in rect_edges(&room.rect) {
+            if on_outline(p, q, &o) {
+                continue;
+            }
+            let along_x = (p.y - q.y).abs() < 1e-9;
+            let line = WallLine {
+                along_x,
+                fixed: if along_x { p.y } else { p.x },
+            };
+            let (t0, t1) = if along_x {
+                (p.x.min(q.x), p.x.max(q.x))
+            } else {
+                (p.y.min(q.y), p.y.max(q.y))
+            };
+            // Stop at the inner face of the outside walls.
+            let (lo, hi) = if along_x {
+                (o.min.x + h, o.max.x - h)
+            } else {
+                (o.min.y + h, o.max.y - h)
+            };
+            let span = (t0.max(lo), t1.min(hi));
+            match lines
+                .iter_mut()
+                .find(|(l, _)| l.along_x == along_x && (l.fixed - line.fixed).abs() < e)
+            {
+                Some((_, spans)) => spans.push(span),
+                None => lines.push((line, vec![span])),
+            }
+        }
+    }
+    for (line, mut spans) in lines {
+        spans.sort_by(|a, c| a.0.total_cmp(&c.0));
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for s in spans {
+            match merged.last_mut() {
+                Some(m) if s.0 <= m.1 + e => m.1 = m.1.max(s.1),
+                _ => merged.push(s),
+            }
+        }
+        draw(line, &merged, CUT_WALL_HEIGHT, Palette::inner_wall());
     }
 }
 
@@ -519,13 +595,6 @@ fn on_outline(p: DVec2, q: DVec2, o: &Rect) -> bool {
         || ((p.x - o.max.x).abs() < e && (q.x - o.max.x).abs() < e)
         || ((p.y - o.min.y).abs() < e && (q.y - o.min.y).abs() < e)
         || ((p.y - o.max.y).abs() < e && (q.y - o.max.y).abs() < e)
-}
-
-fn on_segment(x: DVec2, p: DVec2, q: DVec2) -> bool {
-    let e = 1e-6;
-    let d = q - p;
-    let t = (x - p).dot(d) / d.length_squared().max(1e-12);
-    (-e..=1.0 + e).contains(&t) && (p + d * t).distance(x) < e
 }
 
 /// Camera-space helper: the point where a ray from `origin` along `dir` meets

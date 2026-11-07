@@ -616,7 +616,14 @@ impl<'a> Planner<'a> {
                         Some((ga, gb)) => {
                             let mid = (ga + gb) * 0.5;
                             let half = ((x1 - x0) * 0.12).clamp(3.5, 8.0).min((gb - ga) * 0.5);
-                            let (l0, l1) = (mid - half, mid + half);
+                            let (mut l0, mut l1) = (mid - half, mid + half);
+                            // No slivers beside the lobby: it takes them in.
+                            if l0 - ga < MIN_ROOM_WIDTH {
+                                l0 = ga;
+                            }
+                            if gb - l1 < MIN_ROOM_WIDTH {
+                                l1 = gb;
+                            }
                             let mut out = Vec::new();
                             for (a, b) in gaps {
                                 if b <= l0 || a >= l1 {
