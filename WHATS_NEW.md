@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.006 (2026-11-07)
+
+- The streets come alive: street lamps in the style of each quarter (iron lanterns in the old town, deco double globes on the grand roads, glowing atomic saucers in the new quarters).
+- Golden-age cars park along the streets: finned two-tone cruisers, little bubble cars, and hover cars floating on a blue glow.
+- Real trees line the avenues and fill the parks, with species that suit the region (lindens and birches up north, planes and chestnuts in the middle, palms and cypresses down south).
+- Parks get fountains and benches; pavements get benches, bins, hydrants and rocket-shaped mailboxes; traffic lights stand at the big junctions.
+
 ## 0.005 (2026-11-07)
 
 - Newer quarters are pure golden-age retro-future again: Googie and streamline houses, deco and streamline flats.

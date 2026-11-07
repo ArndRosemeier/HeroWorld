@@ -22,8 +22,9 @@
 //! Environment: `HW_SEED` (world seed, default 1); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river` or `cutaway` picks the starting
-//! camera (handy with `ENGINE_SCREENSHOT`); `HW_CUT_LEVEL` the floor shown
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park` or
+//! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
+//! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
 //! `ENGINE_ZFIGHT=1` marks z-fighting with magenta posts (the `zfight` tool
 //! checks a whole city without the game).
@@ -154,6 +155,32 @@ fn main() -> EngineResult<()> {
             let yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, ground(p) as f32 + 6.0, p.y as f32), yaw, 8.0)
         }
+        "props" | "park" => {
+            // Close to parked cars (or a park fountain), for screenshots.
+            use hw_gen::urban::props::PropKind;
+            let want = |k: &PropKind| {
+                if view == "park" {
+                    matches!(k, PropKind::Fountain)
+                } else {
+                    // HW_PROP picks a kind by name ("Hover", "Atomic", ...).
+                    let name = std::env::var("HW_PROP").unwrap_or_else(|_| "Car".into());
+                    format!("{k:?}").contains(&name)
+                }
+            };
+            let target = generated
+                .world
+                .props
+                .iter()
+                .filter(|p| want(&p.kind))
+                .min_by(|a, b| a.pos.distance(spawn).total_cmp(&b.pos.distance(spawn)));
+            let (c, side) = target.map_or((spawn, spawn_dir.perp()), |t| (t.pos, t.dir.perp()));
+            let back = if view == "park" { 22.0 } else { 9.0 };
+            let p = c + side * back + side.perp() * back * 0.5;
+            let d = c - p;
+            let yaw = d.x.atan2(d.y).to_degrees() as f32;
+            let up = if view == "park" { 9.0 } else { 3.0 };
+            FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, -14.0)
+        }
         "cutaway" => {
             let f = town.cut_focus;
             let h = ground(f) as f32;
@@ -255,6 +282,13 @@ fn main() -> EngineResult<()> {
                 world.prepare_stream(20.0);
                 let eye = world.camera().eye();
                 town.build_all(world, DVec2::new(eye.x as f64, eye.z as f64));
+                let t = std::time::Instant::now();
+                let props = hw_client::propview::PropView::spawn(world, &generated.world)?;
+                eprintln!(
+                    "{} props in {:.2} s",
+                    props.count,
+                    t.elapsed().as_secs_f64()
+                );
             }
             version_corner(&frame.ui, &mut whats_new);
             let input = &frame.input;

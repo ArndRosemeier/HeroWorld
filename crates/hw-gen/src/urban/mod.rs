@@ -24,6 +24,7 @@ pub mod land;
 pub mod lines;
 pub mod params;
 pub mod plots;
+pub mod props;
 pub mod roads;
 pub mod streets;
 pub mod tensor;

@@ -10,8 +10,9 @@ use super::graph::signed_area;
 use super::growth::{CentreKind, Era};
 use super::land::{distance_to, Grid};
 use super::plots::{plan_buildings, road_reach, side_reach};
+use super::props::{plan_props, Prop};
 use super::roads::RoadClass;
-use super::streets::{plan_piece, PieceStreets};
+use super::streets::{plan_piece, PieceStreets, StreetStyle};
 use super::{Town, TownParams};
 use crate::building::BuildingSite;
 use glam::DVec2;
@@ -33,6 +34,10 @@ pub struct WorldRoad {
     pub pavement: f64,
     /// Main road (true) or side street.
     pub main: bool,
+    /// A main road's class.
+    pub class: Option<RoadClass>,
+    /// A side street's style.
+    pub style: Option<StreetStyle>,
 }
 
 /// A building on the ground.
@@ -62,6 +67,8 @@ pub struct TownWorld {
     pub roads: Vec<WorldRoad>,
     pub buildings: Vec<WorldBuilding>,
     pub bridges: Vec<Bridge>,
+    /// Street furniture, trees and parked cars.
+    pub props: Vec<Prop>,
     /// Ground heights, river beds and sea floor included.
     terrain: Grid<f32>,
 }
@@ -94,6 +101,7 @@ impl TownWorld {
             roads: Vec::new(),
             buildings: Vec::new(),
             bridges: Vec::new(),
+            props: Vec::new(),
             terrain,
         };
         out.roads = out.make_roads();
@@ -117,6 +125,7 @@ impl TownWorld {
             }
         }
         out.buildings = buildings;
+        out.props = plan_props(&out);
         out
     }
 
@@ -183,21 +192,21 @@ impl TownWorld {
             for w in r.pts.windows(2) {
                 let here = reach_at((w[0] + w[1]) * 0.5);
                 if (here - cur).abs() > 1e-9 && run.len() >= 2 {
-                    out.push(road(std::mem::take(&mut run), cur, true, r.class));
+                    out.push(road(std::mem::take(&mut run), cur, Some(r.class), None));
                     run.push(w[0]);
                 }
                 cur = here;
                 run.push(w[1]);
             }
             if run.len() >= 2 {
-                out.push(road(run, cur, true, r.class));
+                out.push(road(run, cur, Some(r.class), None));
             }
         }
         for p in &self.pieces {
             let reach = side_reach(p.style);
             for s in &p.streets {
                 if s.len() >= 2 {
-                    out.push(road(s.clone(), reach, false, RoadClass::Avenue));
+                    out.push(road(s.clone(), reach, None, Some(p.style)));
                 }
             }
         }
@@ -249,18 +258,25 @@ impl TownWorld {
     }
 }
 
-fn road(pts: Vec<DVec2>, reach: f64, main: bool, class: RoadClass) -> WorldRoad {
+fn road(
+    pts: Vec<DVec2>,
+    reach: f64,
+    class: Option<RoadClass>,
+    style: Option<StreetStyle>,
+) -> WorldRoad {
     // Pavements: wide on grand roads, a strip in old lanes.
-    let pavement = match (main, class) {
-        (true, RoadClass::Boulevard) => (reach * 0.3).min(5.0),
-        (true, RoadClass::Country) => (reach * 0.2).min(1.5),
+    let pavement = match class {
+        Some(RoadClass::Boulevard) => (reach * 0.3).min(5.0),
+        Some(RoadClass::Country) => (reach * 0.2).min(1.5),
         _ => (reach * 0.3).clamp(1.2, 4.0),
     };
     WorldRoad {
         pts,
         half: (reach - pavement).max(2.0),
         pavement,
-        main,
+        main: class.is_some(),
+        class,
+        style,
     }
 }
 
