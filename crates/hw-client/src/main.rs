@@ -362,177 +362,224 @@ fn main() -> EngineResult<()> {
     // The hero's flight toggle (V); sent with every input.
     let mut hero_flies = std::env::var_os("HW_FLY").is_some() || view == "sky";
 
-    Engine::run("HeroWorld", move |world, frame| {
-        if frame.first {
-            world.set_view_distance(6000.0)?;
-            world.set_physical_sky(Some(PhysicalSky::at_hour(10.5)));
-            let water = world.create_water_material(WaterMaterialDesc {
-                shallow: rgb(70, 140, 150),
-                deep: rgb(16, 52, 76),
-                depth_scale_m: WATER_DEPTH_SCALE as f32,
-                wave_length_m: 7.0,
-                wave_steepness: 0.3,
-                wave_speed_m_s: 0.8,
-                foam_width_m: 0.0,
-                glint: 1.0,
-            })?;
-            for (name, mesh) in ground_mesh(&city.plan) {
-                let id = world.spawn(mesh);
-                if name == "water" {
-                    world.set_entity_material(id, Some(SurfaceMaterialRef::Water(water)))?;
+    // HW_WHATS_NEW=1 opens the list at start (for screenshots).
+    let mut whats_new = std::env::var_os("HW_WHATS_NEW").is_some();
+    Engine::run(
+        format!("HeroWorld {}", hw_core::version()),
+        move |world, frame| {
+            if frame.first {
+                world.set_view_distance(6000.0)?;
+                world.set_physical_sky(Some(PhysicalSky::at_hour(10.5)));
+                let water = world.create_water_material(WaterMaterialDesc {
+                    shallow: rgb(70, 140, 150),
+                    deep: rgb(16, 52, 76),
+                    depth_scale_m: WATER_DEPTH_SCALE as f32,
+                    wave_length_m: 7.0,
+                    wave_steepness: 0.3,
+                    wave_speed_m_s: 0.8,
+                    foam_width_m: 0.0,
+                    glint: 1.0,
+                })?;
+                for (name, mesh) in ground_mesh(&city.plan) {
+                    let id = world.spawn(mesh);
+                    if name == "water" {
+                        world.set_entity_material(id, Some(SurfaceMaterialRef::Water(water)))?;
+                    }
+                    world.set_name(id, name);
                 }
-                world.set_name(id, name);
-            }
-            for c in 0..city.plan.cells.len() {
-                city.build_cell(world, c);
-            }
-        }
-        let input = &frame.input;
-        if input.pressed(Key::Tab) {
-            flying = !flying;
-            if flying {
-                // Start the free camera where the hero camera was.
-                fly.yaw_deg = hero_cam.yaw;
-                fly.pitch_deg = hero_cam.pitch;
-            }
-        }
-        if input.pressed(Key::P) {
-            let locked = world.pointer_lock();
-            world.set_pointer_lock(!locked);
-        }
-
-        // Cut-open view.
-        let mut changed: BTreeSet<usize> = BTreeSet::new();
-        if input.pressed(Key::C) {
-            city.cut_on = !city.cut_on;
-            changed.extend(city.cells_near(city.cut_focus));
-        }
-        let look_from = world.camera().eye();
-        let look_dir = (world.camera().target() - look_from).normalize_or_zero();
-        if input.pressed(Key::F) {
-            if let Some(hit) = ground_hit(look_from, look_dir) {
-                changed.extend(city.cells_near(city.cut_focus));
-                city.cut_focus = DVec2::new(hit.x as f64, hit.z as f64);
-                city.cut_on = true;
-                changed.extend(city.cells_near(city.cut_focus));
-            }
-        }
-        if input.pressed(Key::Z) && city.cut_level > 0 {
-            city.cut_level -= 1;
-            changed.extend(city.cells_near(city.cut_focus));
-        }
-        if input.pressed(Key::X) && city.cut_level < 40 {
-            city.cut_level += 1;
-            changed.extend(city.cells_near(city.cut_focus));
-        }
-        for c in changed {
-            city.build_cell(world, c);
-        }
-
-        // Hero input, relative to where the camera faces.
-        let mut hero_input = hw_net::InputState::default();
-        if !flying {
-            if input.pressed(Key::V) {
-                hero_flies = !hero_flies;
-            }
-            let mut dir = input.move_dir_xz(hero_cam.yaw);
-            if auto_walk {
-                dir = Camera::facing_xz(hero_cam.yaw);
-            }
-            if hero_flies {
-                // Forward follows the camera up and down, so you fly where you look.
-                let flat = Camera::facing_xz(hero_cam.yaw);
-                let ahead = dir.dot(flat);
-                dir = dir - flat * ahead
-                    // The camera looks down at the hero a little; level that out.
-                    + Camera::direction(hero_cam.yaw, hero_cam.pitch + 12.0) * ahead;
-                dir = dir.clamp_length_max(1.0);
-            }
-            hero_input.move_x = dir.x;
-            hero_input.move_y = if hero_flies { dir.y } else { 0.0 };
-            hero_input.move_z = dir.z;
-            hero_input.jump = input.down(Key::Space);
-            hero_input.descend = input.down(Key::Ctrl);
-            hero_input.fly = hero_flies;
-            hero_input.boost = input.down(Key::Shift);
-        }
-
-        // Fixed ticks for the game, however fast frames come.
-        tick_clock += frame.dt as f64;
-        let mut ticks = 0;
-        while tick_clock >= hw_sim::DT && ticks < 5 {
-            tick_clock -= hw_sim::DT;
-            ticks += 1;
-            session.tick(hero_input);
-        }
-        if ticks == 5 {
-            tick_clock = 0.0;
-        }
-
-        // Draw heroes.
-        let heroes = session.entities(frame.dt as f64);
-        facings.retain(|id, _| heroes.iter().any(|h| h.id == *id));
-        hero_entities.retain(|id, e| {
-            let keep = heroes.iter().any(|h| h.id == *id);
-            if !keep {
-                world.despawn(*e);
-            }
-            keep
-        });
-        let mine = session.my_hero();
-        for h in &heroes {
-            let vel = Vec3::from_array(h.vel);
-            // Face where you run; keep the last heading when standing.
-            let facing = facings.entry(h.id).or_insert(0.0);
-            if vel.x.abs() + vel.z.abs() > 0.3 {
-                *facing = vel.x.atan2(vel.z).to_degrees();
-            }
-            let facing = *facing;
-            let place =
-                Place::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32).with_yaw_deg(facing);
-            match hero_entities.get(&h.id) {
-                Some(&e) => world.set_place(e, place)?,
-                None => {
-                    let e = world.place(citymesh::hero_mesh(mine == Some(h.id)), place)?;
-                    hero_entities.insert(h.id, e);
+                for c in 0..city.plan.cells.len() {
+                    city.build_cell(world, c);
                 }
             }
-        }
+            version_corner(&frame.ui, &mut whats_new);
+            let input = &frame.input;
+            if input.pressed(Key::Tab) {
+                flying = !flying;
+                if flying {
+                    // Start the free camera where the hero camera was.
+                    fly.yaw_deg = hero_cam.yaw;
+                    fly.pitch_deg = hero_cam.pitch;
+                }
+            }
+            if input.pressed(Key::P) {
+                let locked = world.pointer_lock();
+                world.set_pointer_lock(!locked);
+            }
 
-        // Camera.
-        let me = session.my_position(&heroes);
-        let inside = me.and_then(|p| solids.inside(p));
-        if inside != city.inside {
-            let mut cells = BTreeSet::new();
-            for i in [city.inside, inside].into_iter().flatten() {
-                cells.insert(city.cell_of(i.building));
+            // Cut-open view.
+            let mut changed: BTreeSet<usize> = BTreeSet::new();
+            if input.pressed(Key::C) {
+                city.cut_on = !city.cut_on;
+                changed.extend(city.cells_near(city.cut_focus));
             }
-            city.inside = inside;
-            for c in cells {
-                city.build_cell(world, c);
+            let look_from = world.camera().eye();
+            let look_dir = (world.camera().target() - look_from).normalize_or_zero();
+            if input.pressed(Key::F) {
+                if let Some(hit) = ground_hit(look_from, look_dir) {
+                    changed.extend(city.cells_near(city.cut_focus));
+                    city.cut_focus = DVec2::new(hit.x as f64, hit.z as f64);
+                    city.cut_on = true;
+                    changed.extend(city.cells_near(city.cut_focus));
+                }
             }
-        }
-        let open_above = inside.map(|i| {
-            let f = &city.buildings[i.building].floors[i.level as usize];
-            hw_sim::BUILDING_BASE + f.elevation + 2.6
-        });
-        match (flying, me) {
-            (false, Some(p)) => hero_cam.update(world, frame, p.as_vec3(), &solids, open_above),
-            _ => {
-                fly.update(world, frame);
-                fly.position = fly.position.max(Vec3::new(f32::MIN, 1.8, f32::MIN));
+            if input.pressed(Key::Z) && city.cut_level > 0 {
+                city.cut_level -= 1;
+                changed.extend(city.cells_near(city.cut_focus));
             }
-        }
-        // Full detail around the camera.
-        let eye = world.camera().eye();
-        let near = city.near_cells(DVec2::new(eye.x as f64, eye.z as f64));
-        if near != city.near {
-            let changed: Vec<usize> = near.symmetric_difference(&city.near).copied().collect();
-            city.near = near;
+            if input.pressed(Key::X) && city.cut_level < 40 {
+                city.cut_level += 1;
+                changed.extend(city.cells_near(city.cut_focus));
+            }
             for c in changed {
                 city.build_cell(world, c);
             }
+
+            // Hero input, relative to where the camera faces.
+            let mut hero_input = hw_net::InputState::default();
+            if !flying {
+                if input.pressed(Key::V) {
+                    hero_flies = !hero_flies;
+                }
+                let mut dir = input.move_dir_xz(hero_cam.yaw);
+                if auto_walk {
+                    dir = Camera::facing_xz(hero_cam.yaw);
+                }
+                if hero_flies {
+                    // Forward follows the camera up and down, so you fly where you look.
+                    let flat = Camera::facing_xz(hero_cam.yaw);
+                    let ahead = dir.dot(flat);
+                    dir = dir - flat * ahead
+                    // The camera looks down at the hero a little; level that out.
+                    + Camera::direction(hero_cam.yaw, hero_cam.pitch + 12.0) * ahead;
+                    dir = dir.clamp_length_max(1.0);
+                }
+                hero_input.move_x = dir.x;
+                hero_input.move_y = if hero_flies { dir.y } else { 0.0 };
+                hero_input.move_z = dir.z;
+                hero_input.jump = input.down(Key::Space);
+                hero_input.descend = input.down(Key::Ctrl);
+                hero_input.fly = hero_flies;
+                hero_input.boost = input.down(Key::Shift);
+            }
+
+            // Fixed ticks for the game, however fast frames come.
+            tick_clock += frame.dt as f64;
+            let mut ticks = 0;
+            while tick_clock >= hw_sim::DT && ticks < 5 {
+                tick_clock -= hw_sim::DT;
+                ticks += 1;
+                session.tick(hero_input);
+            }
+            if ticks == 5 {
+                tick_clock = 0.0;
+            }
+
+            // Draw heroes.
+            let heroes = session.entities(frame.dt as f64);
+            facings.retain(|id, _| heroes.iter().any(|h| h.id == *id));
+            hero_entities.retain(|id, e| {
+                let keep = heroes.iter().any(|h| h.id == *id);
+                if !keep {
+                    world.despawn(*e);
+                }
+                keep
+            });
+            let mine = session.my_hero();
+            for h in &heroes {
+                let vel = Vec3::from_array(h.vel);
+                // Face where you run; keep the last heading when standing.
+                let facing = facings.entry(h.id).or_insert(0.0);
+                if vel.x.abs() + vel.z.abs() > 0.3 {
+                    *facing = vel.x.atan2(vel.z).to_degrees();
+                }
+                let facing = *facing;
+                let place = Place::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32)
+                    .with_yaw_deg(facing);
+                match hero_entities.get(&h.id) {
+                    Some(&e) => world.set_place(e, place)?,
+                    None => {
+                        let e = world.place(citymesh::hero_mesh(mine == Some(h.id)), place)?;
+                        hero_entities.insert(h.id, e);
+                    }
+                }
+            }
+
+            // Camera.
+            let me = session.my_position(&heroes);
+            let inside = me.and_then(|p| solids.inside(p));
+            if inside != city.inside {
+                let mut cells = BTreeSet::new();
+                for i in [city.inside, inside].into_iter().flatten() {
+                    cells.insert(city.cell_of(i.building));
+                }
+                city.inside = inside;
+                for c in cells {
+                    city.build_cell(world, c);
+                }
+            }
+            let open_above = inside.map(|i| {
+                let f = &city.buildings[i.building].floors[i.level as usize];
+                hw_sim::BUILDING_BASE + f.elevation + 2.6
+            });
+            match (flying, me) {
+                (false, Some(p)) => hero_cam.update(world, frame, p.as_vec3(), &solids, open_above),
+                _ => {
+                    fly.update(world, frame);
+                    fly.position = fly.position.max(Vec3::new(f32::MIN, 1.8, f32::MIN));
+                }
+            }
+            // Full detail around the camera.
+            let eye = world.camera().eye();
+            let near = city.near_cells(DVec2::new(eye.x as f64, eye.z as f64));
+            if near != city.near {
+                let changed: Vec<usize> = near.symmetric_difference(&city.near).copied().collect();
+                city.near = near;
+                for c in changed {
+                    city.build_cell(world, c);
+                }
+            }
+            Ok(())
+        },
+    )
+}
+
+/// The version at the top right, with a "What's new" button and its list.
+fn version_corner(ui: &engine::ui::UiFrame, open: &mut bool) {
+    use engine::ui::egui;
+    egui::Area::new(egui::Id::new("version"))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
+        .show(ui.ctx(), |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("HeroWorld {}", hw_core::version()))
+                        .color(egui::Color32::WHITE),
+                );
+                if ui.button("What's new").clicked() {
+                    *open = true;
+                }
+            });
+        });
+    ui.modal("What's new", open, |panel, open| {
+        egui::ScrollArea::vertical()
+            .max_height(420.0)
+            .show(panel.ui(), |ui| {
+                ui.set_max_width(520.0);
+                for line in hw_core::WHATS_NEW
+                    .lines()
+                    .skip_while(|l| !l.starts_with("## "))
+                {
+                    if let Some(h) = line.strip_prefix("## ") {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(h).strong().size(16.0));
+                    } else if let Some(item) = line.strip_prefix("- ") {
+                        ui.label(format!("•  {item}"));
+                    } else if !line.trim().is_empty() {
+                        ui.label(line);
+                    }
+                }
+            });
+        if panel.button("Close") {
+            *open = false;
         }
-        Ok(())
-    })
+    });
 }

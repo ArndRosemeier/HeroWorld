@@ -21,6 +21,10 @@ file; when they change, re-export the snapshot here.
 ## Rules
 
 - **Push straight to `main`.** No branches or pull requests (Arnd's standing rule).
+- **Every push bumps the version.** Add 0.001 to `VERSION` (0.001, 0.002, ...) and put a
+  `## <version> (<date>)` section at the top of `WHATS_NEW.md` with a few plain lines for
+  players. The game shows both (top right, "What's new"); a test checks they agree. If a
+  rebase brings in someone else's bump, take the next number.
 - **Engine only in `hw-client`.** Generation and simulation never import Engine, so the server
   runs headless and tests run anywhere. Server physics will come from Engine's
   physics-without-renderer once it exists (ENGINE_REQUESTS.md #1).
