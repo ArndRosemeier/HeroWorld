@@ -4,10 +4,12 @@
 pub mod coords;
 pub mod det;
 pub mod ids;
+pub mod noise;
 pub mod seed;
 
 pub use coords::{LatLon, LocalFrame, Planet, PlanetPos};
 pub use ids::{NetId, NetIdAllocator, StableId};
+pub use noise::Noise;
 pub use seed::{Rng, Seed};
 
 /// Version of the world-generation rules. Bump it when a change would make an

@@ -43,6 +43,16 @@ pub fn powf(x: f64, y: f64) -> f64 {
     libm::pow(x, y)
 }
 
+#[inline]
+pub fn log10(x: f64) -> f64 {
+    libm::log10(x)
+}
+
+#[inline]
+pub fn ln(x: f64) -> f64 {
+    libm::log(x)
+}
+
 /// A unit vector at angle `a` (radians) in a 2D plane: `(cos a, sin a)`.
 #[inline]
 pub fn dir2(a: f64) -> glam::DVec2 {
