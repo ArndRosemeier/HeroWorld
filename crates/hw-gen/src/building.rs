@@ -11,7 +11,9 @@
 //! from the ground floor. Everything is more spacious than real life, so a
 //! third-person camera and a flying hero fit.
 
+use crate::city::DistrictKind;
 use crate::geom::Rect;
+use crate::style::Look;
 use glam::{DVec2, DVec3};
 use hw_core::{Seed, StableId};
 
@@ -219,6 +221,8 @@ pub struct BuildingSite {
     pub floors: u32,
     /// Index of the street the front faces.
     pub street: u32,
+    /// The district it stands in (it decides the style).
+    pub district: DistrictKind,
 }
 
 impl BuildingSite {
@@ -261,6 +265,8 @@ pub struct BuildingPlan {
     pub core: Option<Rect>,
     pub floors: Vec<Floor>,
     pub openings: Vec<Opening>,
+    /// Style, materials, roof and ornament.
+    pub look: Look,
 }
 
 impl BuildingPlan {
@@ -278,6 +284,7 @@ impl BuildingPlan {
 
 struct Planner<'a> {
     site: &'a BuildingSite,
+    look: Look,
 }
 
 /// How a floor is organised around its corridor.
@@ -292,7 +299,15 @@ struct Bands {
 
 impl<'a> Planner<'a> {
     fn new(site: &'a BuildingSite) -> Self {
-        Self { site }
+        Self {
+            site,
+            look: Look::choose(site.seed, site.district, site.usage, site.floors),
+        }
+    }
+
+    /// Bay lines along x for an outline (rooms and windows follow them).
+    fn x_lines(&self, o: &Rect) -> Vec<f64> {
+        bay_lines(o.min.x, o.max.x, self.look.bay)
     }
 
     fn plan(&self) -> BuildingPlan {
@@ -368,12 +383,13 @@ impl<'a> Planner<'a> {
             floors.push(floor);
             elevation += height;
         }
-        let openings = facade(&floors);
+        let openings = facade(&floors, &self.look);
         BuildingPlan {
             site: s.clone(),
             core,
             floors,
             openings,
+            look: self.look.clone(),
         }
     }
 
@@ -509,7 +525,13 @@ impl<'a> Planner<'a> {
             self.site.usage.upper_room()
         };
         let mut rng = seed.child("rooms").rng();
-        let cuts = partition(outline.min.x, outline.max.x, w, &mut rng);
+        let cuts = partition(
+            outline.min.x,
+            outline.max.x,
+            w,
+            &self.x_lines(&outline),
+            &mut rng,
+        );
         let mut rooms = Vec::new();
         let mut doors = Vec::new();
         for (i, (x0, x1)) in cuts.iter().enumerate() {
@@ -617,7 +639,22 @@ impl<'a> Planner<'a> {
                             let mid = (ga + gb) * 0.5;
                             let half = ((x1 - x0) * 0.12).clamp(3.5, 8.0).min((gb - ga) * 0.5);
                             let (mut l0, mut l1) = (mid - half, mid + half);
-                            // No slivers beside the lobby: it takes them in.
+                            // Lobby walls stand on bay lines, and no slivers are left
+                            // beside it: it takes them in.
+                            let lines = self.x_lines(&outline);
+                            let snap = |x: f64| {
+                                lines
+                                    .iter()
+                                    .copied()
+                                    .filter(|l| *l >= ga - 1e-9 && *l <= gb + 1e-9)
+                                    .min_by(|a, b| (a - x).abs().total_cmp(&(b - x).abs()))
+                                    .unwrap_or(x)
+                            };
+                            let (s0, s1) = (snap(l0), snap(l1));
+                            if s1 - s0 >= MIN_ROOM_WIDTH {
+                                l0 = s0;
+                                l1 = s1;
+                            }
                             if l0 - ga < MIN_ROOM_WIDTH {
                                 l0 = ga;
                             }
@@ -683,7 +720,7 @@ impl<'a> Planner<'a> {
                     if b - a < 0.01 {
                         continue;
                     }
-                    let parts = partition(a, b, target, &mut rng);
+                    let parts = partition(a, b, target, &self.x_lines(&outline), &mut rng);
                     let n = parts.len();
                     for (k, (p0, p1)) in parts.into_iter().enumerate() {
                         let idx = rooms.len();
@@ -760,128 +797,192 @@ fn corridor_door(
     }
 }
 
+/// Bay lines along a wall from `a` to `b`: evenly spaced, as close to
+/// `bay` apart as fits. Rooms are cut on them and windows sit between them,
+/// so a facade has a regular rhythm.
+pub fn bay_lines(a: f64, b: f64, bay: f64) -> Vec<f64> {
+    let n = ((b - a) / bay).round().max(1.0) as usize;
+    (0..=n).map(|k| a + (b - a) * k as f64 / n as f64).collect()
+}
+
 /// Splits `a..b` into pieces near `target` wide (never narrower than
-/// MIN_ROOM_WIDTH unless the whole span is), with seeded variation.
-fn partition(a: f64, b: f64, target: f64, rng: &mut hw_core::Rng) -> Vec<(f64, f64)> {
+/// MIN_ROOM_WIDTH unless the whole span is), with seeded variation; cuts
+/// move to the nearest bay line in `lines` where that keeps rooms wide enough.
+fn partition(
+    a: f64,
+    b: f64,
+    target: f64,
+    lines: &[f64],
+    rng: &mut hw_core::Rng,
+) -> Vec<(f64, f64)> {
     let len = b - a;
     let n = ((len / target).round() as usize)
         .clamp(1, (len / MIN_ROOM_WIDTH).floor().max(1.0) as usize);
     let weights: Vec<f64> = (0..n).map(|_| rng.range(0.8, 1.2)).collect();
     let total: f64 = weights.iter().sum();
-    let mut out = Vec::with_capacity(n);
+    let mut cuts = Vec::with_capacity(n + 1);
+    cuts.push(a);
     let mut x = a;
-    for (i, w) in weights.iter().enumerate() {
-        let next = if i + 1 == n { b } else { x + len * w / total };
-        out.push((x, next));
-        x = next;
+    for w in weights.iter().take(n - 1) {
+        x += len * w / total;
+        let snapped = lines
+            .iter()
+            .copied()
+            .min_by(|p, q| (p - x).abs().total_cmp(&(q - x).abs()))
+            .filter(|l| (l - x).abs() < target * 0.5)
+            .unwrap_or(x);
+        let prev = *cuts.last().unwrap();
+        if snapped - prev >= MIN_ROOM_WIDTH * 0.75 && b - snapped >= MIN_ROOM_WIDTH * 0.75 {
+            cuts.push(snapped);
+        } else if x - prev >= MIN_ROOM_WIDTH * 0.75 && b - x >= MIN_ROOM_WIDTH * 0.75 {
+            cuts.push(x);
+        }
     }
-    out
+    cuts.push(b);
+    cuts.windows(2).map(|w| (w[0], w[1])).collect()
 }
 
-/// Derives every outside opening from the rooms: windows where a room that
-/// wants daylight meets an outside wall, plus the outside doors.
-fn facade(floors: &[Floor]) -> Vec<Opening> {
+/// Derives every outside opening from the rooms: the outside doors, and a
+/// window in every facade bay where a room that wants daylight lies behind
+/// (shaped by the style: punched, ribbon, curtain glass, portholes; shop
+/// fronts and lobbies get big glass on the street).
+fn facade(floors: &[Floor], look: &Look) -> Vec<Opening> {
+    use crate::style::WindowKind;
     const EPS: f64 = 1e-6;
     let mut out = Vec::new();
     for f in floors {
         let o = f.outline;
-        let window_h = (f.height - 1.0 - 0.9).clamp(1.8, 3.2);
-        for (ri, r) in f.rooms.iter().enumerate() {
-            let doors_here: Vec<&Door> = f
-                .doors
-                .iter()
-                .filter(|d| d.a == ri && d.b.is_none())
-                .collect();
-            let walls = [
-                (
-                    Side::Front,
-                    (r.rect.min.y - o.min.y).abs() < EPS,
-                    r.rect.min.x,
-                    r.rect.max.x,
-                ),
-                (
-                    Side::Back,
-                    (r.rect.max.y - o.max.y).abs() < EPS,
-                    r.rect.min.x,
-                    r.rect.max.x,
-                ),
-                (
-                    Side::Left,
-                    (r.rect.min.x - o.min.x).abs() < EPS,
-                    r.rect.min.y,
-                    r.rect.max.y,
-                ),
-                (
-                    Side::Right,
-                    (r.rect.max.x - o.max.x).abs() < EPS,
-                    r.rect.min.y,
-                    r.rect.max.y,
-                ),
-            ];
-            for (side, touches, a, b) in walls {
-                if !touches {
+        let sides = [
+            (Side::Front, o.min.x, o.max.x),
+            (Side::Back, o.min.x, o.max.x),
+            (Side::Left, o.min.y, o.max.y),
+            (Side::Right, o.min.y, o.max.y),
+        ];
+        // The room on a side at a point along it, with its span there.
+        let room_at = |side: Side, t: f64| -> Option<(usize, f64, f64)> {
+            f.rooms.iter().enumerate().find_map(|(ri, r)| {
+                let rr = r.rect;
+                let (touches, a, b) = match side {
+                    Side::Front => ((rr.min.y - o.min.y).abs() < EPS, rr.min.x, rr.max.x),
+                    Side::Back => ((rr.max.y - o.max.y).abs() < EPS, rr.min.x, rr.max.x),
+                    Side::Left => ((rr.min.x - o.min.x).abs() < EPS, rr.min.y, rr.max.y),
+                    Side::Right => ((rr.max.x - o.max.x).abs() < EPS, rr.min.y, rr.max.y),
+                };
+                (touches && t > a - EPS && t < b + EPS).then_some((ri, a, b))
+            })
+        };
+        for (side, s0, s1) in sides {
+            // Outside doors on this side.
+            let mut taken: Vec<(f64, f64)> = Vec::new();
+            for d in f.doors.iter().filter(|d| d.b.is_none()) {
+                let on_wall = match side {
+                    Side::Front => d.along_x && (d.at.y - o.min.y).abs() < EPS,
+                    Side::Back => d.along_x && (d.at.y - o.max.y).abs() < EPS,
+                    Side::Left => !d.along_x && (d.at.x - o.min.x).abs() < EPS,
+                    Side::Right => !d.along_x && (d.at.x - o.max.x).abs() < EPS,
+                };
+                if !on_wall {
                     continue;
                 }
-                // Doors on this wall.
-                let mut taken: Vec<(f64, f64)> = Vec::new();
-                for d in &doors_here {
-                    let on_wall = match side {
-                        Side::Front => d.along_x && (d.at.y - o.min.y).abs() < EPS,
-                        Side::Back => d.along_x && (d.at.y - o.max.y).abs() < EPS,
-                        Side::Left => !d.along_x && (d.at.x - o.min.x).abs() < EPS,
-                        Side::Right => !d.along_x && (d.at.x - o.max.x).abs() < EPS,
-                    };
-                    if !on_wall {
-                        continue;
-                    }
-                    let along = if d.along_x { d.at.x } else { d.at.y };
-                    let kind = if d.size.x >= ENTRANCE_SIZE.x {
-                        OpeningKind::Entrance
-                    } else {
-                        OpeningKind::Door
-                    };
-                    out.push(Opening {
-                        floor: f.level,
-                        side,
-                        kind,
-                        room: ri,
-                        along,
-                        width: d.size.x,
-                        sill: 0.0,
-                        height: d.size.y,
-                    });
-                    taken.push((along - d.size.x * 0.5 - 0.6, along + d.size.x * 0.5 + 0.6));
-                }
+                let along = if d.along_x { d.at.x } else { d.at.y };
+                let kind = if d.size.x >= ENTRANCE_SIZE.x {
+                    OpeningKind::Entrance
+                } else {
+                    OpeningKind::Door
+                };
+                out.push(Opening {
+                    floor: f.level,
+                    side,
+                    kind,
+                    room: d.a,
+                    along,
+                    width: d.size.x,
+                    sill: 0.0,
+                    height: d.size.y,
+                });
+                taken.push((along - d.size.x * 0.5 - 0.4, along + d.size.x * 0.5 + 0.4));
+            }
+            let lines = bay_lines(s0, s1, look.bay);
+            let mut bays: Vec<(f64, f64)> = lines.windows(2).map(|w| (w[0], w[1])).collect();
+            // A room no bay centre falls in (a corridor end, a narrow room)
+            // still gets one window in its middle.
+            for (ri, r) in f.rooms.iter().enumerate() {
                 if !r.kind.wants_daylight() {
                     continue;
                 }
-                let len = b - a;
-                let n = (len / WINDOW_BAY).floor() as usize;
-                let n = if n == 0 && len >= 2.4 { 1 } else { n };
-                if n == 0 {
+                let rr = r.rect;
+                let (touches, a, b) = match side {
+                    Side::Front => ((rr.min.y - o.min.y).abs() < EPS, rr.min.x, rr.max.x),
+                    Side::Back => ((rr.max.y - o.max.y).abs() < EPS, rr.min.x, rr.max.x),
+                    Side::Left => ((rr.min.x - o.min.x).abs() < EPS, rr.min.y, rr.max.y),
+                    Side::Right => ((rr.max.x - o.max.x).abs() < EPS, rr.min.y, rr.max.y),
+                };
+                let covered = bays.iter().any(|(b0, b1)| {
+                    let c = (b0 + b1) * 0.5;
+                    // A window fits only well inside the room.
+                    c > a + 0.75 && c < b - 0.75
+                });
+                if touches && !covered && room_at(side, (a + b) * 0.5).map(|x| x.0) == Some(ri) {
+                    let half = ((b - a) * 0.5).min(look.bay * 0.5);
+                    bays.push(((a + b) * 0.5 - half, (a + b) * 0.5 + half));
+                }
+            }
+            for (b0, b1) in bays {
+                let c = (b0 + b1) * 0.5;
+                let Some((ri, ra, rb)) = room_at(side, c) else {
+                    continue;
+                };
+                let kind = f.rooms[ri].kind;
+                if !kind.wants_daylight() {
                     continue;
                 }
-                let bay = len / n as f64;
-                let width = (bay * 0.6).min(2.4);
-                for k in 0..n {
-                    let c = a + bay * (k as f64 + 0.5);
-                    if taken
-                        .iter()
-                        .any(|(t0, t1)| c + width * 0.5 > *t0 && c - width * 0.5 < *t1)
-                    {
-                        continue;
+                let street_glass = side == Side::Front
+                    && f.level == 0
+                    && matches!(kind, RoomKind::Shop | RoomKind::Lobby);
+                let bay = b1 - b0;
+                let (mut width, sill, height) = if street_glass {
+                    (bay * 0.86, 0.45, (f.height - 1.5).min(3.8))
+                } else {
+                    match look.window {
+                        WindowKind::Curtain => (bay * look.window_share, 0.15, f.height - 1.0),
+                        WindowKind::Ribbon => (
+                            bay * look.window_share,
+                            0.95,
+                            (f.height - 2.2).clamp(1.6, 2.6),
+                        ),
+                        WindowKind::Porthole => {
+                            let d = (bay * look.window_share).clamp(1.0, 1.8);
+                            (d, 1.1, d)
+                        }
+                        WindowKind::Punched | WindowKind::Arched => (
+                            bay * look.window_share,
+                            0.9,
+                            (f.height - 1.9).clamp(1.8, 3.2),
+                        ),
                     }
-                    out.push(Opening {
-                        floor: f.level,
-                        side,
-                        kind: OpeningKind::Window,
-                        room: ri,
-                        along: c,
-                        width,
-                        sill: 0.9,
-                        height: window_h,
-                    });
+                };
+                // Keep clear of the room's own walls.
+                let room_room = ((c - ra).min(rb - c) - 0.3) * 2.0;
+                width = width.min(room_room);
+                if width < 0.8 {
+                    continue;
                 }
+                if taken
+                    .iter()
+                    .any(|(t0, t1)| c + width * 0.5 > *t0 && c - width * 0.5 < *t1)
+                {
+                    continue;
+                }
+                out.push(Opening {
+                    floor: f.level,
+                    side,
+                    kind: OpeningKind::Window,
+                    room: ri,
+                    along: c,
+                    width,
+                    sill,
+                    height,
+                });
             }
         }
     }
@@ -903,6 +1004,7 @@ pub(crate) mod tests {
             size: DVec2::new(w, d),
             floors,
             street: 0,
+            district: DistrictKind::Commercial,
         }
     }
 

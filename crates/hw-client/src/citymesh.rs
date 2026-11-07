@@ -7,9 +7,7 @@
 
 use engine::prelude::*;
 use glam::{DVec2, DVec3, Vec3};
-use hw_gen::building::{
-    BuildingPlan, BuildingSite, BuildingUse, Door, OpeningKind, RoomKind, Side,
-};
+use hw_gen::building::{BuildingPlan, Door, RoomKind};
 use hw_gen::city::{BlockUse, CityPlan, DistrictKind, StreetClass};
 use hw_gen::geom::Rect;
 
@@ -20,11 +18,7 @@ const STREET_TOP: f64 = 0.26;
 /// Boulevards sit a little higher, so they cover side streets at junctions
 /// instead of fighting with them.
 const BOULEVARD_TOP: f64 = 0.28;
-const BLOCK_TOP: f64 = 0.22;
-/// How far windows stand out of the wall, against z-fighting.
-const GLASS_OFFSET: f64 = 0.05;
-/// Thickness of roof slabs (and of terraces where a storey steps back).
-const ROOF_SLAB: f64 = 0.3;
+pub const BLOCK_TOP: f64 = 0.22;
 /// Wall thickness inside cut-open buildings.
 const WALL: f64 = 0.25;
 /// Height of walls on the cut floor.
@@ -33,9 +27,26 @@ const CUT_WALL_HEIGHT: f64 = 2.4;
 /// Corner signs (u, up, v) of one box face.
 type BoxFace = [(f64, f64, f64); 4];
 
+/// Which material a face gets. Faces of each kind are gathered in their own
+/// mesh and merged at the end, keeping their own surface material.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Surf {
+    Plain,
+    /// Smooth and reflective.
+    Glass,
+    /// Lit from inside: neon, signs, coils.
+    Glow,
+    Metal,
+}
+
 /// A mesh plus helpers for shapes in arbitrary orientation.
 pub struct MeshBuilder {
     pub mesh: Mesh,
+    glass: Mesh,
+    glow: Mesh,
+    metal: Mesh,
+    /// Material for the faces added next.
+    pub surf: Surf,
 }
 
 impl Default for MeshBuilder {
@@ -46,17 +57,164 @@ impl Default for MeshBuilder {
 
 impl MeshBuilder {
     pub fn new() -> Self {
-        Self { mesh: Mesh::new() }
+        Self {
+            mesh: Mesh::new(),
+            glass: Mesh::new(),
+            glow: Mesh::new(),
+            metal: Mesh::new(),
+            surf: Surf::Plain,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.mesh.face_count() == 0
+        [&self.mesh, &self.glass, &self.glow, &self.metal]
+            .iter()
+            .all(|m| m.face_count() == 0)
+    }
+
+    fn target(&mut self) -> &mut Mesh {
+        match self.surf {
+            Surf::Plain => &mut self.mesh,
+            Surf::Glass => &mut self.glass,
+            Surf::Glow => &mut self.glow,
+            Surf::Metal => &mut self.metal,
+        }
+    }
+
+    /// One mesh with every face, each kind with its own surface material.
+    /// Faces added so far, over all materials.
+    pub fn face_count(&self) -> usize {
+        [&self.mesh, &self.glass, &self.glow, &self.metal]
+            .iter()
+            .map(|m| m.face_count())
+            .sum()
+    }
+
+    pub fn finish(mut self) -> Mesh {
+        let glass = SurfaceMaterial {
+            roughness: 0.06,
+            metallic: 0.5,
+            ..SurfaceMaterial::DEFAULT
+        };
+        let glow = SurfaceMaterial {
+            roughness: 0.4,
+            emission: 1.2,
+            ..SurfaceMaterial::DEFAULT
+        };
+        let metal = SurfaceMaterial {
+            roughness: 0.35,
+            metallic: 0.85,
+            ..SurfaceMaterial::DEFAULT
+        };
+        for (mut m, surface) in [(self.glass, glass), (self.glow, glow), (self.metal, metal)] {
+            if m.face_count() > 0 {
+                m.set_surface_material(surface);
+                self.mesh
+                    .append_translated(&m, Vec3::ZERO)
+                    .expect("append part");
+            }
+        }
+        self.mesh
     }
 
     fn point(&mut self, p: DVec3, color: Color) -> PointId {
-        let id = self.mesh.add_point(p.as_vec3()).expect("finite point");
-        self.mesh.set_point_color(id, color).expect("point exists");
+        let m = self.target();
+        let id = m.add_point(p.as_vec3()).expect("finite point");
+        m.set_point_color(id, color).expect("point exists");
         id
+    }
+
+    /// A triangle facing `outward`.
+    pub fn tri(&mut self, pts: [DVec3; 3], outward: DVec3, color: Color) {
+        let n = (pts[1] - pts[0]).cross(pts[2] - pts[0]);
+        let order = if n.dot(outward) >= 0.0 {
+            [0, 1, 2]
+        } else {
+            [0, 2, 1]
+        };
+        let ids = order.map(|i| self.point(pts[i], color));
+        self.target()
+            .add_triangle(ids[0], ids[1], ids[2])
+            .expect("tri");
+    }
+
+    /// A convex polygon facing `outward`, as a fan.
+    pub fn polygon(&mut self, pts: &[DVec3], outward: DVec3, color: Color) {
+        for i in 1..pts.len().saturating_sub(1) {
+            self.tri([pts[0], pts[i], pts[i + 1]], outward, color);
+        }
+    }
+
+    /// A convex solid from a bottom and a top quad (corners in matching order).
+    pub fn hexa(&mut self, bottom: [DVec3; 4], top: [DVec3; 4], color: Color) {
+        let centre = (bottom.iter().sum::<DVec3>() + top.iter().sum::<DVec3>()) / 8.0;
+        let face = |b: &mut Self, q: [DVec3; 4]| {
+            let c = q.iter().sum::<DVec3>() / 4.0;
+            b.quad(q, c - centre, color);
+        };
+        face(self, bottom);
+        face(self, top);
+        for i in 0..4 {
+            let j = (i + 1) % 4;
+            face(self, [bottom[i], bottom[j], top[j], top[i]]);
+        }
+    }
+
+    /// An upright cylinder (or a cone when `r_top` is 0) from `c` up `h`.
+    pub fn cylinder(
+        &mut self,
+        c: DVec3,
+        (r, r_top): (f64, f64),
+        h: f64,
+        seg: usize,
+        caps: bool,
+        color: Color,
+    ) {
+        let ring = |rad: f64, y: f64| -> Vec<DVec3> {
+            (0..seg)
+                .map(|i| {
+                    let a = std::f64::consts::TAU * i as f64 / seg as f64;
+                    c + DVec3::new(rad * a.cos(), y, rad * a.sin())
+                })
+                .collect()
+        };
+        let (lo, hi) = (ring(r, 0.0), ring(r_top, h));
+        for i in 0..seg {
+            let j = (i + 1) % seg;
+            let mid = (lo[i] + lo[j] + hi[i] + hi[j]) * 0.25;
+            let out = DVec3::new(mid.x - c.x, 0.0, mid.z - c.z);
+            if r_top < 1e-6 {
+                self.tri([lo[i], lo[j], hi[i]], out + DVec3::Y * 0.01, color);
+            } else {
+                self.quad([lo[i], lo[j], hi[j], hi[i]], out, color);
+            }
+        }
+        if caps {
+            self.polygon(&lo, -DVec3::Y, color);
+            if r_top > 1e-6 {
+                self.polygon(&hi, DVec3::Y, color);
+            }
+        }
+    }
+
+    /// A dome (half sphere) of radius `r` standing on `c`.
+    pub fn dome(&mut self, c: DVec3, r: f64, seg: usize, rings: usize, color: Color) {
+        let at = |i: usize, k: usize| {
+            let a = std::f64::consts::TAU * (i % seg) as f64 / seg as f64;
+            let e = std::f64::consts::FRAC_PI_2 * k as f64 / rings as f64;
+            c + DVec3::new(r * e.cos() * a.cos(), r * e.sin(), r * e.cos() * a.sin())
+        };
+        for k in 0..rings {
+            for i in 0..seg {
+                let (p0, p1, p2, p3) = (at(i, k), at(i + 1, k), at(i + 1, k + 1), at(i, k + 1));
+                let out = (p0 + p1 + p2 + p3) * 0.25 - c;
+                if k + 1 == rings {
+                    self.tri([p0, p1, p2], out, color);
+                } else {
+                    self.quad([p0, p1, p2, p3], out, color);
+                }
+            }
+        }
     }
 
     /// A quad facing `outward` (winding fixed up to match).
@@ -68,7 +226,7 @@ impl MeshBuilder {
             [0, 3, 2, 1]
         };
         let ids = order.map(|i| self.point(pts[i], color));
-        self.mesh.add_face(&ids).expect("quad");
+        self.target().add_face(&ids).expect("quad");
     }
 
     /// A box with centre `c`, unit axes `u` (horizontal) and `v = up × u`
@@ -139,9 +297,9 @@ impl MeshBuilder {
             // Fan triangle; order it to face up.
             let n3 = (at(a, top) - at(centre, top)).cross(at(b, top) - at(centre, top));
             if n3.y >= 0.0 {
-                self.mesh.add_triangle(c, ia, ib).expect("tri");
+                self.target().add_triangle(c, ia, ib).expect("tri");
             } else {
-                self.mesh.add_triangle(c, ib, ia).expect("tri");
+                self.target().add_triangle(c, ib, ia).expect("tri");
             }
             let side = (b - a).perp();
             let out = DVec3::new(side.x, 0.0, side.y);
@@ -190,59 +348,6 @@ impl Palette {
             DistrictKind::AetherWorks => rgb(150, 154, 158),
             DistrictKind::Expo => rgb(226, 214, 180),
             DistrictKind::Dystopia => rgb(96, 98, 92),
-        }
-    }
-
-    /// Facade colour: a few deco tones per district, picked by the building's seed.
-    fn facade(site: &BuildingSite, kind: DistrictKind) -> Color {
-        let tones: &[(u8, u8, u8)] = match kind {
-            DistrictKind::Civic => &[
-                (238, 230, 210),
-                (226, 214, 188),
-                (244, 238, 226),
-                (214, 206, 196),
-            ],
-            DistrictKind::Commercial => &[
-                (236, 196, 170),
-                (232, 214, 160),
-                (190, 218, 196),
-                (230, 222, 206),
-            ],
-            DistrictKind::Residential => &[
-                (240, 226, 200),
-                (214, 228, 222),
-                (236, 206, 196),
-                (226, 232, 206),
-            ],
-            DistrictKind::AetherWorks => &[(150, 166, 182), (170, 180, 188), (132, 150, 170)],
-            DistrictKind::Expo => &[(248, 246, 240), (246, 214, 150), (176, 214, 236)],
-            DistrictKind::Dystopia => &[(98, 100, 92), (86, 90, 86), (112, 104, 94), (78, 82, 80)],
-        };
-        let t = tones[(site.seed.0 % tones.len() as u64) as usize];
-        let base = rgb(t.0, t.1, t.2);
-        if site.usage == BuildingUse::Lab {
-            rgb(60, 92, 66)
-        } else {
-            base
-        }
-    }
-
-    fn glass(kind: DistrictKind) -> Color {
-        match kind {
-            DistrictKind::Dystopia => rgb(48, 64, 56),
-            DistrictKind::AetherWorks => rgb(96, 150, 176),
-            _ => rgb(74, 112, 140),
-        }
-    }
-
-    fn door() -> Color {
-        rgb(92, 64, 46)
-    }
-
-    fn roof(kind: DistrictKind) -> Color {
-        match kind {
-            DistrictKind::Dystopia => rgb(70, 72, 68),
-            _ => rgb(168, 160, 150),
         }
     }
 
@@ -328,7 +433,7 @@ pub fn ground_mesh(plan: &CityPlan) -> Mesh {
         };
         b.prism(&blk.poly.pts, 0.0, BLOCK_TOP, color);
     }
-    b.mesh
+    b.finish()
 }
 
 /// How to draw one building.
@@ -342,91 +447,23 @@ pub enum Look {
 }
 
 /// Adds one building to `b`.
-pub fn add_building(b: &mut MeshBuilder, plan: &BuildingPlan, kind: DistrictKind, look: Look) {
+pub fn add_building(
+    b: &mut MeshBuilder,
+    plan: &BuildingPlan,
+    _kind: DistrictKind,
+    look: Look,
+    detail: crate::buildingmesh::Detail,
+) {
     let site = &plan.site;
-    let facade = Palette::facade(site, kind);
-    let glass = Palette::glass(kind);
+    let facade = rgb(plan.look.wall[0], plan.look.wall[1], plan.look.wall[2]);
     let to_city = |x: f64, y: f64, z: f64| site.to_city(DVec3::new(x, y, z));
     let u = DVec3::new(site.along.x, 0.0, site.along.y);
-    let v = DVec3::new(site.inward.x, 0.0, site.inward.y);
     let base = BLOCK_TOP;
-
     let shown_floors = match look {
         Look::Shell => plan.floors.len(),
         Look::Cut { level } => (level as usize).min(plan.floors.len() - 1),
     };
-    // Closed storeys: one box per run of floors with the same outline.
-    let mut i = 0;
-    while i < shown_floors {
-        let outline = plan.floors[i].outline;
-        let mut j = i;
-        while j + 1 < shown_floors && plan.floors[j + 1].outline == outline {
-            j += 1;
-        }
-        // Above the first run, start on top of the roof slab below, so the
-        // two never share a face.
-        let y0 = plan.floors[i].elevation + if i > 0 { ROOF_SLAB } else { 0.0 };
-        let y1 = plan.floors[j].elevation + plan.floors[j].height;
-        let c = outline.center();
-        let s = outline.size();
-        b.oriented_box(
-            to_city(c.x, base + (y0 + y1) * 0.5, c.y),
-            u,
-            DVec3::new(s.x * 0.5, (y1 - y0) * 0.5, s.y * 0.5),
-            facade,
-        );
-        // A flat roof slab where the next floor steps back (or at the top),
-        // except under a cut-open floor, whose room floors take its place.
-        let under_cut = matches!(look, Look::Cut { .. }) && j + 1 == shown_floors;
-        if !under_cut {
-            b.oriented_box(
-                to_city(c.x, base + y1 + ROOF_SLAB * 0.5, c.y),
-                u,
-                DVec3::new(s.x * 0.5 + 0.3, ROOF_SLAB * 0.5, s.y * 0.5 + 0.3),
-                Palette::roof(kind),
-            );
-        }
-        i = j + 1;
-    }
-    // Windows and doors of closed storeys, straight from the plan's facade.
-    for o in plan
-        .openings
-        .iter()
-        .filter(|o| (o.floor as usize) < shown_floors)
-    {
-        let f = &plan.floors[o.floor as usize];
-        let r = f.outline;
-        let (y0, y1) = (
-            base + f.elevation + o.sill,
-            base + f.elevation + o.sill + o.height,
-        );
-        let (a0, a1) = (o.along - o.width * 0.5, o.along + o.width * 0.5);
-        let (pts, out) = match o.side {
-            Side::Front => {
-                let z = r.min.y - GLASS_OFFSET;
-                ([(a0, z), (a1, z), (a1, z), (a0, z)], -v)
-            }
-            Side::Back => {
-                let z = r.max.y + GLASS_OFFSET;
-                ([(a0, z), (a1, z), (a1, z), (a0, z)], v)
-            }
-            Side::Left => {
-                let x = r.min.x - GLASS_OFFSET;
-                ([(x, a0), (x, a1), (x, a1), (x, a0)], -u)
-            }
-            Side::Right => {
-                let x = r.max.x + GLASS_OFFSET;
-                ([(x, a0), (x, a1), (x, a1), (x, a0)], u)
-            }
-        };
-        let ys = [y0, y0, y1, y1];
-        let quad = [0, 1, 2, 3].map(|k| to_city(pts[k].0, ys[k], pts[k].1));
-        let color = match o.kind {
-            OpeningKind::Window => glass,
-            OpeningKind::Door | OpeningKind::Entrance => Palette::door(),
-        };
-        b.quad(quad, out, color);
-    }
+    crate::buildingmesh::exterior(b, plan, shown_floors, look == Look::Shell, detail);
 
     if let Look::Cut { .. } = look {
         let f = &plan.floors[shown_floors];

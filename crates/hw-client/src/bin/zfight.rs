@@ -1,13 +1,15 @@
 //! Finds z-fighting in a generated city: faces that lie in the same plane,
 //! face the same way and overlap, so they flicker.
 //!
-//! cargo run -p hw-client --bin zfight -- [seed] [--cut LEVEL] [--all] [--svg FILE]
+//! cargo run -p hw-client --bin zfight -- [seed] [--cut LEVEL] [--far] [--all] [--svg FILE]
 //!
 //! Prints the worst spots (where, which colours, which meshes) and exits
-//! with 1 if any differently coloured faces fight. `--all` also lists
+//! with 1 if any differently coloured faces fight. Buildings are drawn in
+//! near detail unless `--far`. `--all` also lists
 //! doubled faces of one colour (wasted, but invisible). `--svg` draws the
 //! spots on a map of the city.
 
+use hw_client::buildingmesh::Detail;
 use hw_client::zfight::{self, hex, source_name, Clash};
 use hw_core::Seed;
 use hw_sim::GeneratedCity;
@@ -18,22 +20,25 @@ fn main() {
     let mut cut = None;
     let mut all = false;
     let mut svg = None;
+    let mut detail = Detail::Near;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--cut" => cut = args.next().and_then(|s| s.parse().ok()),
             "--all" => all = true,
             "--svg" => svg = args.next(),
+            "--far" => detail = Detail::Far,
             s => seed = s.parse().unwrap_or_else(|_| panic!("not a seed: {s}")),
         }
     }
     let city = GeneratedCity::generate(Seed(seed));
-    let tris = zfight::city(&city, cut);
+    let tris = zfight::city(&city, cut, detail);
     let clashes = zfight::find(&tris, &zfight::city_options());
     let (same, differ): (Vec<Clash>, Vec<Clash>) = clashes.iter().partition(|c| c.same_color);
     println!(
-        "seed {seed}{}: {} triangles, {} fighting pairs ({:.1} m²), {} doubled faces of one colour ({:.1} m²)",
+        "seed {seed}{}{}: {} triangles, {} fighting pairs ({:.1} m²), {} doubled faces of one colour ({:.1} m²)",
         cut.map(|l| format!(", cut at floor {l}")).unwrap_or_default(),
+        if detail == Detail::Far { ", far detail" } else { "" },
         tris.len(),
         differ.len(),
         differ.iter().map(|c| c.area).sum::<f64>().abs(),

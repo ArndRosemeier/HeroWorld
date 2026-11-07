@@ -299,7 +299,15 @@ impl CityPlan {
         }
         for l in 0..plan.lots.len() {
             if let Some(site) = plan.site_for(l) {
-                plan.buildings.push((l, site));
+                // Corner lots can bring buildings of two streets close; keep a
+                // gap, so cornices and towers never reach into a neighbour.
+                let clear = plan
+                    .buildings
+                    .iter()
+                    .all(|(_, other)| rects_apart(&site, other, BUILDING_GAP));
+                if clear {
+                    plan.buildings.push((l, site));
+                }
             }
         }
         plan
@@ -639,6 +647,7 @@ impl CityPlan {
             size: DVec2::new(width, depth),
             floors,
             street: lot.street,
+            district: district.kind,
         })
     }
 
@@ -687,6 +696,30 @@ impl CityPlan {
         };
         (usage, floors.max(1), front, side, depth)
     }
+}
+
+/// Least gap between two buildings (m).
+pub const BUILDING_GAP: f64 = 1.0;
+
+/// Are two building rectangles at least `gap` apart? (Separating axes on
+/// the rectangles grown by half the gap.)
+fn rects_apart(a: &BuildingSite, b: &BuildingSite, gap: f64) -> bool {
+    let (ca, cb) = (a.corners(), b.corners());
+    if ((ca[0] + ca[2]) * 0.5).distance((cb[0] + cb[2]) * 0.5)
+        > (a.size.length() + b.size.length()) * 0.5 + gap
+    {
+        return true;
+    }
+    let axes = [a.along, a.inward, b.along, b.inward];
+    axes.iter().any(|ax| {
+        let span = |c: &[DVec2; 4]| {
+            c.iter()
+                .map(|p| p.dot(*ax))
+                .fold((f64::MAX, f64::MIN), |(l, h), v| (l.min(v), h.max(v)))
+        };
+        let ((a0, a1), (b0, b1)) = (span(&ca), span(&cb));
+        a1 + gap <= b0 + 1e-6 || b1 + gap <= a0 + 1e-6
+    })
 }
 
 #[cfg(test)]
@@ -808,6 +841,10 @@ mod tests {
                     a1 <= b0 + 1e-6 || b1 <= a0 + 1e-6
                 });
                 assert!(separated, "two buildings overlap");
+                assert!(
+                    rects_apart(a, b, BUILDING_GAP - 1e-6),
+                    "two buildings too close"
+                );
             }
         }
     }

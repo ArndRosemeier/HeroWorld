@@ -28,6 +28,7 @@ mod session;
 
 use engine::prelude::*;
 use glam::{DVec2, Vec3};
+use hw_client::buildingmesh::Detail;
 use hw_client::citymesh::{self, add_building, ground_hit, ground_mesh, Look, MeshBuilder};
 use hw_client::zfight;
 use hw_core::Seed;
@@ -37,6 +38,12 @@ use hw_sim::collision::{Obstacles, BODY_HEIGHT};
 use hw_sim::GeneratedCity;
 use session::Session;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Faces per city mesh, well inside a GPU buffer.
+const MESH_FACES: usize = 250_000;
+
+/// Buildings within about this distance of the camera get full detail.
+const NEAR_DETAIL: f64 = 220.0;
 
 /// Buildings within this distance of the focus are cut open.
 const CUT_RADIUS: f64 = 110.0;
@@ -48,7 +55,7 @@ struct City {
     /// Buildings per boulevard cell.
     by_cell: Vec<Vec<usize>>,
     /// Engine entity per cell.
-    cell_entities: Vec<Option<EntityId>>,
+    cell_entities: Vec<Vec<EntityId>>,
     cut_on: bool,
     cut_focus: DVec2,
     cut_level: u32,
@@ -56,6 +63,10 @@ struct City {
     inside: Option<hw_sim::collision::Inside>,
     /// `HW_ZFIGHT=1`: mark z-fighting with magenta posts.
     mark_zfighting: bool,
+    /// Centre and radius of each cell's buildings.
+    cell_bounds: Vec<(DVec2, f64)>,
+    /// Cells drawn in near detail.
+    near: BTreeSet<usize>,
 }
 
 impl City {
@@ -71,14 +82,42 @@ impl City {
             plan,
             buildings,
             by_cell,
-            cell_entities: vec![None; cells],
+            cell_entities: vec![Vec::new(); cells],
             cut_on: false,
             cut_focus: DVec2::ZERO,
             cut_level: 1,
             inside: None,
             mark_zfighting: std::env::var_os("HW_ZFIGHT").is_some(),
+            cell_bounds: Vec::new(),
+            near: BTreeSet::new(),
         }
+        .with_cell_bounds()
         .focused_on_centre()
+    }
+
+    fn with_cell_bounds(mut self) -> Self {
+        self.cell_bounds = (0..self.by_cell.len())
+            .map(|c| {
+                let pts: Vec<DVec2> = self.by_cell[c].iter().map(|&i| self.centre_of(i)).collect();
+                if pts.is_empty() {
+                    return (DVec2::ZERO, 0.0);
+                }
+                let centre = pts.iter().sum::<DVec2>() / pts.len() as f64;
+                let r = pts.iter().map(|p| p.distance(centre)).fold(0.0, f64::max) + 40.0;
+                (centre, r)
+            })
+            .collect();
+        self
+    }
+
+    /// Cells that should be drawn in near detail from `eye`.
+    fn near_cells(&self, eye: DVec2) -> BTreeSet<usize> {
+        (0..self.cell_bounds.len())
+            .filter(|&c| {
+                let (centre, r) = self.cell_bounds[c];
+                !self.by_cell[c].is_empty() && centre.distance(eye) < NEAR_DETAIL + r
+            })
+            .collect()
     }
 
     /// Starts with the cut-open area on the tallest building near the centre.
@@ -141,25 +180,42 @@ impl City {
     }
 
     fn build_cell(&mut self, world: &mut World, cell: usize) {
-        if let Some(e) = self.cell_entities[cell].take() {
+        for e in self.cell_entities[cell].drain(..) {
             world.despawn(e);
         }
+        let detail = if self.near.contains(&cell) {
+            Detail::Near
+        } else {
+            Detail::Far
+        };
+        // A dense downtown cell can outgrow a GPU buffer (256 MB by default),
+        // so a cell becomes several meshes of at most MESH_FACES faces each.
         let mut b = MeshBuilder::new();
-        for &i in &self.by_cell[cell] {
+        let buildings = self.by_cell[cell].clone();
+        for (n, &i) in buildings.iter().enumerate() {
             let lot = self.plan.buildings[i].0;
             let kind =
                 self.plan.districts[self.plan.blocks[self.plan.lots[lot].block].district].kind;
-            add_building(&mut b, &self.buildings[i], kind, self.look_of(i));
+            add_building(&mut b, &self.buildings[i], kind, self.look_of(i), detail);
+            if b.face_count() > MESH_FACES || n + 1 == buildings.len() {
+                let full = std::mem::take(&mut b);
+                self.spawn_part(world, cell, full);
+            }
         }
-        if self.mark_zfighting && !b.is_empty() {
-            let n = zfight::mark(&mut b.mesh);
+    }
+
+    fn spawn_part(&mut self, world: &mut World, cell: usize, b: MeshBuilder) {
+        if b.is_empty() {
+            return;
+        }
+        let mut mesh = b.finish();
+        if self.mark_zfighting {
+            let n = zfight::mark(&mut mesh);
             if n > 0 {
                 println!("z-fighting: {n} spots in cell {cell}");
             }
         }
-        if !b.is_empty() {
-            self.cell_entities[cell] = Some(world.spawn(b.mesh));
-        }
+        self.cell_entities[cell].push(world.spawn(mesh));
     }
 }
 
@@ -454,6 +510,16 @@ fn main() -> EngineResult<()> {
             _ => {
                 fly.update(world, frame);
                 fly.position = fly.position.max(Vec3::new(f32::MIN, 1.8, f32::MIN));
+            }
+        }
+        // Full detail around the camera.
+        let eye = world.camera().eye();
+        let near = city.near_cells(DVec2::new(eye.x as f64, eye.z as f64));
+        if near != city.near {
+            let changed: Vec<usize> = near.symmetric_difference(&city.near).copied().collect();
+            city.near = near;
+            for c in changed {
+                city.build_cell(world, c);
             }
         }
         Ok(())

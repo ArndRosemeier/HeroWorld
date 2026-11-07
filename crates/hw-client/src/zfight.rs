@@ -50,6 +50,9 @@ pub struct Options {
     pub gap: f64,
     /// Overlaps smaller than this (m²) are ignored (edges that only touch).
     pub min_area: f64,
+    /// Overlaps thinner than this (m) are ignored too: long edges that only
+    /// touch, off by float rounding far from the origin. Far below a pixel.
+    pub min_width: f64,
     /// Downward faces at or below this height are skipped: the bottoms of
     /// things standing on the ground, which nobody sees.
     pub hidden_below: f64,
@@ -60,6 +63,7 @@ impl Default for Options {
         Self {
             gap: 0.01,
             min_area: 1e-3,
+            min_width: 1e-3,
             hidden_below: f64::NEG_INFINITY,
         }
     }
@@ -200,7 +204,7 @@ fn clashes_in_run(tris: &[Tri], run: &[Prepared], opt: &Options, out: &mut Vec<C
                 }
                 let poly = clip(&flat[a], &flat[b]);
                 let (area, centre) = area_and_centre(&poly);
-                if area < opt.min_area {
+                if area < opt.min_area || area < opt.min_width * longest_side(&poly) {
                     continue;
                 }
                 let (ta, tb) = (&tris[run[a].index], &tris[run[b].index]);
@@ -225,6 +229,13 @@ fn clashes_in_run(tris: &[Tri], run: &[Prepared], opt: &Options, out: &mut Vec<C
 fn plane_gap(a: &Tri, n: DVec3, b: &Tri) -> f64 {
     b.p.iter()
         .map(|p| n.dot(*p - a.p[0]).abs())
+        .fold(0.0, f64::max)
+}
+
+/// The longest side of a polygon (an overlap's area over it is its width).
+fn longest_side(poly: &[DVec2]) -> f64 {
+    (0..poly.len())
+        .map(|i| poly[i].distance(poly[(i + 1) % poly.len()]))
         .fold(0.0, f64::max)
 }
 
@@ -308,10 +319,14 @@ pub fn city_options() -> Options {
 /// Source label of the ground mesh in [`city`].
 pub const GROUND: u32 = u32::MAX;
 
-/// Every triangle of a generated city as the game draws it: the ground
+/// Every triangle of a generated city as the game draws it at `detail`: the ground
 /// (labelled [`GROUND`]) and each building (labelled with its index), closed,
 /// or cut open at floor `cut` where it has one.
-pub fn city(generated: &hw_sim::GeneratedCity, cut: Option<u32>) -> Vec<Tri> {
+pub fn city(
+    generated: &hw_sim::GeneratedCity,
+    cut: Option<u32>,
+    detail: crate::buildingmesh::Detail,
+) -> Vec<Tri> {
     use crate::citymesh::{add_building, ground_mesh, Look, MeshBuilder};
     let plan = &generated.plan;
     let mut out = triangles(&ground_mesh(plan).build(), GROUND);
@@ -323,8 +338,8 @@ pub fn city(generated: &hw_sim::GeneratedCity, cut: Option<u32>) -> Vec<Tri> {
             _ => Look::Shell,
         };
         let mut m = MeshBuilder::new();
-        add_building(&mut m, b, kind, look);
-        out.extend(triangles(&m.mesh.build(), i as u32));
+        add_building(&mut m, b, kind, look, detail);
+        out.extend(triangles(&m.finish().build(), i as u32));
     }
     out
 }
@@ -391,6 +406,30 @@ mod tests {
             .all(|c| !c.same_color && c.sources == [0, 1] || c.sources == [1, 0]));
         let s = spots(&c, 10.0);
         assert_eq!(s.len(), 1);
+    }
+
+    #[test]
+    fn rounding_slivers_along_long_edges_do_not() {
+        // Two 50 m strips sharing an edge, off by 0.1 mm: 0.005 m², but
+        // only a hair wide.
+        let strip = |x0: f64, x1: f64, color, source| {
+            let p = |x: f64, z: f64| DVec3::new(x, 0.0, z);
+            [
+                Tri {
+                    p: [p(x0, 0.0), p(x0, 50.0), p(x1, 50.0)],
+                    color,
+                    source,
+                },
+                Tri {
+                    p: [p(x0, 0.0), p(x1, 50.0), p(x1, 0.0)],
+                    color,
+                    source,
+                },
+            ]
+        };
+        let mut t = strip(0.0, 1.0001, [255, 0, 0], 0).to_vec();
+        t.extend(strip(1.0, 2.0, [0, 0, 255], 1));
+        assert!(find(&t, &Options::default()).is_empty());
     }
 
     #[test]
