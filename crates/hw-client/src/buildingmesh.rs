@@ -404,7 +404,7 @@ pub fn exterior(
     if look.fins && shown == plan.floors.len() && roofed {
         fins(&mut c);
     }
-    if detail == Detail::Near && look.sign && shown >= 3 {
+    if look.sign && shown >= 3 {
         sign(&mut c);
     }
     c.surf(Surf::Plain);
@@ -1090,7 +1090,10 @@ fn roof(c: &mut Ctx, o: Rect, y: f64, detail: Detail) {
             if look.parapet > 0.0 {
                 parapet(c, o, y, look.parapet, 0.3);
             }
-            if detail == Detail::Near && look.rooftop_gear {
+            let pad = look.taxi_pad && o.size().min_element() >= 12.0;
+            if pad {
+                taxi_pad(c, o, y, detail);
+            } else if detail == Detail::Near && look.rooftop_gear {
                 rooftop(c, o, y);
             }
             if detail == Detail::Near && look.chimneys {
@@ -1452,6 +1455,63 @@ fn sawtooth(c: &mut Ctx, o: Rect, y: f64) {
             col(look.trim),
         );
     }
+}
+
+/// A round landing pad for flying taxis on stilts over the roof, its rim
+/// glowing, a beacon at one side: seen from far across the town.
+fn taxi_pad(c: &mut Ctx, o: Rect, y: f64, detail: Detail) {
+    let look = c.look;
+    let cc = o.center();
+    let r = (o.size().min_element() * 0.5 - 1.2).clamp(5.0, 9.0);
+    let top = y + 1.6;
+    let seg = if detail == Detail::Near { 32 } else { 16 };
+    let deck = col([228, 226, 218]);
+    let legs = col([110, 114, 118]);
+    c.surf(Surf::Metal);
+    for (dx, dz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        let p = DVec3::new(cc.x + dx * r * 0.5, y, cc.y + dz * r * 0.5);
+        c.cylinder(p, (0.25, 0.25), top - 0.35 - y, 8, false, legs);
+    }
+    c.surf(Surf::Plain);
+    c.cylinder(
+        DVec3::new(cc.x, top - 0.35, cc.y),
+        (r, r),
+        0.35,
+        seg,
+        true,
+        deck,
+    );
+    // The glowing rim: a thin disc a little wider, just under the deck top.
+    c.surf(Surf::Glow);
+    c.cylinder(
+        DVec3::new(cc.x, top - 0.25, cc.y),
+        (r + 0.18, r + 0.18),
+        0.12,
+        seg,
+        true,
+        col([120, 230, 255]),
+    );
+    c.surf(Surf::Plain);
+    // A painted "T" for taxi, in the accent colour.
+    let paint = col(look.accent);
+    let t = top + 0.02;
+    c.bx(
+        DVec3::new(cc.x - r * 0.45, t - 0.01, cc.y - r * 0.4),
+        DVec3::new(cc.x + r * 0.45, t, cc.y - r * 0.22),
+        paint,
+    );
+    c.bx(
+        DVec3::new(cc.x - r * 0.09, t - 0.01, cc.y - r * 0.22),
+        DVec3::new(cc.x + r * 0.09, t, cc.y + r * 0.45),
+        paint,
+    );
+    // A beacon on a mast at the back edge.
+    let m = DVec3::new(cc.x + r * 0.75, top, cc.y + r * 0.55);
+    c.surf(Surf::Metal);
+    c.cylinder(m, (0.08, 0.05), 3.2, 8, false, legs);
+    c.surf(Surf::Glow);
+    c.dome(m + DVec3::Y * 3.2, 0.35, col([255, 90, 70]));
+    c.surf(Surf::Plain);
 }
 
 /// Stair house over the core, vents, boxes and a water tank.

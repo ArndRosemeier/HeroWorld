@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.009 (2026-11-07)
+
+- Flying-taxi pads on the roofs of the taller golden-age buildings: round decks on stilts with a glowing rim, a big "T" and a red beacon, seen from across town.
+- Neon signs on the facades now show from far away too, not only up close.
+
 ## 0.008 (2026-11-07)
 
 - Housekeeping only: the plan now says where music, sounds and pictures come from.

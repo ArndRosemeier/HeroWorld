@@ -229,6 +229,17 @@ pub struct BuildingSite {
 }
 
 impl BuildingSite {
+    /// The building's look (cheap: no plan needed).
+    pub fn look(&self) -> Look {
+        let mut look = match self.vernacular {
+            Some(v) => Look::vernacular(self.seed, v, self.district, self.usage, self.floors),
+            None => Look::choose(self.seed, self.district, self.usage, self.floors),
+        };
+        // A taxi pad needs a roof wide enough to land on.
+        look.taxi_pad &= self.size.min_element() >= 15.0;
+        look
+    }
+
     /// Building (x, y, z) → city-local (x, y, z).
     pub fn to_city(&self, p: DVec3) -> DVec3 {
         let g = self.origin + self.along * p.x + self.inward * p.z;
@@ -304,10 +315,7 @@ impl<'a> Planner<'a> {
     fn new(site: &'a BuildingSite) -> Self {
         Self {
             site,
-            look: match site.vernacular {
-                Some(v) => Look::vernacular(site.seed, v, site.district, site.usage, site.floors),
-                None => Look::choose(site.seed, site.district, site.usage, site.floors),
-            },
+            look: site.look(),
         }
     }
 

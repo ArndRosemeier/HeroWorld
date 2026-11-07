@@ -226,6 +226,8 @@ pub struct Look {
     pub chimneys: bool,
     /// Dormer windows in a mansard or a steep roof.
     pub dormers: bool,
+    /// A landing pad for flying taxis on the roof.
+    pub taxi_pad: bool,
 }
 
 const LIMESTONE: [Rgb; 4] = [
@@ -462,6 +464,7 @@ impl Look {
             eaves: 0.5,
             chimneys: false,
             dormers: false,
+            taxi_pad: false,
         };
         let look = match style {
             Style::ArtDeco => {
@@ -859,7 +862,22 @@ impl Look {
             },
         };
         let wall = vary(r, look.wall, 0.05);
-        Look { wall, ..look }
+        // Flying taxis land on the flat roofs of taller golden-age buildings.
+        let modern = matches!(
+            style,
+            Style::ArtDeco | Style::Streamline | Style::Skyline | Style::Emporium | Style::Googie
+        );
+        let taxi_pad = modern
+            && floors >= 5
+            && look.roof == Roof::Flat
+            && look.crown == Crown::None
+            && !look.corner_tower
+            && r.chance(0.5);
+        Look {
+            wall,
+            taxi_pad,
+            ..look
+        }
     }
 }
 

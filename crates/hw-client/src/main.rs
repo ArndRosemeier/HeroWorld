@@ -22,7 +22,7 @@
 //! Environment: `HW_SEED` (world seed, default 1); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park` or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad` or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -180,6 +180,26 @@ fn main() -> EngineResult<()> {
             let yaw = d.x.atan2(d.y).to_degrees() as f32;
             let up = if view == "park" { 9.0 } else { 3.0 };
             FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, -14.0)
+        }
+        "pad" => {
+            // Above the nearest rooftop taxi pad.
+            let pad = generated
+                .world
+                .buildings
+                .iter()
+                .filter(|b| b.site.look().taxi_pad)
+                .min_by(|a, b| {
+                    let d = |x: &hw_gen::urban::world::WorldBuilding| x.site.origin.distance(spawn);
+                    d(a).total_cmp(&d(b))
+                });
+            let (c, h) = pad.map_or((spawn, 20.0), |b| {
+                let s = &b.site;
+                let c = s.origin + s.along * s.size.x * 0.5 + s.inward * s.size.y * 0.5;
+                let plan = hw_gen::building::BuildingPlan::generate(s);
+                (c, b.base + plan.height())
+            });
+            let p = c + DVec2::new(-30.0, 30.0);
+            FlyCamera::new((p.x as f32, h as f32 + 32.0, p.y as f32), 135.0, -42.0)
         }
         "cutaway" => {
             let f = town.cut_focus;
