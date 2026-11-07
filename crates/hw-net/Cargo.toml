@@ -1,0 +1,12 @@
+[package]
+name = "hw-net"
+description = "Protocol and UDP transport between the server and game clients."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hw-core = { workspace = true }

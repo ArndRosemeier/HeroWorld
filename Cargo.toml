@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hw-core",
+    "crates/hw-gen",
+    "crates/hw-sim",
+    "crates/hw-net",
+    "crates/hw-client",
+]
+# The client pulls in Engine (wgpu, winit): leave it out of plain `cargo test`
+# runs on machines without the system libraries; `cargo test --workspace` builds it.
+default-members = [
+    "crates/hw-core",
+    "crates/hw-gen",
+    "crates/hw-sim",
+    "crates/hw-net",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[workspace.dependencies]
+hw-core = { path = "crates/hw-core" }
+hw-gen = { path = "crates/hw-gen" }
+hw-sim = { path = "crates/hw-sim" }
+hw-net = { path = "crates/hw-net" }
+engine = { git = "https://github.com/ArndRosemeier/Engine", branch = "main" }
+bevy_ecs = { version = "0.20", default-features = false, features = ["std"] }
+glam = "0.33"
+
+# Engine's generators and renderer crawl without optimisation; optimise
+# dependencies in debug builds so the game stays playable while our own code
+# builds quickly.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

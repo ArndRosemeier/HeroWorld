@@ -1,0 +1,13 @@
+[package]
+name = "hw-gen"
+description = "World generation as pure data: planet, region, city, building and interior plans. No Engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hw-core = { workspace = true }
+glam = { workspace = true }

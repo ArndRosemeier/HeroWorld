@@ -1,0 +1,12 @@
+[package]
+name = "hw-core"
+description = "Shared basics: planet coordinates, seed hashing, IDs. No Engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+glam = { workspace = true }

@@ -1,0 +1,19 @@
+[package]
+name = "hw-sim"
+description = "The game server: simulation state, bubbles, incidents, combat, saves."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "hw-headless"
+path = "src/bin/hw-headless.rs"
+
+[dependencies]
+hw-core = { workspace = true }
+hw-gen = { workspace = true }
+bevy_ecs = { workspace = true }
+glam = { workspace = true }
