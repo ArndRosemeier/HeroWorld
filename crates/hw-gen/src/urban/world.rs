@@ -9,6 +9,7 @@
 use super::graph::signed_area;
 use super::growth::{CentreKind, Era};
 use super::land::{distance_to, Grid};
+use super::landmarks::{plan_landmarks, Landmark};
 use super::plots::{plan_buildings, road_reach, side_reach};
 use super::props::{plan_props, Prop};
 use super::roads::RoadClass;
@@ -69,6 +70,8 @@ pub struct TownWorld {
     pub bridges: Vec<Bridge>,
     /// Street furniture, trees and parked cars.
     pub props: Vec<Prop>,
+    /// The Aether Spire and, by the sea, a lighthouse.
+    pub landmarks: Vec<Landmark>,
     /// Ground heights, river beds and sea floor included.
     terrain: Grid<f32>,
 }
@@ -102,10 +105,12 @@ impl TownWorld {
             buildings: Vec::new(),
             bridges: Vec::new(),
             props: Vec::new(),
+            landmarks: Vec::new(),
             terrain,
         };
         out.roads = out.make_roads();
         out.bridges = out.make_bridges();
+        out.landmarks = plan_landmarks(&out);
         let mut buildings = Vec::new();
         for (pc, streets) in out.town.pieces.iter().zip(&out.pieces) {
             for site in plan_buildings(seed, &out.town, pc, streets) {
@@ -115,6 +120,10 @@ impl TownWorld {
                 let lo = hs.iter().copied().fold(f64::MAX, f64::min);
                 // A building never stands in the water.
                 if lo < WATER_LEVEL + 0.3 {
+                    continue;
+                }
+                // Nor on a landmark's plinth.
+                if out.landmarks.iter().any(|l| l.overlaps(&site, 1.5)) {
                     continue;
                 }
                 buildings.push(WorldBuilding {

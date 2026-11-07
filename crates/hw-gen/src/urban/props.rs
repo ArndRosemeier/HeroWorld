@@ -141,19 +141,19 @@ impl<'a> Walk<'a> {
     }
 }
 
-type Key = (i64, i64);
+pub(super) type Key = (i64, i64);
 const GRID: f64 = 32.0;
 
-fn key(p: DVec2) -> Key {
+pub(super) fn key(p: DVec2) -> Key {
     ((p.x / GRID).floor() as i64, (p.y / GRID).floor() as i64)
 }
 
-fn keys_around(p: DVec2, r: f64) -> impl Iterator<Item = Key> {
+pub(super) fn keys_around(p: DVec2, r: f64) -> impl Iterator<Item = Key> {
     let (a, b) = (key(p - DVec2::splat(r)), key(p + DVec2::splat(r)));
     (a.0..=b.0).flat_map(move |x| (a.1..=b.1).map(move |z| (x, z)))
 }
 
-fn seg_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
+pub(super) fn seg_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
     let ab = b - a;
     let t = ((p - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
     p.distance(a + ab * t)
@@ -248,7 +248,11 @@ impl<'a> Placer<'a> {
 
     /// Places `kind` if the spot is free; true if it did.
     fn put(&mut self, kind: PropKind, pos: DVec2, dir: DVec2, scale: f64, r: f64) -> bool {
-        if !self.dry(pos) || self.in_building(pos, r) || self.crowded(pos, r) {
+        if !self.dry(pos)
+            || self.in_building(pos, r)
+            || self.crowded(pos, r)
+            || self.w.landmarks.iter().any(|l| l.covers(pos, r))
+        {
             return false;
         }
         let lift = match kind {

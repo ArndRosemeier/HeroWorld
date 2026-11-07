@@ -21,6 +21,7 @@
 pub mod graph;
 pub mod growth;
 pub mod land;
+pub mod landmarks;
 pub mod lines;
 pub mod params;
 pub mod plots;

@@ -22,7 +22,7 @@
 //! Environment: `HW_SEED` (world seed, default 1); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad` or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse` or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -201,6 +201,28 @@ fn main() -> EngineResult<()> {
             let p = c + DVec2::new(-30.0, 30.0);
             FlyCamera::new((p.x as f32, h as f32 + 32.0, p.y as f32), 135.0, -42.0)
         }
+        "spire" | "lighthouse" => {
+            // Looking up at a landmark from across its plaza.
+            use hw_gen::urban::landmarks::LandmarkKind;
+            let kind = if view == "spire" {
+                LandmarkKind::AetherSpire
+            } else {
+                LandmarkKind::Lighthouse
+            };
+            let l = hw_client::landmarkview::nearest(&generated.world, kind, spawn);
+            let (c, base, h, face) = l.map_or((spawn, ground(spawn), 30.0, spawn_dir), |l| {
+                // The lighthouse faces the land: look at it from the sea.
+                let face = if view == "lighthouse" { -l.dir } else { l.dir };
+                (l.pos, l.base, l.height, face)
+            });
+            // From above the rooftops, the landmark's whole height in view.
+            let p = c + face * (h * 0.9 + 12.0) + face.perp() * h * 0.35;
+            let d = c - p;
+            let yaw = d.x.atan2(d.y).to_degrees() as f32;
+            let eye = ground(p).max(base) + h * 0.5 + 6.0;
+            let pitch = ((h * 0.4 - (eye - base)) / d.length()).atan().to_degrees() as f32;
+            FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
+        }
         "cutaway" => {
             let f = town.cut_focus;
             let h = ground(f) as f32;
@@ -312,6 +334,7 @@ fn main() -> EngineResult<()> {
                     props.count,
                     t.elapsed().as_secs_f64()
                 );
+                hw_client::landmarkview::LandmarkView::spawn(world, &generated.world)?;
             }
             version_corner(&frame.ui, &mut whats_new);
             {

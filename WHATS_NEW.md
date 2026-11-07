@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.013 (2026-11-08)
+
+- Every town now has its Aether Spire: a gleaming finned tower on a paved plaza near the old centre, ringed with glowing Aether coils and crowned with a shining orb.
+- Seaside towns have a red and white lighthouse on the shore.
+
 ## 0.012 (2026-11-07)
 
 - Multiplayer is much leaner: friends now only get told what changed near them, so ten players fit easily on a home connection, and a lost packet no longer loses a key press.

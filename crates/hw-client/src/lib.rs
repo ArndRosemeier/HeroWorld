@@ -3,6 +3,7 @@
 
 pub mod buildingmesh;
 pub mod citymesh;
+pub mod landmarkview;
 pub mod propview;
 pub mod townmesh;
 pub mod zfight;
