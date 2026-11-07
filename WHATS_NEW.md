@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.008 (2026-11-07)
+
+- Housekeeping only: the plan now says where music, sounds and pictures come from.
+
 ## 0.007 (2026-11-07)
 
 - Housekeeping only: nothing changes in the game. The plan of what comes next is in docs/MILESTONES.md.

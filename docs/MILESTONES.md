@@ -1,6 +1,6 @@
 # HeroWorld milestones
 
-As of 2026-11-07, game version 0.007. This plan turns the [design](DESIGN.md) into milestones
+As of 2026-11-07, game version 0.008. This plan turns the [design](DESIGN.md) into milestones
 up to the vertical slice (one city, two-player co-op) and sketches what comes after. Each
 milestone ends in something you can play or look at, gets its own version bumps and "What's
 new" lines, and says which other milestones can run at the same time.
@@ -156,8 +156,8 @@ Scale's start screen (rising title letters, the sunset city behind, the title th
   the creator.
 - Few, big, friendly buttons: Continue (your hero, your world), New hero, Play with friends
   (host or join by code), Settings, What's new, Quit. Small print: version and credits.
-- Title music (Arnd's theme, as in Scale) with a soft fade-in, playing on through loading;
-  playful sounds on hover and click.
+- Title music (a heroic golden-age theme made with OpenRouter, as Scale's was) with a soft
+  fade-in, playing on through loading; playful sounds on hover and click.
 - Loading the world behind the title, so Continue starts at once when the city is ready, with
   a progress bar in the same style.
 
@@ -269,6 +269,23 @@ Everything above, made to hold together for two friends on a weekend evening.
 - A soak test with bots, a crash reporter, and the first players' notes turned into fixes.
 
 **Done when:** Arnd and a friend play a whole evening from level 1 without a restart.
+
+## Sound, music and pictures
+
+OpenRouter is available for images, sound effects and music (Arnd's model preferences are in
+the `openrouter` skill). No text to speech: characters don't speak aloud; speech is text
+(speech bubbles, the wrist radio).
+
+- **Music:** the title theme (M4), then moods for the utopia by day and night, the dystopia,
+  fights, the colossus (M11). Each piece loops cleanly and follows the music volume.
+- **Sound effects** on top of Engine's built-in ones (explosions, crumbling, water, wind):
+  power sounds per theme (M7), hits and hit-stop (M6), UI clicks and whooshes (M4), the
+  wrist radio and Hero Signal (M9), taxis and cars (M10), robot servos and the walking tank (M11).
+- **Pictures:** concept art to agree a look before building it (the logo, the dystopia, the
+  Doctor's tower), power and origin icons, loading-screen art, emblem pieces for costumes.
+- Generated files go into `assets/` with a note of the prompt and model, so a sound can be
+  made again or changed later; large files are fetched like the packs, not committed, if
+  they outgrow the repo.
 
 ## After the slice
 
