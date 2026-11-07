@@ -5,13 +5,19 @@
 //!
 //! Controls: right mouse + move to look, WASD to fly, Space/E up, Ctrl/Q
 //! down, Shift fast. C toggles the cut-open view, F moves the cut-open area
-//! to where you look, Z/X lower and raise the cut floor.
+//! to where you look, Z/X lower and raise the cut floor. Your hero (the red
+//! figure) runs with I/J/K/L and jumps with U.
 //!
-//! Environment: `HW_SEED` (world seed, default 1); `HW_VIEW` = `overview`,
-//! `street` or `cutaway` picks the starting camera (handy with
-//! `ENGINE_SCREENSHOT`); `HW_CUT_LEVEL` the floor shown cut open.
+//! By default the server runs inside the game (single player). `HW_HOST=1`
+//! also opens it to friends on UDP port 7777; `HW_JOIN=host:port` joins
+//! someone else's world instead.
+//!
+//! Environment: `HW_SEED` (world seed, default 1); `HW_NAME`; `HW_VIEW` =
+//! `overview`, `street`, `cutaway` or `heroes` picks the starting camera
+//! (handy with `ENGINE_SCREENSHOT`); `HW_CUT_LEVEL` the floor shown cut open.
 
 mod citymesh;
+mod session;
 
 use citymesh::{add_building, ground_hit, ground_mesh, Look, MeshBuilder};
 use engine::prelude::*;
@@ -19,7 +25,8 @@ use glam::{DVec2, Vec3};
 use hw_core::Seed;
 use hw_gen::building::BuildingPlan;
 use hw_gen::city::{CityParams, CityPlan};
-use std::collections::BTreeSet;
+use session::Session;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Buildings within this distance of the focus are cut open.
 const CUT_RADIUS: f64 = 110.0;
@@ -134,6 +141,18 @@ fn main() -> EngineResult<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(1u64);
     let view = std::env::var("HW_VIEW").unwrap_or_else(|_| "overview".into());
+    let name = std::env::var("HW_NAME").unwrap_or_else(|_| "Hero".into());
+    let mut session = match std::env::var("HW_JOIN") {
+        Ok(addr) => Session::join(&addr, &name)
+            .map_err(|e| EngineError::InvalidValue(format!("cannot join {addr}: {e}")))?,
+        Err(_) => {
+            let host = std::env::var_os("HW_HOST").is_some();
+            Session::single(Seed(seed), &name, host)
+                .map_err(|e| EngineError::InvalidValue(format!("cannot open port: {e}")))?
+        }
+    };
+    // A joining player builds the city once the host has said which world it is.
+    let seed = session.wait_for_seed().unwrap_or(seed);
     let mut city = City::new(Seed(seed));
     if let Some(level) = std::env::var("HW_CUT_LEVEL")
         .ok()
@@ -147,6 +166,7 @@ fn main() -> EngineResult<()> {
     );
     let mut camera = match view.as_str() {
         "street" => FlyCamera::new((-60.0, 6.0, 140.0), 160.0, 8.0),
+        "heroes" => FlyCamera::new((-4.0, 6.0, 48.0), 160.0, -14.0),
         "cutaway" => {
             let f = city.cut_focus.as_vec2();
             FlyCamera::new((f.x - 55.0, 70.0, f.y + 55.0), 135.0, -45.0)
@@ -155,7 +175,8 @@ fn main() -> EngineResult<()> {
     }
     .with_speed(40.0);
     camera.fast = 8.0;
-    let mut sim = hw_sim::Sim::new();
+    let mut hero_entities: BTreeMap<hw_core::NetId, EntityId> = BTreeMap::new();
+    let mut tick_clock = 0.0f64;
 
     Engine::run("HeroWorld", move |world, frame| {
         if frame.first {
@@ -192,7 +213,44 @@ fn main() -> EngineResult<()> {
         }
         camera.update(world, frame);
         camera.position = camera.position.max(Vec3::new(f32::MIN, 1.8, f32::MIN));
-        sim.step();
+
+        // Fixed ticks for the game, however fast frames come.
+        let key = |k: Key| if frame.input.down(k) { 1.0f32 } else { 0.0 };
+        let input = hw_net::InputState {
+            move_x: key(Key::L) - key(Key::J),
+            move_z: key(Key::K) - key(Key::I),
+            jump: frame.input.down(Key::U),
+        };
+        tick_clock += frame.dt as f64;
+        let mut ticks = 0;
+        while tick_clock >= hw_sim::DT && ticks < 5 {
+            tick_clock -= hw_sim::DT;
+            ticks += 1;
+            session.tick(input);
+        }
+        if ticks == 5 {
+            tick_clock = 0.0;
+        }
+        // Show heroes where the server says they are (smoothing comes later).
+        let heroes = session.entities();
+        hero_entities.retain(|id, e| {
+            let keep = heroes.iter().any(|h| h.id == *id);
+            if !keep {
+                world.despawn(*e);
+            }
+            keep
+        });
+        for h in &heroes {
+            let place = Place::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32);
+            match hero_entities.get(&h.id) {
+                Some(&e) => world.set_place(e, place)?,
+                None => {
+                    let mine = session.my_hero() == Some(h.id);
+                    let e = world.place(citymesh::hero_mesh(mine), place)?;
+                    hero_entities.insert(h.id, e);
+                }
+            }
+        }
         Ok(())
     })
 }

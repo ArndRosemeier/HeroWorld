@@ -15,6 +15,8 @@ Both are snapshots of living design docs that are linked at the top of each file
 
 ```
 cargo run -p hw-client     # the game (single player, server built in)
+HW_HOST=1 cargo run -p hw-client                   # host for friends on UDP 7777
+HW_JOIN=192.168.1.20:7777 cargo run -p hw-client   # join a friend
 cargo run -p hw-sim --bin hw-headless
 scripts/check.sh           # what must pass before a push
 ```

@@ -533,3 +533,23 @@ fn on_segment(x: DVec2, p: DVec2, q: DVec2) -> bool {
 pub fn ground_hit(origin: Vec3, dir: Vec3) -> Option<Vec3> {
     (dir.y < -1e-4).then(|| origin + dir * (-origin.y / dir.y))
 }
+
+/// A stand-in figure for a hero (feet at the origin): red for yours, blue
+/// for friends.
+pub fn hero_mesh(mine: bool) -> Mesh {
+    let (body, head) = if mine {
+        (rgb(200, 40, 46), rgb(236, 196, 160))
+    } else {
+        (rgb(46, 92, 200), rgb(236, 196, 160))
+    };
+    let mut m = Mesh::new();
+    m.add_box((0.0, 0.45, 0.0), (0.36, 0.9, 0.3), rgb(40, 40, 60))
+        .expect("legs");
+    m.add_box((0.0, 1.2, 0.0), (0.56, 0.62, 0.32), body)
+        .expect("torso");
+    m.add_box((0.0, 1.66, 0.0), (0.26, 0.28, 0.26), head)
+        .expect("head");
+    m.add_box((0.0, 1.25, 0.2), (0.6, 0.5, 0.06), body)
+        .expect("cape");
+    m
+}

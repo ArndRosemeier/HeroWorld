@@ -14,8 +14,8 @@ file; when they change, re-export the snapshot here.
 | --- | --- | --- |
 | `hw-core` | planet coordinates (f64, planet-centred), seed hashing, IDs | std, glam |
 | `hw-gen` | plans as pure data: planet, region, city, building, interior | hw-core |
-| `hw-sim` | the server and the truth: entities, combat, destruction, saves (bevy_ecs); binary `hw-headless` | hw-core, hw-gen |
-| `hw-net` | protocol, UDP, deltas, host migration | hw-core |
+| `hw-sim` | the server and the truth: entities, combat, destruction, saves (bevy_ecs); `host::Host` wraps it with players and a socket; binary `hw-headless` | hw-core, hw-gen, hw-net |
+| `hw-net` | protocol, UDP sockets, client connection; later deltas and host migration | hw-core |
 | `hw-client` | Engine client: rendering, input, camera, UI, prediction; binary `heroworld` | all of the above, engine |
 
 ## Rules
@@ -43,7 +43,12 @@ file; when they change, re-export the snapshot here.
 ```
 scripts/check.sh        # cargo fmt --check, clippy -D warnings, cargo test --workspace
 scripts/screenshot.sh   # renders the client headless to screenshots/client.png
+cargo run -p hw-gen --example city_map -- 1 screenshots/city.svg   # a city plan as a map
 ```
+
+Playing together on one machine: `HW_HOST=1 cargo run -p hw-client` in one window,
+`HW_JOIN=127.0.0.1:7777 cargo run -p hw-client` in another (or `cargo run -p hw-sim --bin
+hw-headless` as the host). `crates/hw-sim/tests/join_over_udp.rs` tests the same.
 
 Run `check.sh` before every push. For client changes also take a screenshot and look at it.
 On Linux the client needs `libasound2-dev`, and headless screenshots need `xvfb`,

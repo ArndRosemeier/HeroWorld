@@ -1472,6 +1472,7 @@ dependencies = [
  "glam 0.33.12",
  "hw-core",
  "hw-gen",
+ "hw-net",
 ]
 
 [[package]]
