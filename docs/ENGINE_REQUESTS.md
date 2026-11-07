@@ -8,6 +8,28 @@ HeroWorld is a superhero sandbox in Rust on Engine: a procedurally generated, ro
 
 This list was checked against Engine `main` at commit 6191cf5 (animation blending and foot IK). Save and load, parent/child entities, prefabs, foot IK, f64 global positions and the floating origin already exist and are used as they are.
 
+## Status (2026-11-07)
+
+All ten are in Engine `main`, each with an example (listed in Engine's `run_examples.py`), tests and a README section.
+
+| # | Feature | Engine PR | API to start from | Example |
+| --- | --- | --- | --- | --- |
+| 1 | Physics without a renderer | [#49](https://github.com/ArndRosemeier/Engine/pull/49) | `engine::PhysicsWorld`, `BodyId` | tests |
+| 2 | Fixed tick with interpolation | [#51](https://github.com/ArndRosemeier/Engine/pull/51) | `World::set_sim_rate`, `Frame.sim`, `set_sim_place`, `sim::Headless` | `fixed_tick` |
+| 3 | Building destruction | [#52](https://github.com/ArndRosemeier/Engine/pull/52) | `engine::building` (`BuildingPlan`, `ElementBits`), `World::spawn_building`, `hit_building`, `apply_building_state` | `buildings` |
+| 4 | Ragdolls | [#53](https://github.com/ArndRosemeier/Engine/pull/53) | `World::knock_down`, `get_up`, `pick_character` | `ragdolls` |
+| 5 | Indoor visibility culling | [#54](https://github.com/ArndRosemeier/Engine/pull/54) | `engine::rooms`, rooms and gaps in `BuildingPlan` | `interiors` |
+| 6 | Reflections | [#55](https://github.com/ArndRosemeier/Engine/pull/55) | `ScreenSpaceReflections`, `World::add_reflection_probe` | `reflections` |
+| 7 | Decals | [#56](https://github.com/ArndRosemeier/Engine/pull/56) | `World::spawn_decal(Decal::new(..).on(entity))`, `set_decal_budget` | `decals` |
+| 8 | Colour grading and fog by zone | [#57](https://github.com/ArndRosemeier/Engine/pull/57) | `ColorGrade`, `World::add_fog_volume(FogVolume)`, `set_zone_transition` | `fog_volumes` |
+| 9 | Crowds | [#58](https://github.com/ArndRosemeier/Engine/pull/58) | `World::add_crowd(model, CrowdProfile)`, `add_crowd_agent`, `set_crowd_agent` | `crowds` |
+| 10 | Several moons | [#60](https://github.com/ArndRosemeier/Engine/pull/60) | `World::set_moons(vec![MoonSpec..])` | `moons` |
+
+Notes:
+
+- Crowds: far people use the character simplified to about 5% of its triangles (67.6k to 4.1k vertices for the Actors sample), or `CrowdProfile::far_model` with an export of Actors' "Crowd" level. The 60 fps target with 1,000 people has not been measured on a real GPU yet (the cloud machine renders in software).
+- Reflections: a little hatching shows at the bottom of curved chrome where screen-space rays run out; probes cover the rest.
+
 ## Priorities
 
 Build in this order. The first two unblock HeroWorld's server and networking, so they matter most.
