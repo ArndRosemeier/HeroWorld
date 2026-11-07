@@ -7,7 +7,7 @@ use hw_core::{NetId, Seed};
 use hw_net::{ConnState, Connection, EntityState, InputState, PlayerId};
 use hw_sim::host::Host;
 use hw_sim::predict::{Interpolator, Predictor};
-use hw_sim::{GeneratedCity, Sim};
+use hw_sim::{GeneratedTown, Sim};
 use std::time::{Duration, Instant};
 
 pub enum Session {
@@ -24,14 +24,14 @@ pub enum Session {
 }
 
 impl Session {
-    /// Single player in `city`; `open` also listens for friends.
+    /// Single player in `town`; `open` also listens for friends.
     pub fn single(
         seed: Seed,
-        city: &GeneratedCity,
+        town: &GeneratedTown,
         name: &str,
         open: bool,
     ) -> std::io::Result<Self> {
-        let mut host = Host::with_sim(Sim::for_city(seed, city));
+        let mut host = Host::with_sim(Sim::for_town(seed, town));
         if open {
             let addr = host.listen(("0.0.0.0", hw_net::DEFAULT_PORT))?;
             println!("Hosting on {addr}");
@@ -44,7 +44,7 @@ impl Session {
     }
 
     /// Connects to a host and waits (up to 5 s) for its welcome. Returns the
-    /// session, the host's world seed and its city's radius.
+    /// session, the host's world seed and its town's population.
     pub fn join(addr: &str, name: &str) -> std::io::Result<(Self, u64, f64)> {
         let mut conn = Connection::open(addr, name)?;
         let start = Instant::now();
@@ -53,10 +53,10 @@ impl Session {
             match &conn.state {
                 ConnState::Connected {
                     world_seed,
-                    city_radius,
+                    town_population,
                     ..
                 } => {
-                    let (seed, radius) = (*world_seed, *city_radius);
+                    let (seed, people) = (*world_seed, *town_population);
                     return Ok((
                         Self::Remote {
                             conn: Box::new(conn),
@@ -65,7 +65,7 @@ impl Session {
                             last_tick: 0,
                         },
                         seed,
-                        radius,
+                        people,
                     ));
                 }
                 ConnState::Rejected(reason) => {
@@ -79,10 +79,10 @@ impl Session {
         Err(std::io::Error::other("no answer from the host"))
     }
 
-    /// For a joined session: start predicting with the generated city.
-    pub fn attach_city(&mut self, city: &GeneratedCity) {
+    /// For a joined session: start predicting with the generated town.
+    pub fn attach_town(&mut self, town: &GeneratedTown) {
         if let Session::Remote { predictor, .. } = self {
-            *predictor = Some(Predictor::new(city.obstacles.clone()));
+            *predictor = Some(Predictor::new(town.obstacles.clone()));
         }
     }
 

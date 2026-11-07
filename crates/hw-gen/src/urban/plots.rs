@@ -43,7 +43,7 @@ struct Programme {
 }
 
 /// Half width plus pavement of a side street in this style.
-fn side_reach(style: StreetStyle) -> f64 {
+pub fn side_reach(style: StreetStyle) -> f64 {
     match style {
         StreetStyle::Lanes => 5.0,
         StreetStyle::Garden => 7.5,

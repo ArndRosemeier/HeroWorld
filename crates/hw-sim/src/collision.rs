@@ -6,8 +6,10 @@
 
 use glam::{DVec2, DVec3};
 use hw_gen::building::BuildingPlan;
+use hw_gen::building::BuildingSite;
 use hw_gen::city::CityPlan;
 use hw_gen::geom::Rect;
+use hw_gen::urban::world::{TownWorld, WATER_LEVEL};
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
@@ -52,19 +54,58 @@ impl Solid {
 /// something comes near ever get built, on the server and every client alike.
 #[derive(Debug)]
 struct Collider {
-    plan: Option<Arc<BuildingPlan>>,
+    /// The building's plan, made from its site on first use.
+    plan: OnceLock<Option<Arc<BuildingPlan>>>,
+    site: Option<BuildingSite>,
     base: f64,
+    /// Bottom of the plinth under a building on a slope.
+    plinth: Option<f64>,
     lo: DVec2,
     hi: DVec2,
     solids: OnceLock<Vec<Solid>>,
 }
 
 impl Collider {
+    fn plan(&self) -> Option<&Arc<BuildingPlan>> {
+        self.plan
+            .get_or_init(|| {
+                self.site
+                    .as_ref()
+                    .map(|s| Arc::new(BuildingPlan::generate(s)))
+            })
+            .as_ref()
+    }
+
     fn solids(&self) -> &[Solid] {
-        self.solids.get_or_init(|| match &self.plan {
-            Some(p) => building_solids(p, self.base),
+        self.solids.get_or_init(|| match self.plan() {
+            Some(p) => {
+                let mut out = building_solids(p, self.base);
+                if let Some(y0) = self.plinth {
+                    let s = &p.site;
+                    out.push(Solid {
+                        origin: s.origin,
+                        along: s.along,
+                        inward: s.inward,
+                        min: DVec2::ZERO,
+                        max: s.size,
+                        y0,
+                        y1: self.base,
+                    });
+                }
+                out
+            }
             None => Vec::new(),
         })
+    }
+}
+
+/// Ground height by position, for worlds with terrain.
+#[derive(Clone)]
+pub struct Terrain(pub Arc<dyn Fn(DVec2) -> f64 + Send + Sync>);
+
+impl std::fmt::Debug for Terrain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Terrain")
     }
 }
 
@@ -77,6 +118,9 @@ pub struct Obstacles {
     pub ground: f64,
     /// Rivers and sea: open ground there is the water surface.
     water: Option<Arc<WaterMap>>,
+    /// Hills and valleys (open ground is then the terrain, or the water
+    /// surface at `ground` where the terrain dips below it).
+    terrain: Option<Terrain>,
 }
 
 /// Where the open ground is water, and the bridges over it.
@@ -147,8 +191,10 @@ impl Obstacles {
         for (_, p) in city.buildings.iter().zip(plans) {
             let corners = p.site.corners();
             out.insert(Collider {
-                plan: Some(Arc::new(p.clone())),
+                plan: OnceLock::from(Some(Arc::new(p.clone()))),
+                site: None,
                 base,
+                plinth: None,
                 lo: corners
                     .iter()
                     .fold(DVec2::splat(f64::MAX), |a, c| a.min(*c)),
@@ -156,6 +202,49 @@ impl Obstacles {
                     .iter()
                     .fold(DVec2::splat(f64::MIN), |a, c| a.max(*c)),
                 solids: OnceLock::new(),
+            });
+        }
+        out
+    }
+
+    /// A town on its terrain: open ground follows `terrain` (water stands at
+    /// `water`), each building stands at its own base on a plinth, bridge
+    /// decks span the water. Building plans are made when first needed.
+    pub fn from_town(world: &TownWorld, terrain: Terrain) -> Self {
+        let mut out = Self::flat(WATER_LEVEL);
+        out.terrain = Some(terrain);
+        for b in &world.buildings {
+            let corners = b.site.corners();
+            out.insert(Collider {
+                plan: OnceLock::new(),
+                site: Some(b.site.clone()),
+                base: b.base,
+                plinth: (b.base - b.low > 0.05).then_some(b.low - 1.0),
+                lo: corners
+                    .iter()
+                    .fold(DVec2::splat(f64::MAX), |a, c| a.min(*c)),
+                hi: corners
+                    .iter()
+                    .fold(DVec2::splat(f64::MIN), |a, c| a.max(*c)),
+                solids: OnceLock::new(),
+            });
+        }
+        for br in &world.bridges {
+            let d = br.b - br.a;
+            let len = d.length();
+            if len < 1e-6 {
+                continue;
+            }
+            let along = d / len;
+            let inward = along.perp();
+            out.add(Solid {
+                origin: br.a - inward * br.half,
+                along,
+                inward,
+                min: DVec2::ZERO,
+                max: DVec2::new(len, br.half * 2.0),
+                y0: br.deck - 0.6,
+                y1: br.deck,
             });
         }
         out
@@ -171,8 +260,10 @@ impl Obstacles {
         let cell = OnceLock::new();
         let _ = cell.set(vec![solid]);
         self.insert(Collider {
-            plan: None,
+            plan: OnceLock::from(None),
+            site: None,
             base: 0.0,
+            plinth: None,
             lo,
             hi,
             solids: cell,
@@ -251,7 +342,7 @@ impl Obstacles {
         let q = DVec2::new(p.x, p.z);
         for i in self.near_colliders(q, 0.0) {
             let c = &self.colliders[i as usize];
-            let Some(plan) = &c.plan else { continue };
+            let Some(plan) = c.plan() else { continue };
             let s = &plan.site;
             let d = q - s.origin;
             let l = DVec2::new(d.dot(s.along), d.dot(s.inward));
@@ -279,12 +370,19 @@ impl Obstacles {
         None
     }
 
+    /// The plan of building `i` (as [`Inside::building`] counts), made on
+    /// first use, and the height it stands at.
+    pub fn building(&self, i: usize) -> Option<(Arc<BuildingPlan>, f64)> {
+        let c = self.colliders.get(i)?;
+        c.plan().map(|p| (p.clone(), c.base))
+    }
+
     /// Is `p` (feet) inside a lift shaft?
     pub fn in_lift(&self, p: DVec3) -> bool {
         let q = DVec2::new(p.x, p.z);
         self.near_colliders(q, 0.0).into_iter().any(|i| {
             let c = &self.colliders[i as usize];
-            let Some(plan) = &c.plan else { return false };
+            let Some(plan) = c.plan() else { return false };
             let Some(core) = plan.core else { return false };
             let s = &plan.site;
             let d = q - s.origin;
@@ -302,6 +400,9 @@ impl Obstacles {
     /// Height of the open ground at `p`: the water surface over rivers and
     /// the sea (bridges excepted).
     pub fn ground_at(&self, p: DVec2) -> f64 {
+        if let Some(t) = &self.terrain {
+            return (t.0)(p).max(self.ground);
+        }
         match &self.water {
             Some(w) if w.is_water(p) => hw_gen::water::WATER_LEVEL,
             _ => self.ground,

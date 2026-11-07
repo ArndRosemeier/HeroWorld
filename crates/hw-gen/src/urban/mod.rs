@@ -13,6 +13,8 @@
 //! 6. [`streets`]: side streets and blocks per piece, in the piece's style.
 //! 7. [`plots`]: buildings along the streets of each block.
 //!
+//! [`world`] puts it all on the ground for the game.
+//!
 //! The older [`crate::city`] generator stays in use until this one can
 //! replace it.
 
@@ -26,6 +28,7 @@ pub mod roads;
 pub mod streets;
 pub mod tensor;
 pub mod trace;
+pub mod world;
 
 pub use growth::{Centre, CentreKind, Era, Growth};
 pub use land::{Cover, Land};

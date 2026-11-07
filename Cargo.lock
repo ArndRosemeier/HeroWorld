@@ -925,7 +925,7 @@ dependencies = [
 [[package]]
 name = "engine"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Engine?branch=main#471913aedfb29d4ec3aec2545b6a006ffcb4e53d"
+source = "git+https://github.com/ArndRosemeier/Engine?branch=main#edcdd87b5a82c33166a5519353e5167b602cab19"
 dependencies = [
  "bytemuck",
  "egui",
@@ -935,6 +935,7 @@ dependencies = [
  "glam 0.33.12",
  "gltf",
  "image",
+ "libc",
  "meshopt",
  "noise",
  "pollster",
@@ -946,6 +947,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tiny-skia",
  "wgpu",
+ "windows-sys 0.59.0",
  "winit",
 ]
 

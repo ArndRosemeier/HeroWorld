@@ -61,8 +61,8 @@ pub enum ServerMsg {
         player: PlayerId,
         hero: NetId,
         world_seed: u64,
-        /// Size of the city (its radius in m): with the seed, the world.
-        city_radius: f64,
+        /// People in the town: with the seed, it makes the world.
+        town_population: f64,
         tick_hz: u16,
     },
     Reject {
@@ -162,14 +162,14 @@ impl ServerMsg {
                 player,
                 hero,
                 world_seed,
-                city_radius,
+                town_population,
                 tick_hz,
             } => {
                 header(&mut w, 1);
                 w.u16(player.0)
                     .u32(hero.0)
                     .u64(*world_seed)
-                    .f64(*city_radius)
+                    .f64(*town_population)
                     .u16(*tick_hz);
             }
             ServerMsg::Reject { reason } => {
@@ -207,7 +207,7 @@ impl ServerMsg {
                 player: PlayerId(r.u16()?),
                 hero: NetId(r.u32()?),
                 world_seed: r.u64()?,
-                city_radius: r.f64()?,
+                town_population: r.f64()?,
                 tick_hz: r.u16()?,
             },
             2 => ServerMsg::Reject { reason: r.str()? },
@@ -303,7 +303,7 @@ mod tests {
                 player: PlayerId(2),
                 hero: NetId(8),
                 world_seed: 42,
-                city_radius: 1234.5,
+                town_population: 1234.5,
                 tick_hz: 30,
             },
             ServerMsg::Reject {

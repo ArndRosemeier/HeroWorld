@@ -15,6 +15,8 @@ use glam::{DVec2, DVec3};
 use hw_core::{NetId, NetIdAllocator, Seed};
 use hw_gen::building::BuildingPlan;
 use hw_gen::city::{CityParams, CityPlan};
+use hw_gen::urban::world::TownWorld;
+use hw_gen::urban::TownParams;
 use hw_net::{EntityState, InputState, PlayerId};
 use std::sync::Arc;
 
@@ -28,6 +30,8 @@ pub const DT: f64 = 1.0 / TICK_HZ as f64;
 pub const GROUND_Y: f64 = 0.26;
 /// Where buildings stand (top of the block ground).
 pub const BUILDING_BASE: f64 = 0.22;
+/// People in the town when nobody says otherwise.
+pub const DEFAULT_POPULATION: f64 = 40_000.0;
 /// A normal person's top running speed (m/s) and acceleration.
 pub const RUN_SPEED: f64 = 7.0;
 pub const RUN_ACCEL: f64 = 40.0;
@@ -126,6 +130,31 @@ impl GeneratedCity {
     }
 }
 
+/// The town every machine generates from the seed and its size, with its
+/// collision.
+pub struct GeneratedTown {
+    pub world: Arc<TownWorld>,
+    pub obstacles: Arc<Obstacles>,
+}
+
+impl GeneratedTown {
+    /// The town of `seed` with about `population` people.
+    pub fn generate(seed: Seed, population: f64) -> Self {
+        let world = Arc::new(TownWorld::generate(
+            seed,
+            TownParams::sample(seed, population),
+        ));
+        let w = world.clone();
+        let terrain = collision::Terrain(Arc::new(move |p| w.ground(p)));
+        let obstacles = Arc::new(Obstacles::from_town(&world, terrain));
+        Self { world, obstacles }
+    }
+
+    pub fn population(&self) -> f64 {
+        self.world.town.params.population
+    }
+}
+
 /// One tick of a hero's movement. The server and client prediction both run
 /// exactly this, so they agree.
 pub fn step_hero(body: &mut Body, input: InputState, solids: &Obstacles) {
@@ -208,7 +237,7 @@ pub struct Sim {
     pub world: World,
     pub seed: Seed,
     /// Size of the city: sent to joining players with the seed.
-    pub city_radius: f64,
+    pub town_population: f64,
     pub tick: u64,
     spawn: (DVec2, DVec2),
     schedule: Schedule,
@@ -224,7 +253,14 @@ impl Sim {
     pub fn for_city(seed: Seed, city: &GeneratedCity) -> Self {
         let mut sim = Self::with_solids(seed, city.obstacles.clone());
         sim.spawn = city.spawn_line();
-        sim.city_radius = city.plan.params.radius;
+        sim
+    }
+
+    /// A simulation of a town already generated (the client shares its copy).
+    pub fn for_town(seed: Seed, town: &GeneratedTown) -> Self {
+        let mut sim = Self::with_solids(seed, town.obstacles.clone());
+        sim.spawn = town.world.spawn_line();
+        sim.town_population = town.population();
         sim
     }
 
@@ -238,7 +274,7 @@ impl Sim {
         Self {
             world,
             seed,
-            city_radius: CityParams::default().radius,
+            town_population: DEFAULT_POPULATION,
             tick: 0,
             spawn: (DVec2::ZERO, DVec2::X),
             schedule,
@@ -254,7 +290,8 @@ impl Sim {
         let (mid, dir) = self.spawn;
         let offset = (k as f64 - 1.0) * 2.5 * if k.is_multiple_of(2) { 1.0 } else { -1.0 };
         let p = mid + dir * offset;
-        DVec3::new(p.x, GROUND_Y + 0.5, p.y)
+        let ground = self.world.resource::<Solids>().0.ground_at(p).max(GROUND_Y);
+        DVec3::new(p.x, ground + 0.5, p.y)
     }
 
     /// Advance the simulation by one fixed tick.
@@ -402,6 +439,39 @@ mod tests {
         // Two seconds at up to 7 m/s, after a short run-up.
         assert!(pos.x > 11.0 && pos.x < 14.0, "x = {}", pos.x);
         assert!(pos.z.abs() < 1e-9);
+    }
+
+    #[test]
+    fn heroes_stand_and_run_on_the_town_hills() {
+        let town = GeneratedTown::generate(Seed(10), 3000.0);
+        let mut sim = Sim::for_town(Seed(10), &town);
+        let p = PlayerId(1);
+        let id = sim.spawn_hero(p, sim.spawn_point(1));
+        for _ in 0..TICK_HZ {
+            sim.step();
+        }
+        let ground = |q: DVec3| town.world.ground(DVec2::new(q.x, q.z));
+        let at = sim.position(id).unwrap();
+        assert!(sim.body(id).unwrap().grounded);
+        assert!(
+            (at.y - ground(at)).abs() < 0.3,
+            "{} vs {}",
+            at.y,
+            ground(at)
+        );
+        // Run for a few seconds: never sink into the hill or float off it.
+        sim.set_input(
+            p,
+            InputState {
+                move_x: 1.0,
+                ..Default::default()
+            },
+        );
+        for _ in 0..TICK_HZ * 4 {
+            sim.step();
+            let q = sim.position(id).unwrap();
+            assert!(q.y >= ground(q).max(0.0) - 0.05, "sank at {q}");
+        }
     }
 
     #[test]

@@ -1,7 +1,9 @@
 //! HeroWorld: the game client, with the server built in for single player.
 //!
-//! Milestone 0: fly over a generated city. Buildings around a focus point
-//! can be cut open to show their rooms.
+//! The world is one generated town on its hills, rivers and coast: Engine
+//! streams the ground and water, the town's roads and buildings are built
+//! in cells around the camera. Buildings around a focus point can be cut
+//! open to show their rooms.
 //!
 //! Controls: you play your hero in third person. Hold the right mouse button
 //! (or press P to lock the pointer) and move the mouse to look, WASD to run,
@@ -17,10 +19,10 @@
 //! also opens it to friends on UDP port 7777; `HW_JOIN=host:port` joins
 //! someone else's world instead.
 //!
-//! Environment: `HW_SEED` (world seed, default 1); `HW_CITY_SIZE` (the
-//! city's radius in m: ~100 a hamlet, 1300 the default, 5000 a megalopolis;
-//! joining players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street` or `cutaway` picks the starting
+//! Environment: `HW_SEED` (world seed, default 1); `HW_POP` (people in the
+//! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
+//! players get the host's); `HW_NAME`; `HW_VIEW` =
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river` or `cutaway` picks the starting
 //! camera (handy with `ENGINE_SCREENSHOT`); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
 //! `ENGINE_ZFIGHT=1` marks z-fighting with magenta posts (the `zfight` tool
@@ -29,191 +31,20 @@
 mod session;
 
 use engine::prelude::*;
-use engine::texture::WaterMaterialDesc;
-use engine::world::SurfaceMaterialRef;
+use engine::stream::{StreamSettings, WorldStream};
 use glam::{DVec2, Vec3};
-use hw_client::buildingmesh::Detail;
-use hw_client::citymesh::WATER_DEPTH_SCALE;
-use hw_client::citymesh::{self, add_building, ground_hit, ground_mesh, Look, MeshBuilder};
+use hw_client::citymesh;
+use hw_client::townmesh::{TownGround, TownView};
 use hw_core::Seed;
-use hw_gen::building::BuildingPlan;
-use hw_gen::city::{CityParams, CityPlan};
 use hw_sim::collision::{Obstacles, BODY_HEIGHT};
-use hw_sim::GeneratedCity;
+use hw_sim::GeneratedTown;
 use session::Session;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Faces per city mesh, well inside a GPU buffer.
-const MESH_FACES: usize = 250_000;
-
-/// Buildings within about this distance of the camera get full detail.
-const NEAR_DETAIL: f64 = 220.0;
-
-/// Buildings within this distance of the focus are cut open.
-const CUT_RADIUS: f64 = 110.0;
-
-struct City {
-    plan: CityPlan,
-    /// One plan per building site, same order as `plan.buildings`.
-    buildings: Vec<BuildingPlan>,
-    /// Buildings per boulevard cell.
-    by_cell: Vec<Vec<usize>>,
-    /// Engine entity per cell.
-    cell_entities: Vec<Vec<EntityId>>,
-    cut_on: bool,
-    cut_focus: DVec2,
-    cut_level: u32,
-    /// The building and floor our hero is in: drawn open at that floor.
-    inside: Option<hw_sim::collision::Inside>,
-    /// Centre and radius of each cell's buildings.
-    cell_bounds: Vec<(DVec2, f64)>,
-    /// Cells drawn in near detail.
-    near: BTreeSet<usize>,
-}
-
-impl City {
-    fn new(generated: &GeneratedCity) -> Self {
-        let plan = generated.plan.clone();
-        let buildings = generated.buildings.clone();
-        let mut by_cell = vec![Vec::new(); plan.cells.len()];
-        for (i, (lot, _)) in plan.buildings.iter().enumerate() {
-            by_cell[plan.blocks[plan.lots[*lot].block].cell].push(i);
-        }
-        let cells = plan.cells.len();
-        Self {
-            plan,
-            buildings,
-            by_cell,
-            cell_entities: vec![Vec::new(); cells],
-            cut_on: false,
-            cut_focus: DVec2::ZERO,
-            cut_level: 1,
-            inside: None,
-            cell_bounds: Vec::new(),
-            near: BTreeSet::new(),
-        }
-        .with_cell_bounds()
-        .focused_on_centre()
-    }
-
-    fn with_cell_bounds(mut self) -> Self {
-        self.cell_bounds = (0..self.by_cell.len())
-            .map(|c| {
-                let pts: Vec<DVec2> = self.by_cell[c].iter().map(|&i| self.centre_of(i)).collect();
-                if pts.is_empty() {
-                    return (DVec2::ZERO, 0.0);
-                }
-                let centre = pts.iter().sum::<DVec2>() / pts.len() as f64;
-                let r = pts.iter().map(|p| p.distance(centre)).fold(0.0, f64::max) + 40.0;
-                (centre, r)
-            })
-            .collect();
-        self
-    }
-
-    /// Cells that should be drawn in near detail from `eye`.
-    fn near_cells(&self, eye: DVec2) -> BTreeSet<usize> {
-        (0..self.cell_bounds.len())
-            .filter(|&c| {
-                let (centre, r) = self.cell_bounds[c];
-                !self.by_cell[c].is_empty() && centre.distance(eye) < NEAR_DETAIL + r
-            })
-            .collect()
-    }
-
-    /// Starts with the cut-open area on the tallest building near the centre.
-    fn focused_on_centre(mut self) -> Self {
-        let best = (0..self.buildings.len())
-            .filter(|&i| self.centre_of(i).length() < 250.0)
-            .max_by(|&a, &b| {
-                self.buildings[a]
-                    .floors
-                    .len()
-                    .cmp(&self.buildings[b].floors.len())
-            })
-            .or_else(|| {
-                (0..self.buildings.len()).min_by(|&a, &b| {
-                    self.centre_of(a)
-                        .length()
-                        .total_cmp(&self.centre_of(b).length())
-                })
-            });
-        if let Some(i) = best {
-            self.cut_focus = self.centre_of(i);
-        }
-        self
-    }
-
-    fn centre_of(&self, building: usize) -> DVec2 {
-        let site = &self.buildings[building].site;
-        site.origin + site.along * site.size.x * 0.5 + site.inward * site.size.y * 0.5
-    }
-
-    fn look_of(&self, building: usize) -> Look {
-        if let Some(i) = self.inside {
-            if i.building == building {
-                return Look::Cut { level: i.level };
-            }
-        }
-        if self.cut_on && self.centre_of(building).distance(self.cut_focus) < CUT_RADIUS {
-            Look::Cut {
-                level: self.cut_level,
-            }
-        } else {
-            Look::Shell
-        }
-    }
-
-    fn cells_near(&self, p: DVec2) -> BTreeSet<usize> {
-        (0..self.plan.cells.len())
-            .filter(|&c| {
-                self.by_cell[c].iter().any(|&b| {
-                    let s = &self.buildings[b].site;
-                    s.origin.distance(p) < CUT_RADIUS + 120.0
-                })
-            })
-            .collect()
-    }
-
-    fn cell_of(&self, building: usize) -> usize {
-        let lot = self.plan.buildings[building].0;
-        self.plan.blocks[self.plan.lots[lot].block].cell
-    }
-
-    fn build_cell(&mut self, world: &mut World, cell: usize) {
-        for e in self.cell_entities[cell].drain(..) {
-            world.despawn(e);
-        }
-        let detail = if self.near.contains(&cell) {
-            Detail::Near
-        } else {
-            Detail::Far
-        };
-        // A dense downtown cell can outgrow a GPU buffer (256 MB by default),
-        // so a cell becomes several meshes of at most MESH_FACES faces each.
-        let mut b = MeshBuilder::new();
-        let buildings = self.by_cell[cell].clone();
-        for (n, &i) in buildings.iter().enumerate() {
-            let lot = self.plan.buildings[i].0;
-            let kind =
-                self.plan.districts[self.plan.blocks[self.plan.lots[lot].block].district].kind;
-            add_building(&mut b, &self.buildings[i], kind, self.look_of(i), detail);
-            if b.face_count() > MESH_FACES || n + 1 == buildings.len() {
-                let full = std::mem::take(&mut b);
-                self.spawn_part(world, cell, full);
-            }
-        }
-    }
-
-    fn spawn_part(&mut self, world: &mut World, cell: usize, b: MeshBuilder) {
-        if b.is_empty() {
-            return;
-        }
-        let id = world.spawn(b.finish());
-        world.set_name(id, format!("cell {cell}"));
-        self.cell_entities[cell].push(id);
-    }
-}
+/// Milliseconds per frame for building town cells as you move.
+const BUILD_BUDGET_MS: f64 = 6.0;
+/// Cells within this distance of the cut focus are redrawn when it changes.
+const CUT_REACH: f64 = hw_client::townmesh::CUT_RADIUS + 120.0;
 
 /// The camera that follows the hero: orbit angles and distance.
 struct HeroCamera {
@@ -275,20 +106,20 @@ fn main() -> EngineResult<()> {
     let io = |e: std::io::Error| EngineError::InvalidValue(e.to_string());
 
     // A joining player learns the world seed from the host first.
+    let t0 = std::time::Instant::now();
     let (mut session, generated) = match std::env::var("HW_JOIN") {
         Ok(addr) => {
-            let (mut session, seed, radius) = Session::join(&addr, &name).map_err(io)?;
-            let generated =
-                GeneratedCity::generate_with(Seed(seed), &CityParams::with_radius(radius));
-            session.attach_city(&generated);
+            let (mut session, seed, people) = Session::join(&addr, &name).map_err(io)?;
+            let generated = GeneratedTown::generate(Seed(seed), people);
+            session.attach_town(&generated);
             (session, generated)
         }
         Err(_) => {
             let seed = Seed(env_num("HW_SEED").unwrap_or(1));
-            let params = env_num("HW_CITY_SIZE")
-                .map(|r| CityParams::with_radius(r as f64))
-                .unwrap_or_default();
-            let generated = GeneratedCity::generate_with(seed, &params);
+            let people = env_num("HW_POP")
+                .map(|p| p as f64)
+                .unwrap_or(hw_sim::DEFAULT_POPULATION);
+            let generated = GeneratedTown::generate(seed, people);
             let open = std::env::var_os("HW_HOST").is_some();
             (
                 Session::single(seed, &generated, &name, open).map_err(io)?,
@@ -297,54 +128,95 @@ fn main() -> EngineResult<()> {
         }
     };
     let solids = generated.obstacles.clone();
-    let mut city = City::new(&generated);
+    let mut town = TownView::new(generated.world.clone());
+    let ground = {
+        let w = generated.world.clone();
+        move |p: DVec2| w.ground(p).max(hw_gen::urban::world::WATER_LEVEL)
+    };
     if view == "cutaway" {
-        city.cut_on = true;
+        town.cut_on = true;
     }
     if let Some(level) = env_num("HW_CUT_LEVEL") {
-        city.cut_level = level as u32;
+        town.cut_level = level as u32;
     }
     println!(
-        "HeroWorld: {} buildings. Right mouse to look, WASD to run, Space to jump, V to fly, Tab for the free camera.",
-        city.buildings.len()
+        "HeroWorld {}: a town of {:.0} people, {} buildings, planned in {:.1} s. Right mouse to look, WASD to run, Space to jump, V to fly, Tab for the free camera.",
+        hw_core::version(),
+        generated.population(),
+        town.building_count(),
+        t0.elapsed().as_secs_f64()
     );
+    let (spawn, spawn_dir) = generated.world.spawn_line();
     let mut hero_cam_yaw = 30.0f32;
     let mut fly = match view.as_str() {
-        "street" => FlyCamera::new((-60.0, 6.0, 140.0), 160.0, 8.0),
-        "cutaway" => {
-            let f = city.cut_focus.as_vec2();
-            FlyCamera::new((f.x - 55.0, 70.0, f.y + 55.0), 135.0, -45.0)
+        "street" => {
+            let p = spawn - spawn_dir * 8.0;
+            let yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
+            FlyCamera::new((p.x as f32, ground(p) as f32 + 6.0, p.y as f32), yaw, 8.0)
         }
-        _ => FlyCamera::new((-900.0, 700.0, 900.0), 135.0, -30.0),
+        "cutaway" => {
+            let f = town.cut_focus;
+            let h = ground(f) as f32;
+            FlyCamera::new(
+                (f.x as f32 - 55.0, h + 70.0, f.y as f32 + 55.0),
+                135.0,
+                -45.0,
+            )
+        }
+        "river" => {
+            // Looking at the first river near the town (for screenshots).
+            let r = generated.world.town.land.rivers.first().map_or(spawn, |r| {
+                *r.pts
+                    .iter()
+                    .min_by(|a, b| a.distance(spawn).total_cmp(&b.distance(spawn)))
+                    .expect("river has points")
+            });
+            let p = r + DVec2::new(-120.0, 120.0);
+            FlyCamera::new(
+                (p.x as f32, ground(r) as f32 + 90.0, p.y as f32),
+                135.0,
+                -30.0,
+            )
+        }
+        _ => {
+            let p = spawn + DVec2::new(-900.0, 900.0);
+            FlyCamera::new(
+                (p.x as f32, ground(spawn) as f32 + 700.0, p.y as f32),
+                135.0,
+                -30.0,
+            )
+        }
     }
     .with_speed(40.0);
     fly.fast = 8.0;
     let mut flying = !matches!(view.as_str(), "hero" | "inside" | "sky");
     if view == "inside" {
-        // Start in the lobby of the tallest tower near the centre.
-        let tower = (0..city.buildings.len())
-            .filter(|&i| city.centre_of(i).length() < 300.0 && city.buildings[i].core.is_some())
-            .max_by_key(|&i| city.buildings[i].floors.len());
+        // Start in the lobby of the tallest building near the start.
+        let tower = town.tallest_near(spawn, 400.0);
         if let Some(i) = tower {
-            let plan = &city.buildings[i];
-            let lobby = plan.floors[0]
-                .rooms
-                .iter()
-                .find(|r| r.kind == hw_gen::building::RoomKind::Lobby)
-                .map(|r| r.rect.center())
-                .unwrap_or(plan.floors[0].outline.center());
-            let p = plan
-                .site
-                .to_city(glam::DVec3::new(lobby.x, hw_sim::GROUND_Y + 0.1, lobby.y));
-            session.teleport(p);
-            let along = plan.site.inward;
-            // Look into the building from behind the hero.
-            hero_cam_yaw = along.x.atan2(along.y).to_degrees() as f32;
+            let plan = town.plan(i);
+            if plan.core.is_some() {
+                let base = generated.world.buildings[i].base;
+                let lobby = plan.floors[0]
+                    .rooms
+                    .iter()
+                    .find(|r| r.kind == hw_gen::building::RoomKind::Lobby)
+                    .map(|r| r.rect.center())
+                    .unwrap_or(plan.floors[0].outline.center());
+                let p = plan
+                    .site
+                    .to_city(glam::DVec3::new(lobby.x, base + 0.1, lobby.y));
+                session.teleport(p);
+                let along = plan.site.inward;
+                // Look into the building from behind the hero.
+                hero_cam_yaw = along.x.atan2(along.y).to_degrees() as f32;
+            }
         }
     }
     if view == "sky" {
-        // Hovering above the city centre (with HW_FLY or V held on).
-        session.teleport(glam::DVec3::new(-40.0, 260.0, 40.0));
+        // Hovering above the town centre (with HW_FLY or V held on).
+        let p = spawn + DVec2::new(-40.0, 40.0);
+        session.teleport(glam::DVec3::new(p.x, ground(p) + 260.0, p.y));
         hero_cam_yaw = 135.0;
     }
     let mut hero_cam = HeroCamera {
@@ -370,26 +242,19 @@ fn main() -> EngineResult<()> {
             if frame.first {
                 world.set_view_distance(6000.0)?;
                 world.set_physical_sky(Some(PhysicalSky::at_hour(10.5)));
-                let water = world.create_water_material(WaterMaterialDesc {
-                    shallow: rgb(70, 140, 150),
-                    deep: rgb(16, 52, 76),
-                    depth_scale_m: WATER_DEPTH_SCALE as f32,
-                    wave_length_m: 7.0,
-                    wave_steepness: 0.3,
-                    wave_speed_m_s: 0.8,
-                    foam_width_m: 0.0,
-                    glint: 1.0,
-                })?;
-                for (name, mesh) in ground_mesh(&city.plan) {
-                    let id = world.spawn(mesh);
-                    if name == "water" {
-                        world.set_entity_material(id, Some(SurfaceMaterialRef::Water(water)))?;
-                    }
-                    world.set_name(id, name);
-                }
-                for c in 0..city.plan.cells.len() {
-                    city.build_cell(world, c);
-                }
+                // A wide, coarse water window, so rivers and lakes show
+                // across the town and not only around the camera.
+                let settings = StreamSettings {
+                    water_window: 1536.0,
+                    water_cell: 4.0,
+                    ..StreamSettings::default()
+                };
+                let stream = WorldStream::new(TownGround(generated.world.clone()), settings)
+                    .with_terrain(|t| t.with_beach(1.8));
+                world.set_stream(Some(stream))?;
+                world.prepare_stream(20.0);
+                let eye = world.camera().eye();
+                town.build_all(world, DVec2::new(eye.x as f64, eye.z as f64));
             }
             version_corner(&frame.ui, &mut whats_new);
             let input = &frame.input;
@@ -407,32 +272,30 @@ fn main() -> EngineResult<()> {
             }
 
             // Cut-open view.
-            let mut changed: BTreeSet<usize> = BTreeSet::new();
+            let mut changed = BTreeSet::new();
             if input.pressed(Key::C) {
-                city.cut_on = !city.cut_on;
-                changed.extend(city.cells_near(city.cut_focus));
+                town.cut_on = !town.cut_on;
+                changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
             }
             let look_from = world.camera().eye();
             let look_dir = (world.camera().target() - look_from).normalize_or_zero();
             if input.pressed(Key::F) {
-                if let Some(hit) = ground_hit(look_from, look_dir) {
-                    changed.extend(city.cells_near(city.cut_focus));
-                    city.cut_focus = DVec2::new(hit.x as f64, hit.z as f64);
-                    city.cut_on = true;
-                    changed.extend(city.cells_near(city.cut_focus));
+                if let Some(hit) = town.ground_hit(look_from, look_dir) {
+                    changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
+                    town.cut_focus = hit;
+                    town.cut_on = true;
+                    changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
                 }
             }
-            if input.pressed(Key::Z) && city.cut_level > 0 {
-                city.cut_level -= 1;
-                changed.extend(city.cells_near(city.cut_focus));
+            if input.pressed(Key::Z) && town.cut_level > 0 {
+                town.cut_level -= 1;
+                changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
             }
-            if input.pressed(Key::X) && city.cut_level < 40 {
-                city.cut_level += 1;
-                changed.extend(city.cells_near(city.cut_focus));
+            if input.pressed(Key::X) && town.cut_level < 40 {
+                town.cut_level += 1;
+                changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
             }
-            for c in changed {
-                city.build_cell(world, c);
-            }
+            town.rebuild(world, changed);
 
             // Hero input, relative to where the camera faces.
             let mut hero_input = hw_net::InputState::default();
@@ -507,37 +370,35 @@ fn main() -> EngineResult<()> {
             // Camera.
             let me = session.my_position(&heroes);
             let inside = me.and_then(|p| solids.inside(p));
-            if inside != city.inside {
-                let mut cells = BTreeSet::new();
-                for i in [city.inside, inside].into_iter().flatten() {
-                    cells.insert(city.cell_of(i.building));
-                }
-                city.inside = inside;
-                for c in cells {
-                    city.build_cell(world, c);
-                }
+            if inside != town.inside {
+                let cells: BTreeSet<_> = [town.inside, inside]
+                    .into_iter()
+                    .flatten()
+                    .map(|i| town.cell_of_building(i.building))
+                    .collect();
+                town.inside = inside;
+                town.rebuild(world, cells);
             }
-            let open_above = inside.map(|i| {
-                let f = &city.buildings[i.building].floors[i.level as usize];
-                hw_sim::BUILDING_BASE + f.elevation + 2.6
+            let open_above = inside.and_then(|i| {
+                let (plan, base) = solids.building(i.building)?;
+                let f = &plan.floors[i.level as usize];
+                Some(base + f.elevation + 2.6)
             });
             match (flying, me) {
                 (false, Some(p)) => hero_cam.update(world, frame, p.as_vec3(), &solids, open_above),
                 _ => {
                     fly.update(world, frame);
-                    fly.position = fly.position.max(Vec3::new(f32::MIN, 1.8, f32::MIN));
+                    let q = DVec2::new(fly.position.x as f64, fly.position.z as f64);
+                    fly.position.y = fly.position.y.max(ground(q) as f32 + 1.8);
                 }
             }
-            // Full detail around the camera.
+            // Roads and buildings around the camera, full detail close by.
             let eye = world.camera().eye();
-            let near = city.near_cells(DVec2::new(eye.x as f64, eye.z as f64));
-            if near != city.near {
-                let changed: Vec<usize> = near.symmetric_difference(&city.near).copied().collect();
-                city.near = near;
-                for c in changed {
-                    city.build_cell(world, c);
-                }
-            }
+            town.update(
+                world,
+                DVec2::new(eye.x as f64, eye.z as f64),
+                BUILD_BUDGET_MS,
+            );
             Ok(())
         },
     )
@@ -549,15 +410,22 @@ fn version_corner(ui: &engine::ui::UiFrame, open: &mut bool) {
     egui::Area::new(egui::Id::new("version"))
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
         .show(ui.ctx(), |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new(format!("HeroWorld {}", hw_core::version()))
-                        .color(egui::Color32::WHITE),
-                );
-                if ui.button("What's new").clicked() {
-                    *open = true;
-                }
-            });
+            // A dark backing keeps it readable against a bright sky.
+            egui::Frame::new()
+                .fill(egui::Color32::from_black_alpha(150))
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(8, 4))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("HeroWorld {}", hw_core::version()))
+                                .color(egui::Color32::WHITE),
+                        );
+                        if ui.button("What's new").clicked() {
+                            *open = true;
+                        }
+                    });
+                });
         });
     ui.modal("What's new", open, |panel, open| {
         egui::ScrollArea::vertical()
