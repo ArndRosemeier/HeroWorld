@@ -436,12 +436,24 @@ fn main() -> EngineResult<()> {
                     *facing = vel.x.atan2(vel.z).to_degrees();
                 }
                 let facing = *facing;
-                let place = Place::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32)
+                let mut place = Place::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32)
                     .with_yaw_deg(facing);
+                if h.kind == hw_net::EntityKind::Crate {
+                    // Physics bodies turn every way; Place turns yaw, pitch, roll in that order.
+                    let (y, x, z) = glam::Quat::from_array(h.rot).to_euler(glam::EulerRot::YXZ);
+                    place = place
+                        .with_yaw_deg(y.to_degrees())
+                        .with_pitch_deg(x.to_degrees())
+                        .with_roll_deg(z.to_degrees());
+                }
                 match hero_entities.get(&h.id) {
                     Some(&e) => world.set_place(e, place)?,
                     None => {
-                        let e = world.place(citymesh::hero_mesh(mine == Some(h.id)), place)?;
+                        let mesh = match h.kind {
+                            hw_net::EntityKind::Crate => citymesh::crate_mesh(),
+                            hw_net::EntityKind::Hero => citymesh::hero_mesh(mine == Some(h.id)),
+                        };
+                        let e = world.place(mesh, place)?;
                         hero_entities.insert(h.id, e);
                     }
                 }

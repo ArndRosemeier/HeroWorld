@@ -15,8 +15,8 @@ file; when they change, re-export the snapshot here.
 | --- | --- | --- |
 | `hw-core` | planet coordinates (f64, planet-centred), seed hashing, IDs | std, glam |
 | `hw-gen` | plans as pure data: planet, region, city, building, interior | hw-core |
-| `hw-sim` | the server and the truth: entities, combat, destruction, saves (bevy_ecs); `host::Host` wraps it with players and a socket; binary `hw-headless` | hw-core, hw-gen, hw-net |
-| `hw-net` | protocol, UDP sockets, client connection; later deltas and host migration | hw-core |
+| `hw-sim` | the server and the truth: entities, bubbles, physics, combat, destruction, saves (bevy_ecs); `host::Host` wraps it with players, interest and a socket; binary `hw-headless` | hw-core, hw-gen, hw-net, engine (`engine::physics::PhysicsWorld` only) |
+| `hw-net` | protocol, UDP sockets and the GameHub relay, client connection, reliable messages, replication (per-client acks, change-only updates); later host migration | hw-core |
 | `hw-client` | Engine client: rendering, input, camera, UI, prediction; binary `heroworld` | all of the above, engine |
 
 ## Rules
@@ -26,9 +26,10 @@ file; when they change, re-export the snapshot here.
   `## <version> (<date>)` section at the top of `WHATS_NEW.md` with a few plain lines for
   players. The game shows both (top right, "What's new"); a test checks they agree. If a
   rebase brings in someone else's bump, take the next number.
-- **Engine only in `hw-client`.** Generation and simulation never import Engine, so the server
-  runs headless and tests run anywhere. Server physics will come from Engine's
-  physics-without-renderer once it exists (ENGINE_REQUESTS.md #1).
+- **Engine's renderer only in `hw-client`.** Generation never imports Engine; the server uses
+  only Engine's headless `PhysicsWorld` (`hw-sim/src/physics.rs`), never `World`, windows or
+  the GPU, so it runs without a display. (Engine is one crate, so on Linux every crate that
+  links it needs `libasound2-dev`.)
 - **The server is the truth.** Game state lives in `hw-sim`; the client mirrors it into Engine
   and predicts only the local hero. No gameplay logic in client rendering code.
 - **Same seed, same world.** Generation is deterministic: derive every random choice from the

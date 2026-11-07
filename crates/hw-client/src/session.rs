@@ -32,6 +32,7 @@ impl Session {
         open: bool,
     ) -> std::io::Result<Self> {
         let mut host = Host::with_sim(Sim::for_town(seed, town));
+        host.sim.place_starter_crates();
         if open {
             let addr = host.listen(("0.0.0.0", hw_net::DEFAULT_PORT))?;
             println!("Hosting on {addr}");
@@ -73,6 +74,9 @@ impl Session {
                         "the host turned us away: {reason}"
                     )))
                 }
+                ConnState::Ended(reason) => {
+                    return Err(std::io::Error::other(format!("the host left: {reason}")))
+                }
                 ConnState::Connecting => std::thread::sleep(Duration::from_millis(20)),
             }
         }
@@ -101,17 +105,24 @@ impl Session {
                 interp,
                 last_tick,
             } => {
+                let was_on = matches!(conn.state, ConnState::Connected { .. });
                 let seq = conn.update(input);
+                for news in conn.take_news() {
+                    println!("{news:?}");
+                }
+                if let (true, ConnState::Ended(reason)) = (was_on, &conn.state) {
+                    println!("Session over: {reason}");
+                }
                 let hero = conn.hero();
-                if let Some((tick, ack, entities)) = &conn.latest {
-                    if *tick > *last_tick {
-                        *last_tick = *tick;
-                        interp.push(*tick, entities.clone());
+                if let Some((tick, ack, entities)) = conn.world() {
+                    if tick > *last_tick {
+                        *last_tick = tick;
                         if let (Some(p), Some(h)) = (predictor.as_mut(), hero) {
                             if let Some(me) = entities.iter().find(|e| e.id == h) {
-                                p.reconcile(*ack, me);
+                                p.reconcile(ack, me);
                             }
                         }
+                        interp.push(tick, entities);
                     }
                 }
                 if let (Some(p), Some(seq)) = (predictor.as_mut(), seq) {
@@ -180,8 +191,12 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        if let Session::Remote { conn, .. } = self {
-            conn.close();
+        match self {
+            Session::Remote { conn, .. } => conn.close(),
+            // Friends who joined are told the world is closing.
+            Session::Local { host, .. } => {
+                host.end_session("the host closed the game", Duration::from_millis(500))
+            }
         }
     }
 }

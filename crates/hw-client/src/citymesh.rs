@@ -986,6 +986,24 @@ pub fn ground_hit(origin: Vec3, dir: Vec3) -> Option<Vec3> {
 
 /// A stand-in figure for a hero (feet at the origin): red for yours, blue
 /// for friends.
+/// A wooden crate, 1 m on a side, centred on its origin (a physics body).
+pub fn crate_mesh() -> Mesh {
+    let wood = rgb(176, 124, 72);
+    let band = rgb(120, 80, 44);
+    let mut m = Mesh::new();
+    m.add_box((0.0, 0.0, 0.0), (0.96, 0.96, 0.96), wood)
+        .expect("crate");
+    // Dark planks round the edges, standing just proud of the faces.
+    for (y, h) in [(-0.44, 0.1), (0.44, 0.1)] {
+        m.add_box((0.0, y, 0.0), (1.0, h, 1.0), band).expect("band");
+    }
+    for (x, z) in [(-0.44, -0.44), (0.44, -0.44), (-0.44, 0.44), (0.44, 0.44)] {
+        m.add_box((x, 0.0, z), (0.1, 0.78, 0.1), band)
+            .expect("post");
+    }
+    m
+}
+
 pub fn hero_mesh(mine: bool) -> Mesh {
     let (body, head) = if mine {
         (rgb(200, 40, 46), rgb(236, 196, 160))

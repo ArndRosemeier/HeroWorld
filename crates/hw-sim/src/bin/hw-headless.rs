@@ -1,10 +1,17 @@
 //! Runs a world without a window, for dedicated hosting, bots and tests.
 //!
 //! Environment: `HW_SEED` (default 1), `HW_PORT` (default 7777),
-//! `HW_TICKS` (stop after this many ticks; default: run forever).
+//! `HW_TICKS` (stop after this many ticks; default: run forever),
+//! `HW_SAVE` (world save file: loaded at start if it exists, written every
+//! minute and at the end).
+//!
+//! Type into the console: `quit` ends the session cleanly (players are told
+//! and the world is saved), `save` saves now, anything else is chat.
 
 use hw_core::Seed;
 use hw_sim::host::{Host, HostEvent};
+use std::path::PathBuf;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 fn env<T: std::str::FromStr>(name: &str) -> Option<T> {
@@ -15,11 +22,31 @@ fn main() -> std::io::Result<()> {
     let seed = env("HW_SEED").unwrap_or(1u64);
     let port = env("HW_PORT").unwrap_or(hw_net::DEFAULT_PORT);
     let ticks: Option<u64> = env("HW_TICKS");
+    let save: Option<PathBuf> = std::env::var_os("HW_SAVE").map(PathBuf::from);
     let mut host = Host::new(Seed(seed));
+    match &save {
+        Some(path) if path.exists() => {
+            host.load_world(path)?;
+            println!("hw-headless: loaded {}", path.display());
+        }
+        _ => host.sim.place_starter_crates(),
+    }
     let addr = host.listen(("0.0.0.0", port))?;
     println!("hw-headless: world {seed} listening on {addr}");
+
+    let (tx, console) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+
     let period = Duration::from_secs_f64(hw_sim::DT);
     let mut next = Instant::now();
+    let mut last_save = Instant::now();
+    let host_player = hw_net::PlayerId(0);
     loop {
         for e in host.tick() {
             match e {
@@ -27,9 +54,26 @@ fn main() -> std::io::Result<()> {
                     println!("{name} joined as player {}", player.0)
                 }
                 HostEvent::Left { player, name } => println!("{name} (player {}) left", player.0),
+                HostEvent::Chat { name, text, .. } => println!("{name}: {text}"),
             }
         }
-        if ticks.is_some_and(|t| host.sim.tick >= t) {
+        let mut quit = ticks.is_some_and(|t| host.sim.tick >= t);
+        while let Ok(line) = console.try_recv() {
+            match line.trim() {
+                "quit" | "exit" => quit = true,
+                "save" => last_save = Instant::now() - Duration::from_secs(3600),
+                "" => {}
+                text => host.chat(host_player, text),
+            }
+        }
+        if let Some(path) = &save {
+            if quit || last_save.elapsed() >= Duration::from_secs(60) {
+                host.save_world(path)?;
+                last_save = Instant::now();
+            }
+        }
+        if quit {
+            host.end_session("the host closed the world", Duration::from_secs(1));
             println!("hw-headless: ran {} ticks", host.sim.tick);
             return Ok(());
         }

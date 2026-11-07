@@ -18,3 +18,5 @@ hw-gen = { workspace = true }
 hw-net = { workspace = true }
 bevy_ecs = { workspace = true }
 glam = { workspace = true }
+# Only for `engine::physics::PhysicsWorld`: physics without a window or GPU.
+engine = { workspace = true }

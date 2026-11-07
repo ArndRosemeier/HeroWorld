@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.012 (2026-11-07)
+
+- Multiplayer is much leaner: friends now only get told what changed near them, so ten players fit easily on a home connection, and a lost packet no longer loses a key press.
+- A stack of wooden crates waits on the street where you start. Run into it: crates tumble, roll and land on roofs and ledges like real boxes.
+- When the host closes the game, friends are told why instead of freezing.
+- Dedicated hosts (`hw-headless`) can keep a world save (`HW_SAVE`) and close cleanly by typing `quit`.
+
 ## 0.011 (2026-11-07)
 
 - Chrome bumpers, glass canopies and shop windows now reflect the street around you.

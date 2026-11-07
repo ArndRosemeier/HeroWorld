@@ -1,17 +1,44 @@
 //! The host: the simulation plus players, local and remote.
 //!
 //! In single player the host runs inside the game with one local player and
-//! no socket. Opening it to friends adds a UDP socket; remote players then
-//! join with a hello and play by sending input every tick.
+//! no socket. Opening it to friends adds a UDP socket (and the GameHub relay
+//! for friends who cannot reach it directly); remote players join with a
+//! hello and play by sending input every tick.
+//!
+//! Each tick every remote player gets one update: the entities near their
+//! hero (within [`INTEREST_RADIUS`] or inside their bubble) that changed
+//! since they last confirmed them, nearest first, within a byte budget that
+//! keeps a client under [`hw_net::BANDWIDTH_BUDGET`]. Joins, leaves, chat and
+//! the end of the session go out reliably in the same packets.
 
+use crate::save::WorldSave;
 use crate::{Sim, TICK_HZ};
+use glam::DVec3;
 use hw_core::Seed;
-use hw_net::{ClientMsg, PlayerId, ServerEvent, ServerMsg, ServerSocket};
-use std::collections::BTreeMap;
+use hw_net::protocol::UPDATE_HEADER_BYTES;
+use hw_net::reliable::{ReliableReceiver, ReliableSender};
+use hw_net::{
+    Candidate, ClientMsg, ClientView, InputState, PeerAddr, PlayerId, ServerEvent, ServerLink,
+    ServerMsg, ServerSocket, ToClient, ToServer, Traffic,
+};
+use std::collections::{BTreeMap, VecDeque};
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::path::Path;
+use std::time::{Duration, Instant};
 
 /// Most players in one world.
 pub const MAX_PLAYERS: usize = 10;
+/// A client hears about everything within this distance of its hero.
+pub const INTEREST_RADIUS: f64 = 500.0;
+/// Bytes of entities and removals per update; the rest of the per-tick
+/// budget is left for reliable messages and the header.
+pub const UPDATE_BUDGET: usize =
+    hw_net::BANDWIDTH_BUDGET / TICK_HZ as usize - UPDATE_HEADER_BYTES - 120;
+/// Inputs a remote player may have waiting; more means they run ahead, and
+/// the oldest are dropped.
+const INPUT_QUEUE: usize = 6;
+/// Ticks before an unconfirmed reliable message goes out again.
+const RESEND_TICKS: u64 = 6;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlayerInfo {
@@ -24,14 +51,37 @@ pub struct PlayerInfo {
 /// Something worth telling the person at the host.
 #[derive(Clone, Debug, PartialEq)]
 pub enum HostEvent {
-    Joined { player: PlayerId, name: String },
-    Left { player: PlayerId, name: String },
+    Joined {
+        player: PlayerId,
+        name: String,
+    },
+    Left {
+        player: PlayerId,
+        name: String,
+    },
+    Chat {
+        player: PlayerId,
+        name: String,
+        text: String,
+    },
+}
+
+/// What the host keeps per remote player.
+#[derive(Default)]
+struct Remote {
+    view: ClientView,
+    inputs: VecDeque<(u32, InputState)>,
+    /// Newest input sequence queued.
+    newest: u32,
+    rel_out: ReliableSender<ToClient>,
+    rel_in: ReliableReceiver<ToServer>,
 }
 
 pub struct Host {
     pub sim: Sim,
     socket: Option<ServerSocket>,
     players: BTreeMap<PlayerId, PlayerInfo>,
+    remotes: BTreeMap<PlayerId, Remote>,
     next_player: u16,
 }
 
@@ -47,16 +97,23 @@ impl Host {
             sim,
             socket: None,
             players: BTreeMap::new(),
+            remotes: BTreeMap::new(),
             next_player: 1,
         }
     }
 
     /// Opens the world to remote players on `addr` (port 0 picks a free one).
     pub fn listen(&mut self, addr: impl ToSocketAddrs) -> std::io::Result<SocketAddr> {
-        let socket = ServerSocket::bind(addr)?;
-        let local = socket.local_addr()?;
-        self.socket = Some(socket);
-        Ok(local)
+        self.socket
+            .get_or_insert_with(ServerSocket::without_udp)
+            .open_udp(addr)
+    }
+
+    /// Also takes players through `link` (the GameHub relay).
+    pub fn add_link(&mut self, link: Box<dyn ServerLink>) {
+        self.socket
+            .get_or_insert_with(ServerSocket::without_udp)
+            .add_link(link);
     }
 
     pub fn players(&self) -> &BTreeMap<PlayerId, PlayerInfo> {
@@ -69,12 +126,42 @@ impl Host {
             .expect("room for the local player")
     }
 
+    /// Bytes and packets exchanged with a remote player so far.
+    pub fn traffic(&self, player: PlayerId) -> Option<Traffic> {
+        self.socket.as_ref()?.traffic(player)
+    }
+
+    fn tell_all(&mut self, msg: ToClient) {
+        for r in self.remotes.values_mut() {
+            r.rel_out.push(msg.clone());
+        }
+    }
+
     fn add_player(&mut self, name: &str, remote: bool) -> Option<PlayerId> {
         if self.players.len() >= MAX_PLAYERS {
             return None;
         }
         let id = PlayerId(self.next_player);
         self.next_player = self.next_player.checked_add(1)?;
+        self.tell_all(ToClient::Joined {
+            player: id,
+            name: name.to_string(),
+        });
+        if remote {
+            // The newcomer hears who is here already, then about itself.
+            let mut r = Remote::default();
+            for (p, info) in &self.players {
+                r.rel_out.push(ToClient::Joined {
+                    player: *p,
+                    name: info.name.clone(),
+                });
+            }
+            r.rel_out.push(ToClient::Joined {
+                player: id,
+                name: name.to_string(),
+            });
+            self.remotes.insert(id, r);
+        }
         self.players.insert(
             id,
             PlayerInfo {
@@ -91,17 +178,96 @@ impl Host {
 
     fn remove_player(&mut self, id: PlayerId) -> Option<HostEvent> {
         let info = self.players.remove(&id)?;
+        self.remotes.remove(&id);
         self.sim.remove_hero(id);
         if let Some(s) = self.socket.as_mut() {
             s.kick(id);
         }
+        self.tell_all(ToClient::Left {
+            player: id,
+            name: info.name.clone(),
+        });
         Some(HostEvent::Left {
             player: id,
             name: info.name,
         })
     }
 
-    /// One tick: read the network, advance the simulation, send snapshots.
+    /// The local player says something to everyone.
+    pub fn chat(&mut self, from: PlayerId, text: &str) {
+        self.tell_all(ToClient::Chat {
+            from,
+            text: text.to_string(),
+        });
+    }
+
+    fn welcome(&mut self, addr: PeerAddr, player: Option<PlayerId>) {
+        let msg = match player.and_then(|p| self.sim.hero_of(p).map(|h| (p, h))) {
+            Some((player, hero)) => ServerMsg::Welcome {
+                player,
+                hero,
+                world_seed: self.sim.seed.0,
+                town_population: self.sim.town_population,
+                tick_hz: TICK_HZ as u16,
+            },
+            None => ServerMsg::Reject {
+                reason: "this world is full".into(),
+            },
+        };
+        if let Some(s) = self.socket.as_mut() {
+            s.send_to(addr, &msg);
+        }
+    }
+
+    fn on_input(&mut self, player: PlayerId, msg: ClientMsg, out: &mut Vec<HostEvent>) {
+        let ClientMsg::Input {
+            seq,
+            inputs,
+            ack_tick,
+            ack_bits,
+            rel_ack,
+            reliable,
+        } = msg
+        else {
+            return;
+        };
+        let Some(r) = self.remotes.get_mut(&player) else {
+            return;
+        };
+        r.view.on_ack(ack_tick, ack_bits);
+        r.rel_out.ack(rel_ack);
+        let n = inputs.len() as u32;
+        for (k, input) in inputs.into_iter().enumerate() {
+            let s = seq.wrapping_sub(n - 1 - k as u32);
+            let newer = s.wrapping_sub(r.newest) as i32 > 0;
+            if newer {
+                r.inputs.push_back((s, input));
+                r.newest = s;
+            }
+        }
+        while r.inputs.len() > INPUT_QUEUE {
+            r.inputs.pop_front();
+        }
+        let mut said = Vec::new();
+        for (id, m) in reliable {
+            said.extend(r.rel_in.receive(id, m));
+        }
+        for m in said {
+            match m {
+                ToServer::Chat { text } => {
+                    let name = self
+                        .players
+                        .get(&player)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_default();
+                    self.chat(player, &text);
+                    out.push(HostEvent::Chat { player, name, text });
+                }
+            }
+        }
+    }
+
+    /// One tick: read the network, advance the simulation, send updates.
     pub fn tick(&mut self) -> Vec<HostEvent> {
         let mut out = Vec::new();
         let events = self.socket.as_mut().map(|s| s.poll()).unwrap_or_default();
@@ -120,55 +286,109 @@ impl Host {
                             p
                         }
                     };
-                    let socket = self.socket.as_ref().expect("events come from the socket");
-                    match player.and_then(|p| self.sim.hero_of(p).map(|h| (p, h))) {
-                        Some((player, hero)) => socket.send(
-                            player,
-                            &ServerMsg::Welcome {
-                                player,
-                                hero,
-                                world_seed: self.sim.seed.0,
-                                town_population: self.sim.town_population,
-                                tick_hz: TICK_HZ as u16,
-                            },
-                        ),
-                        None => socket.send_to(
-                            addr,
-                            &ServerMsg::Reject {
-                                reason: "this world is full".into(),
-                            },
-                        ),
-                    }
+                    self.welcome(addr, player);
                 }
-                ServerEvent::Message { player, msg } => match msg {
-                    ClientMsg::Input { seq, input } => {
-                        if let Some(info) = self.players.get_mut(&player) {
-                            // Ignore stale packets that arrive late.
-                            if seq.wrapping_sub(info.ack) < u32::MAX / 2 {
-                                info.ack = seq;
-                                self.sim.set_input(player, input);
-                            }
-                        }
-                    }
-                    ClientMsg::Hello { .. } | ClientMsg::Bye => {}
-                },
+                ServerEvent::Message { player, msg } => self.on_input(player, msg, &mut out),
                 ServerEvent::Left { player } => out.extend(self.remove_player(player)),
             }
         }
-        self.sim.step();
-        if let Some(socket) = &self.socket {
-            let entities = self.sim.snapshot();
-            for (id, info) in self.players.iter().filter(|(_, i)| i.remote) {
-                socket.send(
-                    *id,
-                    &ServerMsg::Snapshot {
-                        tick: self.sim.tick,
-                        ack: info.ack,
-                        entities: entities.clone(),
-                    },
-                );
+        // Each remote hero takes its next input; with none waiting it keeps
+        // doing what it did.
+        let mut take = Vec::new();
+        for (p, r) in self.remotes.iter_mut() {
+            if let Some((seq, input)) = r.inputs.pop_front() {
+                take.push((*p, seq, input));
             }
         }
+        for (p, seq, input) in take {
+            self.sim.set_input(p, input);
+            if let Some(info) = self.players.get_mut(&p) {
+                info.ack = seq;
+            }
+        }
+        self.sim.step();
+        self.send_updates();
         out
+    }
+
+    fn send_updates(&mut self) {
+        let Some(socket) = self.socket.as_mut() else {
+            return;
+        };
+        if self.remotes.is_empty() {
+            socket.flush();
+            return;
+        }
+        let all = self.sim.replicated();
+        let tick = self.sim.tick;
+        for (p, r) in self.remotes.iter_mut() {
+            let me = all.iter().find(|(e, _)| e.owner == Some(*p));
+            let Some(&(me, _)) = me else { continue };
+            let at = DVec3::from_array(me.pos);
+            let bubble = self.sim.bubbles.of(*p);
+            let candidates: Vec<Candidate> = all
+                .iter()
+                .filter_map(|(e, changed)| {
+                    let pos = DVec3::from_array(e.pos);
+                    let d = pos.distance(at);
+                    let near = d <= INTEREST_RADIUS || bubble.is_some_and(|b| b.contains(pos));
+                    near.then_some(Candidate {
+                        state: *e,
+                        changed: *changed,
+                        priority: if e.id == me.id { 0.0 } else { d.max(1.0) },
+                    })
+                })
+                .collect();
+            let (entities, removed) = r.view.build(tick, &candidates, UPDATE_BUDGET);
+            let ack = self.players.get(p).map_or(0, |i| i.ack);
+            socket.send(
+                *p,
+                &ServerMsg::Update {
+                    tick,
+                    ack,
+                    rel_ack: r.rel_in.ack(),
+                    reliable: r.rel_out.due(tick, RESEND_TICKS),
+                    entities,
+                    removed,
+                },
+            );
+        }
+        socket.flush();
+    }
+
+    /// Ends the session cleanly: every remote player is told (reliably) and
+    /// leaves; waits up to `wait` for them to confirm.
+    pub fn end_session(&mut self, reason: &str, wait: Duration) {
+        self.tell_all(ToClient::SessionEnd {
+            reason: reason.to_string(),
+        });
+        let start = Instant::now();
+        while start.elapsed() < wait && self.remotes.values().any(|r| r.rel_out.unconfirmed() > 0) {
+            self.tick();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        self.socket = None;
+        self.remotes.clear();
+        let remote: Vec<PlayerId> = self
+            .players
+            .iter()
+            .filter(|(_, i)| i.remote)
+            .map(|(p, _)| *p)
+            .collect();
+        for p in remote {
+            self.players.remove(&p);
+            self.sim.remove_hero(p);
+        }
+    }
+
+    /// Saves the world to `path`.
+    pub fn save_world(&mut self, path: &Path) -> std::io::Result<()> {
+        self.sim.save().write(path)
+    }
+
+    /// Loads a save into this host's world (same seed).
+    pub fn load_world(&mut self, path: &Path) -> std::io::Result<()> {
+        let save = WorldSave::read(path)?;
+        self.sim.restore(&save).map_err(std::io::Error::other)
     }
 }

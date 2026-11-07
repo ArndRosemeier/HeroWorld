@@ -178,6 +178,7 @@ impl Interpolator {
                     let pb = DVec3::from_array(eb.pos);
                     EntityState {
                         pos: pa.lerp(pb, f).to_array(),
+                        rot: nlerp(ea.rot, eb.rot, f as f32),
                         ..*eb
                     }
                 }
@@ -190,6 +191,18 @@ impl Interpolator {
     pub fn latest(&self, id: NetId) -> Option<EntityState> {
         self.buffer.back()?.1.iter().find(|e| e.id == id).copied()
     }
+}
+
+/// Blends two rotations (quaternions x, y, z, w) the short way round.
+fn nlerp(a: [f32; 4], b: [f32; 4], f: f32) -> [f32; 4] {
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let s = if dot < 0.0 { -1.0 } else { 1.0 };
+    let q: Vec<f32> = a.iter().zip(b).map(|(x, y)| x + (y * s - x) * f).collect();
+    let len = q.iter().map(|v| v * v).sum::<f32>().sqrt();
+    if len < 1e-6 {
+        return b;
+    }
+    [q[0] / len, q[1] / len, q[2] / len, q[3] / len]
 }
 
 #[cfg(test)]
@@ -261,6 +274,7 @@ mod tests {
             vel: [0.0; 3],
             grounded: true,
             owner: None,
+            ..Default::default()
         };
         // Snapshots arrive once per tick and frames come twice per tick.
         let mut xs = Vec::new();

@@ -5,11 +5,15 @@
 //! The state lives in a `bevy_ecs` world and advances in fixed ticks
 //! ([`TICK_HZ`]). [`host::Host`] puts a network socket around it.
 
+pub mod bubbles;
 pub mod collision;
 pub mod host;
+pub mod physics;
 pub mod predict;
+pub mod save;
 
 use bevy_ecs::prelude::*;
+use bubbles::Bubbles;
 use collision::{Body, Obstacles};
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, NetIdAllocator, Seed};
@@ -17,7 +21,9 @@ use hw_gen::building::BuildingPlan;
 use hw_gen::city::{CityParams, CityPlan};
 use hw_gen::urban::world::TownWorld;
 use hw_gen::urban::TownParams;
-use hw_net::{EntityState, InputState, PlayerId};
+use hw_net::{EntityKind, EntityState, InputState, PlayerId};
+use physics::{Physics, PropState, CRATE_HALF};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// Simulation ticks per second.
@@ -69,8 +75,25 @@ pub struct Hero {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Default)]
 pub struct Control(pub InputState);
 
+/// A loose physics body (a crate); its [`Motion`] position is its centre.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Prop;
+
+/// Which way a prop faces: a quaternion (x, y, z, w).
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Orientation(pub [f32; 4]);
+
+/// The tick an entity last changed (moved, turned, appeared), from
+/// `bevy_ecs` change detection. Clients get an entity again only when this
+/// is newer than what they confirmed.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct LastChange(pub u64);
+
 #[derive(Resource)]
 struct Ids(NetIdAllocator);
+
+#[derive(Resource)]
+struct Now(u64);
 
 /// The solid city, shared with anything else that needs it.
 #[derive(Resource, Clone)]
@@ -241,6 +264,11 @@ pub struct Sim {
     pub tick: u64,
     spawn: (DVec2, DVec2),
     schedule: Schedule,
+    track: Schedule,
+    /// Engine physics for loose bodies.
+    pub physics: Physics,
+    /// The simulated areas around the players.
+    pub bubbles: Bubbles,
 }
 
 impl Sim {
@@ -268,9 +296,12 @@ impl Sim {
     pub fn with_solids(seed: Seed, solids: Arc<Obstacles>) -> Self {
         let mut world = World::new();
         world.insert_resource(Ids(NetIdAllocator::new()));
-        world.insert_resource(Solids(solids));
+        world.insert_resource(Solids(solids.clone()));
+        world.insert_resource(Now(0));
         let mut schedule = Schedule::default();
         schedule.add_systems(move_heroes);
+        let mut track = Schedule::default();
+        track.add_systems(track_changes);
         Self {
             world,
             seed,
@@ -278,6 +309,9 @@ impl Sim {
             tick: 0,
             spawn: (DVec2::ZERO, DVec2::X),
             schedule,
+            track,
+            physics: Physics::new(solids),
+            bubbles: Bubbles::default(),
         }
     }
 
@@ -294,10 +328,145 @@ impl Sim {
         DVec3::new(p.x, ground + 0.5, p.y)
     }
 
-    /// Advance the simulation by one fixed tick.
+    /// Advance the simulation by one fixed tick: heroes move, bubbles
+    /// regroup, physics steps inside the bubbles, changes are stamped.
     pub fn step(&mut self) {
         self.schedule.run(&mut self.world);
+        let heroes: Vec<(PlayerId, NetId, DVec3)> = self
+            .world
+            .query::<(&Hero, &Net, &Motion)>()
+            .iter(&self.world)
+            .map(|(h, n, m)| (h.owner, n.0, m.0.pos))
+            .collect();
+        let players: Vec<(PlayerId, DVec3)> = heroes.iter().map(|(p, _, at)| (*p, *at)).collect();
+        self.bubbles.update(&players);
+        self.step_physics(&heroes);
         self.tick += 1;
+        self.world.resource_mut::<Now>().0 = self.tick;
+        self.track.run(&mut self.world);
+    }
+
+    fn step_physics(&mut self, heroes: &[(PlayerId, NetId, DVec3)]) {
+        let keep: BTreeSet<NetId> = heroes.iter().map(|(_, id, _)| *id).collect();
+        self.physics.keep_heroes(&keep);
+        for (_, id, at) in heroes {
+            self.physics.place_hero(*id, *at);
+        }
+        // Props inside a bubble are simulated, nearest the bubble's centre
+        // first, up to its budget; the rest hold still where they are.
+        let mut props: Vec<(Entity, NetId, Body, [f32; 4])> = self
+            .world
+            .query_filtered::<(Entity, &Net, &Motion, &Orientation), With<Prop>>()
+            .iter(&self.world)
+            .map(|(e, n, m, o)| (e, n.0, m.0, o.0))
+            .collect();
+        props.sort_by_key(|p| p.1);
+        let mut ranked: Vec<(usize, f64, NetId)> = props
+            .iter()
+            .filter_map(|(_, id, b, _)| {
+                let (i, bubble) = self
+                    .bubbles
+                    .list
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, x)| x.contains(b.pos))
+                    .min_by(|x, y| {
+                        x.1.center
+                            .distance_squared(b.pos)
+                            .total_cmp(&y.1.center.distance_squared(b.pos))
+                    })?;
+                Some((i, bubble.center.distance(b.pos), *id))
+            })
+            .collect();
+        ranked.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
+        let mut used = vec![0usize; self.bubbles.len()];
+        let mut awake = BTreeSet::new();
+        for (i, _, id) in ranked {
+            if used[i] < self.bubbles.list[i].budget {
+                used[i] += 1;
+                awake.insert(id);
+            }
+        }
+        for (_, id, body, rot) in &props {
+            match (awake.contains(id), self.physics.is_awake(*id)) {
+                (true, false) => self.physics.add_crate(
+                    *id,
+                    PropState {
+                        pos: body.pos,
+                        rot: *rot,
+                        vel: body.vel.as_vec3().to_array(),
+                    },
+                ),
+                (false, true) => self.physics.remove_prop(*id),
+                _ => {}
+            }
+        }
+        self.physics.step();
+        for (e, id, _, _) in props {
+            let Some(st) = self.physics.prop(id) else {
+                continue;
+            };
+            let mut em = self.world.entity_mut(e);
+            if let Some(mut m) = em.get_mut::<Motion>() {
+                m.set_if_neq(Motion(Body {
+                    pos: st.pos,
+                    vel: DVec3::new(st.vel[0] as f64, st.vel[1] as f64, st.vel[2] as f64),
+                    grounded: false,
+                }));
+            }
+            if let Some(mut o) = em.get_mut::<Orientation>() {
+                o.set_if_neq(Orientation(st.rot));
+            }
+        }
+    }
+
+    /// Spawns a crate (centre `at`, turned by `rot`) and returns its ID.
+    pub fn spawn_crate(&mut self, at: DVec3, rot: [f32; 4]) -> NetId {
+        let id = self.world.resource_mut::<Ids>().0.allocate();
+        self.world.spawn((
+            Net(id),
+            Motion(Body {
+                pos: at,
+                vel: DVec3::ZERO,
+                grounded: false,
+            }),
+            Orientation(rot),
+            Prop,
+            LastChange(self.tick),
+        ));
+        id
+    }
+
+    /// Removes every prop (before restoring a save).
+    pub fn clear_props(&mut self) {
+        let found: Vec<(Entity, NetId)> = self
+            .world
+            .query_filtered::<(Entity, &Net), With<Prop>>()
+            .iter(&self.world)
+            .map(|(e, n)| (e, n.0))
+            .collect();
+        for (e, id) in found {
+            self.physics.remove_prop(id);
+            self.world.despawn(e);
+        }
+    }
+
+    /// A pyramid of crates on the street just past where heroes appear,
+    /// something to shove around (and the first thing physics has to hold up).
+    pub fn place_starter_crates(&mut self) {
+        let (mid, dir) = self.spawn;
+        let side = dir.perp();
+        let base = mid + dir * 18.0;
+        let size = CRATE_HALF * 2.0 + 0.04;
+        for (row, count) in [3u32, 2, 1].into_iter().enumerate() {
+            for k in 0..count {
+                let offset = (k as f64 - (count as f64 - 1.0) * 0.5) * size;
+                let p = base + side * offset;
+                let ground = self.world.resource::<Solids>().0.ground_at(p).max(GROUND_Y);
+                let y = ground + CRATE_HALF + 0.02 + row as f64 * size;
+                self.spawn_crate(DVec3::new(p.x, y, p.y), hw_net::protocol::NO_ROTATION);
+            }
+        }
     }
 
     /// Spawns a hero for `owner` at `at` and returns its ID.
@@ -312,6 +481,7 @@ impl Sim {
             }),
             Hero { owner },
             Control::default(),
+            LastChange(self.tick),
         ));
         id
     }
@@ -374,28 +544,63 @@ impl Sim {
         self.body(id).map(|b| b.pos)
     }
 
-    /// The state of every replicated entity, sorted by ID.
-    pub fn snapshot(&mut self) -> Vec<EntityState> {
-        let mut out: Vec<EntityState> = self
+    /// Every replicated entity with the tick it last changed, sorted by ID.
+    pub fn replicated(&mut self) -> Vec<(EntityState, u64)> {
+        let mut out: Vec<(EntityState, u64)> = self
             .world
-            .query::<(&Net, &Motion, Option<&Hero>)>()
+            .query::<(
+                &Net,
+                &Motion,
+                Option<&Hero>,
+                Option<&Orientation>,
+                Has<Prop>,
+                &LastChange,
+            )>()
             .iter(&self.world)
-            .map(|(n, m, h)| EntityState {
-                id: n.0,
-                pos: m.0.pos.to_array(),
-                vel: m.0.vel.as_vec3().to_array(),
-                grounded: m.0.grounded,
-                owner: h.map(|h| h.owner),
+            .map(|(n, m, h, o, prop, c)| {
+                (
+                    EntityState {
+                        id: n.0,
+                        kind: if prop {
+                            EntityKind::Crate
+                        } else {
+                            EntityKind::Hero
+                        },
+                        pos: m.0.pos.to_array(),
+                        vel: m.0.vel.as_vec3().to_array(),
+                        rot: o.map_or(hw_net::protocol::NO_ROTATION, |o| o.0),
+                        grounded: m.0.grounded,
+                        owner: h.map(|h| h.owner),
+                    },
+                    c.0,
+                )
             })
             .collect();
-        out.sort_by_key(|e| e.id);
+        out.sort_by_key(|(e, _)| e.id);
         out
+    }
+
+    /// The state of every replicated entity, sorted by ID.
+    pub fn snapshot(&mut self) -> Vec<EntityState> {
+        self.replicated().into_iter().map(|(e, _)| e).collect()
     }
 }
 
-fn move_heroes(solids: Res<Solids>, mut q: Query<(&Control, &mut Motion)>) {
+fn move_heroes(solids: Res<Solids>, mut q: Query<(&Control, &mut Motion), With<Hero>>) {
     for (control, mut motion) in &mut q {
-        step_hero(&mut motion.0, control.0, &solids.0);
+        let mut body = motion.0;
+        step_hero(&mut body, control.0, &solids.0);
+        // Only a real change counts, so heroes standing still cost no traffic.
+        motion.set_if_neq(Motion(body));
+    }
+}
+
+/// Entities whose replicated state changed since the last tick.
+type Moved = Or<(Changed<Motion>, Changed<Orientation>)>;
+
+fn track_changes(now: Res<Now>, mut q: Query<&mut LastChange, Moved>) {
+    for mut c in &mut q {
+        c.0 = now.0;
     }
 }
 

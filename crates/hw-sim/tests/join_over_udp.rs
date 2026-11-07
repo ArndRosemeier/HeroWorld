@@ -77,9 +77,10 @@ fn two_clients_join_and_play_together() {
     );
 
     // Both clients see all three heroes, with owners.
-    for c in [&a, &b] {
-        let (_, ack, entities) = c.latest.as_ref().expect("snapshots arrive");
-        assert!(*ack > 0);
+    for c in [&mut a, &mut b] {
+        let c = &*c;
+        let (_, ack, entities) = c.world().expect("updates arrive");
+        assert!(ack > 0);
         assert_eq!(entities.len(), 3);
         let mut owners: Vec<_> = entities.iter().filter_map(|e| e.owner).collect();
         owners.sort();

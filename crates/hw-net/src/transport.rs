@@ -1,5 +1,10 @@
-//! UDP endpoints. Both sides are non-blocking and polled once per tick, so
-//! they slot into a game loop without threads.
+//! Endpoints. Both sides are non-blocking and polled once per tick, so they
+//! slot into a game loop without threads of their own.
+//!
+//! Packets travel over UDP when the players can reach each other directly
+//! (one machine, a LAN, a forwarded port), or through the GameHub relay
+//! ([`crate::gamehub`]) when they cannot. The game code sees no difference:
+//! a [`Link`] moves packets, a [`PeerAddr`] says where they go.
 
 use crate::protocol::{ClientMsg, PlayerId, ServerMsg, MAX_PACKET};
 use std::collections::BTreeMap;
@@ -10,12 +15,43 @@ use std::time::{Duration, Instant};
 /// A client that has said nothing for this long is dropped.
 pub const TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Where a peer is: a UDP address, or a player in the host's GameHub room.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PeerAddr {
+    Udp(SocketAddr),
+    Hub(u32),
+}
+
+impl std::fmt::Display for PeerAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PeerAddr::Udp(a) => write!(f, "{a}"),
+            PeerAddr::Hub(id) => write!(f, "relay player {id}"),
+        }
+    }
+}
+
+/// Something that moves packets for the server besides its UDP socket.
+pub trait ServerLink: Send {
+    fn send(&mut self, to: PeerAddr, bytes: &[u8]);
+    /// Everything that arrived since the last call.
+    fn recv(&mut self) -> Vec<(PeerAddr, Vec<u8>)>;
+    /// Called once per tick after all sends (a relay batches them).
+    fn flush(&mut self) {}
+}
+
+/// Something that moves a client's packets to and from its server.
+pub trait Link: Send {
+    fn send(&mut self, bytes: &[u8]);
+    fn recv(&mut self) -> Vec<Vec<u8>>;
+}
+
 /// Something that happened on the server's socket.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ServerEvent {
     /// A new address said hello. The game decides whether to accept it.
     Hello {
-        addr: SocketAddr,
+        addr: PeerAddr,
         name: String,
     },
     Message {
@@ -28,13 +64,24 @@ pub enum ServerEvent {
 }
 
 struct Peer {
-    addr: SocketAddr,
+    addr: PeerAddr,
     last_heard: Instant,
+    stats: Traffic,
 }
 
-/// The server side: one socket, many players.
+/// Bytes and packets one player sent and received.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Traffic {
+    pub bytes_out: u64,
+    pub packets_out: u64,
+    pub bytes_in: u64,
+    pub packets_in: u64,
+}
+
+/// The server side: one socket (and maybe a relay), many players.
 pub struct ServerSocket {
-    socket: UdpSocket,
+    udp: Option<UdpSocket>,
+    links: Vec<Box<dyn ServerLink>>,
     peers: BTreeMap<PlayerId, Peer>,
 }
 
@@ -44,13 +91,40 @@ impl ServerSocket {
         let socket = UdpSocket::bind(addr)?;
         socket.set_nonblocking(true)?;
         Ok(Self {
-            socket,
+            udp: Some(socket),
+            links: Vec::new(),
             peers: BTreeMap::new(),
         })
     }
 
+    /// A server reachable only through links (no UDP port).
+    pub fn without_udp() -> Self {
+        Self {
+            udp: None,
+            links: Vec::new(),
+            peers: BTreeMap::new(),
+        }
+    }
+
+    /// Opens (or replaces) the UDP socket on `addr`; returns its address.
+    pub fn open_udp(&mut self, addr: impl ToSocketAddrs) -> std::io::Result<SocketAddr> {
+        let socket = UdpSocket::bind(addr)?;
+        socket.set_nonblocking(true)?;
+        let local = socket.local_addr()?;
+        self.udp = Some(socket);
+        Ok(local)
+    }
+
+    /// Also take players through `link` (the GameHub relay).
+    pub fn add_link(&mut self, link: Box<dyn ServerLink>) {
+        self.links.push(link);
+    }
+
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        self.socket.local_addr()
+        match &self.udp {
+            Some(s) => s.local_addr(),
+            None => Err(std::io::Error::new(ErrorKind::NotFound, "no UDP socket")),
+        }
     }
 
     pub fn players(&self) -> impl Iterator<Item = PlayerId> + '_ {
@@ -58,79 +132,121 @@ impl ServerSocket {
     }
 
     /// Accepts the address from a Hello as `player` (the game hands out IDs).
-    pub fn accept(&mut self, addr: SocketAddr, player: PlayerId) {
+    pub fn accept(&mut self, addr: PeerAddr, player: PlayerId) {
         self.peers.insert(
             player,
             Peer {
                 addr,
                 last_heard: Instant::now(),
+                stats: Traffic::default(),
             },
         );
     }
 
     /// The player at an address, if it was accepted.
-    pub fn player_at(&self, addr: SocketAddr) -> Option<PlayerId> {
+    pub fn player_at(&self, addr: PeerAddr) -> Option<PlayerId> {
         self.peers
             .iter()
             .find(|(_, p)| p.addr == addr)
             .map(|(id, _)| *id)
     }
 
-    /// Sends to an address that is not (yet) a player, e.g. a Reject.
-    pub fn send_to(&self, addr: SocketAddr, msg: &ServerMsg) {
-        let _ = self.socket.send_to(&msg.encode(), addr);
+    fn send_bytes(&mut self, addr: PeerAddr, bytes: &[u8]) {
+        match addr {
+            PeerAddr::Udp(a) => {
+                if let Some(s) = &self.udp {
+                    let _ = s.send_to(bytes, a);
+                }
+            }
+            PeerAddr::Hub(_) => {
+                for l in &mut self.links {
+                    l.send(addr, bytes);
+                }
+            }
+        }
     }
 
-    pub fn send(&self, player: PlayerId, msg: &ServerMsg) {
-        if let Some(p) = self.peers.get(&player) {
-            let _ = self.socket.send_to(&msg.encode(), p.addr);
+    /// Sends to an address that is not (yet) a player, e.g. a Reject.
+    pub fn send_to(&mut self, addr: PeerAddr, msg: &ServerMsg) {
+        self.send_bytes(addr, &msg.encode());
+    }
+
+    pub fn send(&mut self, player: PlayerId, msg: &ServerMsg) {
+        let bytes = msg.encode();
+        if let Some(p) = self.peers.get_mut(&player) {
+            p.stats.bytes_out += bytes.len() as u64;
+            p.stats.packets_out += 1;
+            let addr = p.addr;
+            self.send_bytes(addr, &bytes);
         }
+    }
+
+    /// Hands batched packets to the relay; call once per tick after sending.
+    pub fn flush(&mut self) {
+        for l in &mut self.links {
+            l.flush();
+        }
+    }
+
+    pub fn traffic(&self, player: PlayerId) -> Option<Traffic> {
+        self.peers.get(&player).map(|p| p.stats)
     }
 
     pub fn kick(&mut self, player: PlayerId) {
         self.peers.remove(&player);
     }
 
-    /// Reads everything waiting on the socket and checks for timeouts.
+    fn receive(&mut self) -> Vec<(PeerAddr, Vec<u8>)> {
+        let mut out = Vec::new();
+        if let Some(s) = &self.udp {
+            let mut buf = [0u8; MAX_PACKET + 1];
+            loop {
+                match s.recv_from(&mut buf) {
+                    Ok((n, addr)) => out.push((PeerAddr::Udp(addr), buf[..n].to_vec())),
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                    // Windows reports a closed remote port as an error on the
+                    // next receive; skip it and keep reading.
+                    Err(e) if e.kind() == ErrorKind::ConnectionReset => continue,
+                    Err(_) => break,
+                }
+            }
+        }
+        for l in &mut self.links {
+            out.extend(l.recv());
+        }
+        out
+    }
+
+    /// Reads everything waiting and checks for timeouts.
     pub fn poll(&mut self) -> Vec<ServerEvent> {
         let mut events = Vec::new();
-        let mut buf = [0u8; MAX_PACKET + 1];
-        loop {
-            match self.socket.recv_from(&mut buf) {
-                Ok((n, addr)) => {
-                    let Ok(msg) = ClientMsg::decode(&buf[..n]) else {
-                        continue;
-                    };
-                    let known = self
-                        .peers
-                        .iter_mut()
-                        .find(|(_, p)| p.addr == addr)
-                        .map(|(id, p)| (*id, p));
-                    match (known, msg) {
-                        (Some((id, _)), ClientMsg::Bye) => {
-                            self.peers.remove(&id);
-                            events.push(ServerEvent::Left { player: id });
-                        }
-                        // A repeated hello means the welcome got lost; the game resends it.
-                        (Some((_, peer)), ClientMsg::Hello { name }) => {
-                            peer.last_heard = Instant::now();
-                            events.push(ServerEvent::Hello { addr, name });
-                        }
-                        (Some((id, peer)), msg) => {
-                            peer.last_heard = Instant::now();
-                            events.push(ServerEvent::Message { player: id, msg });
-                        }
-                        (None, ClientMsg::Hello { name }) => {
-                            events.push(ServerEvent::Hello { addr, name })
-                        }
-                        (None, _) => {}
-                    }
+        for (addr, bytes) in self.receive() {
+            let Ok(msg) = ClientMsg::decode(&bytes) else {
+                continue;
+            };
+            let known = self
+                .peers
+                .iter_mut()
+                .find(|(_, p)| p.addr == addr)
+                .map(|(id, p)| (*id, p));
+            match (known, msg) {
+                (Some((id, _)), ClientMsg::Bye) => {
+                    self.peers.remove(&id);
+                    events.push(ServerEvent::Left { player: id });
                 }
-                Err(e) if e.kind() == ErrorKind::WouldBlock => break,
-                // Windows reports a closed remote port as an error on the next
-                // receive; skip it and keep reading.
-                Err(e) if e.kind() == ErrorKind::ConnectionReset => continue,
-                Err(_) => break,
+                // A repeated hello means the welcome got lost; the game resends it.
+                (Some((_, peer)), ClientMsg::Hello { name }) => {
+                    peer.last_heard = Instant::now();
+                    events.push(ServerEvent::Hello { addr, name });
+                }
+                (Some((id, peer)), msg) => {
+                    peer.last_heard = Instant::now();
+                    peer.stats.bytes_in += bytes.len() as u64;
+                    peer.stats.packets_in += 1;
+                    events.push(ServerEvent::Message { player: id, msg });
+                }
+                (None, ClientMsg::Hello { name }) => events.push(ServerEvent::Hello { addr, name }),
+                (None, _) => {}
             }
         }
         let now = Instant::now();
@@ -148,7 +264,7 @@ impl ServerSocket {
     }
 }
 
-/// The client side: talks to one server.
+/// The client side over UDP: talks to one server.
 pub struct ClientSocket {
     socket: UdpSocket,
     server: SocketAddr,
@@ -169,22 +285,19 @@ impl ClientSocket {
         socket.set_nonblocking(true)?;
         Ok(Self { socket, server })
     }
+}
 
-    pub fn send(&self, msg: &ClientMsg) {
-        let _ = self.socket.send_to(&msg.encode(), self.server);
+impl Link for ClientSocket {
+    fn send(&mut self, bytes: &[u8]) {
+        let _ = self.socket.send_to(bytes, self.server);
     }
 
-    /// Everything the server sent since the last poll.
-    pub fn poll(&mut self) -> Vec<ServerMsg> {
+    fn recv(&mut self) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
         let mut buf = [0u8; MAX_PACKET + 1];
         loop {
             match self.socket.recv_from(&mut buf) {
-                Ok((n, addr)) if addr == self.server => {
-                    if let Ok(msg) = ServerMsg::decode(&buf[..n]) {
-                        out.push(msg);
-                    }
-                }
+                Ok((n, addr)) if addr == self.server => out.push(buf[..n].to_vec()),
                 Ok(_) => {}
                 Err(e) if e.kind() == ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == ErrorKind::ConnectionReset => continue,

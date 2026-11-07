@@ -35,7 +35,7 @@ impl Solid {
         DVec2::new(d.dot(self.along), d.dot(self.inward))
     }
 
-    fn to_world(&self, l: DVec2) -> DVec2 {
+    pub fn to_world(&self, l: DVec2) -> DVec2 {
         self.origin + self.along * l.x + self.inward * l.y
     }
 
@@ -322,6 +322,20 @@ impl Obstacles {
         self.near_colliders(p, r)
             .into_iter()
             .flat_map(move |i| self.colliders[i as usize].solids().iter())
+    }
+
+    /// The solids of every collider within `r` of `p`, by collider index
+    /// (building colliders are made on first touch). For the physics world.
+    pub fn solids_near(&self, p: DVec2, r: f64) -> Vec<(u32, &[Solid])> {
+        self.near_colliders(p, r)
+            .into_iter()
+            .map(|i| (i, self.colliders[i as usize].solids()))
+            .collect()
+    }
+
+    /// Does open ground follow terrain or water (not one flat height)?
+    pub fn has_relief(&self) -> bool {
+        self.terrain.is_some() || self.water.is_some()
     }
 
     /// Is `p` inside any solid?
