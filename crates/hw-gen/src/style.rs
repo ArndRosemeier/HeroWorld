@@ -319,7 +319,7 @@ impl Style {
         use Style::*;
         let tall = floors >= 10;
         match (district, usage) {
-            (_, BuildingUse::House) => Googie,
+            (_, BuildingUse::House) => *rng.pick(&[Googie, Googie, Streamline]),
             (_, BuildingUse::Works) => Works,
             (_, BuildingUse::Pavilion) => Pavilion,
             (_, BuildingUse::Lab) => Lab,
@@ -378,9 +378,18 @@ impl Look {
                 (Quarter::OldTown, Northern) => (&[Burgher, OldTown], &[0.7, 0.3]),
                 (Quarter::OldTown, Continental) => (&[OldTown, Burgher], &[0.85, 0.15]),
                 (Quarter::OldTown, Southern) => (&[Villa, OldTown], &[0.75, 0.25]),
+                // The extensions: the old ways and the golden age side by
+                // side, about half each.
                 (Quarter::Terraces, Northern) => (
-                    &[Rowhouse, Burgher, Emporium, GardenFlats, Streamline],
-                    &[0.4, 0.15, 0.2, 0.15, 0.1],
+                    &[
+                        Rowhouse,
+                        Burgher,
+                        Emporium,
+                        GardenFlats,
+                        Streamline,
+                        ArtDeco,
+                    ],
+                    &[0.35, 0.12, 0.13, 0.13, 0.14, 0.13],
                 ),
                 (Quarter::Terraces, Continental) => (
                     &[
@@ -390,12 +399,13 @@ impl Look {
                         Emporium,
                         Streamline,
                         GardenFlats,
+                        ArtDeco,
                     ],
-                    &[0.45, 0.1, 0.1, 0.15, 0.1, 0.1],
+                    &[0.3, 0.06, 0.1, 0.13, 0.15, 0.11, 0.15],
                 ),
                 (Quarter::Terraces, Southern) => (
-                    &[Villa, Haussmann, Streamline, GardenFlats],
-                    &[0.5, 0.15, 0.2, 0.15],
+                    &[Villa, Haussmann, Streamline, GardenFlats, ArtDeco],
+                    &[0.38, 0.1, 0.22, 0.15, 0.15],
                 ),
             };
             styles[r.weighted(w)]

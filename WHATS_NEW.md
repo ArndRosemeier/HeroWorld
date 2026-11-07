@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.005 (2026-11-07)
+
+- Newer quarters are pure golden-age retro-future again: Googie and streamline houses, deco and streamline flats.
+- The 19th-century extensions mix the old ways with the golden age, about half each.
+
 ## 0.004 (2026-11-07)
 
 - Housekeeping only: nothing changes in the game.

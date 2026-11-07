@@ -103,7 +103,12 @@ pub fn plan_buildings(
         p.population,
         &mut rng,
     );
-    let vernacular = quarter_of(streets.style, &prog).map(|quarter| Vernacular { region, quarter });
+    // The old town and its extensions build in the old ways; everything
+    // since is the golden age's own retro-future.
+    let vernacular = (piece.era != Era::Modern)
+        .then(|| quarter_of(streets.style, &prog))
+        .flatten()
+        .map(|quarter| Vernacular { region, quarter });
     let mut main = main_roads(town, &piece.face);
     if piece.era == Era::Old {
         // Even the high street of an old town is narrow.
