@@ -44,15 +44,19 @@ impl Session {
     }
 
     /// Connects to a host and waits (up to 5 s) for its welcome. Returns the
-    /// session and the host's world seed.
-    pub fn join(addr: &str, name: &str) -> std::io::Result<(Self, u64)> {
+    /// session, the host's world seed and its city's radius.
+    pub fn join(addr: &str, name: &str) -> std::io::Result<(Self, u64, f64)> {
         let mut conn = Connection::open(addr, name)?;
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(5) {
             conn.update(InputState::default());
             match &conn.state {
-                ConnState::Connected { world_seed, .. } => {
-                    let seed = *world_seed;
+                ConnState::Connected {
+                    world_seed,
+                    city_radius,
+                    ..
+                } => {
+                    let (seed, radius) = (*world_seed, *city_radius);
                     return Ok((
                         Self::Remote {
                             conn: Box::new(conn),
@@ -61,6 +65,7 @@ impl Session {
                             last_tick: 0,
                         },
                         seed,
+                        radius,
                     ));
                 }
                 ConnState::Rejected(reason) => {

@@ -1,5 +1,8 @@
 //! Draws a city plan as an SVG map, to look at the generator's output.
-//! Usage: cargo run -p hw-gen --example city_map -- [seed] [out.svg]
+//! Usage: cargo run -p hw-gen --example city_map -- [seed] [out.svg] [radius]
+//!
+//! `radius` (m) sets the size: about 100 for a hamlet, 1300 (the default)
+//! for a big city, several thousand for a megalopolis.
 
 use hw_core::Seed;
 use hw_gen::building::BuildingUse;
@@ -12,9 +15,12 @@ fn main() {
     let out = args
         .next()
         .unwrap_or_else(|| "screenshots/city_map.svg".into());
-    let plan = CityPlan::generate(Seed(seed), &CityParams::default());
+    let radius: f64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(1300.0);
+    let t = std::time::Instant::now();
+    let plan = CityPlan::generate(Seed(seed), &CityParams::with_radius(radius));
+    println!("planned in {:.2} s", t.elapsed().as_secs_f64());
     stats(&plan);
-    let r = plan.params.radius + 250.0;
+    let r = plan.params.radius * 1.2;
     let mut svg = String::new();
     let _ = writeln!(
         svg,
@@ -141,8 +147,12 @@ fn main() {
     for d in &plan.districts {
         let _ = writeln!(
             svg,
-            r##"<text x="{:.0}" y="{:.0}" font-size="44" font-family="sans-serif" text-anchor="middle" fill="#a0102a" stroke="#fff" stroke-width="1.5">{:?}</text>"##,
-            d.center.x, d.center.y, d.kind
+            r##"<text x="{:.0}" y="{:.0}" font-size="{:.0}" font-family="sans-serif" text-anchor="middle" fill="#a0102a" stroke="#fff" stroke-width="{:.1}">{:?}</text>"##,
+            d.center.x,
+            d.center.y,
+            r / 28.0,
+            r / 900.0,
+            d.kind
         );
     }
     svg.push_str("</svg>\n");

@@ -128,6 +128,7 @@ impl Host {
                                 player,
                                 hero,
                                 world_seed: self.sim.seed.0,
+                                city_radius: self.sim.city_radius,
                                 tick_hz: TICK_HZ as u16,
                             },
                         ),

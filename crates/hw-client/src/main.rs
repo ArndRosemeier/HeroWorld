@@ -17,7 +17,9 @@
 //! also opens it to friends on UDP port 7777; `HW_JOIN=host:port` joins
 //! someone else's world instead.
 //!
-//! Environment: `HW_SEED` (world seed, default 1); `HW_NAME`; `HW_VIEW` =
+//! Environment: `HW_SEED` (world seed, default 1); `HW_CITY_SIZE` (the
+//! city's radius in m: ~100 a hamlet, 1300 the default, 5000 a megalopolis;
+//! joining players get the host's); `HW_NAME`; `HW_VIEW` =
 //! `hero` (default), `inside`, `sky`, `overview`, `street` or `cutaway` picks the starting
 //! camera (handy with `ENGINE_SCREENSHOT`); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -35,7 +37,7 @@ use hw_client::citymesh::WATER_DEPTH_SCALE;
 use hw_client::citymesh::{self, add_building, ground_hit, ground_mesh, Look, MeshBuilder};
 use hw_core::Seed;
 use hw_gen::building::BuildingPlan;
-use hw_gen::city::CityPlan;
+use hw_gen::city::{CityParams, CityPlan};
 use hw_sim::collision::{Obstacles, BODY_HEIGHT};
 use hw_sim::GeneratedCity;
 use session::Session;
@@ -275,14 +277,18 @@ fn main() -> EngineResult<()> {
     // A joining player learns the world seed from the host first.
     let (mut session, generated) = match std::env::var("HW_JOIN") {
         Ok(addr) => {
-            let (mut session, seed) = Session::join(&addr, &name).map_err(io)?;
-            let generated = GeneratedCity::generate(Seed(seed));
+            let (mut session, seed, radius) = Session::join(&addr, &name).map_err(io)?;
+            let generated =
+                GeneratedCity::generate_with(Seed(seed), &CityParams::with_radius(radius));
             session.attach_city(&generated);
             (session, generated)
         }
         Err(_) => {
             let seed = Seed(env_num("HW_SEED").unwrap_or(1));
-            let generated = GeneratedCity::generate(seed);
+            let params = env_num("HW_CITY_SIZE")
+                .map(|r| CityParams::with_radius(r as f64))
+                .unwrap_or_default();
+            let generated = GeneratedCity::generate_with(seed, &params);
             let open = std::env::var_os("HW_HOST").is_some();
             (
                 Session::single(seed, &generated, &name, open).map_err(io)?,

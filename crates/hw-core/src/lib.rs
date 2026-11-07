@@ -12,4 +12,4 @@ pub use seed::{Rng, Seed};
 
 /// Version of the world-generation rules. Bump it when a change would make an
 /// existing seed produce a different world, so saves can tell.
-pub const WORLD_VERSION: u32 = 4;
+pub const WORLD_VERSION: u32 = 5;

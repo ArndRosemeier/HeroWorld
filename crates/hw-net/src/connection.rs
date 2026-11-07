@@ -17,6 +17,7 @@ pub enum ConnState {
         player: PlayerId,
         hero: NetId,
         world_seed: u64,
+        city_radius: f64,
         tick_hz: u16,
     },
     Rejected(String),
@@ -53,6 +54,7 @@ impl Connection {
                     player,
                     hero,
                     world_seed,
+                    city_radius,
                     tick_hz,
                 } => {
                     if self.state == ConnState::Connecting {
@@ -60,6 +62,7 @@ impl Connection {
                             player,
                             hero,
                             world_seed,
+                            city_radius,
                             tick_hz,
                         };
                     }

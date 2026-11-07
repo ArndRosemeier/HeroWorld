@@ -497,7 +497,7 @@ pub fn ground_mesh(plan: &CityPlan) -> Vec<(String, Mesh)> {
             DVec3::new(len * 0.5 + s.width * 0.5, top * 0.5, s.width * 0.5),
             color,
         );
-        if s.class == StreetClass::Boulevard {
+        if s.class == StreetClass::Boulevard && s.through {
             // Planted median, except on bridges.
             for (a, z) in median_spans(plan, s) {
                 let (m, half) = ((a + z) * 0.5, (z - a) * 0.5);
@@ -536,7 +536,7 @@ pub fn ground_mesh(plan: &CityPlan) -> Vec<(String, Mesh)> {
 /// Water surface and bed reach this far from the centre (m); the land of
 /// the plan reaches a little further.
 fn water_radius(plan: &CityPlan) -> f64 {
-    plan.params.radius + 900.0
+    plan.params.radius + plan.params.country() - 300.0
 }
 
 /// One sheet at `y` under all the land: a disc, and with a coast the open

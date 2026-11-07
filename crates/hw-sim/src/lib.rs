@@ -81,8 +81,14 @@ pub struct GeneratedCity {
 }
 
 impl GeneratedCity {
+    /// The default city (a big city) of `seed`.
     pub fn generate(seed: Seed) -> Self {
-        let plan = CityPlan::generate(seed, &CityParams::default());
+        Self::generate_with(seed, &CityParams::default())
+    }
+
+    /// The city of `seed` at the size `params` give.
+    pub fn generate_with(seed: Seed, params: &CityParams) -> Self {
+        let plan = CityPlan::generate(seed, params);
         let buildings: Vec<BuildingPlan> = plan
             .buildings
             .iter()
@@ -201,6 +207,8 @@ fn fly_step(body: &mut Body, input: InputState) {
 pub struct Sim {
     pub world: World,
     pub seed: Seed,
+    /// Size of the city: sent to joining players with the seed.
+    pub city_radius: f64,
     pub tick: u64,
     spawn: (DVec2, DVec2),
     schedule: Schedule,
@@ -216,6 +224,7 @@ impl Sim {
     pub fn for_city(seed: Seed, city: &GeneratedCity) -> Self {
         let mut sim = Self::with_solids(seed, city.obstacles.clone());
         sim.spawn = city.spawn_line();
+        sim.city_radius = city.plan.params.radius;
         sim
     }
 
@@ -229,6 +238,7 @@ impl Sim {
         Self {
             world,
             seed,
+            city_radius: CityParams::default().radius,
             tick: 0,
             spawn: (DVec2::ZERO, DVec2::X),
             schedule,

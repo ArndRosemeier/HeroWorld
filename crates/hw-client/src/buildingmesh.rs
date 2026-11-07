@@ -856,9 +856,35 @@ fn entrance(c: &mut Ctx, w: &Wall, f: &Floor, t: (f64, f64), head: f64) {
     let trim = col(look.trim);
     let (t0, t1) = t;
     let top = (head + 0.5).min(f.elevation + f.height - 0.3);
-    // Portal frame.
-    wall_box(c, w, (t0 - 0.45, t0), (f.elevation, top), (0.0, 0.22), trim);
-    wall_box(c, w, (t1, t1 + 0.45), (f.elevation, top), (0.0, 0.22), trim);
+    // Portal frame, as wide as the neighbouring windows leave room for.
+    let side = w.side;
+    let (mut left, mut right) = (0.45_f64, 0.45_f64);
+    for o in c
+        .plan
+        .openings
+        .iter()
+        .filter(|o| o.side == side && o.floor == f.level)
+    {
+        let (a, b) = (o.along - o.width * 0.5, o.along + o.width * 0.5);
+        if b <= t0 + 1e-6 {
+            left = left.min(t0 - b - 0.06);
+        } else if a >= t1 - 1e-6 {
+            right = right.min(a - t1 - 0.06);
+        }
+    }
+    if left > 0.05 {
+        wall_box(c, w, (t0 - left, t0), (f.elevation, top), (0.0, 0.22), trim);
+    }
+    if right > 0.05 {
+        wall_box(
+            c,
+            w,
+            (t1, t1 + right),
+            (f.elevation, top),
+            (0.0, 0.22),
+            trim,
+        );
+    }
     wall_box(c, w, (t0, t1), (head, top), (0.0, 0.22), trim);
     if look.canopy {
         let color = match look.style {
@@ -878,7 +904,7 @@ fn entrance(c: &mut Ctx, w: &Wall, f: &Floor, t: (f64, f64), head: f64) {
         wall_box(
             c,
             w,
-            (t0 - 0.45, t1 + 0.45),
+            (t0 - left.max(0.0), t1 + right.max(0.0)),
             (y + 0.28, y + 0.46),
             (2.45, 2.6),
             col([255, 240, 200]),

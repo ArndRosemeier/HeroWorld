@@ -34,21 +34,64 @@ use std::collections::BTreeMap;
 /// A boulevard lattice node (i, j).
 type Node = (i64, i64);
 
-/// Settings chosen when a world starts.
+/// The size of a settlement, from a hamlet (radius ~100 m) to a
+/// megalopolis (many km). Everything else follows from the radius: street
+/// spacing, the number and kinds of districts, heights, the width of the
+/// rivers. Later the region layer picks it from the city's importance.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CityParams {
     /// Radius of the built-up area (m).
     pub radius: f64,
-    /// Distance between boulevards (m).
-    pub boulevard_spacing: f64,
 }
 
 impl Default for CityParams {
     fn default() -> Self {
+        Self::with_radius(1300.0)
+    }
+}
+
+/// Area of one district (m²): a quarter you can walk across in ten minutes.
+const DISTRICT_AREA: f64 = 750_000.0;
+
+impl CityParams {
+    pub fn with_radius(radius: f64) -> Self {
         Self {
-            radius: 1300.0,
-            boulevard_spacing: 330.0,
+            radius: radius.max(60.0),
         }
+    }
+
+    /// Distance between boulevards: a village has a small grid of main
+    /// streets, a big city a wide lattice of boulevards.
+    pub fn boulevard_spacing(&self) -> f64 {
+        (self.radius * 0.25).clamp(100.0, 420.0)
+    }
+
+    /// The class of the main road lattice.
+    pub fn main_road(&self) -> StreetClass {
+        if self.radius >= 900.0 {
+            StreetClass::Boulevard
+        } else if self.radius >= 400.0 {
+            StreetClass::Avenue
+        } else {
+            StreetClass::Street
+        }
+    }
+
+    /// How far the ground plan reaches past the built-up area (m).
+    pub fn country(&self) -> f64 {
+        (self.radius * 0.9).clamp(400.0, 3000.0)
+    }
+
+    /// How many districts the city has (1 for a hamlet or village).
+    pub fn district_count(&self) -> usize {
+        let area = std::f64::consts::PI * self.radius * self.radius;
+        ((area / DISTRICT_AREA).round() as usize).max(1)
+    }
+
+    /// Heights grow with the city: a village has no towers, a megalopolis
+    /// skyscrapers twice as tall as a big city's. 1 at a radius of 1.3 km.
+    pub fn height_scale(&self) -> f64 {
+        (self.radius / 1300.0).clamp(0.08, 4.0).sqrt()
     }
 }
 
@@ -208,7 +251,7 @@ impl StreetClass {
             Self::Avenue => (16.0, 5.0),
             Self::Street => (12.0, 4.0),
             Self::Lane => (8.0, 2.5),
-            Self::Quay => (0.0, water::QUAY_WIDTH),
+            Self::Quay => (0.0, water::quay_width(80.0)),
             Self::Shore => (0.0, water::SHORE_WIDTH),
         }
     }
@@ -229,6 +272,9 @@ pub struct Street {
     pub width: f64,
     /// Sidewalk width on each side.
     pub sidewalk: f64,
+    /// Part of the lattice of main roads (boulevards in a city, plain
+    /// streets in a village): these cross rivers on bridges.
+    pub through: bool,
 }
 
 impl Street {
@@ -330,9 +376,6 @@ struct Reach {
     coast: bool,
 }
 
-/// How far the ground plan reaches past the built-up area (m).
-const COUNTRY: f64 = 1200.0;
-
 impl CityPlan {
     pub fn generate(seed: Seed, params: &CityParams) -> CityPlan {
         let mut plan = CityPlan {
@@ -344,7 +387,7 @@ impl CityPlan {
             blocks: Vec::new(),
             lots: Vec::new(),
             buildings: Vec::new(),
-            water: CityWater::generate(seed, params.radius, params.radius + COUNTRY * 1.6),
+            water: CityWater::generate(seed, params.radius, params.radius + params.country() * 1.6),
             land: Vec::new(),
             waterfront: Vec::new(),
             bridges: Vec::new(),
@@ -366,15 +409,26 @@ impl CityPlan {
                 plan.make_lots(b);
             }
         }
+        // Buildings so far, by grid square of their centre.
+        let mut grid: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+        let square = |p: DVec2| ((p.x / GRID).floor() as i64, (p.y / GRID).floor() as i64);
         for l in 0..plan.lots.len() {
             if let Some(site) = plan.site_for(l) {
                 // Corner lots can bring buildings of two streets close; keep a
                 // gap, so cornices and towers never reach into a neighbour.
-                let clear = plan
-                    .buildings
-                    .iter()
-                    .all(|(_, other)| rects_apart(&site, other, BUILDING_GAP));
+                let c =
+                    site.origin + site.along * site.size.x * 0.5 + site.inward * site.size.y * 0.5;
+                let (gx, gz) = square(c);
+                let clear = (gx - 1..=gx + 1).all(|x| {
+                    (gz - 1..=gz + 1).all(|z| {
+                        grid.get(&(x, z)).is_none_or(|v| {
+                            v.iter()
+                                .all(|&k| rects_apart(&site, &plan.buildings[k].1, BUILDING_GAP))
+                        })
+                    })
+                });
                 if clear {
+                    grid.entry((gx, gz)).or_default().push(plan.buildings.len());
                     plan.buildings.push((l, site));
                 }
             }
@@ -400,50 +454,78 @@ impl CityPlan {
         best.1
     }
 
+    /// Districts: as many as the area holds. A hamlet or village is one
+    /// residential district. A town or city has its civic centre in the
+    /// middle, shops around it and, as it grows, the Aether Works (at the
+    /// harbour if there is one), the expo grounds and the dystopian quarter
+    /// at the edge. Very big cities get more civic sub-centres.
     fn place_districts(&mut self) {
         let r = self.params.radius;
+        let n = self.params.district_count();
         let seed = self.seed.child("districts");
         let mut rng = seed.rng();
-        self.districts.push(District {
-            id: StableId::from_seed(seed.child(0u32)),
-            kind: DistrictKind::Civic,
-            center: DVec2::ZERO,
-        });
-        let mut ring = [
-            DistrictKind::Commercial,
-            DistrictKind::Residential,
-            DistrictKind::Residential,
-            DistrictKind::AetherWorks,
-            DistrictKind::Expo,
-            DistrictKind::Dystopia,
-        ];
-        rng.shuffle(&mut ring);
-        let step = std::f64::consts::TAU / ring.len() as f64;
-        let mut base = rng.range(0.0, std::f64::consts::TAU);
-        if let Some(c) = &self.water.coast {
-            // The Aether Works keep the harbour.
-            let k = ring
-                .iter()
-                .position(|d| *d == DistrictKind::AetherWorks)
-                .expect("works");
-            base = det::atan2(c.seaward.y, c.seaward.x) - step * k as f64;
+        if n == 1 {
+            self.districts.push(District {
+                id: StableId::from_seed(seed.child(0u32)),
+                kind: DistrictKind::Residential,
+                center: DVec2::ZERO,
+            });
+            return;
         }
-        for (i, kind) in ring.into_iter().enumerate() {
-            let a = base + step * i as f64 + rng.range(-0.2, 0.2);
-            let dist = r * if kind == DistrictKind::Dystopia {
-                rng.range(0.62, 0.72)
-            } else {
-                rng.range(0.5, 0.62)
-            };
-            let mut center = det::dir2(a) * dist;
-            if let Some(c) = &self.water.coast {
-                // On land, and the works right on the shore (the harbour).
-                let shore = 250.0;
+        let mut centers = vec![DVec2::ZERO];
+        if n <= 9 {
+            // A ring around the centre.
+            let k = n - 1;
+            let step = std::f64::consts::TAU / k as f64;
+            let base = rng.range(0.0, std::f64::consts::TAU);
+            for i in 0..k {
+                let a = base + step * i as f64 + rng.range(-0.2, 0.2) * step / 1.05;
+                centers.push(det::dir2(a) * r * rng.range(0.5, 0.66));
+            }
+        } else {
+            // Spread out evenly (best of a few candidates, the one farthest
+            // from the centres so far).
+            while centers.len() < n {
+                let best = (0..16)
+                    .map(|_| {
+                        det::dir2(rng.range(0.0, std::f64::consts::TAU))
+                            * r
+                            * 0.92
+                            * rng.unit().sqrt()
+                    })
+                    .map(|p| {
+                        let d = centers
+                            .iter()
+                            .map(|c| c.distance(p))
+                            .fold(f64::MAX, f64::min);
+                        (d, p)
+                    })
+                    .max_by(|a, b| a.0.total_cmp(&b.0))
+                    .map(|(_, p)| p)
+                    .unwrap_or(DVec2::ZERO);
+                centers.push(best);
+            }
+        }
+        // Keep centres on land, pulled in from the sea.
+        let shore = (r * 0.2).min(250.0);
+        if let Some(c) = &self.water.coast {
+            for p in centers.iter_mut().skip(1) {
                 for _ in 0..60 {
-                    let d = c.land_distance(center);
-                    if d < shore && center.length() > 150.0 {
-                        center *= 0.96;
-                    } else if kind == DistrictKind::AetherWorks && d > shore + 100.0 {
+                    if c.land_distance(*p) < shore && p.length() > shore {
+                        *p *= 0.96;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        let kinds = self.district_kinds(&centers, &mut rng);
+        for (i, (center, kind)) in centers.into_iter().zip(kinds).enumerate() {
+            let mut center = center;
+            if let (Some(c), DistrictKind::AetherWorks) = (&self.water.coast, kind) {
+                // The harbour: right on the shore.
+                for _ in 0..60 {
+                    if c.land_distance(center) > shore + 100.0 {
                         center *= 1.04;
                     } else {
                         break;
@@ -451,11 +533,81 @@ impl CityPlan {
                 }
             }
             self.districts.push(District {
-                id: StableId::from_seed(seed.child(i as u32 + 1)),
+                id: StableId::from_seed(seed.child(i as u32)),
                 kind,
                 center,
             });
         }
+    }
+
+    /// Kinds for district centres (the first is the middle of the city).
+    fn district_kinds(&self, centers: &[DVec2], rng: &mut Rng) -> Vec<DistrictKind> {
+        use DistrictKind::*;
+        let n = centers.len();
+        let mut kinds = vec![Residential; n];
+        kinds[0] = Civic;
+        // Indices of the rest, nearest the centre first.
+        let mut free: Vec<usize> = (1..n).collect();
+        free.sort_by(|&a, &b| centers[a].length().total_cmp(&centers[b].length()));
+        let quota = |min_n: usize, per: usize| {
+            if n >= min_n {
+                (n / per).max(1)
+            } else {
+                0
+            }
+        };
+        let take = |free: &mut Vec<usize>, k: usize| free.remove(k.min(free.len() - 1));
+        // Shops around the core.
+        for _ in 0..quota(4, 5) {
+            if free.is_empty() {
+                break;
+            }
+            let i = take(&mut free, 0);
+            kinds[i] = Commercial;
+        }
+        // The dystopia at the edge.
+        for _ in 0..quota(5, 12) {
+            if free.is_empty() {
+                break;
+            }
+            let i = take(&mut free, usize::MAX);
+            kinds[i] = Dystopia;
+        }
+        // The works: nearest the sea, or anywhere in the outer half.
+        for _ in 0..quota(4, 6) {
+            if free.is_empty() {
+                break;
+            }
+            let k = match &self.water.coast {
+                Some(c) => (0..free.len())
+                    .min_by(|&a, &b| {
+                        c.land_distance(centers[free[a]])
+                            .total_cmp(&c.land_distance(centers[free[b]]))
+                    })
+                    .unwrap_or(0),
+                None => free.len() / 2 + rng.range_int(0, free.len().div_ceil(2) as i64) as usize,
+            };
+            let i = take(&mut free, k);
+            kinds[i] = AetherWorks;
+        }
+        for _ in 0..quota(6, 15) {
+            if free.is_empty() {
+                break;
+            }
+            let k = rng.range_int(0, free.len() as i64) as usize;
+            let i = take(&mut free, k);
+            kinds[i] = Expo;
+        }
+        // Sub-centres in very big cities, among the middle distances.
+        for _ in 0..quota(25, 25).saturating_sub(1) {
+            if free.is_empty() {
+                break;
+            }
+            let k = free.len() / 3 + rng.range_int(0, (free.len() / 3).max(1) as i64) as usize;
+            let i = take(&mut free, k);
+            kinds[i] = Civic;
+        }
+        kinds
     }
 
     fn add_street(&mut self, class: StreetClass, a: DVec2, b: DVec2) -> u32 {
@@ -466,6 +618,7 @@ impl CityPlan {
             b,
             width,
             sidewalk,
+            through: false,
         });
         (self.streets.len() - 1) as u32
     }
@@ -474,8 +627,9 @@ impl CityPlan {
     /// the country past the city, which become plain land.
     fn lay_boulevards(&mut self) -> Vec<Poly> {
         let seed = self.seed.child("boulevards");
-        let s = self.params.boulevard_spacing;
+        let s = self.params.boulevard_spacing();
         let r = self.params.radius;
+        let country = self.params.country();
         // At about 45 degrees to the main river near the centre, so bridges
         // cross it squarely enough and blocks meet it at a slant.
         let main = &self.water.rivers[0].pts;
@@ -491,7 +645,7 @@ impl CityPlan {
             + (seed.child("angle").unit() - 0.5) * 0.5;
         let mut outer = Vec::new();
         let (u, v) = (det::dir2(angle), det::dir2(angle).perp());
-        let n = ((r + COUNTRY) / s).ceil() as i64 + 1;
+        let n = ((r + country) / s).ceil() as i64 + 1;
         let node = |i: i64, j: i64| -> DVec2 {
             let mut g = seed.cell(i, j).rng();
             let jitter = DVec2::new(g.range(-0.15, 0.15), g.range(-0.15, 0.15)) * s;
@@ -511,7 +665,7 @@ impl CityPlan {
                 }
                 let dist = poly.centroid().length();
                 if dist > r {
-                    if dist < r + COUNTRY {
+                    if dist < r + country {
                         outer.push(poly);
                     }
                     continue;
@@ -524,7 +678,8 @@ impl CityPlan {
                         Some(id) => *id,
                         None => {
                             let id =
-                                self.add_street(StreetClass::Boulevard, pts[k], pts[(k + 1) % 4]);
+                                self.add_street(self.params.main_road(), pts[k], pts[(k + 1) % 4]);
+                            self.streets[id as usize].through = true;
                             edges.insert(key, id);
                             id
                         }
@@ -556,6 +711,7 @@ impl CityPlan {
             for w in pts.windows(2) {
                 let street = self.add_street(StreetClass::Quay, w[0], w[1]);
                 self.streets[street as usize].width = width;
+                self.streets[street as usize].sidewalk = water::quay_width(width);
                 out.push(Reach {
                     street,
                     a: w[0],
@@ -726,7 +882,7 @@ impl CityPlan {
     fn trim_boulevards(&mut self, reaches: &[Reach]) {
         for id in 0..self.streets.len() {
             let s = &self.streets[id];
-            if s.class != StreetClass::Boulevard {
+            if !s.through {
                 continue;
             }
             let (a, b) = (s.a, s.b);
@@ -778,10 +934,17 @@ impl CityPlan {
         let mut rng = seed.rng();
         // One street class per cell, so streets meeting at a T are equally wide
         // (a wider street ending on a narrower one would poke into the blocks).
-        let class = self.districts[self.cells[cell].district]
+        let local = self.districts[self.cells[cell].district]
             .kind
             .rules()
             .street;
+        // ... and never wider than the main roads it ends on.
+        let main = self.params.main_road();
+        let class = if local.widths().0 > main.widths().0 {
+            main
+        } else {
+            local
+        };
         let mut queue = self.split_by_water(self.cells[cell].poly.clone(), reaches, Some(class));
         for piece in &queue {
             self.add_land(piece, reaches, true);
@@ -933,9 +1096,12 @@ impl CityPlan {
                     _ => None,
                 })
                 .max_by(|(i, s), (j, t)| {
-                    let rank = |s: u32| match self.streets[s as usize].class {
-                        StreetClass::Boulevard => 0.8,
-                        _ => 1.0,
+                    let rank = |s: u32| {
+                        if self.streets[s as usize].through {
+                            0.8
+                        } else {
+                            1.0
+                        }
                     };
                     (poly.edge_len(*i) * rank(*s)).total_cmp(&(poly.edge_len(*j) * rank(*t)))
                 });
@@ -968,8 +1134,13 @@ impl CityPlan {
         let inward = lot.poly.inward(lot.front);
         let center_dist = lot.poly.centroid().length() / self.params.radius;
 
+        // How near the centre of its own district, for skylines that peak
+        // at each civic core (the main one highest).
+        let core = lot.poly.centroid().distance(district.center)
+            / (DISTRICT_AREA / std::f64::consts::PI).sqrt();
+        let main_core = district.center == DVec2::ZERO;
         let (usage, floors, front_sb, side_sb, depth) =
-            self.programme(district.kind, center_dist, rules, &mut rng);
+            self.programme(district.kind, center_dist, core, main_core, rules, &mut rng);
 
         let v0 = a.dot(inward) + front_sb;
         let max_v = lot
@@ -1014,24 +1185,37 @@ impl CityPlan {
         &self,
         kind: DistrictKind,
         center_dist: f64,
+        core: f64,
+        main_core: bool,
         rules: &Rules,
         rng: &mut Rng,
     ) -> (BuildingUse, u32, f64, f64, f64) {
+        let scale = self.params.height_scale();
         let (f0, f1) = rules.floors;
+        let f1 = ((f1 as f64 * scale).round() as u32).max(1);
+        let f0 = ((f0 as f64 * scale.min(1.0)).round() as u32).clamp(1, f1);
         let mut floors = rng.range_int(f0 as i64, f1 as i64 + 1) as u32;
         let mut depth = rng.range(rules.depth.0, rules.depth.1);
         let (mut front, mut side) = (rules.setback_front, rules.setback_side);
         let usage = match kind {
             DistrictKind::Civic => {
                 // Tallest at the very centre, so the skyline peaks there.
-                let peak = (1.0 - center_dist / 0.35).clamp(0.0, 1.0);
+                let peak = (1.0 - core / 0.8).clamp(0.0, 1.0) * if main_core { 1.0 } else { 0.75 };
                 floors = (f0 as f64 + (f1 - f0) as f64 * (0.3 + 0.7 * peak) * rng.range(0.7, 1.0))
                     as u32;
                 BuildingUse::Offices
             }
             DistrictKind::Commercial => BuildingUse::ShopsAndOffices,
             DistrictKind::Residential => {
-                if center_dist > 0.72 && rng.chance(0.7) {
+                // Villages are houses; cities have them at the edge.
+                let houses = if self.params.radius < 500.0 {
+                    0.85
+                } else if center_dist > 0.72 {
+                    0.7
+                } else {
+                    0.0
+                };
+                if rng.chance(houses) {
                     floors = rng.range_int(1, 3) as u32;
                     depth = rng.range(10.0, 14.0);
                     front = 6.0;
@@ -1179,6 +1363,10 @@ fn trim_at_water(
         None => (p, p),
     }
 }
+
+/// Grid square for finding neighbouring buildings: wider than any building
+/// is long, so neighbours are in the 3 x 3 squares around.
+const GRID: f64 = 160.0;
 
 /// Least gap between two buildings (m).
 pub const BUILDING_GAP: f64 = 1.0;
@@ -1349,7 +1537,7 @@ mod tests {
                     for r in &p.water.rivers {
                         let d = r.distance(c);
                         assert!(
-                            d >= r.width * 0.5 + water::QUAY_WIDTH - 1e-6,
+                            d >= r.width * 0.5 + water::quay_width(r.width) - 1e-6,
                             "seed {seed}: {d} m from a river"
                         );
                     }
@@ -1379,6 +1567,44 @@ mod tests {
                 assert!(!p.bridges.is_empty(), "seed {seed}: no bridges");
             }
         }
+    }
+
+    #[test]
+    fn hamlets_to_megalopolises() {
+        let mut tallest = Vec::new();
+        for (radius, min_buildings, max_buildings) in [
+            (100.0, 4, 60),
+            (300.0, 40, 400),
+            (700.0, 150, 1500),
+            (1300.0, 1000, 5000),
+            (4000.0, 10_000, 60_000),
+        ] {
+            let p = CityPlan::generate(Seed(11), &CityParams::with_radius(radius));
+            let n = p.buildings.len();
+            assert!(
+                (min_buildings..max_buildings).contains(&n),
+                "radius {radius}: {n} buildings"
+            );
+            assert_eq!(p.districts.len(), p.params.district_count());
+            for (_, s) in &p.buildings {
+                for c in s.corners() {
+                    assert!(
+                        !p.water.is_water(c),
+                        "radius {radius}: building in the water"
+                    );
+                }
+            }
+            for (_, s) in p.buildings.iter().take(300) {
+                crate::building::tests::check_plan(&BuildingPlan::generate(s));
+            }
+            tallest.push(p.buildings.iter().map(|(_, s)| s.floors).max().unwrap_or(0));
+        }
+        // No towers in a village; each size taller than the last but one.
+        assert!(tallest[1] <= 6, "village with {} floors", tallest[1]);
+        assert!(
+            tallest[4] > tallest[3] && tallest[3] > tallest[2],
+            "{tallest:?}"
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Finds z-fighting in a generated city: faces that lie in the same plane,
 //! face the same way and overlap, so they flicker.
 //!
-//! cargo run -p hw-client --bin zfight -- [seed] [--cut LEVEL] [--far] [--all] [--svg FILE]
+//! cargo run -p hw-client --bin zfight -- [seed] [--cut LEVEL] [--far] [--all] [--svg FILE] [--radius M]
 //!
 //! Prints the worst spots (where, which colours, which meshes) and exits
 //! with 1 if any differently coloured faces fight. Buildings are drawn in
@@ -21,6 +21,7 @@ fn main() {
     let mut all = false;
     let mut svg = None;
     let mut detail = Detail::Near;
+    let mut params = hw_gen::city::CityParams::default();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -28,10 +29,17 @@ fn main() {
             "--all" => all = true,
             "--svg" => svg = args.next(),
             "--far" => detail = Detail::Far,
+            "--radius" => {
+                let r = args
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .expect("--radius metres");
+                params = hw_gen::city::CityParams::with_radius(r);
+            }
             s => seed = s.parse().unwrap_or_else(|_| panic!("not a seed: {s}")),
         }
     }
-    let city = GeneratedCity::generate(Seed(seed));
+    let city = GeneratedCity::generate_with(Seed(seed), &params);
     let report = zfight::city(&city, cut, detail).run();
     println!(
         "seed {seed}{}{}: {}",

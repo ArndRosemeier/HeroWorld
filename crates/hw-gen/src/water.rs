@@ -15,8 +15,11 @@ use hw_core::{det, Seed};
 /// Height of the water surface below the streets (m).
 pub const WATER_LEVEL: f64 = -3.5;
 
-/// Paved promenade along a river, between the quay wall and the blocks (m).
-pub const QUAY_WIDTH: f64 = 9.0;
+/// Paved promenade along a river, between the quay wall and the blocks (m):
+/// a towpath along a brook, a broad quay along a big river.
+pub fn quay_width(river_width: f64) -> f64 {
+    (river_width * 0.12).clamp(3.0, 9.0)
+}
 
 /// Beach and promenade along the coast, between the sea and the blocks (m).
 pub const SHORE_WIDTH: f64 = 30.0;
@@ -92,10 +95,10 @@ impl CityWater {
             let dist = radius * rng.range(0.55, 0.85);
             // A gentle wave plus one bay or headland.
             let (k1, p1) = (rng.range(1.0, 2.0), rng.range(0.0, std::f64::consts::TAU));
-            let amp = rng.range(40.0, 110.0);
+            let amp = rng.range(0.03, 0.085) * radius;
             let bay_at = rng.range(-0.6, 0.6) * radius;
             let bay = rng.range(-0.12, 0.25) * radius;
-            let step = 220.0;
+            let step = (radius * 0.17).clamp(40.0, 400.0);
             let n = (reach / step).ceil() as i64;
             let pts: Vec<DVec2> = (-n..=n)
                 .map(|i| {
@@ -126,9 +129,11 @@ impl CityWater {
         let up = meander(&mut rng, through, -flow, reach, radius);
         let mut pts: Vec<DVec2> = up.into_iter().rev().collect();
         pts.extend(down.into_iter().skip(1));
+        // A brook through a hamlet, a broad river through a metropolis.
+        let width = (radius * 0.06).clamp(8.0, 220.0);
         rivers.push(River {
             pts,
-            width: rng.range(60.0, 100.0),
+            width: width * rng.range(0.8, 1.25),
         });
         if rng.chance(0.35) {
             // A tributary joins from upstream, at an angle to the main river.
@@ -150,7 +155,7 @@ impl CityWater {
             let arm = meander(&mut rng, join, out, reach, radius);
             rivers.push(River {
                 pts: arm.into_iter().rev().collect(),
-                width: rng.range(35.0, 55.0),
+                width: width * rng.range(0.45, 0.7),
             });
         }
         CityWater { rivers, coast }
@@ -178,10 +183,10 @@ fn meander(
     let mut heading = det::atan2(dir.y, dir.x);
     let base = heading;
     let mut p = start;
-    while p.length() < reach && pts.len() < 64 {
+    while p.length() < reach && pts.len() < 400 {
         let turn = rng.range(-0.4, 0.4) + (base - heading) * 0.5;
         heading += turn;
-        p += det::dir2(heading) * rng.range(0.24, 0.32) * radius;
+        p += det::dir2(heading) * rng.range(0.24, 0.32) * radius.clamp(250.0, 2200.0);
         pts.push(p);
     }
     pts
