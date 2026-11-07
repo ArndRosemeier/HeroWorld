@@ -19,7 +19,7 @@ use glam::{DVec2, DVec3};
 use hw_core::Rng;
 use hw_gen::building::{bay_lines, BuildingPlan, Floor, Opening, OpeningKind, RoomKind, Side};
 use hw_gen::geom::Rect;
-use hw_gen::style::{Cornice, Crown, Look, Piers, Rgb, Roof, Style, WindowKind};
+use hw_gen::style::{Cornice, Crown, Look, Piers, Rgb, Ridge, Roof, Style, WindowKind};
 use std::f64::consts::PI;
 
 /// How much to draw.
@@ -1093,11 +1093,14 @@ fn roof(c: &mut Ctx, o: Rect, y: f64, detail: Detail) {
             if detail == Detail::Near && look.rooftop_gear {
                 rooftop(c, o, y);
             }
+            if detail == Detail::Near && look.chimneys {
+                flat_chimneys(c, o, y);
+            }
             crown(c, o, y);
         }
         Roof::Gable | Roof::Hip => {
             let hip = look.roof == Roof::Hip;
-            pitched(c, o, y, hip, roof_c);
+            pitched(c, o, y, hip, roof_c, detail);
         }
         Roof::Mansard => {
             let inset = 1.4;
@@ -1115,6 +1118,14 @@ fn roof(c: &mut Ctx, o: Rect, y: f64, detail: Detail) {
                 DVec3::new(o.min.x + inset, y + h, o.max.y - inset),
             ];
             c.hexa(lo, hi, roof_c);
+            if detail == Detail::Near {
+                if look.dormers {
+                    mansard_dormers(c, o, y);
+                }
+                if look.chimneys {
+                    flat_chimneys(c, o, y + h);
+                }
+            }
         }
         Roof::Dome => {
             let r = o.size().min_element() * 0.42;
@@ -1141,78 +1152,190 @@ fn roof_dome_color(look: &Look) -> Color {
     }
 }
 
-/// Gable or hip roof over `o`, ridge along the longer side.
-fn pitched(c: &mut Ctx, o: Rect, y: f64, hip: bool, color: Color) {
-    let ov = 0.5;
-    let (x0, x1, z0, z1) = (o.min.x - ov, o.max.x + ov, o.min.y - ov, o.max.y + ov);
-    let along_x = (x1 - x0) >= (z1 - z0);
-    let span = if along_x { z1 - z0 } else { x1 - x0 };
-    let h = (span * 0.32).clamp(1.5, 6.0);
-    let wall = col(c.look.wall);
-    let under = shade(c.look.roof_color, 0.7);
-    if along_x {
-        let zm = (z0 + z1) * 0.5;
-        let inset = if hip { (z1 - z0) * 0.5 } else { 0.0 };
-        let r0 = DVec3::new(x0 + inset, y + h, zm);
-        let r1 = DVec3::new(x1 - inset, y + h, zm);
-        let (a, b, cc, d) = (
-            DVec3::new(x0, y, z0),
-            DVec3::new(x1, y, z0),
-            DVec3::new(x1, y, z1),
-            DVec3::new(x0, y, z1),
-        );
-        c.quad([a, b, r1, r0], DVec3::new(0.0, 1.0, -1.0), color);
-        c.quad([d, cc, r1, r0], DVec3::new(0.0, 1.0, 1.0), color);
-        if hip {
-            c.polygon(&[a, d, r0], DVec3::new(-1.0, 1.0, 0.0), color);
-            c.polygon(&[b, cc, r1], DVec3::new(1.0, 1.0, 0.0), color);
-        } else {
-            // Gable ends, in the wall's colour, over the wall line.
-            let g0 = [
-                DVec3::new(o.min.x, y, z0),
-                DVec3::new(o.min.x, y, z1),
-                DVec3::new(o.min.x, y + h, zm),
-            ];
-            let g1 = [
-                DVec3::new(o.max.x, y, z0),
-                DVec3::new(o.max.x, y, z1),
-                DVec3::new(o.max.x, y + h, zm),
-            ];
-            c.polygon(&g0, -DVec3::X, wall);
-            c.polygon(&g1, DVec3::X, wall);
-        }
-        c.quad([a, b, cc, d], -DVec3::Y, under);
+/// Gable or hip roof over `o`: pitch, eaves and ridge from the look, with
+/// chimneys and dormers at close range.
+fn pitched(c: &mut Ctx, o: Rect, y: f64, hip: bool, color: Color, detail: Detail) {
+    let look = c.look;
+    let ov = look.eaves;
+    let along_x = match look.ridge {
+        Ridge::Long => o.size().x >= o.size().y,
+        Ridge::Front => true,
+        Ridge::Deep => false,
+    };
+    // A local frame: s along the ridge, t across it.
+    let (ws0, ws1, wt0, wt1) = if along_x {
+        (o.min.x, o.max.x, o.min.y, o.max.y)
     } else {
-        let xm = (x0 + x1) * 0.5;
-        let inset = if hip { (x1 - x0) * 0.5 } else { 0.0 };
-        let r0 = DVec3::new(xm, y + h, z0 + inset);
-        let r1 = DVec3::new(xm, y + h, z1 - inset);
-        let (a, b, cc, d) = (
-            DVec3::new(x0, y, z0),
-            DVec3::new(x0, y, z1),
-            DVec3::new(x1, y, z1),
-            DVec3::new(x1, y, z0),
-        );
-        c.quad([a, b, r1, r0], DVec3::new(-1.0, 1.0, 0.0), color);
-        c.quad([d, cc, r1, r0], DVec3::new(1.0, 1.0, 0.0), color);
-        if hip {
-            c.polygon(&[a, d, r0], DVec3::new(0.0, 1.0, -1.0), color);
-            c.polygon(&[b, cc, r1], DVec3::new(0.0, 1.0, 1.0), color);
+        (o.min.y, o.max.y, o.min.x, o.max.x)
+    };
+    let p = move |s: f64, t: f64, yy: f64| {
+        if along_x {
+            DVec3::new(s, yy, t)
         } else {
-            let g0 = [
-                DVec3::new(x0, y, o.min.y),
-                DVec3::new(x1, y, o.min.y),
-                DVec3::new(xm, y + h, o.min.y),
-            ];
-            let g1 = [
-                DVec3::new(x0, y, o.max.y),
-                DVec3::new(x1, y, o.max.y),
-                DVec3::new(xm, y + h, o.max.y),
-            ];
-            c.polygon(&g0, -DVec3::Z, wall);
-            c.polygon(&g1, DVec3::Z, wall);
+            DVec3::new(t, yy, s)
         }
-        c.quad([a, b, cc, d], -DVec3::Y, under);
+    };
+    let n = move |ds: f64, dt: f64, dy: f64| p(ds, dt, dy);
+    let (s0, s1, t0, t1) = (ws0 - ov, ws1 + ov, wt0 - ov, wt1 + ov);
+    let half = (t1 - t0) * 0.5;
+    let tm = (t0 + t1) * 0.5;
+    let h = (half * look.pitch).clamp(1.0, 14.0);
+    let inset = if hip {
+        half.min((s1 - s0) * 0.5 - 0.05)
+    } else {
+        0.0
+    };
+    let r0 = p(s0 + inset, tm, y + h);
+    let r1 = p(s1 - inset, tm, y + h);
+    let (a, b, cc, d) = (p(s0, t0, y), p(s1, t0, y), p(s1, t1, y), p(s0, t1, y));
+    c.quad([a, b, r1, r0], n(0.0, -h, half), color);
+    c.quad([d, cc, r1, r0], n(0.0, h, half), color);
+    if hip {
+        c.polygon(&[a, d, r0], n(-h, 0.0, half), color);
+        c.polygon(&[b, cc, r1], n(h, 0.0, half), color);
+    } else {
+        // Gable ends in the wall's colour, on the wall line, under the
+        // roof's ends.
+        let e = y + h * ov / half;
+        let wall = col(look.wall);
+        for (sw, dir) in [(ws0, -1.0), (ws1, 1.0)] {
+            let g = [
+                p(sw, wt0, y),
+                p(sw, wt1, y),
+                p(sw, wt1, e),
+                p(sw, tm, y + h - 0.02),
+                p(sw, wt0, e),
+            ];
+            c.polygon(&g, n(dir, 0.0, 0.0), wall);
+        }
+    }
+    c.quad([a, b, cc, d], -DVec3::Y, shade(look.roof_color, 0.7));
+    if detail != Detail::Near {
+        return;
+    }
+    // Height of the roof over a point at `t` across.
+    let roof_at = |t: f64| y + h * (1.0 - (t - tm).abs() / half);
+    if look.chimneys {
+        let mut rng = rng_of(c.plan, "chimneys");
+        let len = ws1 - ws0;
+        let count = if len > 14.0 { 2 } else { 1 };
+        let brick = shade(look.wall, 0.75);
+        for k in 0..count {
+            let s = ws0 + len * (0.2 + 0.6 * k as f64) + rng.range(-0.8, 0.8);
+            let t = tm + half * rng.range(-0.45, 0.45);
+            let top = (roof_at(t) + 1.2).max(y + h + 0.5);
+            c.bx(p(s - 0.35, t - 0.45, y), p(s + 0.35, t + 0.45, top), brick);
+            c.bx(
+                p(s - 0.45, t - 0.55, top),
+                p(s + 0.45, t + 0.55, top + 0.15),
+                shade(look.wall, 0.6),
+            );
+        }
+    }
+    if look.dormers && h >= 2.6 {
+        let len = ws1 - ws0;
+        let n_d = ((len - 3.0) / 4.0).floor().max(0.0) as usize;
+        let wall = col(look.trim);
+        let glass = col(look.glass);
+        let roof_c = col(look.roof_color);
+        for side in [-1.0, 1.0] {
+            // Front of the dormer: a little in from the wall line.
+            let tf = if side < 0.0 { wt0 + 0.5 } else { wt1 - 0.5 };
+            let yf = roof_at(tf);
+            let top = yf + 1.5;
+            if top > y + h - 0.3 {
+                continue;
+            }
+            let tb = tm;
+            for k in 0..n_d {
+                let s = ws0 + 2.0 + (len - 4.0) * (k as f64 + 0.5) / n_d as f64;
+                c.bx(p(s - 0.7, tf, yf - 0.4), p(s + 0.7, tb, top), wall);
+                c.bx(
+                    p(s - 0.85, tf - side * 0.15, top),
+                    p(s + 0.85, tb, top + 0.12),
+                    roof_c,
+                );
+                c.surf(Surf::Glass);
+                let tg = tf + side * 0.03;
+                c.quad(
+                    [
+                        p(s - 0.45, tg, yf + 0.15),
+                        p(s + 0.45, tg, yf + 0.15),
+                        p(s + 0.45, tg, top - 0.2),
+                        p(s - 0.45, tg, top - 0.2),
+                    ],
+                    n(0.0, side, 0.0),
+                    glass,
+                );
+                c.surf(Surf::Plain);
+            }
+        }
+    }
+}
+
+/// Dormers on all four sides of a mansard of height `h` standing on `o`.
+fn mansard_dormers(c: &mut Ctx, o: Rect, y: f64) {
+    let look = c.look;
+    let wall = col(look.trim);
+    let glass = col(look.glass);
+    let roof_c = col(look.roof_color);
+    let top = y + 1.9;
+    // (wall line start, end, across position, outward sign, along x?)
+    let sides = [
+        (o.min.x, o.max.x, o.min.y, -1.0, true),
+        (o.min.x, o.max.x, o.max.y, 1.0, true),
+        (o.min.y, o.max.y, o.min.x, -1.0, false),
+        (o.min.y, o.max.y, o.max.x, 1.0, false),
+    ];
+    for (a, b, t, out, along_x) in sides {
+        let p = move |s: f64, tt: f64, yy: f64| {
+            if along_x {
+                DVec3::new(s, yy, tt)
+            } else {
+                DVec3::new(tt, yy, s)
+            }
+        };
+        let len = b - a;
+        let count = ((len - 3.0) / look.bay.max(2.0)).floor().max(0.0) as usize;
+        let tf = t + out * 0.3;
+        let tb = t - out * 2.2;
+        for k in 0..count {
+            let s = a + 2.0 + (len - 4.0) * (k as f64 + 0.5) / count as f64;
+            c.bx(p(s - 0.6, tf, y + 0.2), p(s + 0.6, tb, top), wall);
+            c.bx(
+                p(s - 0.75, tf + out * 0.12, top),
+                p(s + 0.75, tb, top + 0.12),
+                roof_c,
+            );
+            c.surf(Surf::Glass);
+            let tg = tf + out * 0.03;
+            let q = [
+                p(s - 0.4, tg, y + 0.5),
+                p(s + 0.4, tg, y + 0.5),
+                p(s + 0.4, tg, top - 0.2),
+                p(s - 0.4, tg, top - 0.2),
+            ];
+            let nrm = if along_x {
+                DVec3::new(0.0, 0.0, out)
+            } else {
+                DVec3::new(out, 0.0, 0.0)
+            };
+            c.quad(q, nrm, glass);
+            c.surf(Surf::Plain);
+        }
+    }
+}
+
+/// Chimneys on a flat or mansard roof, on the party walls.
+fn flat_chimneys(c: &mut Ctx, o: Rect, y: f64) {
+    let brick = shade(c.look.wall, 0.75);
+    let zm = o.center().y;
+    for x in [o.min.x + 0.6, o.max.x - 0.6] {
+        c.bx(
+            DVec3::new(x - 0.4, y, zm - 1.2),
+            DVec3::new(x + 0.4, y + 1.5, zm + 1.2),
+            brick,
+        );
     }
 }
 

@@ -19,6 +19,7 @@ use super::streets::{piece_seed, PieceStreets, StreetStyle};
 use super::{Piece, Town, OUTLINE};
 use crate::building::{BuildingSite, BuildingUse, CORE_SIZE, CORRIDOR_WIDTH};
 use crate::city::{DistrictKind, BUILDING_GAP};
+use crate::style::{Quarter, Region, Vernacular};
 use glam::DVec2;
 use hw_core::{Rng, Seed, StableId};
 
@@ -73,6 +74,7 @@ pub fn plan_buildings(
     if streets.style == StreetStyle::Park {
         return Vec::new();
     }
+    let region = region_of(seed);
     let seed = piece_seed(seed, piece).child("buildings");
     let mut rng = seed.rng();
     let p = &town.params;
@@ -101,6 +103,7 @@ pub fn plan_buildings(
         p.population,
         &mut rng,
     );
+    let vernacular = quarter_of(streets.style, &prog).map(|quarter| Vernacular { region, quarter });
     let mut main = main_roads(town, &piece.face);
     if piece.era == Era::Old {
         // Even the high street of an old town is narrow.
@@ -112,9 +115,33 @@ pub fn plan_buildings(
     let mut out = Vec::new();
     for (k, block) in streets.blocks.iter().enumerate() {
         let bseed = seed.child(k as u32);
-        fill_block(block, &main, side, &prog, bseed, &mut out);
+        fill_block(block, &main, side, &prog, vernacular, bseed, &mut out);
     }
     out
+}
+
+/// How a town builds by tradition: one region per town, from its seed.
+pub fn region_of(town_seed: Seed) -> Region {
+    let mut rng = town_seed.child("region").rng();
+    *rng.pick(&Region::ALL)
+}
+
+/// The kind of quarter a programme builds, if it builds in the old ways
+/// (business districts, towers, works, the expo and the dystopia do not).
+fn quarter_of(style: StreetStyle, prog: &Programme) -> Option<Quarter> {
+    use DistrictKind::*;
+    if matches!(prog.district, Dystopia | AetherWorks | Expo)
+        || prog.uses[0].0 == BuildingUse::Offices
+    {
+        return None;
+    }
+    match style {
+        StreetStyle::Lanes => Some(Quarter::OldTown),
+        StreetStyle::Garden => Some(Quarter::Suburb),
+        StreetStyle::Organic if prog.uses[0].0 == BuildingUse::House => Some(Quarter::Suburb),
+        StreetStyle::Organic | StreetStyle::Grid | StreetStyle::Baroque => Some(Quarter::Terraces),
+        _ => None,
+    }
 }
 
 /// The main roads around a piece: (polyline, reach); the town's edge has no
@@ -294,6 +321,7 @@ fn fill_block(
     main: &[(Vec<DVec2>, f64)],
     side_reach: f64,
     prog: &Programme,
+    vernacular: Option<Vernacular>,
     seed: Seed,
     out: &mut Vec<BuildingSite>,
 ) {
@@ -419,6 +447,7 @@ fn fill_block(
                         floors,
                         street: 0,
                         district: prog.district,
+                        vernacular,
                     });
                     t += width + rng.range(prog.gap.0, prog.gap.1);
                     placed = true;

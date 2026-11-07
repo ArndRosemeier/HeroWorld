@@ -13,7 +13,7 @@
 
 use crate::city::DistrictKind;
 use crate::geom::Rect;
-use crate::style::Look;
+use crate::style::{Look, Vernacular};
 use glam::{DVec2, DVec3};
 use hw_core::{Seed, StableId};
 
@@ -223,6 +223,9 @@ pub struct BuildingSite {
     pub street: u32,
     /// The district it stands in (it decides the style).
     pub district: DistrictKind,
+    /// Builds in its region's old ways (towns); `None` for the
+    /// golden-age styles alone.
+    pub vernacular: Option<Vernacular>,
 }
 
 impl BuildingSite {
@@ -301,7 +304,10 @@ impl<'a> Planner<'a> {
     fn new(site: &'a BuildingSite) -> Self {
         Self {
             site,
-            look: Look::choose(site.seed, site.district, site.usage, site.floors),
+            look: match site.vernacular {
+                Some(v) => Look::vernacular(site.seed, v, site.district, site.usage, site.floors),
+                None => Look::choose(site.seed, site.district, site.usage, site.floors),
+            },
         }
     }
 
@@ -1005,6 +1011,7 @@ pub(crate) mod tests {
             floors,
             street: 0,
             district: DistrictKind::Commercial,
+            vernacular: None,
         }
     }
 

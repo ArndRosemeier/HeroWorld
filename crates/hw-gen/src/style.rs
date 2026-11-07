@@ -38,6 +38,63 @@ pub enum Style {
     Tenement,
     /// The mad scientist's labs: concrete, portholes, a dome and a coil.
     Lab,
+    /// Old-town houses: plastered stone under steep tiled gables and hips.
+    OldTown,
+    /// Narrow brick merchants' houses, gable to the street (the north).
+    Burgher,
+    /// Stone apartment blocks with balconies under a zinc mansard.
+    Haussmann,
+    /// Brick terraces: a cornice, a flat roof or a slate mansard.
+    Rowhouse,
+    /// Southern stucco under shallow terracotta hips, arches and loggias.
+    Villa,
+    /// Family houses with pitched roofs and a chimney.
+    Cottage,
+}
+
+/// Which way a pitched roof's ridge runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Ridge {
+    /// Along the longer side.
+    Long,
+    /// Along the street front (eaves to the street).
+    Front,
+    /// Front to back (a gable to the street).
+    Deep,
+}
+
+/// How the land builds, by climate and tradition (one per town).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Region {
+    /// Brick, steep slate and tile gables, gables to the street.
+    Northern,
+    /// Plaster and stone, tiled gables and hips, mansards.
+    Continental,
+    /// Stucco, shallow terracotta hips.
+    Southern,
+}
+
+impl Region {
+    pub const ALL: [Region; 3] = [Region::Northern, Region::Continental, Region::Southern];
+}
+
+/// The kind of quarter a building stands in, for towns with a past.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Quarter {
+    /// The old town inside (or where once stood) the walls.
+    OldTown,
+    /// The planned and grown extensions: terraces and apartment blocks.
+    Terraces,
+    /// Houses with gardens.
+    Suburb,
+}
+
+/// Tradition and quarter together: buildings with this build in the old
+/// ways of their region (the golden-age styles still mix in).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Vernacular {
+    pub region: Region,
+    pub quarter: Quarter,
 }
 
 /// What the main walls are made of (colour now, texture later).
@@ -161,6 +218,14 @@ pub struct Look {
     pub rooftop_gear: bool,
     /// Tall decorative fins (Googie pylons, deco fins).
     pub fins: bool,
+    /// Rise over run of a pitched roof.
+    pub pitch: f64,
+    pub ridge: Ridge,
+    /// How far a pitched roof reaches past the walls (m).
+    pub eaves: f64,
+    pub chimneys: bool,
+    /// Dormer windows in a mansard or a steep roof.
+    pub dormers: bool,
 }
 
 const LIMESTONE: [Rgb; 4] = [
@@ -205,6 +270,27 @@ const GOLD: [Rgb; 4] = [
     [200, 196, 188],
     [160, 104, 72],
 ];
+const PLASTER: [Rgb; 7] = [
+    [226, 214, 188],
+    [214, 196, 160],
+    [232, 222, 200],
+    [200, 176, 140],
+    [222, 200, 170],
+    [236, 226, 206],
+    [206, 190, 170],
+];
+const SOUTH: [Rgb; 6] = [
+    [238, 226, 200],
+    [232, 206, 170],
+    [222, 190, 150],
+    [240, 234, 220],
+    [226, 176, 132],
+    [236, 214, 160],
+];
+const CLAY_TILE: [Rgb; 4] = [[168, 84, 56], [150, 70, 48], [182, 104, 70], [140, 78, 58]];
+const SLATE: [Rgb; 3] = [[70, 74, 82], [84, 86, 92], [60, 62, 70]];
+const ZINC: [Rgb; 2] = [[120, 130, 136], [104, 112, 120]];
+const SHINGLE: [Rgb; 4] = [[80, 70, 66], [96, 84, 74], [70, 72, 76], [110, 64, 52]];
 const GLASS: [Rgb; 4] = [
     [64, 104, 128],
     [72, 124, 140],
@@ -255,7 +341,81 @@ impl Look {
     pub fn choose(seed: Seed, district: DistrictKind, usage: BuildingUse, floors: u32) -> Look {
         let mut rng = seed.child("look").rng();
         let style = Style::choose(district, usage, floors, &mut rng);
+        Look::styled(style, floors, &mut rng)
+    }
+
+    /// The look of a building in a town with a past: its region's old ways
+    /// in old towns, terraces and suburbs, the golden-age styles mixed in
+    /// (and alone for towers, works, labs and the dystopia).
+    pub fn vernacular(
+        seed: Seed,
+        v: Vernacular,
+        district: DistrictKind,
+        usage: BuildingUse,
+        floors: u32,
+    ) -> Look {
+        use Region::*;
+        use Style::*;
+        let mut rng = seed.child("look").rng();
         let r = &mut rng;
+        let special = matches!(
+            usage,
+            BuildingUse::Works | BuildingUse::Pavilion | BuildingUse::Lab | BuildingUse::Tenement
+        ) || floors >= 9;
+        let style = if special {
+            Style::choose(district, usage, floors, r)
+        } else {
+            let house = usage == BuildingUse::House;
+            let (styles, w): (&[Style], &[f64]) = match (v.quarter, v.region) {
+                (Quarter::Suburb, Southern) if house => {
+                    (&[Villa, Cottage, Googie], &[0.55, 0.25, 0.2])
+                }
+                (Quarter::Suburb, _) if house => (&[Cottage, Googie], &[0.8, 0.2]),
+                (Quarter::Suburb, Southern) => {
+                    (&[Villa, GardenFlats, Streamline], &[0.5, 0.3, 0.2])
+                }
+                (Quarter::Suburb, _) => (&[Rowhouse, GardenFlats, Streamline], &[0.4, 0.4, 0.2]),
+                (Quarter::OldTown, Northern) => (&[Burgher, OldTown], &[0.7, 0.3]),
+                (Quarter::OldTown, Continental) => (&[OldTown, Burgher], &[0.85, 0.15]),
+                (Quarter::OldTown, Southern) => (&[Villa, OldTown], &[0.75, 0.25]),
+                (Quarter::Terraces, Northern) => (
+                    &[Rowhouse, Burgher, Emporium, GardenFlats, Streamline],
+                    &[0.4, 0.15, 0.2, 0.15, 0.1],
+                ),
+                (Quarter::Terraces, Continental) => (
+                    &[
+                        Haussmann,
+                        OldTown,
+                        Rowhouse,
+                        Emporium,
+                        Streamline,
+                        GardenFlats,
+                    ],
+                    &[0.45, 0.1, 0.1, 0.15, 0.1, 0.1],
+                ),
+                (Quarter::Terraces, Southern) => (
+                    &[Villa, Haussmann, Streamline, GardenFlats],
+                    &[0.5, 0.15, 0.2, 0.15],
+                ),
+            };
+            styles[r.weighted(w)]
+        };
+        let mut look = Look::styled(style, floors, r);
+        // Northern old towns build in brick, southern ones in stucco.
+        if style == OldTown && v.region == Northern && r.chance(0.6) {
+            look.material = Material::Brick;
+            look.wall = pick(r, &BRICK);
+        }
+        if style == Cottage && v.region == Southern {
+            look.roof_color = pick(r, &CLAY_TILE);
+            look.wall = pick(r, &SOUTH);
+        }
+        look
+    }
+
+    /// The look of a building of `style`, varied by `rng`.
+    pub fn styled(style: Style, floors: u32, rng: &mut Rng) -> Look {
+        let r = rng;
         let glass = pick(r, &GLASS);
         let base = Look {
             style,
@@ -287,6 +447,11 @@ impl Look {
             water_tank: false,
             rooftop_gear: true,
             fins: false,
+            pitch: 0.6,
+            ridge: Ridge::Long,
+            eaves: 0.5,
+            chimneys: false,
+            dormers: false,
         };
         let look = match style {
             Style::ArtDeco => {
@@ -504,8 +669,186 @@ impl Look {
                 crown: Crown::Dome,
                 ..base
             },
+            Style::OldTown => Look {
+                material: Material::Stucco,
+                wall: pick(r, &PLASTER),
+                trim: pick(r, &LIMESTONE),
+                frame: *r.pick(&[[72, 56, 44], [52, 70, 60], [232, 228, 216], [60, 64, 80]]),
+                roof_color: if r.chance(0.7) {
+                    pick(r, &CLAY_TILE)
+                } else {
+                    pick(r, &SLATE)
+                },
+                bay: r.range(2.3, 2.9),
+                window_share: r.range(0.38, 0.46),
+                reveal: 0.22,
+                floor_bands: r.chance(0.3),
+                plinth: r.range(0.4, 0.9),
+                cornice: Cornice::Simple,
+                roof: if r.chance(0.75) {
+                    Roof::Gable
+                } else {
+                    Roof::Hip
+                },
+                parapet: 0.0,
+                rooftop_gear: false,
+                awnings: r.chance(0.2),
+                pitch: r.range(0.8, 1.15),
+                ridge: if r.chance(0.3) {
+                    Ridge::Deep
+                } else {
+                    Ridge::Front
+                },
+                eaves: 0.35,
+                chimneys: true,
+                dormers: r.chance(0.4),
+                ..base
+            },
+            Style::Burgher => Look {
+                material: Material::Brick,
+                wall: pick(r, &BRICK),
+                trim: [236, 232, 220],
+                frame: [236, 234, 226],
+                roof_color: if r.chance(0.5) {
+                    pick(r, &SLATE)
+                } else {
+                    pick(r, &CLAY_TILE)
+                },
+                bay: r.range(2.1, 2.5),
+                window_share: r.range(0.46, 0.55),
+                reveal: 0.15,
+                floor_bands: r.chance(0.4),
+                cornice: Cornice::None,
+                roof: Roof::Gable,
+                parapet: 0.0,
+                rooftop_gear: false,
+                pitch: r.range(1.1, 1.5),
+                ridge: if r.chance(0.75) {
+                    Ridge::Deep
+                } else {
+                    Ridge::Front
+                },
+                eaves: 0.2,
+                chimneys: true,
+                dormers: r.chance(0.3),
+                ..base
+            },
+            Style::Haussmann => Look {
+                material: Material::Limestone,
+                wall: pick(r, &LIMESTONE),
+                trim: [240, 236, 224],
+                frame: [52, 50, 48],
+                roof_color: pick(r, &ZINC),
+                bay: r.range(2.6, 3.1),
+                window: if r.chance(0.3) {
+                    WindowKind::Arched
+                } else {
+                    WindowKind::Punched
+                },
+                window_share: r.range(0.45, 0.52),
+                reveal: 0.25,
+                floor_bands: true,
+                plinth: r.range(0.8, 1.4),
+                cornice: Cornice::Stepped,
+                roof: Roof::Mansard,
+                balconies: r.chance(0.8),
+                awnings: r.chance(0.3),
+                parapet: 0.0,
+                rooftop_gear: false,
+                chimneys: true,
+                dormers: true,
+                ..base
+            },
+            Style::Rowhouse => {
+                let mansard = r.chance(0.35);
+                Look {
+                    material: Material::Brick,
+                    wall: if r.chance(0.3) {
+                        [120, 84, 70]
+                    } else {
+                        pick(r, &BRICK)
+                    },
+                    trim: pick(r, &LIMESTONE),
+                    frame: *r.pick(&[[40, 40, 44], [236, 234, 226], [48, 66, 56]]),
+                    roof_color: pick(r, &SLATE),
+                    bay: r.range(2.0, 2.5),
+                    window_share: r.range(0.44, 0.52),
+                    reveal: 0.2,
+                    plinth: r.range(0.6, 1.2),
+                    cornice: Cornice::Stepped,
+                    roof: if mansard { Roof::Mansard } else { Roof::Flat },
+                    parapet: if mansard { 0.0 } else { 0.5 },
+                    rooftop_gear: false,
+                    chimneys: true,
+                    dormers: mansard,
+                    ..base
+                }
+            }
+            Style::Villa => Look {
+                material: Material::Stucco,
+                wall: pick(r, &SOUTH),
+                trim: [244, 240, 230],
+                frame: *r.pick(&[[56, 96, 70], [60, 84, 120], [120, 72, 50], [236, 232, 220]]),
+                roof_color: pick(r, &CLAY_TILE),
+                bay: r.range(2.6, 3.2),
+                window: if r.chance(0.35) {
+                    WindowKind::Arched
+                } else {
+                    WindowKind::Punched
+                },
+                window_share: r.range(0.4, 0.5),
+                reveal: 0.25,
+                cornice: Cornice::Simple,
+                roof: if r.chance(0.7) {
+                    Roof::Hip
+                } else {
+                    Roof::Gable
+                },
+                balconies: r.chance(0.5),
+                parapet: 0.0,
+                rooftop_gear: false,
+                pitch: r.range(0.32, 0.5),
+                ridge: Ridge::Front,
+                eaves: 0.6,
+                chimneys: r.chance(0.3),
+                ..base
+            },
+            Style::Cottage => Look {
+                material: *r.pick(&[Material::Brick, Material::Stucco, Material::Stucco]),
+                wall: if r.chance(0.4) {
+                    pick(r, &BRICK)
+                } else {
+                    pick(r, &PLASTER)
+                },
+                trim: [244, 242, 236],
+                frame: *r.pick(&[[244, 242, 236], [60, 64, 72], [56, 90, 70], [120, 40, 36]]),
+                roof_color: if r.chance(0.5) {
+                    pick(r, &SHINGLE)
+                } else if r.chance(0.6) {
+                    pick(r, &CLAY_TILE)
+                } else {
+                    pick(r, &SLATE)
+                },
+                bay: r.range(2.8, 3.6),
+                window_share: r.range(0.42, 0.55),
+                reveal: 0.12,
+                roof: if r.chance(0.6) {
+                    Roof::Gable
+                } else {
+                    Roof::Hip
+                },
+                parapet: 0.0,
+                rooftop_gear: false,
+                canopy: r.chance(0.5),
+                pitch: r.range(0.55, 0.95),
+                ridge: *r.pick(&[Ridge::Long, Ridge::Front, Ridge::Front, Ridge::Deep]),
+                eaves: r.range(0.4, 0.7),
+                chimneys: true,
+                dormers: r.chance(0.25),
+                ..base
+            },
         };
-        let wall = vary(&mut rng, look.wall, 0.05);
+        let wall = vary(r, look.wall, 0.05);
         Look { wall, ..look }
     }
 }
@@ -546,5 +889,29 @@ mod tests {
         let a = Look::choose(Seed(5), DistrictKind::Civic, BuildingUse::Offices, 20);
         let b = Look::choose(Seed(5), DistrictKind::Civic, BuildingUse::Offices, 20);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn old_towns_and_suburbs_have_pitched_roofs() {
+        for region in Region::ALL {
+            for quarter in [Quarter::OldTown, Quarter::Suburb] {
+                let v = Vernacular { region, quarter };
+                let usage = if quarter == Quarter::Suburb {
+                    BuildingUse::House
+                } else {
+                    BuildingUse::Apartments
+                };
+                let pitched = (0..200)
+                    .filter(|&i| {
+                        let l = Look::vernacular(Seed(i), v, DistrictKind::Residential, usage, 3);
+                        matches!(l.roof, Roof::Gable | Roof::Hip | Roof::Mansard)
+                    })
+                    .count();
+                assert!(
+                    pitched > 140,
+                    "{region:?} {quarter:?}: {pitched} of 200 pitched"
+                );
+            }
+        }
     }
 }

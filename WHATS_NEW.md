@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.003 (2026-11-07)
+
+- Houses have real roofs now: tiled gables and hips, slate and zinc mansards, with chimneys and dormer windows.
+- Each town builds in the old ways of its region: brick gables in the north, plastered stone and tiled roofs in the middle lands, stucco and terracotta in the south.
+- Old towns, terraced streets and suburbs each have their own kinds of houses; the golden-age towers, works and labs stay as they were.
+
 ## 0.002 (2026-11-07)
 
 - You now play in one of the new towns instead of the old city: hills, valleys, rivers and coasts, an old town at the core, newer quarters around it.
