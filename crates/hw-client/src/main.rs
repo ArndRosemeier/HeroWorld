@@ -283,6 +283,9 @@ fn main() -> EngineResult<()> {
 
     // HW_WHATS_NEW=1 opens the list at start (for screenshots).
     let mut whats_new = std::env::var_os("HW_WHATS_NEW").is_some();
+    // A reflection probe over the street around the camera, moved along in
+    // steps, so chrome and glass reflect the buildings around them.
+    let mut street_probe: Option<(engine::reflections::ReflectionProbeId, (i32, i32))> = None;
     Engine::run(
         format!("HeroWorld {}", hw_core::version()),
         move |world, frame| {
@@ -311,6 +314,29 @@ fn main() -> EngineResult<()> {
                 );
             }
             version_corner(&frame.ui, &mut whats_new);
+            {
+                let eye = world.camera().eye();
+                let step = 48.0;
+                let key = ((eye.x / step).round() as i32, (eye.z / step).round() as i32);
+                if street_probe.map(|(_, k)| k) != Some(key) {
+                    let (x, z) = (key.0 as f32 * step, key.1 as f32 * step);
+                    let g = generated.world.ground(DVec2::new(x as f64, z as f64)) as f32;
+                    let probe = engine::reflections::ReflectionProbe::new(
+                        (x, g.max(0.0) + 6.0, z),
+                        (70.0, 24.0, 70.0),
+                    );
+                    match street_probe {
+                        Some((id, _)) => world.set_reflection_probe(id, probe)?,
+                        None => {
+                            let id = world.add_reflection_probe(probe)?;
+                            street_probe = Some((id, key));
+                        }
+                    }
+                    if let Some(p) = street_probe.as_mut() {
+                        p.1 = key;
+                    }
+                }
+            }
             let input = &frame.input;
             if input.pressed(Key::Tab) {
                 flying = !flying;

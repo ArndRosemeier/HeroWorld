@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.011 (2026-11-07)
+
+- Chrome bumpers, glass canopies and shop windows now reflect the street around you.
+
 ## 0.010 (2026-11-07)
 
 - Real surfaces: brick, stone, plaster and stucco walls; clay tile, slate, zinc and shingle roofs; asphalt roads, paving-slab pavements and cobbled lanes in the old towns.
