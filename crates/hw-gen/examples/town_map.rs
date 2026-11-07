@@ -6,7 +6,7 @@
 //! preset is one of: hill, colonial, mill, baroque, garden, mega.
 
 use hw_core::Seed;
-use hw_gen::urban::{CentreKind, Cover, Era, Growth, Land, Preset, TownParams};
+use hw_gen::urban::{CentreKind, Cover, Era, Growth, Land, Network, Preset, RoadClass, TownParams};
 use std::fmt::Write;
 
 fn main() {
@@ -31,6 +31,14 @@ fn main() {
     let t = std::time::Instant::now();
     let growth = Growth::generate(Seed(seed), &params, &land);
     println!("growth in {:.2} s", t.elapsed().as_secs_f64());
+    let t = std::time::Instant::now();
+    let net = Network::generate(Seed(seed), &params, &land, &growth);
+    println!(
+        "main roads in {:.2} s: {} roads, {} bridges",
+        t.elapsed().as_secs_f64(),
+        net.roads.len(),
+        net.bridges.len()
+    );
     println!("{params:?}");
 
     let g = &land.height;
@@ -68,13 +76,34 @@ fn main() {
             );
         }
     }
-    for r in &growth.roads {
-        let pts: Vec<String> = r.iter().map(|q| format!("{:.1},{:.1}", q.x, q.y)).collect();
+    for b in &net.bridges {
         let _ = writeln!(
             svg,
-            r##"<polyline points="{}" fill="none" stroke="#5a4632" stroke-width="{:.1}" stroke-linejoin="round"/>"##,
+            r##"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#222" stroke-width="{:.1}"/>"##,
+            b[0].x,
+            b[0].y,
+            b[1].x,
+            b[1].y,
+            lw * 5.0
+        );
+    }
+    for r in &net.roads {
+        let pts: Vec<String> = r
+            .pts
+            .iter()
+            .map(|q| format!("{:.1},{:.1}", q.x, q.y))
+            .collect();
+        let (col, w) = match r.class {
+            RoadClass::Country => ("#5a4632", 1.6),
+            RoadClass::Boulevard => ("#b01818", 3.0),
+            RoadClass::Avenue => ("#303030", 1.8),
+            RoadClass::Quay => ("#1a5a8a", 2.0),
+        };
+        let _ = writeln!(
+            svg,
+            r##"<polyline points="{}" fill="none" stroke="{col}" stroke-width="{:.1}" stroke-linejoin="round" stroke-linecap="round"/>"##,
             pts.join(" "),
-            lw * 2.0
+            lw * w
         );
     }
     for c in &growth.centres {

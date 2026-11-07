@@ -105,6 +105,11 @@ pub struct TownParams {
     /// Width of the main river (m).
     pub river_width: f64,
 
+    /// Directions (radians, 0 = east, towards +z = south positive) of the
+    /// roads to neighbouring places. Empty: the town picks its own. The
+    /// planet layer fills these so roads meet their neighbours.
+    pub links: Vec<f64>,
+
     // --- Size (later from the city's importance on the planet).
     pub population: f64,
 
@@ -243,6 +248,7 @@ impl TownParams {
             relief,
             rivers,
             river_width,
+            links: Vec::new(),
             population: pop,
             founding,
             walls,

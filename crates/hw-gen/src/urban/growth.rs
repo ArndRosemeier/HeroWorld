@@ -60,8 +60,8 @@ pub struct Growth {
     pub centres: Vec<Centre>,
     /// Where the old roads leave the map, towards neighbouring places.
     pub gates: Vec<DVec2>,
-    /// The old country roads, from the core out to each gate (they share
-    /// their first stretches where they run together).
+    /// The old country roads from the core out to the gates, split where
+    /// they fork, smoothed. Pieces meet exactly at their forks.
     pub roads: Vec<Vec<DVec2>>,
     /// Growth time per cell (m of travel); infinite where nothing grows.
     pub time: Grid<f32>,
@@ -106,10 +106,18 @@ impl Growth {
         let (_, via) = dijkstra(g, &road_cost, &[(core_cell, 0.0)]);
         let mut gates = Vec::new();
         let base_angle = rng.range(0.0, std::f64::consts::TAU);
-        for k in 0..gate_count {
-            let a = base_angle
-                + k as f64 / gate_count as f64 * std::f64::consts::TAU
-                + rng.range(-0.35, 0.35) * std::f64::consts::TAU / gate_count as f64;
+        let angles: Vec<f64> = if p.links.is_empty() {
+            (0..gate_count)
+                .map(|k| {
+                    base_angle
+                        + k as f64 / gate_count as f64 * std::f64::consts::TAU
+                        + rng.range(-0.35, 0.35) * std::f64::consts::TAU / gate_count as f64
+                })
+                .collect()
+        } else {
+            p.links.clone()
+        };
+        for a in angles {
             if let Some(cell) = edge_cell(land, det::dir2(a), &via) {
                 let q = g.center(cell.0, cell.1);
                 if gates.iter().all(|o: &DVec2| o.distance(q) > g.half() * 0.4) {
@@ -117,13 +125,14 @@ impl Growth {
                 }
             }
         }
-        let roads: Vec<Vec<DVec2>> = gates
+        let routes: Vec<Vec<DVec2>> = gates
             .iter()
             .map(|q| {
                 let path = trace(g, &via, g.cell_of(*q).expect("gate on the map"));
                 simplify(&path, g.cell * 0.8)
             })
             .collect();
+        let roads = branches(g, &via, &gates, core_cell);
 
         // --- Centres: the core, villages on the old roads, business districts.
         let mut centres = vec![Centre {
@@ -142,8 +151,8 @@ impl Growth {
         {
             tries += 1;
             // Most villages sit on an old road, some off them.
-            let at = if !roads.is_empty() && rng.chance(0.75) {
-                let r = &roads[rng.index(roads.len())];
+            let at = if !routes.is_empty() && rng.chance(0.75) {
+                let r = &routes[rng.index(routes.len())];
                 point_along(r, s * rng.range(0.7, 2.6))
             } else {
                 Some(det::dir2(rng.range(0.0, std::f64::consts::TAU)) * s * rng.range(0.8, 2.4))
@@ -190,6 +199,7 @@ impl Growth {
         let noise = Noise::new(seed.child("edge"));
         let fray = (s * 0.35).max(60.0);
         let road_speed = (1.0 - 0.75 * p.sprawl) as f32;
+        let core_r = s * 0.12 + 50.0;
         let grow_cost: Vec<f32> = (0..n)
             .map(|k| match land.cover.data[k] {
                 Cover::Sea | Cover::Lake => f32::INFINITY,
@@ -202,7 +212,13 @@ impl Growth {
                     .max(0.25);
                     let sl = slope[k] as f64;
                     let steep = 1.0 + 60.0 * sl * sl + if sl > 0.3 { 8.0 } else { 0.0 };
-                    let road = if on_road[k] { road_speed } else { 1.0 };
+                    // Old towns are compact; ribbons along roads came later.
+                    let road = if on_road[k] {
+                        let r = super::land::smooth(core_r, core_r * 2.5, q.length()) as f32;
+                        1.0 + (road_speed - 1.0) * r
+                    } else {
+                        1.0
+                    };
                     (rough * steep) as f32 * road
                 }
             })
@@ -446,6 +462,76 @@ fn trace<T: Clone>(g: &Grid<T>, via: &[Option<u32>], cell: (usize, usize)) -> Ve
     }
     out.reverse();
     out
+}
+
+/// The tree of paths from the core to the gates, as smooth pieces between
+/// forks.
+fn branches<T: Clone>(
+    g: &Grid<T>,
+    via: &[Option<u32>],
+    gates: &[DVec2],
+    core: (usize, usize),
+) -> Vec<Vec<DVec2>> {
+    use std::collections::BTreeMap;
+    let mut children: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    let mut ends = std::collections::BTreeSet::new();
+    for q in gates {
+        let (i, j) = g.cell_of(*q).expect("gate on the map");
+        let mut k = j * g.w + i;
+        ends.insert(k);
+        while let Some(from) = via[k] {
+            let from = from as usize;
+            let c = children.entry(from).or_default();
+            if c.contains(&k) {
+                break;
+            }
+            c.push(k);
+            k = from;
+        }
+    }
+    let center = |k: usize| g.center(k % g.w, k / g.w);
+    let mut out = Vec::new();
+    let mut stack = vec![core.1 * g.w + core.0];
+    while let Some(start) = stack.pop() {
+        for &first in children.get(&start).map(|v| v.as_slice()).unwrap_or(&[]) {
+            let mut path = vec![center(start)];
+            let mut k = first;
+            loop {
+                path.push(center(k));
+                match children.get(&k).map(|v| v.as_slice()) {
+                    Some([only]) if !ends.contains(&k) => k = *only,
+                    Some(_) => {
+                        stack.push(k);
+                        break;
+                    }
+                    None => break,
+                }
+            }
+            out.push(chaikin(&simplify(&path, g.cell * 1.2), 3));
+        }
+    }
+    out
+}
+
+/// Corner cutting, keeping both ends.
+pub fn chaikin(pts: &[DVec2], rounds: usize) -> Vec<DVec2> {
+    let mut p = pts.to_vec();
+    for _ in 0..rounds {
+        if p.len() < 3 {
+            return p;
+        }
+        let mut q = vec![p[0]];
+        for w in p.windows(2) {
+            q.push(w[0].lerp(w[1], 0.25));
+            q.push(w[0].lerp(w[1], 0.75));
+        }
+        q[1] = p[0].lerp(p[1], 0.5);
+        let n = q.len();
+        q[n - 1] = p[p.len() - 2].lerp(p[p.len() - 1], 0.5);
+        q.push(*p.last().expect("non-empty"));
+        p = q;
+    }
+    p
 }
 
 /// Douglas-Peucker simplification to within `tol`.
