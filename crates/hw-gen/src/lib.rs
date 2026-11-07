@@ -6,5 +6,6 @@ pub mod building;
 pub mod city;
 pub mod geom;
 pub mod style;
+pub mod water;
 
 pub use hw_core::WORLD_VERSION;

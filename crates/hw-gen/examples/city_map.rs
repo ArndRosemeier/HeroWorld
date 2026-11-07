@@ -3,7 +3,7 @@
 
 use hw_core::Seed;
 use hw_gen::building::BuildingUse;
-use hw_gen::city::{BlockUse, CityParams, CityPlan, DistrictKind};
+use hw_gen::city::{BlockUse, CityParams, CityPlan, DistrictKind, StreetClass};
 use std::fmt::Write;
 
 fn main() {
@@ -18,7 +18,7 @@ fn main() {
     let mut svg = String::new();
     let _ = writeln!(
         svg,
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="{} {} {} {}" width="1600" height="1600"><rect x="{}" y="{}" width="{}" height="{}" fill="#5d7a4e"/>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="{} {} {} {}" width="1600" height="1600"><rect x="{}" y="{}" width="{}" height="{}" fill="#3f6f9a"/>"##,
         -r,
         -r,
         2.0 * r,
@@ -34,7 +34,42 @@ fn main() {
             .collect::<Vec<_>>()
             .join(" ")
     };
-    for s in &plan.streets {
+    // Land over the water, then promenades and beaches.
+    for l in &plan.land {
+        let _ = writeln!(
+            svg,
+            r##"<polygon points="{}" fill="#5d7a4e"/>"##,
+            poly(&l.pts)
+        );
+    }
+    for (strip, street) in &plan.waterfront {
+        let fill = match plan.streets[*street as usize].class {
+            StreetClass::Shore => "#e3d29a",
+            _ => "#cfc9bb",
+        };
+        let _ = writeln!(
+            svg,
+            r##"<polygon points="{}" fill="{fill}"/>"##,
+            poly(&strip.pts)
+        );
+    }
+    for b in &plan.bridges {
+        let s = &plan.streets[b.street as usize];
+        let _ = writeln!(
+            svg,
+            r##"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#8a6d4a" stroke-width="{:.1}"/>"##,
+            b.a.x,
+            b.a.y,
+            b.b.x,
+            b.b.y,
+            s.width + 2.0 * s.sidewalk + 3.0
+        );
+    }
+    for s in plan
+        .streets
+        .iter()
+        .filter(|s| !s.class.is_water() && s.a != s.b)
+    {
         let _ = writeln!(
             svg,
             r##"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#cfc9bb" stroke-width="{:.1}" stroke-linecap="round"/>"##,
@@ -45,7 +80,11 @@ fn main() {
             s.width + 2.0 * s.sidewalk
         );
     }
-    for s in &plan.streets {
+    for s in plan
+        .streets
+        .iter()
+        .filter(|s| !s.class.is_water() && s.a != s.b)
+    {
         let _ = writeln!(
             svg,
             r##"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="#55565c" stroke-width="{:.1}"/>"##,

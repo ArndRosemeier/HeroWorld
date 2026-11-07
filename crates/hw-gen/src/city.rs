@@ -16,11 +16,17 @@
 //!    district rules, with a use and a height. The building itself is planned
 //!    later, on demand, by [`crate::building`].
 //!
+//! Water comes first ([`crate::water`]): rivers and the coast are lines the
+//! cells are split along before anything else, registered as quay and shore
+//! "streets" so blocks keep clear of them and lots can front them.
+//! Boulevards cross rivers on bridges and stop at the shore.
+//!
 //! Coordinates are the city's local frame on the ground (x east, z south),
 //! in metres, centred on the civic centre.
 
 use crate::building::{BuildingSite, BuildingUse};
 use crate::geom::{EdgeTag, Poly};
+use crate::water::{self, CityWater};
 use glam::DVec2;
 use hw_core::{det, Rng, Seed, StableId};
 use std::collections::BTreeMap;
@@ -187,6 +193,11 @@ pub enum StreetClass {
     Avenue,
     Street,
     Lane,
+    /// A river reach: the "carriageway" is the water, the "sidewalks" the
+    /// quay promenades.
+    Quay,
+    /// A reach of the coastline: beach and promenade on the land side.
+    Shore,
 }
 
 impl StreetClass {
@@ -197,7 +208,14 @@ impl StreetClass {
             Self::Avenue => (16.0, 5.0),
             Self::Street => (12.0, 4.0),
             Self::Lane => (8.0, 2.5),
+            Self::Quay => (0.0, water::QUAY_WIDTH),
+            Self::Shore => (0.0, water::SHORE_WIDTH),
         }
+    }
+
+    /// Water, not a road.
+    pub fn is_water(self) -> bool {
+        matches!(self, Self::Quay | Self::Shore)
     }
 }
 
@@ -216,7 +234,11 @@ pub struct Street {
 impl Street {
     /// Distance from the centre line to the edge of the sidewalk.
     pub fn reach(&self) -> f64 {
-        self.width * 0.5 + self.sidewalk
+        match self.class {
+            // The coast is one-sided: the line is the water's edge.
+            StreetClass::Shore => self.sidewalk,
+            _ => self.width * 0.5 + self.sidewalk,
+        }
     }
 
     pub fn distance_to(&self, p: DVec2) -> f64 {
@@ -273,7 +295,43 @@ pub struct CityPlan {
     pub lots: Vec<Lot>,
     /// One per lot that holds a building; `lot` index in `lots`.
     pub buildings: Vec<(usize, BuildingSite)>,
+    pub water: CityWater,
+    /// The ground down to the water's edge, out past the built-up area.
+    /// Edges facing water are tagged with that quay or shore street.
+    pub land: Vec<Poly>,
+    /// Promenades and beaches: land within reach of a quay or shore street,
+    /// with that street's index.
+    pub waterfront: Vec<(Poly, u32)>,
+    pub bridges: Vec<Bridge>,
 }
+
+/// Where a boulevard crosses a river.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Bridge {
+    /// The boulevard.
+    pub street: u32,
+    /// The quay street (river reach) it crosses.
+    pub river: u32,
+    /// Ends of the span, on the boulevard's centre line, just past the banks.
+    pub a: DVec2,
+    pub b: DVec2,
+}
+
+/// One straight piece of a river or the coast, registered as a street.
+#[derive(Clone, Copy, Debug)]
+struct Reach {
+    street: u32,
+    a: DVec2,
+    b: DVec2,
+    /// Half the water's width (0 for the coast).
+    half: f64,
+    /// From the line to the blocks.
+    reach: f64,
+    coast: bool,
+}
+
+/// How far the ground plan reaches past the built-up area (m).
+const COUNTRY: f64 = 1200.0;
 
 impl CityPlan {
     pub fn generate(seed: Seed, params: &CityParams) -> CityPlan {
@@ -286,12 +344,23 @@ impl CityPlan {
             blocks: Vec::new(),
             lots: Vec::new(),
             buildings: Vec::new(),
+            water: CityWater::generate(seed, params.radius, params.radius + COUNTRY * 1.6),
+            land: Vec::new(),
+            waterfront: Vec::new(),
+            bridges: Vec::new(),
         };
+        let reaches = plan.add_water_streets();
         plan.place_districts();
-        plan.lay_boulevards();
+        let outer = plan.lay_boulevards();
         for c in 0..plan.cells.len() {
-            plan.cut_cell(c);
+            plan.cut_cell(c, &reaches);
         }
+        for poly in outer {
+            for piece in plan.split_by_water(poly, &reaches, None) {
+                plan.add_land(&piece, &reaches, false);
+            }
+        }
+        plan.trim_boulevards(&reaches);
         for b in 0..plan.blocks.len() {
             if plan.blocks[b].usage == BlockUse::Lots {
                 plan.make_lots(b);
@@ -349,8 +418,16 @@ impl CityPlan {
             DistrictKind::Dystopia,
         ];
         rng.shuffle(&mut ring);
-        let base = rng.range(0.0, std::f64::consts::TAU);
         let step = std::f64::consts::TAU / ring.len() as f64;
+        let mut base = rng.range(0.0, std::f64::consts::TAU);
+        if let Some(c) = &self.water.coast {
+            // The Aether Works keep the harbour.
+            let k = ring
+                .iter()
+                .position(|d| *d == DistrictKind::AetherWorks)
+                .expect("works");
+            base = det::atan2(c.seaward.y, c.seaward.x) - step * k as f64;
+        }
         for (i, kind) in ring.into_iter().enumerate() {
             let a = base + step * i as f64 + rng.range(-0.2, 0.2);
             let dist = r * if kind == DistrictKind::Dystopia {
@@ -358,10 +435,25 @@ impl CityPlan {
             } else {
                 rng.range(0.5, 0.62)
             };
+            let mut center = det::dir2(a) * dist;
+            if let Some(c) = &self.water.coast {
+                // On land, and the works right on the shore (the harbour).
+                let shore = 250.0;
+                for _ in 0..60 {
+                    let d = c.land_distance(center);
+                    if d < shore && center.length() > 150.0 {
+                        center *= 0.96;
+                    } else if kind == DistrictKind::AetherWorks && d > shore + 100.0 {
+                        center *= 1.04;
+                    } else {
+                        break;
+                    }
+                }
+            }
             self.districts.push(District {
                 id: StableId::from_seed(seed.child(i as u32 + 1)),
                 kind,
-                center: det::dir2(a) * dist,
+                center,
             });
         }
     }
@@ -378,14 +470,28 @@ impl CityPlan {
         (self.streets.len() - 1) as u32
     }
 
-    /// The boulevard lattice and its cells.
-    fn lay_boulevards(&mut self) {
+    /// The boulevard lattice and its cells. Returns the lattice quads out in
+    /// the country past the city, which become plain land.
+    fn lay_boulevards(&mut self) -> Vec<Poly> {
         let seed = self.seed.child("boulevards");
         let s = self.params.boulevard_spacing;
         let r = self.params.radius;
-        let angle = seed.child("angle").unit() * std::f64::consts::FRAC_PI_2;
+        // At about 45 degrees to the main river near the centre, so bridges
+        // cross it squarely enough and blocks meet it at a slant.
+        let main = &self.water.rivers[0].pts;
+        let k = (0..main.len() - 1)
+            .min_by(|&i, &j| {
+                let d = |k: usize| water::segment_distance(DVec2::ZERO, main[k], main[k + 1]);
+                d(i).total_cmp(&d(j))
+            })
+            .unwrap_or(0);
+        let flow = main[k + 1] - main[k];
+        let angle = det::atan2(flow.y, flow.x)
+            + std::f64::consts::FRAC_PI_4
+            + (seed.child("angle").unit() - 0.5) * 0.5;
+        let mut outer = Vec::new();
         let (u, v) = (det::dir2(angle), det::dir2(angle).perp());
-        let n = (r / s).ceil() as i64 + 1;
+        let n = ((r + COUNTRY) / s).ceil() as i64 + 1;
         let node = |i: i64, j: i64| -> DVec2 {
             let mut g = seed.cell(i, j).rng();
             let jitter = DVec2::new(g.range(-0.15, 0.15), g.range(-0.15, 0.15)) * s;
@@ -400,7 +506,14 @@ impl CityPlan {
                     pts: pts.clone(),
                     tags: vec![EdgeTag::Inner; 4],
                 };
-                if poly.centroid().length() > r || poly.area() <= 0.0 {
+                if poly.area() <= 0.0 {
+                    continue;
+                }
+                let dist = poly.centroid().length();
+                if dist > r {
+                    if dist < r + COUNTRY {
+                        outer.push(poly);
+                    }
                     continue;
                 }
                 let mut tags = Vec::with_capacity(4);
@@ -427,10 +540,240 @@ impl CityPlan {
                 });
             }
         }
+        outer
+    }
+
+    /// Registers every reach of the rivers and the coast as a street.
+    fn add_water_streets(&mut self) -> Vec<Reach> {
+        let mut out = Vec::new();
+        let rivers: Vec<(Vec<DVec2>, f64)> = self
+            .water
+            .rivers
+            .iter()
+            .map(|r| (r.pts.clone(), r.width))
+            .collect();
+        for (pts, width) in rivers {
+            for w in pts.windows(2) {
+                let street = self.add_street(StreetClass::Quay, w[0], w[1]);
+                self.streets[street as usize].width = width;
+                out.push(Reach {
+                    street,
+                    a: w[0],
+                    b: w[1],
+                    half: width * 0.5,
+                    reach: self.streets[street as usize].reach(),
+                    coast: false,
+                });
+            }
+        }
+        if let Some(c) = self.water.coast.clone() {
+            for w in c.pts.windows(2) {
+                let street = self.add_street(StreetClass::Shore, w[0], w[1]);
+                out.push(Reach {
+                    street,
+                    a: w[0],
+                    b: w[1],
+                    half: 0.0,
+                    reach: water::SHORE_WIDTH,
+                    coast: true,
+                });
+            }
+        }
+        out
+    }
+
+    /// Splits a piece of land along every water line crossing it, and drops
+    /// what lies at sea. A cut carried on past the end of its reach (beyond
+    /// a bend) runs between two pieces of land: with `class` it becomes a
+    /// street of that class, else (country, no blocks) an inner edge.
+    fn split_by_water(
+        &mut self,
+        poly: Poly,
+        reaches: &[Reach],
+        class: Option<StreetClass>,
+    ) -> Vec<Poly> {
+        let mut pieces = vec![poly];
+        for r in reaches {
+            let mut next = Vec::with_capacity(pieces.len() + 1);
+            for p in pieces {
+                if crosses(&p, r.a, r.b) {
+                    if let Some((x, y)) = p.split(r.a, r.b - r.a, EdgeTag::Street(r.street)) {
+                        next.push(x);
+                        next.push(y);
+                        continue;
+                    }
+                }
+                next.push(p);
+            }
+            pieces = next;
+        }
+        let at_sea = |p: DVec2| {
+            self.water
+                .coast
+                .as_ref()
+                .is_some_and(|c| c.land_distance(p) < 0.0)
+        };
+        let mut pieces: Vec<Poly> = pieces
+            .into_iter()
+            .filter(|p| !at_sea(p.centroid()))
+            .collect();
+        // Edges on a reach's line but past its ends, by reach.
+        let mut past: BTreeMap<u32, Vec<(usize, usize)>> = BTreeMap::new();
+        for (k, p) in pieces.iter().enumerate() {
+            for i in 0..p.len() {
+                if let EdgeTag::Street(id) = p.tags[i] {
+                    if let Some(r) = reaches.iter().find(|r| r.street == id) {
+                        let (x, y) = p.edge(i);
+                        if water::segment_distance((x + y) * 0.5, r.a, r.b) > 0.5 {
+                            past.entry(id).or_default().push((k, i));
+                        }
+                    }
+                }
+            }
+        }
+        for (id, edges) in past {
+            let tag = match class {
+                Some(class) => {
+                    // One street along the whole run, stopped at the water.
+                    let r = reaches.iter().find(|r| r.street == id).expect("reach");
+                    let dir = (r.b - r.a).normalize();
+                    let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+                    for &(k, i) in &edges {
+                        let (x, y) = pieces[k].edge(i);
+                        for t in [(x - r.a).dot(dir), (y - r.a).dot(dir)] {
+                            lo = lo.min(t);
+                            hi = hi.max(t);
+                        }
+                    }
+                    let (p, q) = (r.a + dir * lo, r.a + dir * hi);
+                    let (p, q) = trim_at_water(p, q, reaches, self.water.coast.as_ref());
+                    EdgeTag::Street(self.add_street(class, p, q))
+                }
+                None => EdgeTag::Inner,
+            };
+            for (k, i) in edges {
+                pieces[k].tags[i] = tag;
+            }
+        }
+        pieces
+    }
+
+    /// Keeps `poly` at least `margin(reach)` from every water line, on its
+    /// own side (the land side of the coast). None if nothing is left.
+    fn clear_of_water(
+        poly: Poly,
+        reaches: &[Reach],
+        margin: impl Fn(&Reach) -> f64,
+    ) -> Option<Poly> {
+        let mut out = poly;
+        for r in reaches {
+            let m = margin(r);
+            if poly_segment_distance(&out, r.a, r.b) >= m - 1e-9 {
+                continue;
+            }
+            let dir = (r.b - r.a).normalize_or_zero();
+            let mut n = dir.perp();
+            if !r.coast && n.dot(out.centroid() - r.a) < 0.0 {
+                n = -n;
+            }
+            out = out.clip(r.a + n * m, n, EdgeTag::Street(r.street))?;
+        }
+        // A clip past the end of its reach (at a bend) fronts no water.
+        for i in 0..out.len() {
+            if let EdgeTag::Street(id) = out.tags[i] {
+                if let Some(r) = reaches.iter().find(|r| r.street == id) {
+                    let (x, y) = out.edge(i);
+                    if water::segment_distance((x + y) * 0.5, r.a, r.b) > r.reach + 1.0 {
+                        out.tags[i] = EdgeTag::Inner;
+                    }
+                }
+            }
+        }
+        Some(out)
+    }
+
+    /// Records a piece of ground (and its promenades and beaches).
+    /// `city`: inside the built-up area, where promenades and beaches go.
+    fn add_land(&mut self, piece: &Poly, reaches: &[Reach], city: bool) {
+        let Some(land) = Self::clear_of_water(piece.clone(), reaches, |r| r.half) else {
+            return;
+        };
+        for r in reaches.iter().filter(|_| city) {
+            if poly_segment_distance(&land, r.a, r.b) >= r.reach - 1e-9 {
+                continue;
+            }
+            let dir = (r.b - r.a).normalize_or_zero();
+            let mut n = dir.perp();
+            if !r.coast && n.dot(land.centroid() - r.a) < 0.0 {
+                n = -n;
+            }
+            // The strip between the water and the blocks, along this reach
+            // only (not on past its ends).
+            let strip = land
+                .clip(r.a + n * r.reach, -n, EdgeTag::Inner)
+                .and_then(|p| p.clip(r.a, dir, EdgeTag::Inner))
+                .and_then(|p| p.clip(r.b, -dir, EdgeTag::Inner));
+            if let Some(strip) = strip {
+                if strip.area() > 1.0 {
+                    self.waterfront.push((strip, r.street));
+                }
+            }
+        }
+        self.land.push(land);
+    }
+
+    /// Boulevards stop short of the sea, and bridge the rivers they cross.
+    fn trim_boulevards(&mut self, reaches: &[Reach]) {
+        for id in 0..self.streets.len() {
+            let s = &self.streets[id];
+            if s.class != StreetClass::Boulevard {
+                continue;
+            }
+            let (a, b) = (s.a, s.b);
+            let dir = (b - a).normalize_or_zero();
+            // Crossings steep enough to bridge: (point, half span, reach).
+            let spans: Vec<(DVec2, f64, &Reach)> = reaches
+                .iter()
+                .filter(|r| !r.coast)
+                .filter_map(|r| {
+                    let (x, sin) = intersect(a, b, r.a, r.b)?;
+                    (sin > 0.45).then(|| (x, (r.half + 2.0) / sin, r))
+                })
+                .collect();
+            let keep = water::SHORE_WIDTH - water::PROMENADE_WIDTH + s.reach();
+            let coast = self.water.coast.as_ref();
+            let rivers = &self.water.rivers;
+            let ok = |x: DVec2| {
+                let on_bridge = spans.iter().any(|(c, h, _)| c.distance(x) <= *h);
+                coast.is_none_or(|c| c.land_distance(x) >= keep)
+                    && (on_bridge || rivers.iter().all(|r| r.distance(x) >= r.width * 0.5 + 2.0))
+            };
+            let (t0, t1) = dry_span(a, b, ok).unwrap_or((0.0, 0.0));
+            let (a2, b2) = (a.lerp(b, t0), a.lerp(b, t1));
+            let mut bridges = Vec::new();
+            for (x, half, r) in &spans {
+                // Clamped to the street (two boulevards can meet on a bridge).
+                let len = a.distance(b);
+                let tx = (*x - a).dot(dir);
+                if tx >= t0 * len && tx <= t1 * len {
+                    let (ta, tb) = ((tx - half).max(t0 * len), (tx + half).min(t1 * len));
+                    bridges.push(Bridge {
+                        street: id as u32,
+                        river: r.street,
+                        a: a + dir * ta,
+                        b: a + dir * tb,
+                    });
+                }
+            }
+            self.bridges.extend(bridges);
+            let s = &mut self.streets[id];
+            s.a = a2;
+            s.b = b2;
+        }
     }
 
     /// Cuts a cell into blocks with local streets.
-    fn cut_cell(&mut self, cell: usize) {
+    fn cut_cell(&mut self, cell: usize, reaches: &[Reach]) {
         let seed = Seed(self.cells[cell].id.0).child("cuts");
         let mut rng = seed.rng();
         // One street class per cell, so streets meeting at a T are equally wide
@@ -439,7 +782,10 @@ impl CityPlan {
             .kind
             .rules()
             .street;
-        let mut queue = vec![self.cells[cell].poly.clone()];
+        let mut queue = self.split_by_water(self.cells[cell].poly.clone(), reaches, Some(class));
+        for piece in &queue {
+            self.add_land(piece, reaches, true);
+        }
         let mut done: Vec<Poly> = Vec::new();
         // Districts can change inside a cell; each piece cuts by the rules of
         // the district at its own centre, so borders run along streets.
@@ -476,6 +822,7 @@ impl CityPlan {
                 .position(|t| *t == EdgeTag::Street(id))
                 .expect("cut edge");
             let (p, q) = a.edge(k);
+            let (p, q) = trim_at_water(p, q, reaches, self.water.coast.as_ref());
             self.add_street(class, p, q);
             queue.push(a);
             queue.push(b);
@@ -492,6 +839,10 @@ impl CityPlan {
                 EdgeTag::Street(s) => streets[s as usize].reach(),
                 EdgeTag::Inner => 0.0,
             }) else {
+                continue;
+            };
+            // Clear of every river and the coast, even past bends.
+            let Some(poly) = Self::clear_of_water(poly, reaches, |r| r.reach) else {
                 continue;
             };
             if poly.area() < 200.0 {
@@ -569,10 +920,17 @@ impl CityPlan {
         }
         for (k, poly) in lots.into_iter().enumerate() {
             // Front: the longest edge on a street, preferring the busier street.
+            // Only edges really along their street: one cut short at the
+            // water no longer reaches every block it once bounded.
+            let along = |i: usize, s: u32| {
+                let st = &self.streets[s as usize];
+                let (x, y) = poly.edge(i);
+                st.distance_to((x + y) * 0.5) <= st.reach() + 2.0
+            };
             let front = (0..poly.len())
                 .filter_map(|i| match poly.tags[i] {
-                    EdgeTag::Street(s) => Some((i, s)),
-                    EdgeTag::Inner => None,
+                    EdgeTag::Street(s) if along(i, s) => Some((i, s)),
+                    _ => None,
                 })
                 .max_by(|(i, s), (j, t)| {
                     let rank = |s: u32| match self.streets[s as usize].class {
@@ -695,6 +1053,130 @@ impl CityPlan {
             }
         };
         (usage, floors.max(1), front, side, depth)
+    }
+}
+
+/// Does segment `ab` pass through the inside of convex `poly`?
+fn crosses(poly: &Poly, a: DVec2, b: DVec2) -> bool {
+    // Clip the segment to the polygon (Cyrus-Beck).
+    let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+    let d = b - a;
+    for i in 0..poly.len() {
+        let (p, _) = poly.edge(i);
+        let n = poly.inward(i);
+        let num = n.dot(a - p);
+        let den = n.dot(d);
+        if den.abs() < 1e-12 {
+            if num < 0.0 {
+                return false;
+            }
+        } else {
+            let t = -num / den;
+            if den > 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+        }
+        if t0 >= t1 {
+            return false;
+        }
+    }
+    (t1 - t0) * d.length() > 1e-6
+}
+
+/// Least distance between convex `poly` and segment `ab` (0 if they meet).
+fn poly_segment_distance(poly: &Poly, a: DVec2, b: DVec2) -> f64 {
+    if crosses(poly, a, b) || poly.contains(a) {
+        return 0.0;
+    }
+    let mut best = f64::MAX;
+    for i in 0..poly.len() {
+        let (p, q) = poly.edge(i);
+        best = best
+            .min(water::segment_distance(p, a, b))
+            .min(water::segment_distance(a, p, q))
+            .min(water::segment_distance(b, p, q));
+    }
+    best
+}
+
+/// Where segments `ab` and `cd` cross, with the sine of their angle.
+fn intersect(a: DVec2, b: DVec2, c: DVec2, d: DVec2) -> Option<(DVec2, f64)> {
+    let (r, s) = (b - a, d - c);
+    let den = r.perp_dot(s);
+    if den.abs() < 1e-9 {
+        return None;
+    }
+    let t = (c - a).perp_dot(s) / den;
+    let u = (c - a).perp_dot(r) / den;
+    ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u))
+        .then(|| (a + r * t, (den / (r.length() * s.length())).abs()))
+}
+
+/// The longest part of segment `ab` where `ok` holds, as (t0, t1).
+fn dry_span(a: DVec2, b: DVec2, ok: impl Fn(DVec2) -> bool) -> Option<(f64, f64)> {
+    let n = 48;
+    let at = |t: f64| ok(a.lerp(b, t));
+    let mut best: Option<(f64, f64)> = None;
+    let mut run: Option<f64> = None;
+    for i in 0..=n {
+        let t = i as f64 / n as f64;
+        let good = at(t);
+        match (good, run) {
+            (true, None) => run = Some(t),
+            (false, Some(t0)) => {
+                let t1 = (i - 1) as f64 / n as f64;
+                if best.is_none_or(|(b0, b1)| t1 - t0 > b1 - b0) {
+                    best = Some((t0, t1));
+                }
+                run = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(t0) = run {
+        if best.is_none_or(|(b0, b1)| 1.0 - t0 > b1 - b0) {
+            best = Some((t0, 1.0));
+        }
+    }
+    let (t0, t1) = best?;
+    // Refine each end between the last wet and the first dry sample.
+    let refine = |mut wet: f64, mut dry: f64| {
+        for _ in 0..30 {
+            let m = (wet + dry) * 0.5;
+            if at(m) {
+                dry = m;
+            } else {
+                wet = m;
+            }
+        }
+        dry
+    };
+    let step = 1.0 / n as f64;
+    let t0 = if t0 > 0.0 { refine(t0 - step, t0) } else { t0 };
+    let t1 = if t1 < 1.0 { refine(t1 + step, t1) } else { t1 };
+    (t1 > t0).then_some((t0, t1))
+}
+
+/// The part of street `pq` clear of the water: it ends at the quays and
+/// the beach. A street wholly in the water shrinks to a point.
+fn trim_at_water(
+    p: DVec2,
+    q: DVec2,
+    reaches: &[Reach],
+    coast: Option<&water::Coast>,
+) -> (DVec2, DVec2) {
+    let ok = |x: DVec2| {
+        reaches
+            .iter()
+            .filter(|r| !r.coast)
+            .all(|r| water::segment_distance(x, r.a, r.b) >= r.reach - 1e-6)
+            && coast.is_none_or(|c| c.land_distance(x) >= water::SHORE_WIDTH - 1e-6)
+    };
+    match dry_span(p, q, ok) {
+        Some((t0, t1)) => (p.lerp(q, t0), p.lerp(q, t1)),
+        None => (p, p),
     }
 }
 
@@ -854,6 +1336,48 @@ mod tests {
         let p = plan(6);
         for (_, s) in &p.buildings {
             crate::building::tests::check_plan(&BuildingPlan::generate(s));
+        }
+    }
+
+    #[test]
+    fn nothing_is_built_in_the_water() {
+        for seed in 1..8 {
+            let p = plan(seed);
+            for (_, s) in &p.buildings {
+                for c in s.corners() {
+                    assert!(!p.water.is_water(c), "seed {seed}: building in the water");
+                    for r in &p.water.rivers {
+                        let d = r.distance(c);
+                        assert!(
+                            d >= r.width * 0.5 + water::QUAY_WIDTH - 1e-6,
+                            "seed {seed}: {d} m from a river"
+                        );
+                    }
+                }
+            }
+            for st in p
+                .streets
+                .iter()
+                .filter(|s| !s.class.is_water() && s.a != s.b)
+            {
+                let mid = (st.a + st.b) * 0.5;
+                let bridged = p
+                    .bridges
+                    .iter()
+                    .any(|b| p.streets[b.street as usize] == *st);
+                assert!(
+                    bridged || !p.water.is_water(mid),
+                    "seed {seed}: {:?} street in the water",
+                    st.class
+                );
+            }
+            if p.water
+                .rivers
+                .iter()
+                .any(|r| r.distance(DVec2::ZERO) < p.params.radius * 0.5)
+            {
+                assert!(!p.bridges.is_empty(), "seed {seed}: no bridges");
+            }
         }
     }
 

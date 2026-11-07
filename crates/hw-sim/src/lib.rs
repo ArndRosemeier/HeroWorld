@@ -103,10 +103,16 @@ impl GeneratedCity {
 
     /// Spawn points on the street closest to the civic centre.
     pub fn spawn_line(&self) -> (DVec2, DVec2) {
-        let street = self.plan.streets.iter().min_by(|a, b| {
-            a.distance_to(DVec2::ZERO)
-                .total_cmp(&b.distance_to(DVec2::ZERO))
-        });
+        let street = self
+            .plan
+            .streets
+            .iter()
+            .filter(|s| !s.class.is_water() && s.a.distance(s.b) > 10.0)
+            .filter(|s| !self.plan.water.is_water((s.a + s.b) * 0.5))
+            .min_by(|a, b| {
+                a.distance_to(DVec2::ZERO)
+                    .total_cmp(&b.distance_to(DVec2::ZERO))
+            });
         match street {
             Some(s) => ((s.a + s.b) * 0.5, (s.b - s.a).normalize_or(DVec2::X)),
             None => (DVec2::ZERO, DVec2::X),
