@@ -18,8 +18,9 @@ pub struct TraceSpec<'a> {
     pub field: &'a Field,
     /// Where streets may run.
     pub inside: &'a dyn Fn(DVec2) -> bool,
-    /// Spacing between parallel streets at a point (m).
-    pub dsep: &'a dyn Fn(DVec2) -> f64,
+    /// Spacing between parallel streets at a point (m), for main streets
+    /// (`true`) or cross streets: different spacings make oblong blocks.
+    pub dsep: &'a dyn Fn(DVec2, bool) -> f64,
     /// Step along a street (m).
     pub step: f64,
     pub max_len: f64,
@@ -113,7 +114,8 @@ impl Hash {
 /// Traces streets over `given` roads (which they join but never duplicate),
 /// starting from `seeds`.
 pub fn trace(spec: &TraceSpec, given: &[Vec<DVec2>], seeds: &[DVec2], rng: &mut Rng) -> Vec<Line> {
-    let probe = (spec.dsep)(seeds.first().copied().unwrap_or(DVec2::ZERO));
+    let at0 = seeds.first().copied().unwrap_or(DVec2::ZERO);
+    let probe = (spec.dsep)(at0, true).min((spec.dsep)(at0, false));
     let mut hash = Hash {
         cell: probe.max(spec.step * 2.0),
         map: HashMap::new(),
@@ -159,7 +161,7 @@ pub fn trace(spec: &TraceSpec, given: &[Vec<DVec2>], seeds: &[DVec2], rng: &mut 
                 hash.add(*p, family);
             }
             // Streets of the other family start along this one.
-            let d = (spec.dsep)(seed);
+            let d = (spec.dsep)(seed, !major);
             queue[1 - family as usize].extend(resample(&pts, d));
             lines.push(Line { pts, major });
         }
@@ -192,7 +194,7 @@ pub fn trace(spec: &TraceSpec, given: &[Vec<DVec2>], seeds: &[DVec2], rng: &mut 
                 continue;
             }
             let dir = (p - q).normalize_or_zero();
-            let reach = (spec.dsep)(p) * spec.join;
+            let reach = (spec.dsep)(p, l.major).min((spec.dsep)(p, !l.major)) * spec.join;
             // Skip its own last stretch.
             let from = p + dir * spec.step * 1.5;
             if let Some(t) = all.ahead(from, dir, reach) {
@@ -210,7 +212,7 @@ pub fn trace(spec: &TraceSpec, given: &[Vec<DVec2>], seeds: &[DVec2], rng: &mut 
 }
 
 fn valid_seed(spec: &TraceSpec, hash: &Hash, p: DVec2, family: u8) -> bool {
-    let d = (spec.dsep)(p);
+    let d = (spec.dsep)(p, family == MAJOR);
     (spec.inside)(p) && !hash.near(p, d, &[family]) && !hash.near(p, d * 0.3, &[GIVEN])
 }
 
@@ -278,7 +280,7 @@ fn run(
         if !(spec.inside)(next) {
             break;
         }
-        let sep = (spec.dsep)(next) * 0.5;
+        let sep = (spec.dsep)(next, major) * 0.5;
         if hash.near(next, sep, &[fam]) {
             break;
         }
@@ -346,7 +348,7 @@ mod tests {
             wiggle: Box::new(|_| 0.0),
         };
         let inside = |p: DVec2| p.x.abs() < 200.0 && p.y.abs() < 200.0;
-        let dsep = |_: DVec2| 50.0;
+        let dsep = |_: DVec2, _: bool| 50.0;
         let spec = TraceSpec {
             field: &field,
             inside: &inside,

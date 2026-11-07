@@ -6,7 +6,8 @@
 //! preset is one of: hill, colonial, mill, baroque, garden, mega.
 
 use hw_core::Seed;
-use hw_gen::urban::{CentreKind, Cover, Era, Growth, Land, Network, Preset, RoadClass, TownParams};
+use hw_gen::urban::streets::{plan_piece, StreetStyle};
+use hw_gen::urban::{CentreKind, Cover, Era, Growth, Land, Preset, RoadClass, Town, TownParams};
 use std::fmt::Write;
 
 fn main() {
@@ -16,6 +17,10 @@ fn main() {
     let out = args
         .next()
         .unwrap_or_else(|| "screenshots/town_map.svg".into());
+    // Optional close-up: half the side of the view (m), and its centre.
+    let zoom: Option<f64> = args.next().and_then(|s| s.parse().ok());
+    let cx: f64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let cy: f64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
     let params = match what.as_str() {
         "hill" => Preset::MedievalHillTown.params(Seed(seed)),
         "colonial" => Preset::ColonialGridPort.params(Seed(seed)),
@@ -26,31 +31,27 @@ fn main() {
         n => TownParams::sample(Seed(seed), n.parse().expect("population or preset")),
     };
     let t = std::time::Instant::now();
-    let land = Land::generate(Seed(seed), &params);
-    println!("land in {:.2} s", t.elapsed().as_secs_f64());
-    let t = std::time::Instant::now();
-    let growth = Growth::generate(Seed(seed), &params, &land);
-    println!("growth in {:.2} s", t.elapsed().as_secs_f64());
-    let t = std::time::Instant::now();
-    let net = Network::generate(Seed(seed), &params, &land, &growth);
+    let town = Town::generate(Seed(seed), params.clone());
     println!(
-        "main roads in {:.2} s: {} roads, {} bridges",
+        "planned in {:.2} s: {} main roads, {} bridges, {} pieces",
         t.elapsed().as_secs_f64(),
-        net.roads.len(),
-        net.bridges.len()
+        town.network.roads.len(),
+        town.network.bridges.len(),
+        town.pieces.len()
     );
     println!("{params:?}");
-
+    let (land, growth, net) = (&town.land, &town.growth, &town.network);
     let g = &land.height;
     let half = g.half();
+    let view = zoom.unwrap_or(half);
     let mut svg = String::new();
     let _ = writeln!(
         svg,
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="{} {} {} {}" width="1600" height="1600">"#,
-        -half,
-        -half,
-        2.0 * half,
-        2.0 * half
+        cx - view,
+        cy - view,
+        2.0 * view,
+        2.0 * view
     );
     let _ = writeln!(
         svg,
@@ -59,9 +60,9 @@ fn main() {
         -half,
         2.0 * half,
         2.0 * half,
-        base64(&png(g.w, g.h, &terrain_rgb(&land, &growth)))
+        base64(&png(g.w, g.h, &terrain_rgb(land, growth)))
     );
-    let lw = half / 400.0;
+    let lw = view / 400.0;
     for r in &land.rivers {
         for k in 0..r.pts.len() - 1 {
             let (a, b) = (r.pts[k], r.pts[k + 1]);
@@ -73,6 +74,40 @@ fn main() {
                 b.x,
                 b.y,
                 r.widths[k].max(lw)
+            );
+        }
+    }
+    let t = std::time::Instant::now();
+    let plans: Vec<_> = town
+        .pieces
+        .iter()
+        .map(|pc| plan_piece(Seed(seed), &town, pc))
+        .collect();
+    println!(
+        "streets in {:.2} s: {} streets, {} blocks",
+        t.elapsed().as_secs_f64(),
+        plans.iter().map(|p| p.streets.len()).sum::<usize>(),
+        plans.iter().map(|p| p.blocks.len()).sum::<usize>()
+    );
+    for pl in &plans {
+        let fill = match pl.style {
+            StreetStyle::Lanes => "#b5655a",
+            StreetStyle::Organic => "#d9a877",
+            StreetStyle::Grid => "#e0c27a",
+            StreetStyle::Baroque => "#e8d7a0",
+            StreetStyle::Garden => "#c9dca0",
+            StreetStyle::Superblock => "#c7c7d6",
+            StreetStyle::RetroFuture => "#f0b8d8",
+            StreetStyle::Industrial => "#9aa8b8",
+            StreetStyle::Park => "#6f9a52",
+        };
+        for b in &pl.blocks {
+            let pts: Vec<String> = b.iter().map(|q| format!("{:.1},{:.1}", q.x, q.y)).collect();
+            let _ = writeln!(
+                svg,
+                r##"<polygon points="{}" fill="{fill}" stroke="#fff" stroke-width="{:.2}"/>"##,
+                pts.join(" "),
+                lw * 0.5
             );
         }
     }
@@ -122,23 +157,23 @@ fn main() {
         );
     }
     // Scale bar: 1 km (or 100 m for small places).
-    let bar = if half > 3000.0 { 1000.0 } else { 100.0 };
-    let (x0, y0) = (-half * 0.95, half * 0.93);
+    let bar = if view > 3000.0 { 1000.0 } else { 100.0 };
+    let (x0, y0) = (cx - view * 0.95, cy + view * 0.93);
     let _ = writeln!(
         svg,
         r##"<line x1="{x0}" y1="{y0}" x2="{}" y2="{y0}" stroke="#000" stroke-width="{}"/><text x="{x0}" y="{}" font-size="{}" font-family="sans-serif">{} m</text>"##,
         x0 + bar,
         lw * 3.0,
         y0 - lw * 6.0,
-        half / 40.0,
+        view / 40.0,
         bar
     );
     let _ = writeln!(
         svg,
         r##"<text x="{}" y="{}" font-size="{}" font-family="sans-serif" fill="#000">seed {seed}: {:?}, {} people, relief {:.2}</text>"##,
-        -half * 0.95,
-        -half * 0.92,
-        half / 35.0,
+        cx - view * 0.95,
+        cy - view * 0.92,
+        view / 35.0,
         params.site,
         params.population as u64,
         params.relief

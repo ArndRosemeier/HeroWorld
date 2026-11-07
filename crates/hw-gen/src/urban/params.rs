@@ -223,7 +223,8 @@ impl TownParams {
             rng.range(0.0, 2.0) * big,
             rng.range(0.0, 2.0),
             rng.range(0.0, 1.5) * big,
-            rng.range(0.5, 2.0),
+            // HeroWorld's expo quarters: special, so rare.
+            rng.range(0.0, 0.5),
         ];
         if founding == Founding::Colony {
             plan_styles[0] += 4.0;
@@ -312,7 +313,7 @@ impl Preset {
                 p.relief = r.range(0.0, 0.3);
                 p.founding = Founding::Colony;
                 p.planned = r.range(0.7, 0.9);
-                p.plan_styles = [6.0, 0.5, 0.5, 0.5, 1.0];
+                p.plan_styles = [6.0, 0.5, 0.5, 0.5, 0.3];
                 p.walls = 0;
             }),
             Preset::RiverValleyMillTown => (40_000.0, |p, r| {
@@ -330,14 +331,14 @@ impl Preset {
                 p.founding = Founding::Fortress;
                 p.walls = 2;
                 p.planned = r.range(0.35, 0.55);
-                p.plan_styles = [1.0, 5.0, 1.0, 0.5, 1.0];
+                p.plan_styles = [1.0, 5.0, 1.0, 0.5, 0.3];
             }),
             Preset::GardenCity => (60_000.0, |p, r| {
                 p.site = Site::Crossroads;
                 p.relief = r.range(0.1, 0.4);
                 p.founding = Founding::Village;
                 p.planned = r.range(0.5, 0.8);
-                p.plan_styles = [1.0, 0.5, 6.0, 0.0, 1.0];
+                p.plan_styles = [1.0, 0.5, 6.0, 0.0, 0.3];
                 p.green = r.range(0.3, 0.45);
                 p.density = r.range(1500.0, 2500.0);
             }),

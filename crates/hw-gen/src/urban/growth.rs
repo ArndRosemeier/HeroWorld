@@ -269,19 +269,27 @@ impl Growth {
             _ => 15_000.0,
         } * rng.range(0.6, 1.6);
         let ext_pop = old_pop * rng.range(8.0, 30.0);
-        let at_share = |pop: f64| {
-            let k = ((pop / p.population).min(1.0) * want as f64) as usize;
+        // Old towns were packed: their people took far less land than
+        // today's (people per km² in the old town and the extensions).
+        let old_density = rng.range(12_000.0, 25_000.0);
+        let ext_density = rng.range(6_000.0, 12_000.0);
+        let cells_for = |pop: f64| {
+            let old = pop.min(old_pop) / old_density;
+            let ext = (pop - old_pop).max(0.0) / ext_density;
+            (((old + ext) * 1e6 / cell_area) as usize).min(want)
+        };
+        let time_at = |k: usize| {
             order
                 .get(k.min(order.len().saturating_sub(1)))
                 .map_or(0.0, |k| time[*k])
         };
-        let eras = [at_share(old_pop), at_share(ext_pop)];
+        let eras = [time_at(cells_for(old_pop)), time_at(cells_for(ext_pop))];
         // Walls followed the edge of the town at the time they were built.
         let mut walls = Vec::new();
         for w in 0..p.walls {
             let pop = old_pop * det::powf(4.0, w as f64) * rng.range(0.5, 0.9);
             if pop < p.population * 0.8 {
-                walls.push(at_share(pop));
+                walls.push(time_at(cells_for(pop)));
             }
         }
         Growth {

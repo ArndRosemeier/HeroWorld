@@ -180,7 +180,7 @@ impl Network {
             };
             let inside =
                 |q: DVec2| built(q) && !land.cover_at(q).is_water() && era(q) != Some(Era::Old);
-            let dsep = |q: DVec2| match era(q) {
+            let dsep = |q: DVec2, _: bool| match era(q) {
                 Some(Era::Modern) => d_mod,
                 _ => d_ext,
             };
