@@ -239,11 +239,18 @@ impl Land {
             let w = p.river_width;
             // The town grew beside the river, not in it.
             let side = flow.perp() * if rng.chance(0.5) { 1.0 } else { -1.0 };
+            // A hill town looks down on its river from a distance.
+            let below = if p.site == Site::Hilltop {
+                s * 0.7 + 100.0
+            } else {
+                0.0
+            };
             let through = side
                 * ((w * 0.5).max(cell * 0.55)
                     + cell
                     + rng.range(30.0, 60.0)
-                    + s * rng.range(0.0, 0.12));
+                    + s * rng.range(0.0, 0.12)
+                    + below);
             let mut r = river_through(
                 &mut rng,
                 &seed.child("river0"),
@@ -307,8 +314,9 @@ impl Land {
         let hill = (p.site == Site::Hilltop).then(|| {
             (
                 det::dir2(rng.range(0.0, std::f64::consts::TAU)) * s * rng.range(0.0, 0.15),
-                25.0 + p.relief * 90.0,
-                s * rng.range(0.35, 0.6) + 80.0,
+                // Standing well above the hills around it.
+                30.0 + amp * 0.7,
+                s * rng.range(0.4, 0.6) + 100.0,
             )
         });
         let mut height = Grid::new(half, cell, 0.0f32);
@@ -333,8 +341,12 @@ impl Land {
                         + (amp * 0.8 + 40.0) * smooth(vw * 0.7, vw * 2.5, d);
                 }
                 if let Some((c, top, r)) = hill {
+                    // A broad, flat-topped hill the old town sits on, its
+                    // own bumps smoothed away near the top.
                     let x = q.distance(c) / r;
-                    h += top * det::exp(-x * x);
+                    let x2 = x * x;
+                    let plateau = det::exp(-x2 * x2);
+                    h = h * (1.0 - 0.8 * plateau) + top * plateau;
                 }
                 // Banks a little above the water, rising to the hills.
                 let d = *to_water.at(i, j) as f64;
