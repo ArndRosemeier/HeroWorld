@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.007 (2026-11-07)
+
+- Housekeeping only: nothing changes in the game. The plan of what comes next is in docs/MILESTONES.md.
+
 ## 0.006 (2026-11-07)
 
 - The streets come alive: street lamps in the style of each quarter (iron lanterns in the old town, deco double globes on the grand roads, glowing atomic saucers in the new quarters).

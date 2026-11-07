@@ -5,7 +5,8 @@ Rust on Arnd's [Engine](https://github.com/ArndRosemeier/Engine).
 
 **Read first:** [`docs/DESIGN.md`](docs/DESIGN.md) (what the game is and how it is built),
 then [`docs/ENGINE_REQUESTS.md`](docs/ENGINE_REQUESTS.md) (what we asked Engine for, and what
-it does not do yet). The living copies of both are Claude Docs linked at the top of each
+it does not do yet). The plan of what to build next, milestone by milestone, and which
+milestones can run side by side, is [`docs/MILESTONES.md`](docs/MILESTONES.md). The living copies of both are Claude Docs linked at the top of each
 file; when they change, re-export the snapshot here.
 
 ## Crates
