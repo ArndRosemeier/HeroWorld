@@ -35,6 +35,8 @@ pub const RUN_ACCEL: f64 = 40.0;
 pub const AIR_ACCEL: f64 = 12.0;
 pub const GRAVITY: f64 = 20.0;
 pub const JUMP_SPEED: f64 = 7.5;
+/// Vertical speed in a lift shaft.
+pub const LIFT_SPEED: f64 = 5.0;
 
 /// Every replicated entity has one.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,10 +118,22 @@ pub fn step_hero(body: &mut Body, input: InputState, solids: &Obstacles) {
     } else {
         delta
     };
-    if input.jump && body.grounded {
-        body.vel.y = JUMP_SPEED;
+    if solids.in_lift(body.pos) {
+        // The Aether lift in every core: hold jump to rise, descend to sink,
+        // otherwise hover. Step out at any floor.
+        body.vel.y = if input.jump {
+            LIFT_SPEED
+        } else if input.descend {
+            -LIFT_SPEED
+        } else {
+            0.0
+        };
+    } else {
+        if input.jump && body.grounded {
+            body.vel.y = JUMP_SPEED;
+        }
+        body.vel.y -= GRAVITY * DT;
     }
-    body.vel.y -= GRAVITY * DT;
     solids.move_body(body, DT);
 }
 
@@ -236,6 +250,19 @@ impl Sim {
             .map(|(_, m)| m.0)
     }
 
+    /// Moves an entity (spawning, teleports, tests).
+    pub fn set_body(&mut self, id: NetId, body: Body) {
+        for (n, mut m) in self
+            .world
+            .query::<(&Net, &mut Motion)>()
+            .iter_mut(&mut self.world)
+        {
+            if n.0 == id {
+                m.0 = body;
+            }
+        }
+    }
+
     pub fn position(&mut self, id: NetId) -> Option<DVec3> {
         self.body(id).map(|b| b.pos)
     }
@@ -293,6 +320,7 @@ mod tests {
                 move_x: 1.0,
                 move_z: 0.0,
                 jump: false,
+                descend: false,
             },
         );
         for _ in 0..TICK_HZ * 2 {
@@ -345,6 +373,7 @@ mod tests {
                             move_x: a.cos(),
                             move_z: a.sin(),
                             jump: t % 20 == 0,
+                            descend: false,
                         },
                     );
                 }

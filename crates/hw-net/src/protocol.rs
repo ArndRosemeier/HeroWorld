@@ -24,6 +24,8 @@ pub struct InputState {
     pub move_x: f32,
     pub move_z: f32,
     pub jump: bool,
+    /// Go down (in a lift; later in flight).
+    pub descend: bool,
 }
 
 /// One entity in a snapshot.
@@ -96,7 +98,8 @@ impl ClientMsg {
                 w.u32(*seq)
                     .f32(input.move_x)
                     .f32(input.move_z)
-                    .bool(input.jump);
+                    .bool(input.jump)
+                    .bool(input.descend);
             }
             ClientMsg::Bye => header(&mut w, 3),
         }
@@ -122,6 +125,7 @@ impl ClientMsg {
                         move_x,
                         move_z,
                         jump: r.bool()?,
+                        descend: r.bool()?,
                     },
                 }
             }
@@ -236,6 +240,7 @@ mod tests {
                     move_x: 0.6,
                     move_z: -0.8,
                     jump: true,
+                    descend: false,
                 },
             },
             ClientMsg::Bye,
@@ -297,6 +302,7 @@ mod tests {
                 move_x: 3.0,
                 move_z: 4.0,
                 jump: false,
+                descend: true,
             },
         };
         let ClientMsg::Input { input, .. } = ClientMsg::decode(&m.encode()).unwrap() else {

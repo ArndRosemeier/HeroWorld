@@ -6,6 +6,8 @@
 //! Controls: you play your hero in third person. Hold the right mouse button
 //! (or press P to lock the pointer) and move the mouse to look, WASD to run,
 //! Space to jump, R/T to zoom in and out (all the way in is first person).
+//! Buildings are open: walk in through a door, and in the lift (the core in
+//! the middle) hold Space to rise and Ctrl to sink; step out at any floor.
 //! Tab switches to a free-flying camera and back. C cuts buildings open
 //! around where you look (F moves the cut there), Z/X pick the floor.
 //!
@@ -46,6 +48,8 @@ struct City {
     cut_on: bool,
     cut_focus: DVec2,
     cut_level: u32,
+    /// The building and floor our hero is in: drawn open at that floor.
+    inside: Option<hw_sim::collision::Inside>,
 }
 
 impl City {
@@ -65,6 +69,7 @@ impl City {
             cut_on: false,
             cut_focus: DVec2::ZERO,
             cut_level: 1,
+            inside: None,
         }
         .focused_on_centre()
     }
@@ -98,6 +103,11 @@ impl City {
     }
 
     fn look_of(&self, building: usize) -> Look {
+        if let Some(i) = self.inside {
+            if i.building == building {
+                return Look::Cut { level: i.level };
+            }
+        }
         if self.cut_on && self.centre_of(building).distance(self.cut_focus) < CUT_RADIUS {
             Look::Cut {
                 level: self.cut_level,
@@ -116,6 +126,11 @@ impl City {
                 })
             })
             .collect()
+    }
+
+    fn cell_of(&self, building: usize) -> usize {
+        let lot = self.plan.buildings[building].0;
+        self.plan.blocks[self.plan.lots[lot].block].cell
     }
 
     fn build_cell(&mut self, world: &mut World, cell: usize) {
@@ -145,7 +160,16 @@ struct HeroCamera {
 impl HeroCamera {
     const MAX_DISTANCE: f32 = 14.0;
 
-    fn update(&mut self, world: &mut World, frame: &Frame, target: Vec3, solids: &Obstacles) {
+    /// `open_above`: height above which nothing is drawn (the hero's floor
+    /// ceiling when inside a building), so the camera may go there.
+    fn update(
+        &mut self,
+        world: &mut World,
+        frame: &Frame,
+        target: Vec3,
+        solids: &Obstacles,
+        open_above: Option<f64>,
+    ) {
         let input = &frame.input;
         if input.mouse_down(MouseButton::Right) || world.pointer_lock() {
             let (yaw, pitch) = input.look_delta(0.15);
@@ -163,8 +187,9 @@ impl HeroCamera {
         let mut t = 0.3;
         while t < wanted {
             let p = head - dir * t;
-            let floor = solids.floor_under(DVec2::new(p.x as f64, p.z as f64), f64::MAX);
-            if (p.y as f64) < floor + 0.2 {
+            let q = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+            let hidden = open_above.is_some_and(|y| q.y > y);
+            if !hidden && (solids.solid_at(q) || q.y < solids.ground + 0.2) {
                 d = (t - step).max(0.0);
                 break;
             }
@@ -212,6 +237,7 @@ fn main() -> EngineResult<()> {
         "HeroWorld: {} buildings. Right mouse to look, WASD to run, Space to jump, Tab for the free camera.",
         city.buildings.len()
     );
+    let mut hero_cam_yaw = 30.0f32;
     let mut fly = match view.as_str() {
         "street" => FlyCamera::new((-60.0, 6.0, 140.0), 160.0, 8.0),
         "cutaway" => {
@@ -222,10 +248,32 @@ fn main() -> EngineResult<()> {
     }
     .with_speed(40.0);
     fly.fast = 8.0;
-    let mut flying = view != "hero";
+    let mut flying = view != "hero" && view != "inside";
+    if view == "inside" {
+        // Start in the lobby of the tallest tower near the centre.
+        let tower = (0..city.buildings.len())
+            .filter(|&i| city.centre_of(i).length() < 300.0 && city.buildings[i].core.is_some())
+            .max_by_key(|&i| city.buildings[i].floors.len());
+        if let Some(i) = tower {
+            let plan = &city.buildings[i];
+            let lobby = plan.floors[0]
+                .rooms
+                .iter()
+                .find(|r| r.kind == hw_gen::building::RoomKind::Lobby)
+                .map(|r| r.rect.center())
+                .unwrap_or(plan.floors[0].outline.center());
+            let p = plan
+                .site
+                .to_city(glam::DVec3::new(lobby.x, hw_sim::GROUND_Y + 0.1, lobby.y));
+            session.teleport(p);
+            let along = plan.site.inward;
+            // Look into the building from behind the hero.
+            hero_cam_yaw = along.x.atan2(along.y).to_degrees() as f32;
+        }
+    }
     let mut hero_cam = HeroCamera {
-        yaw: 30.0,
-        pitch: -12.0,
+        yaw: hero_cam_yaw,
+        pitch: if view == "inside" { -35.0 } else { -12.0 },
         distance: 7.0,
     };
     let mut hero_entities: BTreeMap<hw_core::NetId, EntityId> = BTreeMap::new();
@@ -293,6 +341,7 @@ fn main() -> EngineResult<()> {
             hero_input.move_x = dir.x;
             hero_input.move_z = dir.z;
             hero_input.jump = input.down(Key::Space);
+            hero_input.descend = input.down(Key::Ctrl);
         }
 
         // Fixed ticks for the game, however fast frames come.
@@ -339,8 +388,23 @@ fn main() -> EngineResult<()> {
 
         // Camera.
         let me = session.my_position(&heroes);
+        let inside = me.and_then(|p| solids.inside(p));
+        if inside != city.inside {
+            let mut cells = BTreeSet::new();
+            for i in [city.inside, inside].into_iter().flatten() {
+                cells.insert(city.cell_of(i.building));
+            }
+            city.inside = inside;
+            for c in cells {
+                city.build_cell(world, c);
+            }
+        }
+        let open_above = inside.map(|i| {
+            let f = &city.buildings[i.building].floors[i.level as usize];
+            hw_sim::BUILDING_BASE + f.elevation + 2.6
+        });
         match (flying, me) {
-            (false, Some(p)) => hero_cam.update(world, frame, p.as_vec3(), &solids),
+            (false, Some(p)) => hero_cam.update(world, frame, p.as_vec3(), &solids, open_above),
             _ => {
                 fly.update(world, frame);
                 fly.position = fly.position.max(Vec3::new(f32::MIN, 1.8, f32::MIN));

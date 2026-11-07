@@ -141,6 +141,21 @@ impl Session {
         }
     }
 
+    /// Puts our hero somewhere (single player only; for tests and screenshots).
+    pub fn teleport(&mut self, pos: DVec3) {
+        if let Session::Local { host, me } = self {
+            if let Some(id) = host.sim.hero_of(*me) {
+                host.sim.set_body(
+                    id,
+                    hw_sim::collision::Body {
+                        pos,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    }
+
     pub fn my_hero(&mut self) -> Option<NetId> {
         match self {
             Session::Local { host, me } => host.sim.hero_of(*me),

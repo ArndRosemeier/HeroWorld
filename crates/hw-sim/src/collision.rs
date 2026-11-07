@@ -7,7 +7,9 @@
 use glam::{DVec2, DVec3};
 use hw_gen::building::BuildingPlan;
 use hw_gen::city::CityPlan;
+use hw_gen::geom::Rect;
 use std::collections::BTreeMap;
+use std::sync::{Arc, OnceLock};
 
 /// Ground grid cell for lookups (m).
 const CELL: f64 = 32.0;
@@ -45,10 +47,31 @@ impl Solid {
     }
 }
 
+/// One building for collision: its plan, and its solids made on first use
+/// (walls with door gaps, floor slabs, terraces, the roof). Only buildings
+/// something comes near ever get built, on the server and every client alike.
+#[derive(Debug)]
+struct Collider {
+    plan: Option<Arc<BuildingPlan>>,
+    base: f64,
+    lo: DVec2,
+    hi: DVec2,
+    solids: OnceLock<Vec<Solid>>,
+}
+
+impl Collider {
+    fn solids(&self) -> &[Solid] {
+        self.solids.get_or_init(|| match &self.plan {
+            Some(p) => building_solids(p, self.base),
+            None => Vec::new(),
+        })
+    }
+}
+
 /// All solids of a city with a grid to find nearby ones fast.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct Obstacles {
-    pub solids: Vec<Solid>,
+    colliders: Vec<Collider>,
     grid: BTreeMap<(i64, i64), Vec<u32>>,
     /// Height of open ground.
     pub ground: f64,
@@ -67,6 +90,18 @@ pub const BODY_RADIUS: f64 = 0.4;
 pub const BODY_HEIGHT: f64 = 1.8;
 /// Ledges lower than this are stepped onto.
 pub const STEP: f64 = 0.45;
+/// Thickness of floor slabs, outside walls and inside walls.
+pub const SLAB: f64 = 0.3;
+pub const OUTER_WALL: f64 = 0.3;
+pub const INNER_WALL: f64 = 0.2;
+
+/// Where a point is inside a building.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Inside {
+    /// Index into the city's buildings.
+    pub building: usize,
+    pub level: u32,
+}
 
 impl Obstacles {
     /// Open ground only.
@@ -77,53 +112,65 @@ impl Obstacles {
         }
     }
 
-    /// Every building of a city, from its plans (one per `city.buildings`).
+    /// Every building of a city (one plan per `city.buildings`, same order),
+    /// standing on `base`.
     pub fn from_city(city: &CityPlan, plans: &[BuildingPlan], ground: f64, base: f64) -> Self {
         let mut out = Self::flat(ground);
         for (_, p) in city.buildings.iter().zip(plans) {
-            let s = &p.site;
-            let mut i = 0;
-            while i < p.floors.len() {
-                let outline = p.floors[i].outline;
-                let mut j = i;
-                while j + 1 < p.floors.len() && p.floors[j + 1].outline == outline {
-                    j += 1;
-                }
-                out.add(Solid {
-                    origin: s.origin,
-                    along: s.along,
-                    inward: s.inward,
-                    min: outline.min,
-                    max: outline.max,
-                    y0: base + p.floors[i].elevation,
-                    // The roof slab on top.
-                    y1: base + p.floors[j].elevation + p.floors[j].height + 0.3,
-                });
-                i = j + 1;
-            }
+            let corners = p.site.corners();
+            out.insert(Collider {
+                plan: Some(Arc::new(p.clone())),
+                base,
+                lo: corners
+                    .iter()
+                    .fold(DVec2::splat(f64::MAX), |a, c| a.min(*c)),
+                hi: corners
+                    .iter()
+                    .fold(DVec2::splat(f64::MIN), |a, c| a.max(*c)),
+                solids: OnceLock::new(),
+            });
         }
         out
     }
 
+    /// Adds a free-standing box (tests, props).
     pub fn add(&mut self, solid: Solid) {
-        let idx = self.solids.len() as u32;
         let (mut lo, mut hi) = (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN));
         for c in solid.corners() {
             lo = lo.min(c);
             hi = hi.max(c);
         }
-        let (x0, z0) = ((lo.x / CELL).floor() as i64, (lo.y / CELL).floor() as i64);
-        let (x1, z1) = ((hi.x / CELL).floor() as i64, (hi.y / CELL).floor() as i64);
+        let cell = OnceLock::new();
+        let _ = cell.set(vec![solid]);
+        self.insert(Collider {
+            plan: None,
+            base: 0.0,
+            lo,
+            hi,
+            solids: cell,
+        });
+    }
+
+    fn insert(&mut self, c: Collider) {
+        let idx = self.colliders.len() as u32;
+        let (x0, z0) = (
+            (c.lo.x / CELL).floor() as i64,
+            (c.lo.y / CELL).floor() as i64,
+        );
+        let (x1, z1) = (
+            (c.hi.x / CELL).floor() as i64,
+            (c.hi.y / CELL).floor() as i64,
+        );
         for x in x0..=x1 {
             for z in z0..=z1 {
                 self.grid.entry((x, z)).or_default().push(idx);
             }
         }
-        self.solids.push(solid);
+        self.colliders.push(c);
     }
 
-    /// Solids whose grid cells touch a circle (may repeat none; sorted).
-    fn near(&self, p: DVec2, r: f64) -> Vec<u32> {
+    /// Colliders whose boxes come within `r` of `p`, sorted.
+    fn near_colliders(&self, p: DVec2, r: f64) -> Vec<u32> {
         let mut out = Vec::new();
         let (x0, z0) = (
             ((p.x - r) / CELL).floor() as i64,
@@ -136,7 +183,13 @@ impl Obstacles {
         for x in x0..=x1 {
             for z in z0..=z1 {
                 if let Some(v) = self.grid.get(&(x, z)) {
-                    out.extend_from_slice(v);
+                    out.extend(v.iter().copied().filter(|&i| {
+                        let c = &self.colliders[i as usize];
+                        p.x + r >= c.lo.x
+                            && p.x - r <= c.hi.x
+                            && p.y + r >= c.lo.y
+                            && p.y - r <= c.hi.y
+                    }));
                 }
             }
         }
@@ -145,11 +198,83 @@ impl Obstacles {
         out
     }
 
+    /// Every solid near a point (builds colliders on first touch).
+    fn near(&self, p: DVec2, r: f64) -> impl Iterator<Item = &Solid> {
+        self.near_colliders(p, r)
+            .into_iter()
+            .flat_map(move |i| self.colliders[i as usize].solids().iter())
+    }
+
+    /// Is `p` inside any solid?
+    pub fn solid_at(&self, p: DVec3) -> bool {
+        self.near(DVec2::new(p.x, p.z), 0.0).any(|s| {
+            let l = s.to_local(DVec2::new(p.x, p.z));
+            p.y > s.y0
+                && p.y < s.y1
+                && l.x > s.min.x
+                && l.x < s.max.x
+                && l.y > s.min.y
+                && l.y < s.max.y
+        })
+    }
+
+    /// The building and floor a point is in, if any.
+    pub fn inside(&self, p: DVec3) -> Option<Inside> {
+        let q = DVec2::new(p.x, p.z);
+        for i in self.near_colliders(q, 0.0) {
+            let c = &self.colliders[i as usize];
+            let Some(plan) = &c.plan else { continue };
+            let s = &plan.site;
+            let d = q - s.origin;
+            let l = DVec2::new(d.dot(s.along), d.dot(s.inward));
+            if l.x < 0.0 || l.y < 0.0 || l.x > s.size.x || l.y > s.size.y {
+                continue;
+            }
+            let y = p.y - c.base;
+            if let Some(f) = plan
+                .floors
+                .iter()
+                .find(|f| y >= f.elevation - 0.05 && y < f.elevation + f.height)
+            {
+                if f.outline.min.x <= l.x
+                    && l.x <= f.outline.max.x
+                    && f.outline.min.y <= l.y
+                    && l.y <= f.outline.max.y
+                {
+                    return Some(Inside {
+                        building: i as usize,
+                        level: f.level,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    /// Is `p` (feet) inside a lift shaft?
+    pub fn in_lift(&self, p: DVec3) -> bool {
+        let q = DVec2::new(p.x, p.z);
+        self.near_colliders(q, 0.0).into_iter().any(|i| {
+            let c = &self.colliders[i as usize];
+            let Some(plan) = &c.plan else { return false };
+            let Some(core) = plan.core else { return false };
+            let s = &plan.site;
+            let d = q - s.origin;
+            let l = DVec2::new(d.dot(s.along), d.dot(s.inward));
+            let top = c.base + plan.height();
+            l.x > core.min.x
+                && l.x < core.max.x
+                && l.y > core.min.y
+                && l.y < core.max.y
+                && p.y >= c.base - 0.1
+                && p.y < top
+        })
+    }
+
     /// Height of whatever is under `p` (x, z) no higher than `max_y`.
     pub fn floor_under(&self, p: DVec2, max_y: f64) -> f64 {
         let mut best = self.ground;
-        for i in self.near(p, 0.0) {
-            let s = &self.solids[i as usize];
+        for s in self.near(p, 0.0) {
             let l = s.to_local(p);
             if l.x >= s.min.x && l.x <= s.max.x && l.y >= s.min.y && l.y <= s.max.y && s.y1 <= max_y
             {
@@ -166,11 +291,14 @@ impl Obstacles {
         // A few passes settle corners between neighbouring boxes.
         for _ in 0..3 {
             let mut moved = false;
-            for i in self.near(DVec2::new(pos.x, pos.z), BODY_RADIUS) {
-                let s = &self.solids[i as usize];
-                // Only walls: the body overlaps the box vertically and is not
-                // standing on top of it (or stepping up onto it).
-                if pos.y + BODY_HEIGHT <= s.y0 || pos.y >= s.y1 - STEP {
+            for s in self.near(DVec2::new(pos.x, pos.z), BODY_RADIUS) {
+                // Only walls: the body overlaps the box vertically, is not
+                // standing on top of it (or stepping up onto it), and it is not a
+                // ceiling just above the head (handled in move_body).
+                if pos.y + BODY_HEIGHT <= s.y0
+                    || pos.y >= s.y1 - STEP
+                    || s.y0 > pos.y + BODY_HEIGHT - 0.6
+                {
                     continue;
                 }
                 let l = s.to_local(DVec2::new(pos.x, pos.z));
@@ -229,6 +357,19 @@ impl Obstacles {
                     body.vel -= n3 * into;
                 }
             }
+            // Ceilings stop a rising body.
+            if body.vel.y > 0.0 {
+                let head = next.y + BODY_HEIGHT;
+                let q = DVec2::new(next.x, next.z);
+                for s in self.near(q, 0.0) {
+                    let l = s.to_local(q);
+                    let over = l.x >= s.min.x && l.x <= s.max.x && l.y >= s.min.y && l.y <= s.max.y;
+                    if over && s.y0 >= body.pos.y + BODY_HEIGHT - 0.6 && head > s.y0 {
+                        next.y = s.y0 - BODY_HEIGHT;
+                        body.vel.y = 0.0;
+                    }
+                }
+            }
             // Land on whatever is below, stepping up small ledges.
             let floor = self.floor_under(DVec2::new(next.x, next.z), next.y.max(body.pos.y) + STEP);
             if next.y <= floor {
@@ -239,6 +380,114 @@ impl Obstacles {
             body.pos = next;
         }
     }
+}
+
+/// The solids of one building, from its plan.
+fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
+    let site = &plan.site;
+    let mut out = Vec::new();
+    let mut push = |r: Rect, y0: f64, y1: f64| {
+        if r.size().x > 1e-6 && r.size().y > 1e-6 && y1 > y0 {
+            out.push(Solid {
+                origin: site.origin,
+                along: site.along,
+                inward: site.inward,
+                min: r.min,
+                max: r.max,
+                y0,
+                y1,
+            });
+        }
+    };
+    let n = plan.floors.len();
+    for (k, f) in plan.floors.iter().enumerate() {
+        let y = base + f.elevation;
+        let top = if k + 1 < n {
+            y + f.height - SLAB
+        } else {
+            y + f.height
+        };
+        // The slab under this floor covers the floor below (its terrace too),
+        // with a hole for the lift shaft.
+        if k > 0 {
+            let below = plan.floors[k - 1].outline;
+            for r in minus(below, plan.core) {
+                push(r, y - SLAB, y);
+            }
+        }
+        // Walls: every room edge, minus the doors on it. Shared edges come
+        // twice; that is harmless for collision.
+        for (ri, room) in f.rooms.iter().enumerate() {
+            let r = room.rect;
+            let edges = [
+                (true, r.min.y, r.min.x, r.max.x),
+                (true, r.max.y, r.min.x, r.max.x),
+                (false, r.min.x, r.min.y, r.max.y),
+                (false, r.max.x, r.min.y, r.max.y),
+            ];
+            for (along_x, fixed, t0, t1) in edges {
+                let outer = if along_x {
+                    (fixed - f.outline.min.y).abs() < 1e-6 || (fixed - f.outline.max.y).abs() < 1e-6
+                } else {
+                    (fixed - f.outline.min.x).abs() < 1e-6 || (fixed - f.outline.max.x).abs() < 1e-6
+                };
+                let mut gaps: Vec<(f64, f64)> = f
+                    .doors
+                    .iter()
+                    .filter(|d| (d.a == ri || d.b == Some(ri)) && d.along_x == along_x)
+                    .filter(|d| (if along_x { d.at.y } else { d.at.x } - fixed).abs() < 1e-6)
+                    .map(|d| {
+                        let c = if along_x { d.at.x } else { d.at.y };
+                        (c - d.size.x * 0.5, c + d.size.x * 0.5)
+                    })
+                    .collect();
+                gaps.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let half = if outer { OUTER_WALL } else { INNER_WALL } * 0.5;
+                let mut t = t0;
+                let mut pieces = Vec::new();
+                for (g0, g1) in gaps {
+                    if g0 > t {
+                        pieces.push((t, g0.min(t1)));
+                    }
+                    t = t.max(g1);
+                }
+                if t < t1 {
+                    pieces.push((t, t1));
+                }
+                for (a, b) in pieces {
+                    if b - a < 0.05 {
+                        continue;
+                    }
+                    let rect = if along_x {
+                        Rect::from_xz(a, fixed - half, b, fixed + half)
+                    } else {
+                        Rect::from_xz(fixed - half, a, fixed + half, b)
+                    };
+                    push(rect, y, top);
+                }
+            }
+        }
+        if k + 1 == n {
+            push(f.outline, y + f.height - SLAB, y + f.height);
+        }
+    }
+    out
+}
+
+/// A rectangle minus an optional hole, as up to four rectangles.
+fn minus(r: Rect, hole: Option<Rect>) -> Vec<Rect> {
+    let Some(h) = hole else { return vec![r] };
+    if h.min.x >= r.max.x || h.max.x <= r.min.x || h.min.y >= r.max.y || h.max.y <= r.min.y {
+        return vec![r];
+    }
+    let (hx0, hx1) = (h.min.x.max(r.min.x), h.max.x.min(r.max.x));
+    let (hz0, hz1) = (h.min.y.max(r.min.y), h.max.y.min(r.max.y));
+    vec![
+        Rect::from_xz(r.min.x, r.min.y, r.max.x, hz0),
+        Rect::from_xz(r.min.x, hz1, r.max.x, r.max.y),
+        Rect::from_xz(r.min.x, hz0, hx0, hz1),
+        Rect::from_xz(hx1, hz0, r.max.x, hz1),
+    ]
 }
 
 #[cfg(test)]

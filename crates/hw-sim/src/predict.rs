@@ -218,6 +218,7 @@ mod tests {
                 move_x: if t < 60 { 1.0 } else { 0.0 },
                 move_z: if t >= 40 { 1.0 } else { 0.0 },
                 jump: t % 25 == 0,
+                descend: false,
             };
             let seq = t + 1;
             to_server.push_back((seq, input));

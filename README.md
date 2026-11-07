@@ -25,4 +25,4 @@ Crates and rules for contributors (and coding agents): [AGENTS.md](AGENTS.md).
 
 ## Controls
 
-WASD run, Space jump, right mouse (or P to lock the pointer) look, R/T zoom (all the way in is first person), Tab free camera, C cut buildings open, F move the cut to where you look, Z/X choose the floor.
+WASD run, Space jump (in a lift: rise; Ctrl sinks), right mouse (or P to lock the pointer) look, R/T zoom (all the way in is first person), Tab free camera, C cut buildings open, F move the cut to where you look, Z/X choose the floor.
