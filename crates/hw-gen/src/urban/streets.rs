@@ -156,7 +156,8 @@ pub fn plan_piece(seed: Seed, town: &Town, piece: &Piece) -> PieceStreets {
         };
         let mut seeds = vec![centre];
         let (lo, hi) = bounds(outline);
-        let st = dmaj.max(dmin) * 1.5;
+        // Close enough that thin pieces get a seed too.
+        let st = dmin * 0.8;
         let mut y = lo.y + st * 0.5;
         while y < hi.y {
             let mut x = lo.x + st * 0.5;
@@ -178,30 +179,88 @@ pub fn plan_piece(seed: Seed, town: &Town, piece: &Piece) -> PieceStreets {
         );
         streets = lines.into_iter().map(|l| simplify(&l.pts, 1.0)).collect();
     }
-    // Blocks: the faces of the outline plus the streets.
-    let mut tagged = vec![TaggedLine {
-        pts: {
-            let mut r = outline.clone();
-            r.push(outline[0]);
-            r
-        },
-        tag: 1,
-    }];
-    tagged.extend(streets.iter().map(|s| TaggedLine {
-        pts: s.clone(),
-        tag: 0,
-    }));
-    let g = Graph::build(&tagged, 1.0);
-    let blocks = g
-        .faces(dmin.min(60.0) * 4.0)
-        .into_iter()
-        .map(|f| f.pts)
-        .collect();
+    // Blocks: the faces of the outline plus the streets. A loop of streets
+    // that touches nothing would sit inside its block like a hole, so it is
+    // tied to the outline by two short streets first.
+    let mut blocks = Vec::new();
+    for round in 0..3 {
+        let mut tagged = vec![TaggedLine {
+            pts: {
+                let mut r = outline.clone();
+                r.push(outline[0]);
+                r
+            },
+            tag: 1,
+        }];
+        tagged.extend(streets.iter().map(|s| TaggedLine {
+            pts: s.clone(),
+            tag: 0,
+        }));
+        let faces: Vec<Vec<DVec2>> = Graph::build(&tagged, 1.0)
+            .faces(dmin.min(60.0) * 4.0)
+            .into_iter()
+            // A street that strays past the outline must not make a block
+            // outside the piece.
+            .filter(|f| super::inner_point(&f.pts).is_some_and(|c| contains(outline, c)))
+            .map(|f| f.pts)
+            .collect();
+        let inner = |b: &Vec<DVec2>| {
+            super::inner_point(b).is_some_and(|c| {
+                faces.iter().any(|o| {
+                    !std::ptr::eq(o, b)
+                        && super::graph::signed_area(o) > super::graph::signed_area(b)
+                        && contains(o, c)
+                })
+            })
+        };
+        let islands: Vec<&Vec<DVec2>> = faces.iter().filter(|b| inner(b)).collect();
+        if islands.is_empty() || round == 2 {
+            // Last resort: drop any block that still holds another.
+            let holds = |o: &Vec<DVec2>| {
+                faces.iter().any(|b| {
+                    !std::ptr::eq(o, b)
+                        && super::graph::signed_area(o) > super::graph::signed_area(b)
+                        && super::inner_point(b).is_some_and(|c| contains(o, c))
+                })
+            };
+            blocks = faces.iter().filter(|o| !holds(o)).cloned().collect();
+            break;
+        }
+        for isl in islands {
+            let near = |q: DVec2| nearest_on(outline, q);
+            let (k0, _) = isl
+                .iter()
+                .enumerate()
+                .map(|(k, q)| (k, q.distance(near(*q))))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .expect("non-empty");
+            let k1 = (k0 + isl.len() / 2) % isl.len();
+            for k in [k0, k1] {
+                let q = isl[k];
+                let t = near(q);
+                streets.push(vec![q, t + (t - q).normalize_or_zero() * 0.5]);
+            }
+        }
+    }
     PieceStreets {
         style,
         streets,
         blocks,
     }
+}
+
+/// The nearest point on a closed outline.
+fn nearest_on(ring: &[DVec2], p: DVec2) -> DVec2 {
+    let n = ring.len();
+    (0..n)
+        .map(|k| {
+            let (a, b) = (ring[k], ring[(k + 1) % n]);
+            let ab = b - a;
+            let t = ((p - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
+            a + ab * t
+        })
+        .min_by(|x, y| x.distance(p).total_cmp(&y.distance(p)))
+        .unwrap_or(p)
 }
 
 fn bounds(pts: &[DVec2]) -> (DVec2, DVec2) {

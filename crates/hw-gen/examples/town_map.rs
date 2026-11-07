@@ -6,6 +6,8 @@
 //! preset is one of: hill, colonial, mill, baroque, garden, mega.
 
 use hw_core::Seed;
+use hw_gen::building::BuildingUse;
+use hw_gen::urban::plots::plan_buildings;
 use hw_gen::urban::streets::{plan_piece, StreetStyle};
 use hw_gen::urban::{CentreKind, Cover, Era, Growth, Land, Preset, RoadClass, Town, TownParams};
 use std::fmt::Write;
@@ -110,6 +112,67 @@ fn main() {
                 lw * 0.5
             );
         }
+    }
+    // Buildings, where they would show (close-ups and small towns).
+    let t = std::time::Instant::now();
+    let mut count = 0;
+    let mut floors_sum = 0u64;
+    if view <= 2500.0 {
+        for (pc, pl) in town.pieces.iter().zip(&plans) {
+            let (lo, hi) = pc.face.pts.iter().fold(
+                (glam::DVec2::splat(f64::MAX), glam::DVec2::splat(f64::MIN)),
+                |(lo, hi), q| (lo.min(*q), hi.max(*q)),
+            );
+            if hi.x < cx - view || lo.x > cx + view || hi.y < cy - view || lo.y > cy + view {
+                continue;
+            }
+            for b in plan_buildings(Seed(seed), &town, pc, pl) {
+                count += 1;
+                floors_sum += b.floors as u64;
+                // Darker is taller.
+                let shade = (210.0 - (b.floors as f64).ln() * 45.0).clamp(40.0, 200.0) as u8;
+                let fill = match b.usage {
+                    BuildingUse::House => format!(
+                        "rgb({},{},{})",
+                        shade + 20,
+                        shade.saturating_sub(10),
+                        shade.saturating_sub(30)
+                    ),
+                    BuildingUse::Works | BuildingUse::Lab => {
+                        format!("rgb({},{},{})", shade.saturating_sub(20), shade, shade + 20)
+                    }
+                    BuildingUse::Tenement => format!(
+                        "rgb({},{},{})",
+                        shade.saturating_sub(30),
+                        shade,
+                        shade.saturating_sub(30)
+                    ),
+                    BuildingUse::Pavilion => format!(
+                        "rgb({},{},{})",
+                        shade + 30,
+                        shade.saturating_sub(20),
+                        shade + 20
+                    ),
+                    _ => format!("rgb({shade},{shade},{shade})"),
+                };
+                let pts: Vec<String> = b
+                    .corners()
+                    .iter()
+                    .map(|q| format!("{:.1},{:.1}", q.x, q.y))
+                    .collect();
+                let _ = writeln!(
+                    svg,
+                    r##"<polygon points="{}" fill="{fill}" stroke="#222" stroke-width="{:.2}"/>"##,
+                    pts.join(" "),
+                    lw * 0.15
+                );
+            }
+        }
+        println!(
+            "buildings in view in {:.2} s: {count}, mean {:.1} floors",
+            t.elapsed().as_secs_f64(),
+            floors_sum as f64 / count.max(1) as f64
+        );
     }
     for b in &net.bridges {
         let _ = writeln!(

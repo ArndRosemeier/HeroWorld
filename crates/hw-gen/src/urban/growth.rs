@@ -206,16 +206,21 @@ impl Growth {
                 Cover::River(_) => 7.0,
                 Cover::Land => {
                     let q = g.center(k % g.w, k / g.w);
+                    // The last term works at the old town's own size, so
+                    // even on flat land it grows lobed, not round.
                     let rough = (1.0
                         + 0.45 * noise.fbm(q.x / fray, q.y / fray, 4)
-                        + 0.3 * noise.fbm(q.x / (fray * 4.0) + 50.0, q.y / (fray * 4.0), 2))
+                        + 0.3 * noise.fbm(q.x / (fray * 4.0) + 50.0, q.y / (fray * 4.0), 2)
+                        + 0.55 * noise.fbm(q.x / core_r - 70.0, q.y / core_r + 30.0, 3))
                     .max(0.25);
                     let sl = slope[k] as f64;
                     let steep = 1.0 + 60.0 * sl * sl + if sl > 0.3 { 8.0 } else { 0.0 };
                     // Old towns are compact; ribbons along roads came later.
                     let road = if on_road[k] {
+                        // Even an old town stretches a little along its
+                        // main road.
                         let r = super::land::smooth(core_r, core_r * 2.5, q.length()) as f32;
-                        1.0 + (road_speed - 1.0) * r
+                        0.8 + (road_speed - 0.8) * r
                     } else {
                         1.0
                     };

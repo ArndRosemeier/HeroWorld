@@ -11,6 +11,7 @@
 //!    the avenues traced along a direction field ([`tensor`], [`trace`]).
 //! 5. [`Town`] pieces: the land between main roads ([`graph`]).
 //! 6. [`streets`]: side streets and blocks per piece, in the piece's style.
+//! 7. [`plots`]: buildings along the streets of each block.
 //!
 //! The older [`crate::city`] generator stays in use until this one can
 //! replace it.
@@ -20,6 +21,7 @@ pub mod growth;
 pub mod land;
 pub mod lines;
 pub mod params;
+pub mod plots;
 pub mod roads;
 pub mod streets;
 pub mod tensor;

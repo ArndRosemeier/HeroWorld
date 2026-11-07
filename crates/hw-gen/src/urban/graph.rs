@@ -87,10 +87,15 @@ impl Graph {
         let mut cuts: Vec<Vec<(usize, f64, DVec2)>> = lines
             .iter()
             .map(|l| {
-                vec![
-                    (0, 0.0, l.pts[0]),
-                    (l.pts.len() - 2, 1.0, *l.pts.last().expect("2+")),
-                ]
+                let n = l.pts.len();
+                let mut c = vec![(0, 0.0, l.pts[0]), (n - 2, 1.0, l.pts[n - 1])];
+                // A closed ring that nothing crosses would be one edge from a
+                // node to itself, which bounds no face: cut it in three.
+                if n >= 4 && l.pts[0].distance(l.pts[n - 1]) <= tol {
+                    c.push((n / 3, 0.0, l.pts[n / 3]));
+                    c.push((2 * n / 3, 0.0, l.pts[2 * n / 3]));
+                }
+                c
             })
             .collect();
         let seg = |li: usize, si: usize| (lines[li].pts[si], lines[li].pts[si + 1]);
@@ -369,6 +374,20 @@ mod tests {
             "dead end removed: {:?}",
             faces[0].pts
         );
+    }
+
+    #[test]
+    fn a_lone_ring_is_a_face() {
+        let ring: Vec<DVec2> = (0..=24)
+            .map(|k| {
+                let a = k as f64 / 24.0 * std::f64::consts::TAU;
+                DVec2::new(a.cos(), a.sin()) * 50.0
+            })
+            .collect();
+        let g = Graph::build(&[TaggedLine { pts: ring, tag: 0 }], 1.0);
+        let f = g.faces(1.0);
+        assert_eq!(f.len(), 1);
+        assert!((f[0].area - std::f64::consts::PI * 2500.0).abs() < 100.0);
     }
 
     #[test]
