@@ -6,6 +6,7 @@ use crate::buildingmesh::Detail;
 use crate::citymesh::{add_building, Look, MeshBuilder, BLOCK_TOP};
 use engine::prelude::*;
 use engine::stream::WorldGenerator;
+use engine::texgen::GroundLayer;
 use glam::{DVec2, DVec3, Vec3};
 use hw_gen::building::BuildingPlan;
 use hw_gen::urban::world::{TownWorld, WorldRoad, WATER_LEVEL};
@@ -288,9 +289,7 @@ impl TownView {
             let mut one = MeshBuilder::new();
             add_building(&mut one, &plan, wb.site.district, self.look_of(i), detail);
             let lift = Vec3::new(0.0, (wb.base - BLOCK_TOP) as f32, 0.0);
-            b.mesh
-                .append_translated(&one.finish(), lift)
-                .expect("append building");
+            b.append(one, lift);
             if wb.base - wb.low > 0.05 {
                 b.prism(
                     &wb.site.corners(),
@@ -301,11 +300,11 @@ impl TownView {
             }
             if b.face_count() > MESH_FACES {
                 let full = std::mem::take(&mut b);
-                ids.push(world.spawn(full.finish()));
+                ids.extend(full.finish_parts().into_iter().map(|m| world.spawn(m)));
             }
         }
         if !b.is_empty() {
-            ids.push(world.spawn(b.finish()));
+            ids.extend(b.finish_parts().into_iter().map(|m| world.spawn(m)));
         }
         // Inland water (a coastal town's comes from Engine's sea).
         if !self.world.coastal() {
@@ -423,8 +422,18 @@ fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &RoadRun, i
     };
     let pavement = rgb(165, 160, 150);
     let total = r.half + r.pavement;
+    b.tex = Some(GroundLayer::Paving.into());
     strip(b, w, &run.pts, -total, total, lift, pavement);
+    // Old lanes are cobbled.
+    let lane = r.style == Some(hw_gen::urban::streets::StreetStyle::Lanes);
+    b.tex = Some(if lane {
+        GroundLayer::Cobble.into()
+    } else {
+        GroundLayer::RoadAsphalt.into()
+    });
+    let asphalt = if lane { rgb(120, 116, 110) } else { asphalt };
     strip(b, w, &run.pts, -r.half, r.half, lift + 0.05, asphalt);
+    b.tex = None;
 }
 
 /// A ribbon from offset `a` to `b` (left negative) along `pts`, draped on

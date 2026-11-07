@@ -6,11 +6,14 @@
 //! cut-open area moves).
 
 use engine::prelude::*;
+use engine::texgen::Layer;
 use glam::{DVec2, DVec3, Vec3};
 use hw_gen::building::{BuildingPlan, Door, RoomKind};
 use hw_gen::city::{BlockUse, CityPlan, DistrictKind, StreetClass};
 use hw_gen::geom::{EdgeTag, Poly, Rect};
 use hw_gen::water::{self, WATER_LEVEL};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 /// Heights of the ground layers (m). Carriageways sit above sidewalks where
 /// they overlap at junctions.
@@ -52,8 +55,36 @@ pub struct MeshBuilder {
     glass: Mesh,
     glow: Mesh,
     metal: Mesh,
+    /// Plain faces with a texture, one mesh per texture.
+    textured: Vec<(Layer, Mesh)>,
     /// Material for the faces added next.
     pub surf: Surf,
+    /// Texture for the plain faces added next ([`Self::finish_parts`]
+    /// keeps it; [`Self::finish`] drops textures).
+    pub tex: Option<Layer>,
+}
+
+/// The average colour of a texture layer (linear), so vertex colours can
+/// be divided by it: a textured face then keeps the colour asked for on
+/// average, with the texture's grain on top.
+fn layer_mean(l: Layer) -> [f32; 3] {
+    static MEANS: OnceLock<Mutex<HashMap<Layer, [f32; 3]>>> = OnceLock::new();
+    let means = MEANS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(m) = means.lock().expect("means").get(&l) {
+        return *m;
+    }
+    let t = engine::texgen::layer(l);
+    let mut sum = [0.0f64; 3];
+    let n = (t.albedo.len() / 4).max(1);
+    for px in t.albedo.chunks_exact(4) {
+        let c = Color::rgb(px[0], px[1], px[2]);
+        sum[0] += c.r as f64;
+        sum[1] += c.g as f64;
+        sum[2] += c.b as f64;
+    }
+    let m = sum.map(|v| ((v / n as f64) as f32).max(0.02));
+    means.lock().expect("means").insert(l, m);
+    m
 }
 
 impl Default for MeshBuilder {
@@ -69,19 +100,31 @@ impl MeshBuilder {
             glass: Mesh::new(),
             glow: Mesh::new(),
             metal: Mesh::new(),
+            textured: Vec::new(),
             surf: Surf::Plain,
+            tex: None,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        [&self.mesh, &self.glass, &self.glow, &self.metal]
-            .iter()
-            .all(|m| m.face_count() == 0)
+        self.face_count() == 0
     }
 
     fn target(&mut self) -> &mut Mesh {
         match self.surf {
-            Surf::Plain => &mut self.mesh,
+            Surf::Plain => match self.tex {
+                None => &mut self.mesh,
+                Some(l) => {
+                    let i = match self.textured.iter().position(|(k, _)| *k == l) {
+                        Some(i) => i,
+                        None => {
+                            self.textured.push((l, Mesh::new()));
+                            self.textured.len() - 1
+                        }
+                    };
+                    &mut self.textured[i].1
+                }
+            },
             Surf::Glass => &mut self.glass,
             Surf::Glow => &mut self.glow,
             Surf::Metal => &mut self.metal,
@@ -94,10 +137,67 @@ impl MeshBuilder {
         [&self.mesh, &self.glass, &self.glow, &self.metal]
             .iter()
             .map(|m| m.face_count())
-            .sum()
+            .sum::<usize>()
+            + self
+                .textured
+                .iter()
+                .map(|(_, m)| m.face_count())
+                .sum::<usize>()
     }
 
+    /// Adds everything `other` holds, moved by `offset`, keeping its
+    /// materials and textures apart.
+    pub fn append(&mut self, other: MeshBuilder, offset: Vec3) {
+        for (to, from) in [
+            (&mut self.mesh, other.mesh),
+            (&mut self.glass, other.glass),
+            (&mut self.glow, other.glow),
+            (&mut self.metal, other.metal),
+        ] {
+            if from.face_count() > 0 {
+                to.append_translated(&from, offset).expect("append part");
+            }
+        }
+        for (l, m) in other.textured {
+            let (s, t) = (self.surf, self.tex);
+            self.surf = Surf::Plain;
+            self.tex = Some(l);
+            self.target()
+                .append_translated(&m, offset)
+                .expect("append textured part");
+            self.surf = s;
+            self.tex = t;
+        }
+    }
+
+    /// One mesh per texture, the untextured faces (every material) first.
+    pub fn finish_parts(mut self) -> Vec<Mesh> {
+        let textured = std::mem::take(&mut self.textured);
+        let mut out = Vec::new();
+        let plain = self.finish();
+        if plain.face_count() > 0 {
+            out.push(plain);
+        }
+        for (l, mut m) in textured {
+            if m.face_count() == 0 {
+                continue;
+            }
+            engine::texgen::layer(l)
+                .apply_triplanar(&mut m)
+                .expect("texture a part");
+            out.push(m);
+        }
+        out
+    }
+
+    /// One mesh with every face; textures are dropped (the faces keep
+    /// their colours divided by the texture's average).
     pub fn finish(mut self) -> Mesh {
+        for (_, m) in std::mem::take(&mut self.textured) {
+            self.mesh
+                .append_translated(&m, Vec3::ZERO)
+                .expect("append part");
+        }
         let glass = SurfaceMaterial {
             roughness: 0.06,
             metallic: 0.5,
@@ -125,6 +225,18 @@ impl MeshBuilder {
     }
 
     fn point(&mut self, p: DVec3, color: Color) -> PointId {
+        let color = match (self.surf, self.tex) {
+            (Surf::Plain, Some(l)) => {
+                let m = layer_mean(l);
+                Color {
+                    r: (color.r / m[0]).min(1.0),
+                    g: (color.g / m[1]).min(1.0),
+                    b: (color.b / m[2]).min(1.0),
+                    a: color.a,
+                }
+            }
+            _ => color,
+        };
         let m = self.target();
         let id = m.add_point(p.as_vec3()).expect("finite point");
         m.set_point_color(id, color).expect("point exists");

@@ -15,6 +15,7 @@
 
 use crate::citymesh::{MeshBuilder, Surf};
 use engine::prelude::*;
+use engine::texgen::{FacadeLayer, Layer, RoofLayer};
 use glam::{DVec2, DVec3};
 use hw_core::Rng;
 use hw_gen::building::{bay_lines, BuildingPlan, Floor, Opening, OpeningKind, RoomKind, Side};
@@ -370,6 +371,7 @@ pub fn exterior(
         v: DVec3::new(site.inward.x, 0.0, site.inward.y),
     };
     let look = &plan.look;
+    c.b.tex = Some(wall_layer(look));
     let ts = tiers(plan, shown);
     for (n, &(i, j)) in ts.iter().enumerate() {
         let top_tier = n + 1 == ts.len();
@@ -408,6 +410,42 @@ pub fn exterior(
         sign(&mut c);
     }
     c.surf(Surf::Plain);
+    c.b.tex = None;
+}
+
+/// The texture of a building's walls (tinted by its wall colour).
+pub fn wall_layer(look: &Look) -> Layer {
+    use hw_gen::style::Material;
+    let [r, g, b] = look.wall.map(|v| v as f64);
+    let l: Layer = match look.material {
+        Material::Limestone => FacadeLayer::Limestone.into(),
+        Material::Granite => FacadeLayer::Granite.into(),
+        Material::Brick if r + g + b < 300.0 => FacadeLayer::BrickBrown.into(),
+        Material::Brick if g > r * 0.75 => FacadeLayer::BrickYellow.into(),
+        Material::Brick => FacadeLayer::BrickRed.into(),
+        Material::Terracotta => FacadeLayer::Sandstone.into(),
+        Material::Stucco if look.style == Style::OldTown => FacadeLayer::Plaster.into(),
+        Material::Stucco => FacadeLayer::Stucco.into(),
+        Material::Concrete => FacadeLayer::Concrete.into(),
+        Material::Metal | Material::Glass => FacadeLayer::MetalPanel.into(),
+    };
+    let _ = b;
+    l
+}
+
+/// The texture of a pitched or mansard roof.
+fn roof_layer(look: &Look) -> Layer {
+    let [r, g, _] = look.roof_color.map(|v| v as f64);
+    let l = if r > g + 40.0 {
+        RoofLayer::ClayTile
+    } else if look.roof == Roof::Mansard && look.style == Style::Haussmann {
+        RoofLayer::Zinc
+    } else if look.style == Style::Cottage {
+        RoofLayer::AsphaltShingle
+    } else {
+        RoofLayer::Slate
+    };
+    l.into()
 }
 
 /// Far detail: plain walls and flat window panes.
@@ -1104,6 +1142,7 @@ fn roof(c: &mut Ctx, o: Rect, y: f64, detail: Detail) {
         Roof::Gable | Roof::Hip => {
             let hip = look.roof == Roof::Hip;
             pitched(c, o, y, hip, roof_c, detail);
+            c.b.tex = Some(wall_layer(look));
         }
         Roof::Mansard => {
             let inset = 1.4;
@@ -1120,7 +1159,9 @@ fn roof(c: &mut Ctx, o: Rect, y: f64, detail: Detail) {
                 DVec3::new(o.max.x - inset, y + h, o.max.y - inset),
                 DVec3::new(o.min.x + inset, y + h, o.max.y - inset),
             ];
+            c.b.tex = Some(roof_layer(look));
             c.hexa(lo, hi, roof_c);
+            c.b.tex = Some(wall_layer(look));
             if detail == Detail::Near {
                 if look.dormers {
                     mansard_dormers(c, o, y);
@@ -1191,12 +1232,15 @@ fn pitched(c: &mut Ctx, o: Rect, y: f64, hip: bool, color: Color, detail: Detail
     let r0 = p(s0 + inset, tm, y + h);
     let r1 = p(s1 - inset, tm, y + h);
     let (a, b, cc, d) = (p(s0, t0, y), p(s1, t0, y), p(s1, t1, y), p(s0, t1, y));
+    c.b.tex = Some(roof_layer(look));
     c.quad([a, b, r1, r0], n(0.0, -h, half), color);
     c.quad([d, cc, r1, r0], n(0.0, h, half), color);
     if hip {
         c.polygon(&[a, d, r0], n(-h, 0.0, half), color);
         c.polygon(&[b, cc, r1], n(h, 0.0, half), color);
+        c.b.tex = Some(wall_layer(look));
     } else {
+        c.b.tex = Some(wall_layer(look));
         // Gable ends in the wall's colour, on the wall line, under the
         // roof's ends.
         let e = y + h * ov / half;

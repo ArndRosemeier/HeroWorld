@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.010 (2026-11-07)
+
+- Real surfaces: brick, stone, plaster and stucco walls; clay tile, slate, zinc and shingle roofs; asphalt roads, paving-slab pavements and cobbled lanes in the old towns.
+
 ## 0.009 (2026-11-07)
 
 - Flying-taxi pads on the roofs of the taller golden-age buildings: round decks on stilts with a glowing rim, a big "T" and a red beacon, seen from across town.
