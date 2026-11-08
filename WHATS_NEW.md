@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.046 (2026-11-08)
+
+- Molehaven looks the part: mushroom houses with swelling stems, curled caps with pale spots
+  and glowing gills, round doors in wooden frames, crystal clusters, a stone well under an iron
+  arch with a lantern, and market stalls with striped, scalloped awnings.
+- Lift pavilions have tapered chrome posts and a thin swept canopy with a lit edge; the pipes
+  in the utility tunnels are round, with flanges at their ends.
+
 ## 0.045 (2026-11-08)
 
 - Barricades rebuilt: concrete jersey barriers with a red and white band, striped sawhorses

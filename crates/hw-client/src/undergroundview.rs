@@ -9,6 +9,7 @@
 //! just inside the carved rock. Lamps come on near the camera while it is
 //! down there.
 
+use crate::carmesh::lathe;
 use crate::citymesh::{MeshBuilder, Surf};
 use engine::prelude::*;
 use engine::texgen::{FacadeLayer, GroundLayer};
@@ -16,7 +17,7 @@ use glam::{DVec2, DVec3, Vec3};
 use hw_gen::urban::underground::{Underground, Void, VoidKind};
 use hw_gen::urban::world::TownWorld;
 use std::collections::BTreeMap;
-use std::f64::consts::TAU;
+use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 /// Lamps lit at once underground.
 const POOL: usize = 28;
@@ -325,21 +326,48 @@ fn lining(b: &mut MeshBuilder, u: &Underground, i: usize, town: &TownWorld) {
     }
 }
 
-/// A round pipe from `a` to `c`.
+/// A round pipe from `a` to `c`, open at the ends, in the builder's
+/// current surface.
 fn tube(b: &mut MeshBuilder, a: DVec3, c: DVec3, r: f64, col: Color) {
-    let d = (c - a).normalize_or(DVec3::X);
-    let s = d.cross(DVec3::Y).normalize_or(DVec3::Z);
-    let t = s.cross(d);
-    let seg = 8;
-    for k in 0..seg {
-        let (a0, a1) = (
-            TAU * k as f64 / seg as f64,
-            TAU * (k + 1) as f64 / seg as f64,
-        );
-        let r0 = s * a0.cos() * r + t * a0.sin() * r;
-        let r1 = s * a1.cos() * r + t * a1.sin() * r;
-        b.quad([a + r0, c + r0, c + r1, a + r1], (r0 + r1) * 0.5, col);
+    let len = (c - a).length();
+    if len < 1e-6 {
+        return;
     }
+    let surf = b.surf;
+    let seg = if r < 0.06 { 8 } else { 24 };
+    // Closed ends, with a flange collar where a run starts and stops.
+    let f = (r * 1.25).min(r + 0.05);
+    let prof = if len > 0.6 && r >= 0.06 {
+        // Tight pairs of points keep the flange's edges crisp.
+        let e = 0.006;
+        vec![
+            (0.0, 0.0),
+            (f - e, 0.0),
+            (f, e),
+            (f, 0.06 - e),
+            (f - e, 0.06),
+            (r + e, 0.06),
+            (r, 0.06 + e),
+            (r, len - 0.06 - e),
+            (r + e, len - 0.06),
+            (f - e, len - 0.06),
+            (f, len - 0.06 + e),
+            (f, len - e),
+            (f - e, len),
+            (0.0, len),
+        ]
+    } else {
+        let e = (r * 0.1).min(0.006);
+        vec![
+            (0.0, 0.0),
+            (r - e, 0.0),
+            (r, e),
+            (r, len - e),
+            (r - e, len),
+            (0.0, len),
+        ]
+    };
+    lathe(b, a, c - a, &prof, seg, |_| Some((surf, col)));
 }
 
 /// Pipes and the Aether conduit along a tunnel piece, broken off where
@@ -472,9 +500,9 @@ fn lift_ring(b: &mut MeshBuilder, c: DVec2, y: f64, col: Color) {
     b.surf = Surf::Plain;
 }
 
-/// A Googie pavilion over a lift: four chrome posts, a swept canopy and a
-/// glowing atomic sign on a mast (amber for Molehaven, Aether blue for the
-/// tunnels).
+/// A Googie pavilion over a lift: four tapered chrome posts, a thin swept
+/// canopy with a glowing front edge, and a glowing atomic sign on a mast
+/// (amber for Molehaven, Aether blue for the tunnels).
 fn pavilion(b: &mut MeshBuilder, c: DVec2, door: DVec2, top: f64, molehaven: bool) {
     let h = hw_gen::urban::underground::SHAFT_HALF + 0.35;
     let side = door.perp();
@@ -488,91 +516,127 @@ fn pavilion(b: &mut MeshBuilder, c: DVec2, door: DVec2, top: f64, molehaven: boo
     } else {
         rgb(130, 230, 255)
     };
-    b.surf = Surf::Metal;
-    for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-        let p = c + door * h * sz + side * h * sx;
-        b.cylinder(
-            v3(p, top - 0.2),
-            (0.09, 0.09),
-            3.4,
-            8,
-            false,
-            rgb(220, 224, 230),
-        );
-    }
-    b.surf = Surf::Plain;
-    // The canopy: higher at the door, swept back.
+    let chrome = rgb(220, 224, 230);
     let w = h + 0.9;
     let (front, back) = (top + 3.6, top + 3.0);
-    let q = |dz: f64, sx: f64, y: f64| v3(c + door * dz + side * sx * w, y);
-    let bottom = [
-        q(w + 0.6, -1.0, front - 0.18),
-        q(w + 0.6, 1.0, front - 0.18),
-        q(-w, 1.0, back - 0.18),
-        q(-w, -1.0, back - 0.18),
-    ];
-    let topq = [
-        q(w + 0.6, -1.0, front),
-        q(w + 0.6, 1.0, front),
-        q(-w, 1.0, back),
-        q(-w, -1.0, back),
-    ];
-    b.hexa(bottom, topq, roof);
-    // A glowing edge along the canopy's front.
-    b.surf = Surf::Glow;
-    b.quad(
-        [
-            q(w + 0.61, -1.0, front - 0.17),
-            q(w + 0.61, 1.0, front - 0.17),
-            q(w + 0.61, 1.0, front - 0.03),
-            q(w + 0.61, -1.0, front - 0.03),
-        ],
-        v3(door, 0.0),
-        glow,
-    );
-    b.surf = Surf::Plain;
-    // The sign: a mast with an atom (a glowing ball in two rings).
-    let m = c - door * (w - 0.4) + side * (w - 0.4);
-    b.surf = Surf::Metal;
-    b.cylinder(v3(m, top), (0.07, 0.07), 5.4, 8, false, rgb(220, 224, 230));
-    b.surf = Surf::Glow;
-    let ball = v3(m, top + 5.6);
-    sphere(b, ball, 0.32, glow);
-    for tilt in [0.6f64, -0.6] {
-        let seg = 20;
-        for k in 0..seg {
-            let a0 = TAU * k as f64 / seg as f64;
-            let a1 = TAU * (k + 1) as f64 / seg as f64;
-            let ring = |a: f64| {
-                let x = a.cos() * 0.75;
-                let y = a.sin() * 0.75;
-                ball + v3(side * x, 0.0)
-                    + DVec3::new(0.0, y * tilt.cos(), 0.0)
-                    + v3(door * y * tilt.sin(), 0.0)
-            };
-            tube(b, ring(a0), ring(a1), 0.03, glow);
-        }
+    // The canopy's underside height at `dz` along the door axis.
+    let under = |dz: f64| back + (front - back) * (dz + w) / (2.0 * w + 0.6) - 0.1;
+    for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        let p = c + door * h * sz + side * h * sx;
+        let len = under(h * sz) - (top - 0.2) + 0.05;
+        lathe(
+            b,
+            v3(p, top - 0.2),
+            DVec3::Y,
+            &[
+                (0.0, 0.0),
+                (0.16, 0.0),
+                (0.16, 0.05),
+                (0.1, 0.16),
+                (0.07, 0.3),
+                (0.09, len - 0.1),
+                (0.12, len),
+                (0.0, len + 0.01),
+            ],
+            16,
+            |_| Some((Surf::Metal, chrome)),
+        );
     }
-    b.surf = Surf::Plain;
-}
-
-fn sphere(b: &mut MeshBuilder, c: DVec3, r: f64, col: Color) {
-    let (seg, rings) = (12, 6);
-    let at = |i: usize, k: usize| {
-        let a = TAU * (i % seg) as f64 / seg as f64;
-        let e = std::f64::consts::PI * (k as f64 / rings as f64 - 0.5);
-        c + DVec3::new(r * e.cos() * a.cos(), r * e.sin(), r * e.cos() * a.sin())
+    // The canopy: a thin wing, higher at the door and swept back, its
+    // front edge sharp and lit, its back and sides rounded.
+    let q = |dz: f64, sx: f64, y: f64| v3(c + door * dz + side * sx, y);
+    let (z0, z1) = (-w, w + 0.6);
+    let n = 12;
+    let mut sec: Vec<(f64, f64)> = Vec::new(); // (dz, dy) round the section
+    for k in 0..=n {
+        let t = k as f64 / n as f64;
+        sec.push((z0 + (z1 - z0) * t, 0.18 - 0.12 * t + 0.04 * (PI * t).sin()));
+    }
+    for k in (0..=n).rev() {
+        let t = k as f64 / n as f64;
+        sec.push((z0 + (z1 - z0) * t, 0.0 + 0.03 * t - 0.02 * (PI * t).sin()));
+    }
+    let base = |dz: f64| back + (front - back) * (dz - z0) / (z1 - z0) - 0.18;
+    let mut rows: Vec<Vec<DVec3>> = Vec::new();
+    let ends = 4;
+    let row = |sx: f64, k: f64| -> Vec<DVec3> {
+        sec.iter()
+            .map(|&(dz, dy)| {
+                let mid = (z0 + z1) * 0.5;
+                let dz = mid + (dz - mid) * (1.0 - (1.0 - k) * 0.04);
+                let y0 = base(dz) + 0.09;
+                q(dz, sx, y0 + (base(dz) + dy - y0) * k)
+            })
+            .collect()
     };
-    for k in 0..rings {
-        for i in 0..seg {
-            let p = [at(i, k), at(i + 1, k), at(i + 1, k + 1), at(i, k + 1)];
-            let out = (p[0] + p[1] + p[2] + p[3]) * 0.25 - c;
-            b.quad(p, out, col);
+    for e in 0..ends {
+        let th = FRAC_PI_2 * e as f64 / ends as f64;
+        rows.push(row(-(w + 0.12 * th.cos()), th.sin().max(0.02)));
+    }
+    rows.push(row(-w, 1.0));
+    rows.push(row(w, 1.0));
+    for e in (0..ends).rev() {
+        let th = FRAC_PI_2 * e as f64 / ends as f64;
+        rows.push(row(w + 0.12 * th.cos(), th.sin().max(0.02)));
+    }
+    crate::carmesh::surface(b, &rows, true, |_, j| {
+        if j + 1 == n || j == n || j == n + 1 {
+            Some((Surf::Glow, glow))
+        } else {
+            Some((Surf::Plain, roof))
         }
+    });
+    // The sign: a mast with an atom (a glowing ball in two rings).
+    let mpos = c - door * (w - 0.4) + side * (w - 0.4);
+    let mast = 5.4;
+    lathe(
+        b,
+        v3(mpos, top),
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.14, 0.0),
+            (0.1, 0.12),
+            (0.07, 0.4),
+            (0.05, mast),
+            (0.0, mast + 0.01),
+        ],
+        12,
+        |_| Some((Surf::Metal, chrome)),
+    );
+    let ball = v3(mpos, top + 5.6);
+    b.surf = Surf::Glow;
+    sphere(b, ball, 0.32, glow);
+    b.surf = Surf::Plain;
+    for tilt in [0.6f64, -0.6] {
+        let ring: Vec<DVec3> = (0..=32)
+            .map(|k| {
+                let a = TAU * k as f64 / 32.0;
+                let (x, y) = (a.cos() * 0.75, a.sin() * 0.75);
+                ball + v3(side * x, 0.0)
+                    + DVec3::Y * (y * tilt.cos())
+                    + v3(door * y * tilt.sin(), 0.0)
+            })
+            .collect();
+        crate::carmesh::tube(b, &ring, (0.03, 0.03), 8, Some((Surf::Glow, glow)));
     }
 }
 
-/// A mushroom: stem and a dome cap, `glow` under the cap.
+/// A smooth ball in the builder's current surface.
+fn sphere(b: &mut MeshBuilder, c: DVec3, r: f64, col: Color) {
+    let rings = 12;
+    let prof: Vec<(f64, f64)> = (0..=rings)
+        .map(|k| {
+            let a = PI * k as f64 / rings as f64;
+            (r * a.sin(), -r * a.cos())
+        })
+        .collect();
+    let surf = b.surf;
+    lathe(b, c, DVec3::Y, &prof, 24, |_| Some((surf, col)));
+}
+
+/// A mushroom: a swelling stem with a flared foot, a domed cap with a
+/// curled lip and pale spots, and `glow` in the gills underneath.
 #[allow(clippy::too_many_arguments)]
 fn mushroom(
     b: &mut MeshBuilder,
@@ -584,38 +648,87 @@ fn mushroom(
     cap: Color,
     glow: Color,
 ) {
-    b.cylinder(
-        v3(p, y),
-        (stem_r, stem_r * 0.85),
-        h,
-        12,
-        false,
-        rgb(226, 214, 186),
+    let big = cap_r > 2.0;
+    let seg = if big { 40 } else { 20 };
+    let base = v3(p, y);
+    let r = stem_r;
+    lathe(
+        b,
+        base,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (r * 1.35, 0.0),
+            (r * 1.2, h * 0.06),
+            (r * 1.02, h * 0.2),
+            (r * 1.05, h * 0.5),
+            (r * 0.92, h * 0.85),
+            (r * 0.95, h),
+            (0.0, h + 0.01),
+        ],
+        seg,
+        |_| Some((Surf::Plain, rgb(226, 214, 186))),
     );
-    // The cap: a squashed dome.
-    let (seg, rings) = (16, 5);
+    // The cap: gills (lit) from the stem out to a curled lip, then the dome.
+    let dome = cap_r * 0.55;
+    let mut prof = vec![
+        (r * 0.9, -0.02),
+        (cap_r * 0.9, -0.12),
+        (cap_r * 0.98, -0.1),
+        (cap_r * 1.02, -0.02),
+    ];
+    let rings = if big { 10 } else { 6 };
+    for k in 0..=rings {
+        let a = FRAC_PI_2 * k as f64 / rings as f64;
+        prof.push((cap_r * a.cos().max(0.0), dome * a.sin() + 0.04 * a.cos()));
+    }
+    if let Some(l) = prof.last_mut() {
+        l.0 = 0.0;
+    }
     let c = v3(p, y + h);
-    let at = |i: usize, k: usize| {
-        let a = TAU * (i % seg) as f64 / seg as f64;
-        let e = std::f64::consts::FRAC_PI_2 * k as f64 / rings as f64;
-        c + DVec3::new(
-            cap_r * e.cos() * a.cos(),
-            cap_r * 0.55 * e.sin(),
-            cap_r * e.cos() * a.sin(),
-        )
-    };
-    for k in 0..rings {
-        for i in 0..seg {
-            let q = [at(i, k), at(i + 1, k), at(i + 1, k + 1), at(i, k + 1)];
-            let out = (q[0] + q[1] + q[2] + q[3]) * 0.25 - c + DVec3::Y * 0.2;
-            b.quad(q, out, cap);
+    lathe(b, c, DVec3::Y, &prof, seg, |k| {
+        if k == 0 {
+            Some((Surf::Glow, glow))
+        } else {
+            Some((Surf::Plain, cap))
+        }
+    });
+    // A disc closes the gills round the stem.
+    let ring: Vec<DVec3> = (0..seg)
+        .rev()
+        .map(|i| {
+            let a = TAU * i as f64 / seg as f64;
+            c + DVec3::new(r * 0.9 * a.cos(), -0.02, r * 0.9 * a.sin())
+        })
+        .collect();
+    b.surf = Surf::Glow;
+    b.polygon(&ring, -DVec3::Y, glow);
+    b.surf = Surf::Plain;
+    // Pale spots on the dome.
+    if big {
+        for k in 0..9 {
+            let a = TAU * k as f64 / 9.0 + (k % 2) as f64 * 0.3;
+            let e = 0.35 + 0.35 * ((k * 7) % 3) as f64 / 2.0;
+            let n = DVec3::new(e.cos() * a.cos(), e.sin(), e.cos() * a.sin());
+            let at = c + DVec3::new(cap_r * n.x, dome * n.y + 0.04 * e.cos(), cap_r * n.z);
+            let up = DVec3::new(n.x / cap_r, n.y / dome, n.z / cap_r).normalize();
+            let sr = cap_r * 0.12;
+            lathe(
+                b,
+                at - up * 0.06,
+                up,
+                &[
+                    (0.0, 0.0),
+                    (sr, 0.0),
+                    (sr * 0.9, 0.05),
+                    (sr * 0.5, 0.09),
+                    (0.0, 0.1),
+                ],
+                24,
+                |_| Some((Surf::Plain, rgb(244, 236, 216))),
+            );
         }
     }
-    // Glowing gills underneath.
-    b.surf = Surf::Glow;
-    let rim: Vec<DVec3> = (0..seg).rev().map(|i| at(i, 0) - DVec3::Y * 0.02).collect();
-    b.polygon(&rim, -DVec3::Y, glow);
-    b.surf = Surf::Plain;
 }
 
 /// Molehaven's dressing: mushroom houses round the great hall and in the
@@ -707,24 +820,59 @@ fn molehaven(b: &mut MeshBuilder, u: &Underground, glows: &mut Vec<Glow>) {
         crystal(b, p, f, h, col);
     }
     b.surf = Surf::Plain;
-    // The well in the middle, glowing water.
-    b.cylinder(
+    // The well in the middle: a stone ring with a moulded lip round
+    // glowing water, an iron arch over it with a lantern.
+    let stone = rgb(120, 110, 96);
+    lathe(
+        b,
         v3(c.centre, f),
-        (2.2, 2.2),
-        0.9,
-        20,
-        true,
-        rgb(120, 110, 96),
+        DVec3::Y,
+        &[
+            (1.75, 0.75),
+            (1.8, 0.0),
+            (2.3, 0.0),
+            (2.25, 0.12),
+            (2.2, 0.7),
+            (2.32, 0.76),
+            (2.34, 0.9),
+            (2.2, 0.98),
+            (1.85, 0.98),
+            (1.75, 0.9),
+        ],
+        48,
+        |_| Some((Surf::Plain, stone)),
+    );
+    lathe(
+        b,
+        v3(c.centre, f + 0.75),
+        DVec3::Y,
+        &[(0.0, 0.0), (1.8, 0.0), (0.0, 0.001)],
+        48,
+        |_| Some((Surf::Glow, rgb(90, 220, 255))),
+    );
+    let arch: Vec<DVec3> = (0..=16)
+        .map(|k| {
+            let a = PI * k as f64 / 16.0;
+            v3(c.centre, f + 0.95) + DVec3::new(-2.05 * a.cos(), 2.4 * a.sin(), 0.0)
+        })
+        .collect();
+    crate::carmesh::tube(
+        b,
+        &arch,
+        (0.07, 0.07),
+        10,
+        Some((Surf::Metal, rgb(70, 66, 62))),
+    );
+    let lamp = v3(c.centre, f + 3.35);
+    tube(
+        b,
+        lamp + DVec3::Y * 0.2,
+        lamp - DVec3::Y * 0.4,
+        0.015,
+        rgb(70, 66, 62),
     );
     b.surf = Surf::Glow;
-    b.cylinder(
-        v3(c.centre, f + 0.9),
-        (1.8, 1.8),
-        0.02,
-        20,
-        true,
-        rgb(90, 220, 255),
-    );
+    sphere(b, lamp - DVec3::Y * 0.55, 0.18, rgb(120, 230, 255));
     b.surf = Surf::Plain;
     glows.push(Glow {
         pos: v3(c.centre, f + 2.0),
@@ -732,69 +880,146 @@ fn molehaven(b: &mut MeshBuilder, u: &Underground, glows: &mut Vec<Glow>) {
         strength: 8.0,
         range: 14.0,
     });
-    // Market stalls with striped awnings round the well.
+    // Market stalls with striped, scalloped awnings round the well.
     for k in 0..5 {
         let a = TAU * k as f64 / 5.0 + 0.6;
         let d = DVec2::new(a.cos(), a.sin());
         let p = c.centre + d * 9.0;
-        b.oriented_box(
-            v3(p, f + 0.5),
-            v3(d.perp(), 0.0),
-            DVec3::new(1.4, 0.5, 0.7),
-            rgb(140, 100, 64),
-        );
-        for s in 0..4 {
-            let col = if s % 2 == 0 {
-                caps[k % caps.len()]
-            } else {
-                rgb(240, 232, 212)
-            };
-            let o = d.perp() * (-1.2 + s as f64 * 0.8);
-            b.oriented_box(
-                v3(p + o, f + 2.3),
-                v3(d.perp(), 0.0),
-                DVec3::new(0.4, 0.05, 1.0),
-                col,
-            );
-        }
-        b.surf = Surf::Metal;
-        for sx in [-1.3, 1.3] {
-            b.cylinder(
-                v3(p + d.perp() * sx, f),
-                (0.05, 0.05),
-                2.3,
-                6,
-                false,
-                rgb(160, 150, 130),
-            );
-        }
-        b.surf = Surf::Plain;
+        stall(b, p, d, f, caps[k % caps.len()]);
     }
+}
+
+/// A market stall facing `d`: a wooden counter with a top board, turned
+/// posts, and a striped awning that curves down to a scalloped edge.
+fn stall(b: &mut MeshBuilder, p: DVec2, d: DVec2, f: f64, stripe: Color) {
+    let side = d.perp();
+    let wood = rgb(140, 100, 64);
+    crate::carmesh::slab(
+        b,
+        v3(p, f + 0.5),
+        [v3(side, 0.0), DVec3::Y],
+        DVec3::new(1.4, 0.5, 0.6),
+        wood,
+    );
+    crate::carmesh::slab(
+        b,
+        v3(p + d * 0.05, f + 1.03),
+        [v3(side, 0.0), DVec3::Y],
+        DVec3::new(1.5, 0.03, 0.72),
+        rgb(170, 126, 84),
+    );
+    for sx in [-1.3, 1.3] {
+        for dz in [-0.55, 0.85] {
+            let q = v3(p + side * sx + d * dz, f);
+            lathe(
+                b,
+                q,
+                DVec3::Y,
+                &[
+                    (0.0, 0.0),
+                    (0.07, 0.0),
+                    (0.05, 0.1),
+                    (0.045, 2.35),
+                    (0.0, 2.4),
+                ],
+                10,
+                |_| Some((Surf::Plain, wood)),
+            );
+        }
+    }
+    // The awning: rows across the stall, each a thin curved section from
+    // the back (high) to the scalloped front; stripes every 0.4 m.
+    let (w, stripes) = (1.6, 8);
+    let n = 8;
+    let per = 4;
+    let cols = stripes * per;
+    let mut rows: Vec<Vec<DVec3>> = Vec::new();
+    for i in 0..=cols {
+        let t = i as f64 / cols as f64;
+        let sx = -w + 2.0 * w * t;
+        // The scallops: the front edge dips between stripe centres.
+        let ph = (t * stripes as f64).fract();
+        let dip = 0.12 * (PI * ph).sin();
+        let mut top = Vec::new();
+        let mut bot = Vec::new();
+        for k in 0..=n {
+            let u = k as f64 / n as f64;
+            let dz = -0.8 + 2.0 * u;
+            let y = f + 2.6 - 0.35 * u - 0.25 * u * u - if k == n { dip } else { 0.0 };
+            let at = v3(p + side * sx + d * dz, y);
+            top.push(at);
+            bot.push(at - DVec3::Y * 0.03);
+        }
+        bot.reverse();
+        top.extend(bot);
+        rows.push(top);
+    }
+    crate::carmesh::surface(b, &rows, true, |i, _| {
+        let c = if (i / per) % 2 == 0 {
+            stripe
+        } else {
+            rgb(240, 232, 212)
+        };
+        Some((Surf::Plain, c))
+    });
 }
 
 fn disc(b: &mut MeshBuilder, c: DVec3, n: DVec3, r: f64, col: Color) {
     let s = n.cross(DVec3::Y).normalize_or(DVec3::X);
-    let pts: Vec<DVec3> = (0..16)
+    let pts: Vec<DVec3> = (0..32)
         .map(|k| {
-            let a = TAU * k as f64 / 16.0;
+            let a = TAU * k as f64 / 32.0;
             c + s * a.cos() * r + DVec3::Y * a.sin() * r
         })
         .collect();
     b.polygon(&pts, n, col);
+    let surf = b.surf;
+    let mut ring = pts.clone();
+    ring.push(pts[0]);
+    crate::carmesh::tube(
+        b,
+        &ring,
+        (r * 0.09, r * 0.09),
+        8,
+        Some((Surf::Plain, rgb(110, 74, 44))),
+    );
+    b.surf = surf;
 }
 
+/// A crystal: a leaning hexagonal prism with a pointed tip, and two
+/// smaller ones at its foot.
 fn crystal(b: &mut MeshBuilder, p: DVec2, y: f64, h: f64, col: Color) {
-    let r = h * 0.18;
-    let base: Vec<DVec3> = (0..5)
-        .map(|k| {
-            let a = TAU * k as f64 / 5.0;
-            DVec3::new(p.x + r * a.cos(), y, p.y + r * a.sin())
-        })
-        .collect();
-    let tip = DVec3::new(p.x + r * 0.3, y + h, p.y);
-    for k in 0..5 {
-        let (a, c) = (base[k], base[(k + 1) % 5]);
-        let out = (a + c) * 0.5 - DVec3::new(p.x, y, p.y);
-        b.tri([a, c, tip], out, col);
+    for (k, (dx, dz, f, lean)) in [
+        (0.0, 0.0, 1.0, 0.12),
+        (0.35, 0.2, 0.5, 0.35),
+        (-0.3, 0.25, 0.4, -0.4),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let r = h * f * 0.16;
+        let foot = DVec3::new(p.x + dx * h * 0.4, y - 0.1, p.y + dz * h * 0.4);
+        let axis = DVec3::new(lean, 1.0, lean * 0.5 * (k as f64 - 1.0)).normalize();
+        let (u, v) = {
+            let u = axis.cross(DVec3::X).normalize();
+            (u, axis.cross(u))
+        };
+        let ring = |t: f64, s: f64| -> Vec<DVec3> {
+            (0..6)
+                .map(|i| {
+                    let a = TAU * i as f64 / 6.0;
+                    foot + axis * t + (u * a.cos() + v * a.sin()) * r * s
+                })
+                .collect()
+        };
+        let len = h * f;
+        let (lo, hi) = (ring(0.0, 1.0), ring(len * 0.7, 1.0));
+        let tip = foot + axis * len;
+        for i in 0..6 {
+            let j = (i + 1) % 6;
+            let out = (lo[i] + lo[j]) * 0.5 - foot;
+            b.quad([lo[i], lo[j], hi[j], hi[i]], out, col);
+            b.tri([hi[i], hi[j], tip], out + axis * r, col);
+        }
     }
 }
