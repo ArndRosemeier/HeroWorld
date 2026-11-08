@@ -63,9 +63,20 @@ impl Session {
         let mut host = Host::with_sim(Sim::for_town(seed, town));
         host.sim.place_starter_crates();
         host.sim.place_first_fight();
-        // Screenshots: `HW_INCIDENT=1` starts the first incident at once.
-        if std::env::var("HW_INCIDENT").is_ok() {
+        // Screenshots: `HW_INCIDENT=1` starts the first incident at once
+        // (`fire`, `crash`, `breakout`...: of that kind).
+        if let Ok(v) = std::env::var("HW_INCIDENT") {
+            use hw_sim::incidents::IncidentKind;
             host.sim.incidents.first_after = 0.0;
+            host.sim.incidents.next_kind = match v.as_str() {
+                "mugging" => Some(IncidentKind::Mugging),
+                "robbery" => Some(IncidentKind::Robbery),
+                "rampage" => Some(IncidentKind::Rampage),
+                "breakout" => Some(IncidentKind::Breakout),
+                "crash" => Some(IncidentKind::CarCrash),
+                "fire" => Some(IncidentKind::Fire),
+                _ => None,
+            };
         }
         if open {
             let addr = host.listen(("0.0.0.0", hw_net::DEFAULT_PORT))?;

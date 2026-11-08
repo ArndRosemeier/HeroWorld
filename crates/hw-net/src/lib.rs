@@ -24,7 +24,7 @@ pub use replication::{Candidate, ClientView};
 pub use transport::{ClientSocket, Link, PeerAddr, ServerEvent, ServerLink, ServerSocket, Traffic};
 
 /// Protocol version. Server and client must match exactly to play together.
-pub const PROTOCOL_VERSION: u32 = 15;
+pub const PROTOCOL_VERSION: u32 = 16;
 
 /// Most players in one world.
 pub const MAX_PLAYERS: usize = 10;

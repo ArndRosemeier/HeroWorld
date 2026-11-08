@@ -1052,19 +1052,21 @@ fn main() -> EngineResult<()> {
             let mut news = session.take_news();
             // Broken and mended street props: their places, and lamps on them.
             news.retain(|m| match m {
-                hw_net::ToClient::Incident { id, at, .. } => {
+                hw_net::ToClient::Incident { id, at, yaw, .. } => {
                     radio.hear(world, m);
                     // `HW_VIEW=incident`: the camera goes to the first call.
                     if view == "incident" && radio.calls.len() == 1 && radio.calls.contains_key(id)
                     {
                         let c = Vec3::from_array(*at);
-                        let p = c + Vec3::new(90.0, 70.0, 90.0);
+                        // From its front, close by.
+                        let a = hw_sim::props::byte_to_yaw(*yaw) as f32;
+                        let p = c + Vec3::new(a.sin(), 0.0, a.cos()) * 9.0 + Vec3::Y * 3.5;
                         let d = c - p;
                         let yaw = d.x.atan2(d.z).to_degrees();
                         let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
                             .atan()
                             .to_degrees();
-                        fly = FlyCamera::new((p.x, p.y, p.z), yaw, pitch + 20.0);
+                        fly = FlyCamera::new((p.x, p.y, p.z), yaw, pitch + 22.0);
                     }
                     false
                 }
@@ -1524,11 +1526,13 @@ fn main() -> EngineResult<()> {
                 let fighting = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
                 radio.update(frame.dt);
                 let cam = world.camera();
+                let hero_at = session.my_position(&heroes).map(|p| p.as_vec3());
                 radio.panel(
                     frame.ui.ctx(),
                     cam.eye(),
                     cam.target() - cam.eye(),
                     fighting,
+                    hero_at,
                 );
                 for a in powers.ui(frame.ui.ctx(), &my_sheet, fighting, creating) {
                     match a {

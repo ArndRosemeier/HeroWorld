@@ -102,3 +102,57 @@ fn an_unanswered_incident_times_out_and_more_follow() {
     let at = DVec3::from_array(news[0].2.map(|v| v as f64));
     assert!(sim.enemies().iter().all(|e| e.2.distance(at) > 30.0));
 }
+
+#[test]
+fn heroes_get_people_out_of_a_fire_one_by_one() {
+    use hw_net::InputState;
+    use hw_sim::incidents::IncidentKind;
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    let me = PlayerId(1);
+    let hero = sim.spawn_hero(me, sim.spawn_point(1));
+    sim.incidents.next_kind = Some(IncidentKind::Fire);
+    let mut news = Vec::new();
+    run(&mut sim, incidents::FIRST_SECONDS + 2.0, &mut news);
+    let inc = sim.incidents.open[0].clone();
+    assert_eq!(inc.kind, IncidentKind::Fire);
+    assert_eq!(inc.left, 3);
+    let karma = sim.sheet(me).unwrap().karma;
+    // Standing by does nothing; holding the help key next to each gets
+    // them out in turn.
+    for k in (0..3u8).rev() {
+        let next = *sim.incidents.open[0].victims().last().unwrap();
+        sim.set_body(
+            hero,
+            Body {
+                pos: next + DVec3::new(0.0, 0.2, 0.0) + (inc.at - next) * 0.5,
+                vel: DVec3::ZERO,
+                grounded: true,
+            },
+        );
+        sim.set_input(me, InputState::default());
+        run(&mut sim, 1.0, &mut news);
+        assert_eq!(sim.incidents.open[0].left, k + 1, "freed without help");
+        sim.set_input(
+            me,
+            InputState {
+                revive: true,
+                ..Default::default()
+            },
+        );
+        run(
+            &mut sim,
+            IncidentKind::Fire.rescue_seconds() + 0.5,
+            &mut news,
+        );
+        if k > 0 {
+            assert_eq!(sim.incidents.open[0].left, k, "not got out");
+        }
+    }
+    run(&mut sim, 1.5, &mut news);
+    assert!(
+        news.iter().any(|n| n.0 == inc.id && n.3 == 1),
+        "the fire incident was not resolved"
+    );
+    assert!(sim.sheet(me).unwrap().karma > karma + 30, "no karma for it");
+}

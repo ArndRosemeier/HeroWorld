@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.033 (2026-11-08)
+
+- Rescues: houses catch fire with people inside, and cars crash with people trapped. Get
+  there, stand next to them and hold E to help them out, one by one. Being a guardian pays
+  karma too.
+
 ## 0.032 (2026-11-08)
 
 - Your wrist radio crackles: muggings, robberies, mutant rampages and lab breakouts break out

@@ -1,9 +1,13 @@
 //! Incidents: trouble that comes to the heroes. Every so often something
 //! starts within a few hundred metres of a hero: a mugging, a robbery at a
-//! shop, a mutant rampage, a breakout from one of the mad scientist's labs.
-//! Each is a group of villains standing where it happens; beating them all
-//! resolves it (karma for everyone near), and one nobody answers ends after
-//! a few minutes (they get away).
+//! shop, a mutant rampage, a breakout from one of the mad scientist's labs,
+//! a car crash with people trapped, a fire with people inside.
+//!
+//! A fight is a group of villains standing where it happens; beating them
+//! all resolves it (karma for everyone near). A rescue is people to get
+//! out: a hero holds the help key (the revive key) next to each in turn
+//! until they are free (Guardian karma for each). One nobody answers ends
+//! after a few minutes (the crooks get away, or the fire brigade comes).
 //!
 //! The spawn rule (DESIGN.md): two to four open at once within about 800 m
 //! of the heroes, at least a minute apart. Which and where come from the
@@ -12,7 +16,7 @@
 
 use crate::combat::{self, EnemyKind, Fighter, Fights, Spot};
 use crate::progress::{self, Affinity};
-use crate::{Hero, Motion, Net, Solids, GROUND_Y, TICK_HZ};
+use crate::{Control, Hero, Motion, Net, Solids, DT, GROUND_Y, TICK_HZ};
 use bevy_ecs::prelude::*;
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
@@ -34,6 +38,8 @@ pub const REWARD: f64 = 120.0;
 /// Incidents start this far from a hero (m).
 pub const NEAREST: f64 = 150.0;
 pub const FARTHEST: f64 = 800.0;
+/// A hero this near a trapped person can help them out (m).
+pub const RESCUE_REACH: f64 = 3.5;
 
 /// What kind of trouble.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -46,14 +52,20 @@ pub enum IncidentKind {
     Rampage,
     /// The mad scientist's technicians loose from a lab.
     Breakout,
+    /// Two cars smashed together, people trapped inside.
+    CarCrash,
+    /// A house on fire, people inside.
+    Fire,
 }
 
 impl IncidentKind {
-    pub const ALL: [IncidentKind; 4] = [
+    pub const ALL: [IncidentKind; 6] = [
         IncidentKind::Mugging,
         IncidentKind::Robbery,
         IncidentKind::Rampage,
         IncidentKind::Breakout,
+        IncidentKind::CarCrash,
+        IncidentKind::Fire,
     ];
 
     pub fn code(self) -> u8 {
@@ -71,6 +83,25 @@ impl IncidentKind {
             IncidentKind::Robbery => "Robbery in progress",
             IncidentKind::Rampage => "Mutant rampage",
             IncidentKind::Breakout => "Lab breakout",
+            IncidentKind::CarCrash => "Car crash, people trapped",
+            IncidentKind::Fire => "Fire, people inside",
+        }
+    }
+
+    /// People to get out (none for a fight).
+    pub fn trapped(self) -> u8 {
+        match self {
+            IncidentKind::CarCrash => 2,
+            IncidentKind::Fire => 3,
+            _ => 0,
+        }
+    }
+
+    /// Seconds of holding the help key to get one person out.
+    pub fn rescue_seconds(self) -> f64 {
+        match self {
+            IncidentKind::CarCrash => 4.0,
+            _ => 3.0,
         }
     }
 
@@ -81,6 +112,7 @@ impl IncidentKind {
             IncidentKind::Robbery => (4, None, 1),
             IncidentKind::Rampage => (3, Some(EnemyKind::Brute), 2),
             IncidentKind::Breakout => (5, Some(EnemyKind::Technician), 2),
+            IncidentKind::CarCrash | IncidentKind::Fire => (0, None, 0),
         }
     }
 
@@ -91,6 +123,9 @@ impl IncidentKind {
             IncidentKind::Robbery => 1.5,
             IncidentKind::Rampage => 2.0,
             IncidentKind::Breakout => 2.5,
+            // Per person got out.
+            IncidentKind::CarCrash => 3.0,
+            IncidentKind::Fire => 2.5,
         }
     }
 }
@@ -118,8 +153,15 @@ pub struct Incident {
     pub id: u32,
     pub kind: IncidentKind,
     pub at: DVec3,
-    /// Its villains' fight spot.
-    pub spot: usize,
+    /// Its villains' fight spot (none for a rescue).
+    pub spot: Option<usize>,
+    /// Which way it faces (a crash: across the road; a fire: out of the
+    /// house).
+    pub facing: DVec2,
+    /// People still to get out.
+    pub left: u8,
+    /// Seconds a hero has been helping the next one out.
+    pub freeing: f64,
     pub level: u8,
     pub started: u64,
     /// Unanswered, it ends at this tick.
@@ -136,8 +178,35 @@ impl Incident {
             at: self.at.as_vec3().to_array(),
             level: self.level,
             state: self.state.code(),
+            yaw: crate::props::yaw_to_byte(self.facing.x.atan2(self.facing.y)),
+            left: self.left,
         }
     }
+
+    /// Where the people still trapped are (the next to get out last).
+    pub fn victims(&self) -> Vec<DVec3> {
+        victims(self.kind, self.at, self.facing, self.left)
+    }
+}
+
+/// Where the trapped people of an incident are: a crash's beside the
+/// doors of its two cars, a fire's at the door and windows of the house.
+/// The server and every client place them alike.
+pub fn victims(kind: IncidentKind, at: DVec3, facing: DVec2, left: u8) -> Vec<DVec3> {
+    let f = DVec3::new(facing.x, 0.0, facing.y).normalize_or(DVec3::X);
+    let side = DVec3::new(f.z, 0.0, -f.x);
+    (0..left)
+        .map(|k| match kind {
+            IncidentKind::CarCrash => {
+                let car = if k % 2 == 0 { -1.0 } else { 1.0 };
+                at + side * (2.6 * car) + f * 1.5
+            }
+            _ => {
+                let n = kind.trapped().max(1) as f64;
+                at - f * 2.2 + side * ((k as f64 - (n - 1.0) * 0.5) * 1.8)
+            }
+        })
+        .collect()
 }
 
 /// The town's incidents.
@@ -151,6 +220,8 @@ pub struct Incidents {
     last_start: Option<u64>,
     /// Seconds before the first one (default [`FIRST_SECONDS`]).
     pub first_after: f64,
+    /// The kind the next one will be, if set (tests and screenshots).
+    pub next_kind: Option<IncidentKind>,
     /// Spots of incidents that ended, free to use again.
     free: Vec<usize>,
     news: Vec<ToClient>,
@@ -174,9 +245,14 @@ impl Incidents {
         }
     }
 
-    /// Once a second: start, answer, resolve and time out incidents.
+    /// Every tick: helping people out. Once a second: start, answer,
+    /// resolve and time out incidents.
     pub(crate) fn step(&mut self, world: &mut World, tick: u64) {
-        if self.town.is_none() || !tick.is_multiple_of(TICK_HZ as u64) {
+        if self.town.is_none() {
+            return;
+        }
+        self.rescue(world);
+        if !tick.is_multiple_of(TICK_HZ as u64) {
             return;
         }
         let mut heroes: Vec<(NetId, DVec3, u8)> = world
@@ -198,6 +274,51 @@ impl Incidents {
         }
     }
 
+    /// Heroes holding the help key next to the next trapped person get
+    /// them out, one after another.
+    fn rescue(&mut self, world: &mut World) {
+        if self.open.iter().all(|i| i.left == 0) {
+            return;
+        }
+        let mut helpers: Vec<(NetId, DVec3, u8, bool)> = world
+            .query::<(&Hero, &Net, &Motion, &Fighter, &Control)>()
+            .iter(world)
+            .map(|(_, n, m, f, c)| (n.0, m.0.pos, f.level, c.0.revive && f.standing()))
+            .collect();
+        helpers.sort_by_key(|h| h.0);
+        let mut rewards = Vec::new();
+        for inc in self.open.iter_mut().filter(|i| i.left > 0) {
+            let next = *inc.victims().last().expect("someone trapped");
+            let helping = helpers
+                .iter()
+                .any(|h| h.3 && h.1.distance(next) < RESCUE_REACH);
+            if !helping {
+                inc.freeing = (inc.freeing - DT).max(0.0);
+                continue;
+            }
+            inc.answered = true;
+            inc.freeing += DT;
+            if inc.freeing + 1e-9 < inc.kind.rescue_seconds() {
+                continue;
+            }
+            inc.freeing = 0.0;
+            inc.left -= 1;
+            // Karma for everyone who helped or stood by.
+            let base = combat::enemy_spec(EnemyKind::Brute).karma;
+            for h in helpers.iter().filter(|h| h.1.distance(next) < REWARD) {
+                let one = progress::defeat_karma(base, inc.level, h.2) as f32;
+                rewards.push(combat::Reward {
+                    hero: h.0,
+                    karma: (one * inc.kind.bonus()).round() as u32,
+                    deed: Some(Affinity::Guardian),
+                    lean: 0,
+                });
+            }
+            self.news.push(inc.news());
+        }
+        world.resource_mut::<Fights>().rewards.extend(rewards);
+    }
+
     /// Answered, resolved or timed out.
     fn settle(&mut self, world: &mut World, tick: u64, heroes: &[(NetId, DVec3, u8)]) {
         let mut ended = Vec::new();
@@ -205,8 +326,14 @@ impl Incidents {
             if heroes.iter().any(|h| h.1.distance(inc.at) < ANSWER) {
                 inc.answered = true;
             }
-            let spot = &world.resource::<Fights>().spots[inc.spot];
-            if spot.groups > 0 && spot.members == 0 {
+            let beaten = match inc.spot {
+                Some(i) => {
+                    let spot = &world.resource::<Fights>().spots[i];
+                    spot.groups > 0 && spot.members == 0
+                }
+                None => inc.left == 0,
+            };
+            if beaten {
                 inc.state = State::Resolved;
                 ended.push(k);
             } else if tick >= inc.expires && !inc.answered {
@@ -220,11 +347,13 @@ impl Incidents {
         }
         for k in ended.into_iter().rev() {
             let inc = self.open.remove(k);
-            match inc.state {
-                State::Resolved => self.reward(world, &inc, heroes),
-                _ => Self::send_home(world, inc.spot),
+            if let Some(spot) = inc.spot {
+                match inc.state {
+                    State::Resolved => self.reward(world, &inc, heroes),
+                    _ => Self::send_home(world, spot),
+                }
+                self.free.push(spot);
             }
-            self.free.push(inc.spot);
             self.news.push(inc.news());
         }
     }
@@ -296,6 +425,11 @@ impl Incidents {
             .into_iter()
             .filter(|(p, _)| !held(*p))
             .collect();
+        let homes: Vec<_> = fronts(BuildingUse::Apartments)
+            .into_iter()
+            .chain(fronts(BuildingUse::House))
+            .chain(fronts(BuildingUse::Tenement))
+            .collect();
         let streets: Vec<(DVec2, DVec2)> = town
             .roads
             .iter()
@@ -304,14 +438,17 @@ impl Incidents {
             .filter(|(p, _)| ring(*p) && !held(*p))
             .collect();
         let mut kinds: Vec<(IncidentKind, f64)> = vec![
-            (IncidentKind::Mugging, 0.35),
-            (IncidentKind::Robbery, 0.3),
-            (IncidentKind::Rampage, 0.2),
-            (IncidentKind::Breakout, 0.15),
+            (IncidentKind::Mugging, 0.25),
+            (IncidentKind::Robbery, 0.2),
+            (IncidentKind::Rampage, 0.15),
+            (IncidentKind::Breakout, 0.12),
+            (IncidentKind::CarCrash, 0.14),
+            (IncidentKind::Fire, 0.14),
         ];
         kinds.retain(|(k, _)| match k {
             IncidentKind::Breakout => !labs.is_empty(),
             IncidentKind::Robbery => !shops.is_empty(),
+            IncidentKind::Fire => !homes.is_empty(),
             _ => !streets.is_empty(),
         });
         let total: f64 = kinds.iter().map(|k| k.1).sum();
@@ -327,9 +464,15 @@ impl Incidents {
             }
             roll -= w;
         }
+        if let Some(k) = self.next_kind.take() {
+            if kinds.iter().any(|x| x.0 == k) {
+                kind = k;
+            }
+        }
         let places = match kind {
             IncidentKind::Breakout => &labs,
             IncidentKind::Robbery => &shops,
+            IncidentKind::Fire => &homes,
             _ => &streets,
         };
         let (p, face) = *rng.pick(places);
@@ -343,9 +486,34 @@ impl Incidents {
         }
         let y = world.resource::<Solids>().0.ground_at(p).max(GROUND_Y);
         let at = DVec3::new(p.x, y, p.y);
-        // Facing the hero who will come.
-        let facing = (me - p).normalize_or(face.normalize_or(DVec2::X));
+        // A fight faces the hero who will come; a rescue the way its place
+        // does (across the road, out of the house).
+        let facing = if kind.trapped() > 0 {
+            face.normalize_or(DVec2::X)
+        } else {
+            (me - p).normalize_or(face.normalize_or(DVec2::X))
+        };
         let (size, only, extra) = kind.group();
+        if kind.trapped() > 0 {
+            let level = world.resource::<Fights>().team_level;
+            let inc = Incident {
+                id: self.count,
+                kind,
+                at,
+                spot: None,
+                facing,
+                left: kind.trapped(),
+                freeing: 0.0,
+                level,
+                started: tick,
+                expires: tick + ticks(TIMEOUT_SECONDS),
+                answered: false,
+                state: State::Open,
+            };
+            self.news.push(inc.news());
+            self.open.push(inc);
+            return;
+        }
         let spot = Spot {
             extra,
             size: Some(size),
@@ -378,7 +546,10 @@ impl Incidents {
             id: self.count,
             kind,
             at,
-            spot: index,
+            spot: Some(index),
+            facing,
+            left: 0,
+            freeing: 0.0,
             level,
             started: tick,
             expires: tick + ticks(TIMEOUT_SECONDS),

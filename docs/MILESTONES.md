@@ -330,8 +330,18 @@ within 60 m of in four minutes ends and its villains leave, as does one the hero
 from. Clients hear of each through `ToClient::Incident` (protocol 15; joiners get the open ones).
 The client's wrist radio (`radioview.rs`, top left) lists the calls with distance, a clock
 direction and con colour, and a beam of light stands over each. `HW_INCIDENT=1` starts the first
-at once; `HW_VIEW=incident` flies the camera to it. Next: rescues (car crashes with people
-trapped, fires), the Hero Signal, map markers.
+at once; `HW_VIEW=incident` flies the camera to it.
+
+**Status (0.033):** rescues. Two more incident kinds, a car crash with two people trapped and
+a house on fire with three inside (`IncidentKind::CarCrash`, `Fire`): no villains, the people
+stand where `incidents::victims` puts them (the same on every machine), and a hero holding E
+(the revive key) within 3.5 m of the next one gets them out in 4 s (crash) or 3 s (fire),
+Guardian karma for each to every hero near. The client shows two smashed, smoking cars, or
+flames at the door and windows with smoke over the roof, and the people waving; "Hold E to
+help them out" when you are close. `ToClient::Incident` now carries the facing and how many
+are left (protocol 16). `HW_INCIDENT=fire|crash|mugging|...` picks the first kind. Not yet:
+carrying the injured to a medic, getting people out of buildings that heroes broke, the Hero
+Signal, map markers, rooftop groups, the transition band.
 
 ### M10. Traffic, taxis and the underground (in progress)
 
