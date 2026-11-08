@@ -27,7 +27,8 @@ fn model(name: &str, lod: Lod, paint: u8) -> Mesh {
         "cruiser" => car_into(&mut b, CarModel::Cruiser, paint, lod, true),
         "bubble" => car_into(&mut b, CarModel::Bubble, paint, lod, true),
         "hover" => car_into(&mut b, CarModel::Hover, paint, lod, true),
-        "taxi" => taxi_into(&mut b, lod),
+        "taxi" => taxi_into(&mut b, lod, true),
+        "taxi_open" => taxi_into(&mut b, lod, false),
         "ambulance" => hw_client::carmesh::ambulance_into(&mut b, lod),
         "wheel" => wheel(&mut b, DVec3::new(0.0, 0.36, 0.0), 0.36, 0.22, lod),
         _ => return prop(name, lod),
@@ -110,6 +111,15 @@ fn main() -> EngineResult<()> {
                 rgb(120, 122, 126),
             )?);
             world.set_sun((0.5, 1.0, 0.35), 0.25);
+            if show == "taxi_open" {
+                // The canopy, opened on its hinge (HW_OPEN degrees).
+                let (door, hinge, _) = hw_client::carmesh::taxi_door(lod);
+                let open = env_f("HW_OPEN", 50.0);
+                world.place(
+                    door,
+                    Place::new(hinge.x as f32, hinge.y as f32, hinge.z as f32).with_pitch_deg(open),
+                )?;
+            }
         }
         let target_y = env_f("HW_LOOK_Y", 0.8);
         world.look_orbit((0.0, target_y, 0.0), dist, yaw, pitch);

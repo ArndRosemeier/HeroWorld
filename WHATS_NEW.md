@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.048 (2026-11-08)
+
+- Flying taxis and hover cars have a cabin you can see through the bubble: red leather benches,
+  a padded dash with glowing dials and a steering wheel.
+- The taxi's bubble canopy can tilt up and forward like a jet's to let a fare in.
+
 ## 0.047 (2026-11-08)
 
 - Traffic lights work: red, amber and green change with the junction, and the cars obey them.

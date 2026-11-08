@@ -135,7 +135,20 @@ pub(crate) fn surface(
             acc += du.cross(dv).dot(rows[i][j] - c);
         }
     }
-    b.grid(rows, wrap, acc >= 0.0, paint);
+    b.grid(rows, wrap, (acc >= 0.0) != INSIDE.get(), paint);
+}
+
+thread_local! {
+    /// Set while laying the inner face of a shell (see [`inside`]).
+    static INSIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with every surface it lays facing inwards: the inner face of
+/// a thin shell, such as a canopy seen from under it when it is open.
+fn inside(f: impl FnOnce()) {
+    INSIDE.set(true);
+    f();
+    INSIDE.set(false);
 }
 
 /// Two unit vectors at right angles to `axis` (and to each other).
@@ -837,7 +850,7 @@ pub fn car_into(b: &mut MeshBuilder, model: CarModel, paint: u8, lod: Lod, wheel
     match model {
         CarModel::Cruiser => cruiser(b, &kit, lod),
         CarModel::Bubble => bubble(b, &kit, lod),
-        CarModel::Hover => hover(b, &kit, lod, false),
+        CarModel::Hover => hover(b, &kit, lod, false, true),
     }
     if wheels {
         if let Some((x, zs, r)) = wheel_layout(model) {
@@ -852,8 +865,24 @@ pub fn car_into(b: &mut MeshBuilder, model: CarModel, paint: u8, lod: Lod, wheel
 
 /// The flying taxi: the hover car in yellow with a black-and-white check
 /// along its flanks and a glowing TAXI lamp on the roof.
-pub fn taxi_into(b: &mut MeshBuilder, lod: Lod) {
-    hover(b, &Kit::new(5), lod, true);
+///
+/// `canopy` false leaves its bubble canopy (with the lamp) off, for a taxi
+/// whose canopy is drawn on its own by [`taxi_door`] so it can open.
+pub fn taxi_into(b: &mut MeshBuilder, lod: Lod, canopy: bool) {
+    hover(b, &Kit::new(5), lod, true, canopy);
+}
+
+/// The taxi's door: its bubble canopy with the TAXI lamp, which tilts up
+/// and forward like a jet's to let the fare in. Returns the mesh in the
+/// hinge's frame (the hinge at the origin, the canopy closed), the hinge's
+/// place on the taxi and its axis: turning the canopy by a positive angle
+/// about the axis lifts its back (about 0.9 rad is fully open).
+pub fn taxi_door(lod: Lod) -> (Mesh, DVec3, DVec3) {
+    let mut part = MeshBuilder::new();
+    let hinge = hover_canopy(&mut part, &Kit::new(5), lod, true);
+    let mut b = MeshBuilder::new();
+    b.append(part, -hinge.as_vec3());
+    (b.finish(), hinge, DVec3::X)
 }
 
 /// The long, low two-tone sedan: tail fins, a wraparound windscreen, a
@@ -1621,21 +1650,202 @@ fn bubble(b: &mut MeshBuilder, kit: &Kit, lod: Lod) {
 
 /// The hover car: a jet-age teardrop under a bubble canopy, chrome
 /// nacelles glowing at the tail, a swept fin and a glow plate underneath.
-fn hover(b: &mut MeshBuilder, kit: &Kit, lod: Lod, taxi: bool) {
-    let section = |z: f64| {
-        let nose = smooth(1.2, 2.35, z);
-        let tail = smooth(-0.4, -2.3, z);
-        Section {
-            w: 0.95 * (1.0 - 0.45 * tail) * (1.0 - 0.15 * nose),
-            bot: 0.7 + 0.1 * nose + 0.12 * tail,
-            mid: 0.98 + 0.02 * tail,
-            top: 1.28 - 0.14 * nose - 0.12 * tail,
-            n_up: 2.8,
-            n_dn: 2.4,
-            tumble: 0.08,
-            tuck: 0.3,
-        }
+/// The hover car's hull, as a function of z, for the hull and the parts
+/// that sit on it.
+fn hover_section(z: f64) -> Section {
+    let nose = smooth(1.2, 2.35, z);
+    let tail = smooth(-0.4, -2.3, z);
+    Section {
+        w: 0.95 * (1.0 - 0.45 * tail) * (1.0 - 0.15 * nose),
+        bot: 0.7 + 0.1 * nose + 0.12 * tail,
+        mid: 0.98 + 0.02 * tail,
+        top: 1.28 - 0.14 * nose - 0.12 * tail,
+        n_up: 2.8,
+        n_dn: 2.4,
+        tumble: 0.08,
+        tuck: 0.3,
+    }
+}
+
+/// The hover car's bubble canopy (and the taxi's lamp on it), hinged at
+/// its front foot; returns that hinge point.
+fn hover_canopy(b: &mut MeshBuilder, k: &Kit, lod: Lod, taxi: bool) -> DVec3 {
+    let base = |z: f64| hover_section(z).y_at(0.6) - 0.03;
+    let canopy = Cabin {
+        z: [-0.75, 1.35],
+        roof: [-0.05, 0.4],
+        height: 0.46,
+        w_base: 0.64,
+        w_roof: 0.46,
+        n: 2.3,
+        base: &base,
+        ease: 0.7,
+        stations: vec![],
+        bands: vec![0.07, 0.993],
     };
+    let paint = |at: At| {
+        if at.s < 0.07 || (lod == Lod::Near && at.s > 0.993) {
+            return k.metal();
+        }
+        k.glazed()
+    };
+    canopy.build(b, lod, paint);
+    // Its inner face, seen from below when it is open.
+    if lod != Lod::Far {
+        inside(|| canopy.build(b, lod, paint));
+    }
+    if taxi {
+        // The TAXI lamp on the canopy, on a chrome saddle.
+        let top = base(0.15) + 0.46;
+        tube(
+            b,
+            &[
+                DVec3::new(-0.26, top + 0.1, 0.15),
+                DVec3::new(0.26, top + 0.1, 0.15),
+            ],
+            (0.13, 0.09),
+            lod.pick(16, 8, 6),
+            Kit::glow(rgb(255, 214, 70)),
+        );
+        tube(
+            b,
+            &[
+                DVec3::new(-0.3, top + 0.01, 0.15),
+                DVec3::new(0.3, top + 0.01, 0.15),
+            ],
+            (0.08, 0.025),
+            lod.pick(12, 6, 4),
+            k.metal(),
+        );
+    }
+    DVec3::new(0.0, base(1.35), 1.35)
+}
+
+/// The hover car's cabin seen through the canopy: leather floor, a rear
+/// bench, a front seat, a chrome-rimmed dash and a steering wheel.
+fn hover_interior(b: &mut MeshBuilder, k: &Kit, lod: Lod) {
+    if lod == Lod::Far {
+        return;
+    }
+    let leather = rgb(150, 36, 40);
+    let deck = |z: f64, x: f64| hover_section(z).y_at(x);
+    // The floor: a dark skin just over the deck, inside the canopy's foot.
+    let (nx, nz) = (lod.pick(8, 4, 2), lod.pick(14, 6, 2));
+    let rows: Vec<Vec<DVec3>> = (0..=nz)
+        .map(|i| {
+            let z = -0.68 + 1.95 * i as f64 / nz as f64;
+            (0..=nx)
+                .map(|j| {
+                    let x = -0.56 + 1.12 * j as f64 / nx as f64;
+                    DVec3::new(x, deck(z, x) + 0.012, z)
+                })
+                .collect()
+        })
+        .collect();
+    b.grid(&rows, false, true, |_, _| Kit::plain(rgb(40, 30, 32)));
+    // (z, half width, backrest height): the rear bench sits under the
+    // canopy's falling tail, so its back is lower.
+    let seats = [(-0.28, 0.36, 0.09), (0.3, 0.4, 0.12)];
+    for (z, w, back) in seats {
+        let y = deck(z, 0.0);
+        cushion(
+            b,
+            lod,
+            DVec3::new(0.0, y + 0.07, z),
+            DVec3::new(w, 0.07, 0.17),
+            0.0,
+            Kit::plain(leather),
+        );
+        cushion(
+            b,
+            lod,
+            DVec3::new(0.0, y + 0.06 + back, z - 0.17),
+            DVec3::new(w, back, 0.05),
+            -0.25,
+            Kit::plain(leather),
+        );
+    }
+    // The dash: a padded cowl with a chrome rim and glowing dials.
+    let z = 0.95;
+    let y = deck(z, 0.0);
+    cushion(
+        b,
+        lod,
+        DVec3::new(0.0, y + 0.1, z),
+        DVec3::new(0.45, 0.08, 0.1),
+        0.3,
+        Kit::plain(k.body),
+    );
+    if lod == Lod::Near {
+        tube(
+            b,
+            &[
+                DVec3::new(-0.45, y + 0.18, z - 0.06),
+                DVec3::new(0.45, y + 0.18, z - 0.06),
+            ],
+            (0.012, 0.012),
+            6,
+            k.metal(),
+        );
+        for dx in [-0.34, -0.16] {
+            b.surf = Surf::Glow;
+            disc(
+                b,
+                DVec3::new(dx, y + 0.11, z - 0.105),
+                (DVec3::X * 0.045, DVec3::Y * 0.045),
+                12,
+                -DVec3::Z,
+                rgb(160, 240, 255),
+            );
+            b.surf = Surf::Plain;
+        }
+        // The steering wheel, before the left seat.
+        let c = DVec3::new(-0.25, y + 0.2, z - 0.2);
+        let tilt = 0.5f64;
+        let (u, v) = (DVec3::X, DVec3::new(0.0, tilt.cos(), tilt.sin()));
+        let ring: Vec<DVec3> = (0..=24)
+            .map(|i| {
+                let a = TAU * i as f64 / 24.0;
+                c + (u * a.cos() + v * a.sin()) * 0.11
+            })
+            .collect();
+        tube(b, &ring, (0.012, 0.012), 6, Kit::plain(rgb(240, 236, 224)));
+        tube(
+            b,
+            &[c, c + DVec3::new(0.0, -0.03, 0.15)],
+            (0.012, 0.012),
+            6,
+            k.metal(),
+        );
+    }
+}
+
+/// A padded cushion: a rounded box with half sizes `half`, tipped back by
+/// `tilt` (radians about x).
+fn cushion(b: &mut MeshBuilder, lod: Lod, c: DVec3, half: DVec3, tilt: f64, paint: Paint) {
+    let (seg, rings) = (lod.pick(16, 8, 4), lod.pick(8, 4, 2));
+    let f = |v: f64, e: f64| v.signum() * v.abs().powf(e);
+    let (st, ct) = tilt.sin_cos();
+    let rows: Vec<Vec<DVec3>> = (0..=rings)
+        .map(|k| {
+            let t = PI * (k as f64 / rings as f64 - 0.5);
+            (0..seg)
+                .map(|i| {
+                    let a = TAU * i as f64 / seg as f64;
+                    let p = DVec3::new(
+                        half.x * f(t.cos(), 0.3) * f(a.cos(), 0.3),
+                        half.y * f(t.sin(), 0.5),
+                        half.z * f(t.cos(), 0.3) * f(a.sin(), 0.5),
+                    );
+                    c + DVec3::new(p.x, p.y * ct - p.z * st, p.y * st + p.z * ct)
+                })
+                .collect()
+        })
+        .collect();
+    surface(b, &rows, true, |_, _| paint);
+}
+
+fn hover(b: &mut MeshBuilder, kit: &Kit, lod: Lod, taxi: bool, canopy: bool) {
     // The checker: cells of a fifth of a metre along the flanks.
     let cells: Vec<f64> = (0..=18).map(|i| -1.9 + 0.2 * i as f64).collect();
     let mut stations = vec![-2.15, 1.95];
@@ -1645,7 +1855,7 @@ fn hover(b: &mut MeshBuilder, kit: &Kit, lod: Lod, taxi: bool) {
     let body = Body {
         z: [-2.35, 2.35],
         end_r: [0.18, 0.5],
-        section: &section,
+        section: &hover_section,
         arches: vec![],
         stations,
         bands: if taxi {
@@ -1693,25 +1903,10 @@ fn hover(b: &mut MeshBuilder, kit: &Kit, lod: Lod, taxi: bool) {
         Kit::plain(k.body)
     });
     let deck = |z: f64, x: f64| body.shape(z).y_at(x);
-    let base = |z: f64| deck(z, 0.6) - 0.03;
-    let canopy = Cabin {
-        z: [-0.75, 1.35],
-        roof: [-0.05, 0.4],
-        height: 0.46,
-        w_base: 0.64,
-        w_roof: 0.46,
-        n: 2.3,
-        base: &base,
-        ease: 0.7,
-        stations: vec![],
-        bands: vec![0.07, 0.993],
-    };
-    canopy.build(b, lod, |at| {
-        if at.s < 0.07 || (lod == Lod::Near && at.s > 0.993) {
-            return k.metal();
-        }
-        k.glazed()
-    });
+    hover_interior(b, &k, lod);
+    if canopy {
+        hover_canopy(b, &k, lod, taxi);
+    }
 
     // Nacelles on short pylons, glowing at the tail.
     let seg = lod.pick(24, 12, 6);
@@ -1799,32 +1994,6 @@ fn hover(b: &mut MeshBuilder, kit: &Kit, lod: Lod, taxi: bool) {
         let zs = z + (body.sec(z).x_at(y) - x).max(0.0) * 0.4;
         lamp_pod(b, lod, DVec3::new(sx * x, y, zs), 0.09, &k, k.body);
     }
-    if taxi {
-        // The TAXI lamp on the canopy, on a chrome saddle.
-        let top = base(0.15) + 0.46;
-        b.surf = Surf::Glow;
-        tube(
-            b,
-            &[
-                DVec3::new(-0.26, top + 0.1, 0.15),
-                DVec3::new(0.26, top + 0.1, 0.15),
-            ],
-            (0.13, 0.09),
-            lod.pick(16, 8, 6),
-            Kit::glow(rgb(255, 214, 70)),
-        );
-        b.surf = Surf::Plain;
-        tube(
-            b,
-            &[
-                DVec3::new(-0.3, top + 0.01, 0.15),
-                DVec3::new(0.3, top + 0.01, 0.15),
-            ],
-            (0.08, 0.025),
-            lod.pick(12, 6, 4),
-            k.metal(),
-        );
-    }
     if lod == Lod::Near {
         // An aerial.
         tube(
@@ -1858,6 +2027,23 @@ mod tests {
             assert!(near <= 30_000, "{m:?} close up is too heavy: {near}");
             assert!(mid * 3 <= near, "{m:?} mid level {mid} vs {near}");
             assert!(far <= 2_000, "{m:?} far level has {far} triangles");
+        }
+    }
+
+    #[test]
+    fn the_taxi_canopy_is_the_closed_taxis_canopy() {
+        for lod in [Lod::Near, Lod::Mid, Lod::Far] {
+            let count = |canopy: bool| {
+                let mut b = MeshBuilder::new();
+                taxi_into(&mut b, lod, canopy);
+                b.finish().build().triangle_count()
+            };
+            let (door, hinge, axis) = taxi_door(lod);
+            let door = door.build();
+            assert_eq!(count(false) + door.triangle_count(), count(true));
+            assert_eq!(axis, DVec3::X);
+            // The hinge sits on the deck, at the canopy's front foot.
+            assert!(hinge.y > 1.0 && hinge.y < 1.4 && hinge.z > 1.0, "{hinge}");
         }
     }
 

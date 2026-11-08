@@ -298,9 +298,19 @@ pub fn wheel_levels(model: CarModel) -> Option<Vec<LodLevel>> {
 
 /// Flying taxis: close up, in the next lane, far.
 pub fn taxi_levels() -> Vec<LodLevel> {
+    taxi_body(true)
+}
+
+/// A taxi without its canopy, for one whose canopy opens: draw it with
+/// [`taxi_door_levels`].
+pub fn taxi_open_levels() -> Vec<LodLevel> {
+    taxi_body(false)
+}
+
+fn taxi_body(canopy: bool) -> Vec<LodLevel> {
     let make = |lod: Lod| {
         let mut b = MeshBuilder::new();
-        taxi_into(&mut b, lod);
+        taxi_into(&mut b, lod, canopy);
         b.finish()
     };
     vec![
@@ -308,6 +318,18 @@ pub fn taxi_levels() -> Vec<LodLevel> {
         LodLevel::new(make(Lod::Mid), 250.0),
         LodLevel::new(make(Lod::Far), 1200.0),
     ]
+}
+
+/// The taxi's canopy as its own model, in its hinge's frame, with the
+/// hinge's place on the taxi and its axis (see [`crate::carmesh::taxi_door`]).
+pub fn taxi_door_levels() -> (Vec<LodLevel>, DVec3, DVec3) {
+    let (near, hinge, axis) = crate::carmesh::taxi_door(Lod::Near);
+    let levels = vec![
+        LodLevel::new(near, 50.0),
+        LodLevel::new(crate::carmesh::taxi_door(Lod::Mid).0, 250.0),
+        LodLevel::new(crate::carmesh::taxi_door(Lod::Far).0, 1200.0),
+    ];
+    (levels, hinge, axis)
 }
 
 /// A private hover car flying in a sky lane.
