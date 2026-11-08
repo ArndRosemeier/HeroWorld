@@ -5,6 +5,7 @@
 //! The state lives in a `bevy_ecs` world and advances in fixed ticks
 //! ([`TICK_HZ`]). [`host::Host`] puts a network socket around it.
 
+pub mod alarms;
 pub mod balance;
 pub mod bubbles;
 pub mod citizens;
@@ -390,6 +391,9 @@ pub struct Sim {
     pub wrecks: wrecks::Wrecks,
     /// Trouble that comes to the heroes (see [`incidents`]).
     pub incidents: incidents::Incidents,
+    /// Trouble bystanders notice: they run, stare, cars stop (see
+    /// [`alarms`]).
+    pub alarms: alarms::Alarms,
 }
 
 impl Sim {
@@ -522,6 +526,7 @@ impl Sim {
             taxis: taxi::Taxis::default(),
             wrecks: wrecks::Wrecks::default(),
             incidents: incidents::Incidents::default(),
+            alarms: alarms::Alarms::default(),
         }
     }
 
@@ -553,8 +558,29 @@ impl Sim {
         self.incidents.step(&mut self.world, self.tick);
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
+        self.alarms.step(self.tick);
+        // Cars stop for heroes and villains standing in the road, and short
+        // of a fight or a collapse.
+        let standing: Vec<DVec3> = self
+            .world
+            .query::<(&Motion, Option<&Hero>, Option<&Fighter>)>()
+            .iter(&self.world)
+            .filter(|(_, h, f)| h.is_some() || f.is_some_and(|f| f.standing()))
+            .map(|(m, ..)| m.0.pos)
+            .collect();
+        let stops = self.alarms.car_stops();
         if let Some(t) = self.wrecks.traffic.as_mut() {
+            t.set_blockers(&standing, &stops);
             t.advance_to(self.tick as f64 * DT);
+            // Heroes bump into the cars near them (and can stand on them).
+            let heroes: Vec<DVec3> = self
+                .world
+                .query::<(&Motion, &Hero)>()
+                .iter(&self.world)
+                .map(|(m, _)| m.0.pos)
+                .collect();
+            let cars = t.car_solids(&heroes, 25.0, self.tick as f64 * DT);
+            self.world.resource::<Solids>().0.set_movers(cars);
         }
         self.pay_karma();
         self.sync_levels();
@@ -591,10 +617,9 @@ impl Sim {
         for (at, radius, power) in blows {
             let (_, _) = self.street.hit(at, DVec3::Y, radius, power, self.tick);
             let (_, _) = self.wrecks.hit(at, DVec3::Y, radius, power, self.tick);
-            let broke = self
-                .damage
-                .hit(&solids, at, radius, power, None, self.tick)
-                .broken;
+            let hit = self.damage.hit(&solids, at, radius, power, None, self.tick);
+            let broke = hit.broken;
+            self.alarm_for_damage(at, broke, !hit.collapsed.is_empty());
             if broke > 0 {
                 self.damage.tell(ToClient::Impact {
                     at: at.as_vec3().to_array(),
@@ -610,6 +635,7 @@ impl Sim {
     fn strike(&mut self) {
         let tick = self.tick;
         let mut blows = Vec::new();
+        let mut fights = Vec::new();
         for (hero, control, motion, mut strike, fighter) in self
             .world
             .query::<(&Hero, &Control, &Motion, &mut Strike, Option<&Fighter>)>()
@@ -623,6 +649,9 @@ impl Sim {
             }
             // A blow at a villain is the fight's (see `combat`); the downed
             // break nothing.
+            if fighter.is_some_and(|f| f.engaged) {
+                fights.push(motion.0.pos);
+            }
             if fighter.is_some_and(|f| f.engaged || !f.standing()) {
                 continue;
             }
@@ -642,6 +671,11 @@ impl Sim {
                 strike.ready_at = tick + PUNCH_TICKS;
                 blows.push((hero.owner, ImpactKind::Punch, chest, aim, level));
             }
+        }
+        // Bystanders notice a fight.
+        for at in fights {
+            self.alarms
+                .raise_or_refresh(alarms::AlarmKind::Fight, at, tick, TICK_HZ);
         }
         if blows.is_empty() {
             return;
@@ -672,9 +706,11 @@ impl Sim {
             // A punch at thin air hits nothing (a prop it broke counts).
             let solid = solids.solid_at(at) || solids.solid_at(at + aim * 0.4);
             let broken = if kind == ImpactKind::Blast || solid {
-                self.damage
-                    .hit(&solids, at, radius, strength, Some(owner), tick)
-                    .broken
+                let hit = self
+                    .damage
+                    .hit(&solids, at, radius, strength, Some(owner), tick);
+                self.alarm_for_damage(at, hit.broken + props, !hit.collapsed.is_empty());
+                hit.broken
             } else {
                 0
             };
@@ -690,10 +726,24 @@ impl Sim {
         }
     }
 
+    /// Walls and props smashed at `at` (`broke` pieces; a building
+    /// `collapsed`): people near run.
+    fn alarm_for_damage(&mut self, at: DVec3, broke: usize, collapsed: bool) {
+        let kind = if collapsed {
+            alarms::AlarmKind::Collapse
+        } else if broke > 0 {
+            alarms::AlarmKind::Explosion
+        } else {
+            return;
+        };
+        self.alarms.raise_or_refresh(kind, at, self.tick, TICK_HZ);
+    }
+
     /// Reliable news for every client since the last call: damage, repairs,
     /// impacts.
     pub fn take_news(&mut self) -> Vec<ToClient> {
-        let mut news = self.street.take_news();
+        let mut news = self.alarms.take_news();
+        news.extend(self.street.take_news());
         news.extend(self.wrecks.take_news());
         news.extend(self.incidents.take_news());
         news.extend(self.damage.take_news());

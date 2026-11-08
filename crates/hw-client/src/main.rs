@@ -73,7 +73,7 @@ mod session;
 
 use engine::prelude::*;
 use engine::stream::{StreamSettings, WorldStream};
-use glam::{DVec2, Vec3};
+use glam::{DVec2, DVec3, Vec3};
 use hw_client::citymesh;
 use hw_client::crowdview::CrowdView;
 use hw_client::damageview::DamageView;
@@ -232,8 +232,9 @@ fn main() -> EngineResult<()> {
             }
         };
     let mut solids = generated.obstacles.clone();
-    let mut citizens = hw_sim::citizens::Citizens::new(generated.world.clone());
     let mut traffic = hw_sim::traffic::Traffic::new(generated.world.clone());
+    let mut citizens = hw_sim::citizens::Citizens::new(generated.world.clone(), traffic.signals());
+    citizens.set_hour(game_hour() as f64);
     // Taxi stands of the town, the "Where to?" list (G), and where we asked to go.
     let mut stands = hw_sim::taxi::stands(&generated.world);
     let mut taxi_menu = false;
@@ -244,6 +245,8 @@ fn main() -> EngineResult<()> {
     let mut taxi_demo =
         env_num("HW_TAXI").map(|d| (d as usize, env_num("HW_TAXI_SECS").unwrap_or(0)));
     let mut traffic_view = hw_client::trafficview::TrafficView::new();
+    // Trouble bystanders notice, as the server tells it.
+    let mut alarms = hw_sim::alarms::Alarms::default();
     // HW_WRECK=<frames>: that many frames in, the cars near the camera are
     // wrecked (for screenshots).
     let mut wreck_demo = env_num("HW_WRECK");
@@ -860,8 +863,10 @@ fn main() -> EngineResult<()> {
                     generated = g;
                     solids = generated.obstacles.clone();
                     town = TownView::new(generated.world.clone());
-                    citizens = hw_sim::citizens::Citizens::new(generated.world.clone());
                     traffic = hw_sim::traffic::Traffic::new(generated.world.clone());
+                    citizens =
+                        hw_sim::citizens::Citizens::new(generated.world.clone(), traffic.signals());
+                    citizens.set_hour(game_hour() as f64);
                     stands = hw_sim::taxi::stands(&generated.world);
                     traffic_view.clear(world);
                     radio.clear(world);
@@ -1401,6 +1406,10 @@ fn main() -> EngineResult<()> {
                     });
                     false
                 }
+                hw_net::ToClient::Alarm { .. } => {
+                    alarms.apply(m);
+                    false
+                }
                 hw_net::ToClient::CarsCleared { cars } => {
                     for &id in cars {
                         traffic_view.clear_wreck(world, &mut traffic, id);
@@ -1842,12 +1851,34 @@ fn main() -> EngineResult<()> {
             crowd.update(
                 world,
                 &citizens,
+                &alarms,
                 DVec2::new(eye.x as f64, eye.z as f64),
                 session.time(tick_clock / hw_sim::DT),
                 frame.dt as f64,
             )?;
             // Cars on the streets, hover cars and taxis in the sky lanes.
+            // Cars stop for heroes and villains in the road and short of
+            // trouble, as the server's do.
+            let standing: Vec<DVec3> = heroes
+                .iter()
+                .filter(|e| match e.kind {
+                    hw_net::EntityKind::Hero => true,
+                    _ => e
+                        .combat
+                        .is_some_and(|c| c.status == hw_net::Status::Standing),
+                })
+                .map(|e| DVec3::from_array(e.pos))
+                .collect();
+            traffic.set_blockers(&standing, &alarms.car_stops());
             traffic.advance_to(session.time(tick_clock / hw_sim::DT));
+            // Joined a friend: our own hero bumps into the cars near it as
+            // the host's does (the host sets them itself when we host).
+            if matches!(session, Session::Remote { .. }) {
+                if let Some(me) = session.my_position(&heroes) {
+                    let t = session.time(tick_clock / hw_sim::DT);
+                    solids.set_movers(traffic.car_solids(&[me], 25.0, t));
+                }
+            }
             if let Some(s) = extras.signals.as_mut() {
                 s.update(world, &traffic, session.time(tick_clock / hw_sim::DT))?;
             }

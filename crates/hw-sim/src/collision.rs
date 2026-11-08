@@ -17,6 +17,8 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 /// Ground grid cell for lookups (m).
 const CELL: f64 = 32.0;
+/// A moving solid reaches at most this far from its origin (m).
+const MOVER_REACH: f64 = 3.5;
 
 /// One solid box: a rectangle in a building's frame, from `y0` to `y1`.
 #[derive(Clone, Debug, PartialEq)]
@@ -181,6 +183,9 @@ pub struct Obstacles {
     /// Street props that block the way (barricades): prop index to its
     /// collider.
     props: BTreeMap<u32, usize>,
+    /// Things that move: the street cars near the heroes, set each tick
+    /// (see [`Self::set_movers`]).
+    movers: RwLock<Arc<[Solid]>>,
 }
 
 /// Where the open ground is water, and the bridges over it.
@@ -385,10 +390,25 @@ impl Obstacles {
     /// The solids near a point, a set per collider (builds colliders on
     /// first touch).
     fn near(&self, p: DVec2, r: f64) -> Vec<SolidSet<'_>> {
-        self.near_colliders(p, r)
+        let mut sets: Vec<SolidSet<'_>> = self
+            .near_colliders(p, r)
             .into_iter()
             .map(|i| self.colliders[i as usize].set())
-            .collect()
+            .collect();
+        let movers = self.movers.read().expect("movers lock").clone();
+        if movers
+            .iter()
+            .any(|m| m.origin.distance(p) < r + MOVER_REACH)
+        {
+            sets.push(SolidSet::Shared(movers));
+        }
+        sets
+    }
+
+    /// The moving solids now (street cars near the heroes): heroes bump
+    /// into them and can stand on them. Replaces the last set.
+    pub fn set_movers(&self, solids: Vec<Solid>) {
+        *self.movers.write().expect("movers lock") = solids.into();
     }
 
     /// The solids of every collider within `r` of `p`, by collider index

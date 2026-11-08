@@ -879,6 +879,15 @@ pub enum ToClient {
         parts: u8,
         bytes: Vec<u8>,
     },
+    /// Trouble bystanders notice (see `hw_sim::alarms`): its number, kind,
+    /// where, how far it is noticed; raised or moved (`live`), or over.
+    Alarm {
+        id: u32,
+        kind: u8,
+        at: [f32; 3],
+        radius: f32,
+        live: bool,
+    },
 }
 
 /// Most broken elements in one [`ToClient::Damage`] (it must fit a packet
@@ -941,6 +950,7 @@ impl ToClient {
             ToClient::Fx(_) => FX_BYTES,
             ToClient::Sheet(s) => s.wire_size(),
             ToClient::Look { bytes, .. } => 2 + 2 + 2 + bytes.len(),
+            ToClient::Alarm { .. } => 4 + 1 + 12 + 4 + 1,
         }
     }
 
@@ -1085,6 +1095,19 @@ impl ToClient {
             } => {
                 w.u8(17).u16(player.0).u8(*part).u8(*parts).bytes(bytes);
             }
+            ToClient::Alarm {
+                id,
+                kind,
+                at,
+                radius,
+                live,
+            } => {
+                w.u8(18).u32(*id).u8(*kind);
+                for v in at {
+                    w.f32(*v);
+                }
+                w.f32(*radius).bool(*live);
+            }
         }
     }
 
@@ -1220,6 +1243,13 @@ impl ToClient {
                 state: r.u8()?,
                 carrier: r.u32()?,
                 at: [r.f32()?, r.f32()?, r.f32()?],
+            },
+            18 => ToClient::Alarm {
+                id: r.u32()?,
+                kind: r.u8()?,
+                at: [r.f32()?, r.f32()?, r.f32()?],
+                radius: r.f32()?,
+                live: r.bool()?,
             },
             17 => ToClient::Look {
                 player: PlayerId(r.u16()?),

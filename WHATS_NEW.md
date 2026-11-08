@@ -3,6 +3,18 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.058 (2026-11-08)
+
+- Cars drive smoothly now instead of jumping a few times a second.
+- Far fewer people on the pavements, and how many depends on the place and the hour: busy shopping
+  streets at midday, quiet back streets, nearly empty at night.
+- People cross at the lights: every junction has a walk phase when all cars wait, and pedestrians
+  stay on the pavement otherwise.
+- Cars stop for you and for anyone standing in the road, and queue behind instead of driving through.
+- Cars are solid: you bump into them and can stand on their roofs.
+- Trouble is noticed. Near a fight, a mugging, a collapsing wall or an explosion, people run away,
+  those further off stop and stare, and cars stop short of a fight or a collapse.
+
 ## 0.057 (2026-11-08)
 
 - Nobody jumps a brand-new hero any more. Villains have their own business, and to them you're just

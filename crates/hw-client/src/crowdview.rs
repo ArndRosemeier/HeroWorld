@@ -6,6 +6,7 @@
 use crate::people::Built;
 use engine::prelude::*;
 use glam::DVec2;
+use hw_sim::alarms::Alarms;
 use hw_sim::citizens::{Citizen, Citizens};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,6 +14,9 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const SHOW_RADIUS: f64 = 260.0;
 /// ...and at most this many at once (the nearest).
 pub const MAX_SHOWN: usize = 600;
+/// Running from trouble: how fast a citizen's clock goes (forwards, or
+/// backwards to run back the way it came).
+const RUN: f64 = 2.6;
 /// Full characters (the rest are drawn instanced).
 const NEAR_M: f32 = 22.0;
 const NEAR_MAX: usize = 20;
@@ -30,6 +34,8 @@ pub struct CrowdView {
     delay: BTreeMap<u64, f64>,
     /// Citizens knocked over and not up yet, with their character.
     down: BTreeMap<u64, EntityId>,
+    /// Running from trouble: how fast each one's clock goes (see [`RUN`]).
+    running: BTreeMap<u64, f64>,
     /// Who is near enough to show (looked up twice a second; their places
     /// are worked out every frame).
     near: Vec<u64>,
@@ -49,6 +55,7 @@ impl CrowdView {
             shown: BTreeMap::new(),
             delay: BTreeMap::new(),
             down: BTreeMap::new(),
+            running: BTreeMap::new(),
             near: Vec::new(),
             refresh: 0.0,
         }
@@ -72,6 +79,7 @@ impl CrowdView {
         }
         self.near.clear();
         self.delay.clear();
+        self.running.clear();
         self.down.clear();
         self.refresh = 0.0;
     }
@@ -90,10 +98,14 @@ impl CrowdView {
     }
 
     /// Moves everyone to `time`; `camera` is where they are seen from.
+    /// Near trouble (`alarms`) people run off along their way, or back the
+    /// way they came, whichever is away from it; a little further off they
+    /// stop and stare.
     pub fn update(
         &mut self,
         world: &mut World,
         citizens: &Citizens,
+        alarms: &Alarms,
         camera: DVec2,
         time: f64,
         dt: f64,
@@ -121,11 +133,16 @@ impl CrowdView {
                 .collect();
         }
         let mut seen = BTreeSet::new();
-        for &id in &self.near {
+        for id in self.near.clone() {
             let delay = self.delay.get(&id).copied().unwrap_or(0.0);
-            let Some(c): Option<Citizen> = citizens.citizen(id, time - delay) else {
+            let Some(mut c): Option<Citizen> = citizens.citizen(id, time - delay) else {
                 continue;
             };
+            if !self.down.contains_key(&id) {
+                if let Some(r) = self.react(citizens, alarms, &c, time - delay, dt) {
+                    c = r;
+                }
+            }
             let Some(&crowd) = self.crowds.get(&c.look) else {
                 continue;
             };
@@ -171,6 +188,63 @@ impl CrowdView {
             self.down.remove(&id);
         }
         Ok(())
+    }
+
+    /// How citizen `c` (at its own clock `t`) reacts to the nearest
+    /// trouble, if any: running (its clock sped up, or run backwards) or
+    /// standing to stare. Moves its clock on.
+    fn react(
+        &mut self,
+        citizens: &Citizens,
+        alarms: &Alarms,
+        c: &Citizen,
+        t: f64,
+        dt: f64,
+    ) -> Option<Citizen> {
+        let p = DVec2::new(c.pos.x, c.pos.z);
+        let near = alarms
+            .active()
+            .filter(|a| (c.pos.y - a.at.y).abs() < 30.0)
+            .map(|a| (a.flat().distance(p) / a.radius.max(1.0), a))
+            .min_by(|x, y| x.0.total_cmp(&y.0));
+        let Some((ratio, a)) = near.filter(|n| n.0 < 2.0) else {
+            self.running.remove(&c.id);
+            return None;
+        };
+        let away = (p - a.flat()).normalize_or(DVec2::Y);
+        let delay = self.delay.entry(c.id).or_insert(0.0);
+        if ratio < 1.0 && a.kind.frightens() {
+            // Run: along its way if that leads away, else back.
+            let rate = *self.running.entry(c.id).or_insert_with(|| {
+                let next = citizens
+                    .citizen(c.id, t + 1.0)
+                    .map_or(p, |n| DVec2::new(n.pos.x, n.pos.z));
+                if (next - a.flat()).length() >= (p - a.flat()).length() {
+                    RUN
+                } else {
+                    -RUN
+                }
+            });
+            *delay += dt * (1.0 - rate);
+            let mut r = citizens.citizen(c.id, t + dt * rate)?;
+            if r.speed > 0.0 {
+                r.speed *= rate.abs();
+                if rate < 0.0 {
+                    r.facing = -r.facing;
+                }
+            } else {
+                // Held up (at a kerb, or one who stands about): turned away.
+                r.facing = away;
+            }
+            return Some(r);
+        }
+        // Stop and stare.
+        *delay += dt;
+        Some(Citizen {
+            facing: -away,
+            speed: 0.0,
+            ..*c
+        })
     }
 
     /// Knocks over every full-character citizen within `radius` of

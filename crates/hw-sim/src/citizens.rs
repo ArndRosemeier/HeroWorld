@@ -12,23 +12,47 @@
 //! (looking in a shop window, waiting for someone). A few just stand and
 //! chat. More people walk downtown and on main roads than in the outskirts.
 
+use crate::traffic::{Signals, CYCLE};
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
+use hw_gen::building::BuildingUse;
 use hw_gen::geom::Polyline;
 use hw_gen::urban::underground::{molehaven_layout, Underground};
 use hw_gen::urban::world::{TownWorld, WorldRoad};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// How many different looks citizens are drawn with (the client builds
 /// this many characters; a citizen's look is one of them).
 pub const LOOKS: u32 = 24;
 
-/// Walkers per metre of pavement (both sides together) at the town's core
-/// and in the outskirts.
-const DENSITY_CORE: f64 = 0.22;
-const DENSITY_EDGE: f64 = 0.04;
-/// Main roads are busier than side streets.
-const MAIN_FACTOR: f64 = 1.5;
+/// People out on foot come from the buildings along a street: each one
+/// sends this many to its stretch of pavement at its busiest hour, by what
+/// it is for (and a little more for each floor). Shops draw the most,
+/// houses the fewest; a quiet residential street has a handful of people,
+/// a downtown shopping street one every ten metres or so.
+fn draws(usage: BuildingUse, floors: u32) -> f64 {
+    let f = floors as f64;
+    match usage {
+        BuildingUse::ShopsAndOffices => 0.22 + 0.03 * f,
+        BuildingUse::Offices => 0.08 + 0.02 * f,
+        BuildingUse::Apartments => 0.04 + 0.012 * f,
+        BuildingUse::House => 0.015,
+        BuildingUse::Works => 0.03,
+        BuildingUse::Pavilion => 0.45,
+        BuildingUse::Lab => 0.01,
+        BuildingUse::Tenement => 0.05 + 0.01 * f,
+    }
+}
+/// Passers-by per metre on top (main roads see more of them).
+const THROUGH: f64 = 0.004;
+const THROUGH_MAIN: f64 = 0.008;
+/// Never more than this many per metre of street (both sides).
+const MOST: f64 = 0.1;
+/// A building's front is on the street whose pavement is this near.
+const FRONTAGE: f64 = 14.0;
+/// The hour the town is seen at, unless told (see [`Citizens::set_hour`]).
+const DEFAULT_HOUR: f64 = 10.5;
 /// Size of the grid cells that index streets by place.
 const CELL: f64 = 64.0;
 /// Street ends closer than this to another street are joined to it.
@@ -49,7 +73,8 @@ pub struct Citizen {
 }
 
 /// One leg of a route: along a street's pavement from one distance to
-/// another (either way), or straight across from one pavement to the next.
+/// another (either way), or straight across from one pavement to the next
+/// (waiting for a junction's walk light first, if it crosses traffic).
 #[derive(Clone, Copy, Debug)]
 enum Leg {
     Street {
@@ -58,16 +83,78 @@ enum Leg {
         from: f64,
         to: f64,
     },
-    Cross(DVec2, DVec2),
+    Cross(DVec2, DVec2, Option<u32>),
 }
 
 impl Leg {
     fn len(&self) -> f64 {
         match *self {
             Leg::Street { from, to, .. } => (to - from).abs(),
-            Leg::Cross(a, b) => a.distance(b),
+            Leg::Cross(a, b, _) => a.distance(b),
         }
     }
+
+    /// The same leg walked the other way.
+    fn back(self) -> Leg {
+        match self {
+            Leg::Street {
+                road,
+                side,
+                from,
+                to,
+            } => Leg::Street {
+                road,
+                side,
+                from: to,
+                to: from,
+            },
+            Leg::Cross(a, b, w) => Leg::Cross(b, a, w),
+        }
+    }
+}
+
+/// Whether a way over a carriageway may be taken.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Wait {
+    /// No traffic on it: straight over.
+    Free,
+    /// Over in the walk phase of this junction's lights.
+    Light(u32),
+    /// Traffic and no lights: not here.
+    Never,
+}
+
+/// Where a side street meets a street: its mouth on one pavement, which
+/// people walking along cross (at the junction's walk light, if it has
+/// traffic).
+#[derive(Clone, Copy, Debug)]
+struct Mouth {
+    s0: f64,
+    s1: f64,
+    light: Option<u32>,
+    /// Not to be crossed: too long, or traffic and no lights. Walking
+    /// along stops before it.
+    wall: bool,
+}
+
+/// The longest way over a carriageway anyone takes (m): one that fits in a
+/// walk phase at a brisk pace.
+const LONGEST_CROSSING: f64 = 20.0;
+
+/// Turning at a street's end onto another: from each side of this
+/// street, where on the other one walking goes on, on which pavement,
+/// and whether it may cross to it (the near pavement, round the corner)
+/// or over to the far one.
+#[derive(Clone, Copy, Debug)]
+struct Turn {
+    road: u32,
+    /// By side (-1, then 1): distance along the next street, its near side,
+    /// and how the near and the far pavements are reached.
+    sides: [(f64, f64, Wait, Wait); 2],
+}
+
+fn side_index(side: f64) -> usize {
+    usize::from(side > 0.0)
 }
 
 /// A street's pavement centre line, measured.
@@ -75,8 +162,14 @@ struct Walk {
     line: Polyline,
     /// Pavement offset from the centre line.
     offset: f64,
-    /// Walkers living on this street.
+    /// At each point, the way to its pavement and how far per metre of
+    /// offset (the mitre).
+    miters: Vec<DVec2>,
+    /// Walkers living on this street at its busiest hour.
     people: u32,
+    /// How much of its draw is shops and offices (0 to 1): they are busy
+    /// by day, homes in the morning and evening.
+    commerce: f64,
 }
 
 impl Walk {
@@ -85,11 +178,16 @@ impl Walk {
     }
 
     /// Point and direction at distance `s`, `side` = -1 left or 1 right.
+    /// The pavement keeps its distance from the centre line round bends
+    /// too (its corners are mitred), so it never cuts over the road on
+    /// the inside of a bend.
     fn sample(&self, s: f64, side: f64) -> (DVec2, DVec2) {
         let (k, t) = self.line.locate(s);
         let (a, b) = (self.line.pts[k], self.line.pts[k + 1]);
         let dir = (b - a).normalize_or_zero();
-        (a.lerp(b, t) + dir.perp() * self.offset * side, dir)
+        let o = self.offset * side;
+        let (ma, mb) = (self.miters[k], self.miters[k + 1]);
+        ((a + ma * o).lerp(b + mb * o, t), dir)
     }
 
     /// Distance along the line of the point nearest `p` (and how far off).
@@ -102,25 +200,34 @@ impl Walk {
 pub struct Citizens {
     seed: Seed,
     walks: Vec<Walk>,
-    /// Streets met at each street end: (end 0 or 1) -> (street, distance).
-    joins: Vec<[Vec<(u32, f64)>; 2]>,
+    /// Streets met at each street end, as turns onto them.
+    joins: Vec<[Vec<Turn>; 2]>,
+    /// How far before each end a street's pavement stops (the corner
+    /// with the street it meets), by side (-1, then 1).
+    ends: Vec<Ends>,
+    /// Side streets' mouths along each street, by side (-1, then 1), in
+    /// order.
+    mouths: Vec<[Vec<Mouth>; 2]>,
+    /// The traffic lights people cross by.
+    signals: Arc<Signals>,
     /// Streets by grid cell (each street in every cell it passes).
     grid: BTreeMap<(i64, i64), Vec<u32>>,
-    world: std::sync::Arc<TownWorld>,
+    world: Arc<TownWorld>,
     /// Molehaven's people: its floor, its middle, and each one's way.
     moles: (f64, DVec2, Vec<MoleWay>),
+    /// The hour of day (0 to 24): who is out.
+    hour: f64,
 }
 
 impl Citizens {
     /// Plans where the town's people walk (streets, joins, how many per
-    /// street). Takes a few milliseconds.
-    pub fn new(world: std::sync::Arc<TownWorld>) -> Self {
+    /// street), crossing by the town's traffic lights (see
+    /// [`crate::traffic::Traffic::signals`]). Takes a few milliseconds.
+    pub fn new(world: Arc<TownWorld>, signals: Arc<Signals>) -> Self {
         let seed = world.seed.child("citizens");
-        let core = world.spawn_line().0;
-        let reach = world.half().max(200.0) * 0.6;
         let mut walks = Vec::with_capacity(world.roads.len());
-        for (i, r) in world.roads.iter().enumerate() {
-            walks.push(walk_of(r, core, reach, seed.child(i as u64)));
+        for r in world.roads.iter() {
+            walks.push(walk_of(r));
         }
         let mut grid: BTreeMap<(i64, i64), Vec<u32>> = BTreeMap::new();
         for (i, w) in walks.iter().enumerate() {
@@ -141,50 +248,47 @@ impl Citizens {
                 grid.entry(c).or_default().push(i as u32);
             }
         }
-        let mut joins = Vec::with_capacity(walks.len());
-        for (i, w) in walks.iter().enumerate() {
-            let mut ends: [Vec<(u32, f64)>; 2] = [Vec::new(), Vec::new()];
-            for (e, p) in [w.line.pts[0], *w.line.pts.last().expect("walk has points")]
-                .into_iter()
-                .enumerate()
-            {
-                let mut near = Vec::new();
-                for dx in -1..=1 {
-                    for dy in -1..=1 {
-                        let c = cell_of(p);
-                        if let Some(list) = grid.get(&(c.0 + dx, c.1 + dy)) {
-                            near.extend(list.iter().copied());
-                        }
-                    }
-                }
-                near.sort();
-                near.dedup();
-                for j in near {
-                    if j as usize == i {
-                        continue;
-                    }
-                    let (s, d) = walks[j as usize].nearest(p);
-                    if d < JOIN + world.roads[j as usize].half {
-                        ends[e].push((j, s));
-                    }
-                }
-            }
-            joins.push(ends);
-        }
+        let met = streets_met(&walks, &grid, &world);
+        let ways = Carriageways::new(&world);
+        let (ends, mouths) = pavement_runs(&walks, &ways, &world, &signals);
+        let joins = turns(&walks, &met, &ends, &ways, &world, &signals);
+        people_from_buildings(&mut walks, &grid, &world, seed);
         let moles = plan_moles(&world.underground);
         Self {
             seed,
             walks,
             joins,
             grid,
+            ends,
+            mouths,
+            signals,
             world,
             moles,
+            hour: DEFAULT_HOUR,
         }
     }
 
-    /// How many citizens the town has out on its streets.
+    /// How many citizens the town has out on its streets at this hour.
     pub fn count(&self) -> u64 {
-        self.walks.iter().map(|w| w.people as u64).sum::<u64>() + self.moles.2.len() as u64
+        let out: f64 = self
+            .walks
+            .iter()
+            .map(|w| w.people as f64 * self.share_out(w))
+            .sum();
+        out.round() as u64 + self.moles.2.len() as u64
+    }
+
+    /// The hour of day (0 to 24) the town is seen at: by night the
+    /// streets are nearly empty, the shopping streets fill by day and the
+    /// homes' streets in the morning and evening.
+    pub fn set_hour(&mut self, hour: f64) {
+        self.hour = hour.rem_euclid(24.0);
+    }
+
+    /// The share of a street's people out at this hour.
+    fn share_out(&self, w: &Walk) -> f64 {
+        let (shops, homes) = busy_at(self.hour);
+        w.commerce * shops + (1.0 - w.commerce) * homes
     }
 
     /// Every citizen within `radius` of `around` at `time` (seconds of game
@@ -247,10 +351,14 @@ impl Citizens {
             return None;
         }
         let s = self.seed.child(id);
+        // Indoors at this hour.
+        if s.child("out").unit() >= self.share_out(home) {
+            return None;
+        }
         let mut rng = s.rng();
         let look = (s.child("look").0 % LOOKS as u64) as u32;
         let side = if rng.chance(0.5) { 1.0 } else { -1.0 };
-        let start = rng.range(0.0, home.len());
+        let start = self.place_on(road as u32, side, rng.range(0.0, home.len()));
         // Some stand about (chatting, waiting for a taxi).
         if rng.chance(0.1) {
             let (p, d) = home.sample(start, side);
@@ -267,28 +375,45 @@ impl Citizens {
             return Some(self.at(id, p, d, 0.0, look));
         }
         // There and back with a pause at each end, offset so the town's
-        // people are spread over their routes.
-        let walk_t = length / speed;
-        let period = 2.0 * (walk_t + pause);
-        let t = (time + rng.range(0.0, period)).rem_euclid(period);
-        let (dist, moving, back) = if t < walk_t {
-            (t * speed, true, false)
-        } else if t < walk_t + pause {
-            (length, false, false)
-        } else if t < 2.0 * walk_t + pause {
-            (length - (t - walk_t - pause) * speed, true, true)
-        } else {
-            (0.0, false, true)
+        // people are spread over their routes. Time for the usual waits
+        // at kerbs is planned in; someone held up longer sets off back
+        // later, or out on the next round later.
+        let half = length / speed + pause + self.kerbs(&legs) as f64 * CYCLE * 0.5;
+        let period = 2.0 * half;
+        let off = rng.range(0.0, period);
+        let t0 = ((time + off) / period).floor() * period - off;
+        let round = |t0: f64, begun: f64| {
+            let out = self.walk(&legs, false, begun, speed, f64::INFINITY);
+            let turn = (t0 + half).max(out.err().unwrap_or(begun) + pause * 0.5);
+            let home = self.walk(&legs, true, turn, speed, f64::INFINITY);
+            (turn, home.err().unwrap_or(turn))
         };
-        let (p, mut dir) = self.along(&legs, dist);
-        if back {
-            dir = -dir;
+        // The round before, as planned, may not be home yet.
+        let (turn_before, home_before) = round(t0 - period, t0 - period);
+        let begun = t0.max(home_before + 1.0);
+        let (back, from) = if time < begun {
+            (true, turn_before)
+        } else {
+            let (turn, _) = round(t0, begun);
+            if time < turn {
+                (false, begun)
+            } else {
+                (true, turn)
+            }
+        };
+        if let Ok((p, dir, v)) = self.walk(&legs, back, from, speed, time) {
+            return Some(self.at(id, p, dir, v, look));
         }
-        if !moving {
-            // Turned towards the shops while waiting.
-            dir = dir.perp() * if back { -side } else { side };
-        }
-        Some(self.at(id, p, dir, if moving { speed } else { 0.0 }, look))
+        // Arrived: turned towards the shops while waiting.
+        let (p, dir) = if back {
+            let (p, d) = self.leg_at(legs[0], 0.0);
+            (p, -d)
+        } else {
+            let last = legs[legs.len() - 1];
+            self.leg_at(last, last.len())
+        };
+        let dir = dir.perp() * if back { -side } else { side };
+        Some(self.at(id, p, dir, 0.0, look))
     }
 
     /// One of Molehaven's people at `time`.
@@ -350,8 +475,25 @@ impl Citizens {
         }
     }
 
+    /// `s` along street `road` on `side`, moved onto its pavement: off
+    /// the corners and out of side streets' mouths.
+    fn place_on(&self, road: u32, side: f64, s: f64) -> f64 {
+        let w = &self.walks[road as usize];
+        let [e0, e1] = self.ends[road as usize][side_index(side)];
+        let s = s.clamp(e0.min(w.len() * 0.5), (w.len() - e1).max(w.len() * 0.5));
+        match self.mouths[road as usize][side_index(side)]
+            .iter()
+            .find(|m| m.s0 < s && s < m.s1)
+        {
+            Some(m) if s - m.s0 < m.s1 - s => m.s0,
+            Some(m) => m.s1,
+            None => s,
+        }
+    }
+
     /// From home along the street, then through up to three more streets
-    /// met at the ends (a walk to work, the shops, a friend's).
+    /// met at the ends (a walk to work, the shops, a friend's), round the
+    /// corners and over at the crossings.
     fn route(&self, road: u32, start: f64, side: f64, rng: &mut hw_core::seed::Rng) -> Vec<Leg> {
         let mut legs = Vec::new();
         let mut road = road;
@@ -361,69 +503,194 @@ impl Citizens {
         for _ in 0..hops {
             let w = &self.walks[road as usize];
             let end = if rng.chance(0.5) { 0 } else { 1 };
-            let to = if end == 0 { 0.0 } else { w.len() };
+            let [e0, e1] = self.ends[road as usize][side_index(side)];
+            let to = if end == 0 {
+                e0.min(from)
+            } else {
+                (w.len() - e1).max(from)
+            };
+            // A stretch that cannot be crossed: walk up to it and back.
+            let wall = self.mouths[road as usize][side_index(side)]
+                .iter()
+                .filter(|m| m.wall)
+                .filter_map(|m| {
+                    if to > from && m.s1 > from && m.s0 < to {
+                        Some(m.s0.max(from))
+                    } else if to < from && m.s0 < from && m.s1 > to {
+                        Some(m.s1.min(from))
+                    } else {
+                        None
+                    }
+                })
+                .min_by(|a, b| (a - from).abs().total_cmp(&(b - from).abs()));
             legs.push(Leg::Street {
                 road,
                 side,
                 from,
-                to,
+                to: wall.unwrap_or(to),
             });
+            if wall.is_some() {
+                break;
+            }
             let next = &self.joins[road as usize][end];
             if next.is_empty() {
                 break;
             }
-            let (r, s) = *rng.pick(next);
-            // Round the corner onto the nearer pavement of the next street;
-            // now and then cross over to the far one.
+            let turn = *rng.pick(next);
+            // Round the corner onto the near pavement of the next street;
+            // now and then over to the far one (by the lights, where there
+            // is traffic; never where there is traffic and no lights).
+            let far = rng.chance(0.2);
+            let (sb, near, to_near, to_far) = turn.sides[side_index(side)];
+            let (next_side, wait) = match (far, to_near, to_far) {
+                (true, _, f) if f != Wait::Never => (-near, f),
+                (_, n, _) if n != Wait::Never => (near, n),
+                (_, _, f) if f != Wait::Never => (-near, f),
+                _ => break,
+            };
+            let light = match wait {
+                Wait::Light(j) => Some(j),
+                _ => None,
+            };
             let a = w.sample(to, side).0;
-            let nw = &self.walks[r as usize];
-            let near_side = if nw.sample(s, 1.0).0.distance(a) <= nw.sample(s, -1.0).0.distance(a) {
-                1.0
-            } else {
-                -1.0
-            };
-            let next_side = if rng.chance(0.2) {
-                -near_side
-            } else {
-                near_side
-            };
-            let b = nw.sample(s, next_side).0;
-            legs.push(Leg::Cross(a, b));
-            road = r;
-            from = s;
+            let b = self.walks[turn.road as usize].sample(sb, next_side).0;
+            legs.push(Leg::Cross(a, b, light));
+            road = turn.road;
+            from = sb;
             side = next_side;
         }
         legs
     }
 
-    /// Point and heading `dist` metres along a route.
-    fn along(&self, legs: &[Leg], dist: f64) -> (DVec2, DVec2) {
-        let mut left = dist;
-        for (i, l) in legs.iter().enumerate() {
-            let len = l.len();
-            if left <= len || i + 1 == legs.len() {
-                match *l {
-                    Leg::Street {
-                        road,
-                        side,
-                        from,
-                        to,
-                    } => {
-                        let w = &self.walks[road as usize];
-                        let forward = to >= from;
-                        let s = if forward { from + left } else { from - left };
-                        let (p, d) = w.sample(s, side);
-                        return (p, if forward { d } else { -d });
-                    }
-                    Leg::Cross(a, b) => {
-                        let t = (left / len.max(1e-9)).clamp(0.0, 1.0);
-                        return (a.lerp(b, t), (b - a).normalize_or(DVec2::Y));
-                    }
-                }
+    /// Point and heading `x` metres into a leg.
+    fn leg_at(&self, leg: Leg, x: f64) -> (DVec2, DVec2) {
+        match leg {
+            Leg::Street {
+                road,
+                side,
+                from,
+                to,
+            } => {
+                let w = &self.walks[road as usize];
+                let forward = to >= from;
+                let s = if forward { from + x } else { from - x };
+                let (p, d) = w.sample(s, side);
+                (p, if forward { d } else { -d })
             }
-            left -= len;
+            Leg::Cross(a, b, _) => {
+                let len = a.distance(b);
+                let t = (x / len.max(1e-9)).clamp(0.0, 1.0);
+                (a.lerp(b, t), (b - a).normalize_or(DVec2::Y))
+            }
         }
-        (DVec2::ZERO, DVec2::Y)
+    }
+
+    /// The pieces of a leg in walking order: (from, to) metres into it,
+    /// and the lights to wait for before them (side streets' mouths and
+    /// crossings with traffic).
+    fn pieces(&self, leg: Leg, out: &mut Vec<(f64, f64, Option<u32>)>) {
+        out.clear();
+        let len = leg.len();
+        let Leg::Street {
+            road,
+            side,
+            from,
+            to,
+        } = leg
+        else {
+            if let Leg::Cross(_, _, light) = leg {
+                out.push((0.0, len, light));
+            }
+            return;
+        };
+        let forward = to >= from;
+        let mut at = 0.0;
+        let mouths = &self.mouths[road as usize][side_index(side)];
+        let mut found: Vec<(f64, f64, Option<u32>)> = mouths
+            .iter()
+            .filter(|m| {
+                if forward {
+                    m.s0 >= from - 1e-6 && m.s1 <= to + 1e-6
+                } else {
+                    m.s1 <= from + 1e-6 && m.s0 >= to - 1e-6
+                }
+            })
+            .map(|m| {
+                if forward {
+                    (m.s0 - from, m.s1 - from, m.light)
+                } else {
+                    (from - m.s1, from - m.s0, m.light)
+                }
+            })
+            .collect();
+        found.sort_by(|x, y| x.0.total_cmp(&y.0));
+        for (a, b, light) in found {
+            if a < at {
+                continue;
+            }
+            out.push((at, a, None));
+            out.push((a, b, light));
+            at = b;
+        }
+        out.push((at, len, None));
+    }
+
+    /// How many waits for lights a route has (one way).
+    fn kerbs(&self, legs: &[Leg]) -> usize {
+        let mut pieces = Vec::new();
+        legs.iter()
+            .map(|&l| {
+                self.pieces(l, &mut pieces);
+                pieces.iter().filter(|p| p.2.is_some()).count()
+            })
+            .sum()
+    }
+
+    /// Where someone is at `now` who set off along `legs` (`back`: from
+    /// the far end) at `begun`, walking at `speed`, waiting at kerbs for
+    /// the walk lights and crossing briskly: (where, heading, speed), or
+    /// once arrived, when that was.
+    fn walk(
+        &self,
+        legs: &[Leg],
+        back: bool,
+        begun: f64,
+        speed: f64,
+        now: f64,
+    ) -> Result<(DVec2, DVec2, f64), f64> {
+        let mut t = begun;
+        let mut pieces = Vec::new();
+        let n = legs.len();
+        for i in 0..n {
+            let leg = if back {
+                legs[n - 1 - i].back()
+            } else {
+                legs[i]
+            };
+            self.pieces(leg, &mut pieces);
+            for &(a, b, light) in &pieces {
+                let len = b - a;
+                let (start, v) = match light {
+                    Some(j) => {
+                        let (start, by) = self.signals.crossing(j, t, len);
+                        (start, (len / (by - start).max(0.1)).clamp(speed, 3.0))
+                    }
+                    None => (t, speed),
+                };
+                if now < start {
+                    // At the kerb, waiting for the walk light.
+                    let (p, d) = self.leg_at(leg, a);
+                    return Ok((p, d, 0.0));
+                }
+                let end = start + len / v;
+                if now < end {
+                    let (p, d) = self.leg_at(leg, a + (now - start) * v);
+                    return Ok((p, d, v));
+                }
+                t = end;
+            }
+        }
+        Err(t)
     }
 }
 
@@ -431,27 +698,401 @@ fn cell_of(p: DVec2) -> (i64, i64) {
     ((p.x / CELL).floor() as i64, (p.y / CELL).floor() as i64)
 }
 
-fn walk_of(r: &WorldRoad, core: DVec2, reach: f64, seed: Seed) -> Walk {
+/// Streets meeting each street end: (end 0 or 1) -> (street, distance
+/// along it).
+type Met = Vec<[Vec<(u32, f64)>; 2]>;
+
+fn end_point(w: &Walk, e: usize) -> DVec2 {
+    if e == 0 {
+        w.line.pts[0]
+    } else {
+        *w.line.pts.last().expect("walk has points")
+    }
+}
+
+fn streets_met(walks: &[Walk], grid: &BTreeMap<(i64, i64), Vec<u32>>, world: &TownWorld) -> Met {
+    let mut met = Vec::with_capacity(walks.len());
+    for (i, w) in walks.iter().enumerate() {
+        let mut ends: [Vec<(u32, f64)>; 2] = [Vec::new(), Vec::new()];
+        for (e, list) in ends.iter_mut().enumerate() {
+            let p = end_point(w, e);
+            let c = cell_of(p);
+            let mut near = Vec::new();
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    if let Some(l) = grid.get(&(c.0 + dx, c.1 + dy)) {
+                        near.extend(l.iter().copied());
+                    }
+                }
+            }
+            near.sort();
+            near.dedup();
+            for j in near {
+                if j as usize == i {
+                    continue;
+                }
+                let (s, d) = walks[j as usize].nearest(p);
+                if d < JOIN + world.roads[j as usize].half {
+                    list.push((j, s));
+                }
+            }
+        }
+        met.push(ends);
+    }
+    met
+}
+
+/// Whether a street carries cars (as [`crate::traffic`] plans them).
+fn has_traffic(r: &WorldRoad) -> bool {
+    r.half >= 2.5 && r.pts.len() >= 2
+}
+
+/// Distance from `p` to the segment `a`-`b`.
+fn segment_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
+    let ab = b - a;
+    let t = ((p - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
+    p.distance(a + ab * t)
+}
+
+/// A piece of a street's centre line: (street, from, to).
+type Segment = (u32, DVec2, DVec2);
+
+/// How far before each end a street's pavements stop: by side (-1, then
+/// 1), at end 0 and end 1.
+type Ends = [[f64; 2]; 2];
+
+/// Every street's carriageway, for asking whether a point is on one.
+struct Carriageways {
+    /// Centre line segments by grid cell: (street, from, to).
+    segs: BTreeMap<(i64, i64), Vec<Segment>>,
+}
+
+impl Carriageways {
+    const CELL: f64 = 16.0;
+
+    fn key(p: DVec2) -> (i64, i64) {
+        (
+            (p.x / Self::CELL).floor() as i64,
+            (p.y / Self::CELL).floor() as i64,
+        )
+    }
+
+    fn new(world: &TownWorld) -> Self {
+        let mut segs: BTreeMap<(i64, i64), Vec<Segment>> = BTreeMap::new();
+        for (i, r) in world.roads.iter().enumerate() {
+            for s in r.pts.windows(2) {
+                let lo = s[0].min(s[1]) - DVec2::splat(r.half + 1.0);
+                let hi = s[0].max(s[1]) + DVec2::splat(r.half + 1.0);
+                let (k0, k1) = (Self::key(lo), Self::key(hi));
+                for x in k0.0..=k1.0 {
+                    for y in k0.1..=k1.1 {
+                        segs.entry((x, y)).or_default().push((i as u32, s[0], s[1]));
+                    }
+                }
+            }
+        }
+        Self { segs }
+    }
+
+    /// Whether `p` is on a carriageway (within its half width plus
+    /// `margin(street)`), and if so whether on one with traffic.
+    fn under(&self, p: DVec2, world: &TownWorld, margin: impl Fn(u32) -> f64) -> Option<bool> {
+        let mut found: Option<bool> = None;
+        for &(j, a, b) in self.segs.get(&Self::key(p)).into_iter().flatten() {
+            let r = &world.roads[j as usize];
+            if segment_distance(p, a, b) < r.half + margin(j) {
+                found = Some(found.unwrap_or(false) || has_traffic(r));
+            }
+        }
+        found
+    }
+}
+
+/// How walking straight from `a` to `b` may go: if it steps onto a
+/// carriageway with traffic, by the lights of the junction there.
+fn crossing_wait(
+    a: DVec2,
+    b: DVec2,
+    ways: &Carriageways,
+    world: &TownWorld,
+    signals: &Signals,
+) -> Wait {
+    let n = (a.distance(b) / 0.5).ceil().max(2.0) as usize;
+    let traffic =
+        (1..n).any(|k| ways.under(a.lerp(b, k as f64 / n as f64), world, |_| -0.3) == Some(true));
+    if !traffic {
+        return Wait::Free;
+    }
+    if a.distance(b) > LONGEST_CROSSING {
+        return Wait::Never;
+    }
+    signals
+        .junction_near(a.lerp(b, 0.5), 30.0)
+        .map_or(Wait::Never, Wait::Light)
+}
+
+/// The turns at every street end (see [`Turn`]).
+fn turns(
+    walks: &[Walk],
+    met: &Met,
+    ends: &[Ends],
+    ways: &Carriageways,
+    world: &TownWorld,
+    signals: &Signals,
+) -> Vec<[Vec<Turn>; 2]> {
+    let mut out = Vec::with_capacity(walks.len());
+    for (i, w) in walks.iter().enumerate() {
+        let road = &world.roads[i];
+        let reach = road.half + road.pavement * 0.5;
+        let mut both: [Vec<Turn>; 2] = [Vec::new(), Vec::new()];
+        for (e, list) in met[i].iter().enumerate() {
+            let stop = |side: f64| {
+                let [e0, e1] = ends[i][side_index(side)];
+                if e == 0 {
+                    e0
+                } else {
+                    w.len() - e1
+                }
+            };
+            // The carriageways round the corner.
+            for &(j, s) in list {
+                let nw = &walks[j as usize];
+                let [[a0, a1], [b0, b1]] = ends[j as usize];
+                let (lo, hi) = (a0.max(b0), nw.len() - a1.max(b1));
+                let (lo, hi) = if lo <= hi {
+                    (lo, hi)
+                } else {
+                    (nw.len() * 0.5, nw.len() * 0.5)
+                };
+                let r = &world.roads[j as usize];
+                let edge = JOIN + r.half;
+                // Where walking goes on along the next street: from its
+                // corner when it starts here, else either way round.
+                let spots: Vec<f64> = if s <= edge {
+                    vec![lo]
+                } else if s >= nw.len() - edge {
+                    vec![hi]
+                } else {
+                    vec![(s - reach).clamp(lo, hi), (s + reach).clamp(lo, hi)]
+                };
+                let mut sides = [(0.0, 1.0, Wait::Never, Wait::Never); 2];
+                for (k, side) in [-1.0, 1.0].into_iter().enumerate() {
+                    let a = w.sample(stop(side), side).0;
+                    let mut best = (f64::MAX, 0.0, 1.0);
+                    for &sb in &spots {
+                        for near in [-1.0, 1.0] {
+                            let d = nw.sample(sb, near).0.distance(a);
+                            if d < best.0 {
+                                best = (d, sb, near);
+                            }
+                        }
+                    }
+                    let (_, sb, near) = best;
+                    // Where streets meet at odd angles, a pavement's end can
+                    // lie on another carriageway: nobody waits there.
+                    let on_road = |p: DVec2| ways.under(p, world, |_| -0.3) == Some(true);
+                    let wait = |to: f64| {
+                        let b = nw.sample(sb, to).0;
+                        if on_road(a) || on_road(b) {
+                            Wait::Never
+                        } else {
+                            crossing_wait(a, b, ways, world, signals)
+                        }
+                    };
+                    sides[k] = (sb, near, wait(near), wait(-near));
+                }
+                both[e].push(Turn { road: j, sides });
+            }
+        }
+        out.push(both);
+    }
+    out
+}
+
+/// Where each street's pavements run over other carriageways: near
+/// their ends (where they stop: the corner) and between (side streets'
+/// mouths, crossed by the lights if the side street has traffic).
+/// Measured along each pavement every metre.
+fn pavement_runs(
+    walks: &[Walk],
+    ways: &Carriageways,
+    world: &TownWorld,
+    signals: &Signals,
+) -> (Vec<Ends>, Vec<[Vec<Mouth>; 2]>) {
+    const STEP: f64 = 1.0;
+    const NEAR_END: f64 = 12.0;
+    let mut ends = Vec::with_capacity(walks.len());
+    let mut mouths = Vec::with_capacity(walks.len());
+    for (i, w) in walks.iter().enumerate() {
+        let len = w.len();
+        let mut e = [[0.0; 2]; 2];
+        let mut m: [Vec<Mouth>; 2] = [Vec::new(), Vec::new()];
+        let n = (len / STEP).ceil().max(1.0) as usize;
+        let at = |t: usize| len * t as f64 / n as f64;
+        for side in [-1.0, 1.0] {
+            let k = side_index(side);
+            // Whether each point is on another carriageway, and if so
+            // whether one with traffic.
+            let under: Vec<Option<bool>> = (0..=n)
+                .map(|t| {
+                    let p = w.sample(at(t), side).0;
+                    // A street that bends back past itself counts too.
+                    ways.under(p, world, |j| if j as usize == i { -0.1 } else { 0.3 })
+                })
+                .collect();
+            let mut t = 0;
+            while t <= n {
+                if under[t].is_none() {
+                    t += 1;
+                    continue;
+                }
+                let first = t;
+                let mut traffic = false;
+                while t <= n && under[t].is_some() {
+                    traffic |= under[t] == Some(true);
+                    t += 1;
+                }
+                let last = t - 1;
+                let (s0, s1) = (at(first.saturating_sub(1)), at((last + 1).min(n)));
+                // Near an end, it is the corner: the pavement stops before.
+                if s0 < NEAR_END {
+                    e[k][0] = s1;
+                } else if s1 > len - NEAR_END {
+                    e[k][1] = e[k][1].max(len - s0);
+                } else {
+                    let mid = w.sample((s0 + s1) * 0.5, side).0;
+                    let light = if traffic {
+                        signals.junction_near(mid, 30.0)
+                    } else {
+                        None
+                    };
+                    let wall = s1 - s0 > LONGEST_CROSSING || (traffic && light.is_none());
+                    m[k].push(Mouth {
+                        s0,
+                        s1,
+                        light,
+                        wall,
+                    });
+                }
+            }
+            // Never more than most of a street.
+            let most = len * 0.45;
+            e[k] = [e[k][0].min(most), e[k][1].min(most)];
+        }
+        ends.push(e);
+        mouths.push(m);
+    }
+    (ends, mouths)
+}
+
+fn walk_of(r: &WorldRoad) -> Walk {
     let line = Polyline::new(&r.pts);
-    let len = line.len();
-    let mid = line.pts[line.pts.len() / 2];
-    let t = (mid.distance(core) / reach).clamp(0.0, 1.0);
-    // Busy at the core, quiet at the edge (smoothly).
-    let k = 1.0 - t * t * (3.0 - 2.0 * t);
-    let mut density = DENSITY_EDGE + (DENSITY_CORE - DENSITY_EDGE) * k;
-    if r.main {
-        density *= MAIN_FACTOR;
-    }
-    // A road without pavement has no walkers.
-    if r.pavement < 0.8 {
-        density = 0.0;
-    }
-    let want = len * density;
-    let people = (want.floor() + if seed.unit() < want.fract() { 1.0 } else { 0.0 }) as u32;
+    let pts = &line.pts;
+    let normal = |k: usize| (pts[k + 1] - pts[k]).normalize_or(DVec2::X).perp();
+    let last = pts.len() - 1;
+    let miters = (0..=last)
+        .map(|k| {
+            if k == 0 {
+                return normal(0);
+            }
+            if k == last {
+                return normal(last - 1);
+            }
+            let (n0, n1) = (normal(k - 1), normal(k));
+            let m = (n0 + n1).normalize_or(n1);
+            // Sharp corners are cut off at three times the offset.
+            m / m.dot(n1).max(1.0 / 3.0)
+        })
+        .collect();
     Walk {
+        miters,
         line,
         offset: r.half + r.pavement * 0.5,
-        people: people.min(0xF_FFFF),
+        people: 0,
+        commerce: 0.0,
+    }
+}
+
+/// How busy the streets are at `hour` (0 to 1, at their busiest): shops
+/// and offices, and homes.
+fn busy_at(hour: f64) -> (f64, f64) {
+    // (hour, shops, homes), straight lines between.
+    const DAY: [(f64, f64, f64); 11] = [
+        (0.0, 0.04, 0.08),
+        (5.0, 0.02, 0.04),
+        (7.0, 0.25, 0.55),
+        (8.5, 0.55, 0.75),
+        (10.0, 0.75, 0.45),
+        (12.5, 1.0, 0.5),
+        (15.0, 0.85, 0.5),
+        (17.5, 0.95, 0.85),
+        (19.5, 0.5, 0.7),
+        (22.0, 0.15, 0.25),
+        (24.0, 0.04, 0.08),
+    ];
+    let h = hour.rem_euclid(24.0);
+    for w in DAY.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        if h <= b.0 {
+            let t = (h - a.0) / (b.0 - a.0);
+            return (a.1 + (b.1 - a.1) * t, a.2 + (b.2 - a.2) * t);
+        }
+    }
+    (DAY[0].1, DAY[0].2)
+}
+
+/// How many people walk each street at its busiest: those its buildings
+/// draw (each building counts for the street its front is on) and some
+/// passers-by.
+fn people_from_buildings(
+    walks: &mut [Walk],
+    grid: &BTreeMap<(i64, i64), Vec<u32>>,
+    world: &TownWorld,
+    seed: Seed,
+) {
+    let mut drawn = vec![(0.0f64, 0.0f64); walks.len()];
+    for b in &world.buildings {
+        let site = &b.site;
+        let front = site.origin + site.along * site.size.x * 0.5;
+        let c = cell_of(front);
+        let mut best: Option<(f64, u32)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for &i in grid.get(&(c.0 + dx, c.1 + dy)).into_iter().flatten() {
+                    let w = &walks[i as usize];
+                    let off = (w.nearest(front).1 - w.offset).abs();
+                    if off < FRONTAGE && best.is_none_or(|(d, _)| off < d) {
+                        best = Some((off, i));
+                    }
+                }
+            }
+        }
+        let Some((_, i)) = best else {
+            continue;
+        };
+        let d = draws(site.usage, site.floors);
+        let shops = matches!(
+            site.usage,
+            BuildingUse::ShopsAndOffices | BuildingUse::Offices | BuildingUse::Pavilion
+        );
+        drawn[i as usize].0 += d;
+        if shops {
+            drawn[i as usize].1 += d;
+        }
+    }
+    for (i, (w, r)) in walks.iter_mut().zip(&world.roads).enumerate() {
+        // A road without pavement has no walkers.
+        if r.pavement < 0.8 {
+            continue;
+        }
+        let len = w.len();
+        let (all, shops) = drawn[i];
+        let through = len * if r.main { THROUGH_MAIN } else { THROUGH };
+        let want = (all + through).min(len * MOST);
+        let s = seed.child(i as u64);
+        w.people = (want.floor() + if s.unit() < want.fract() { 1.0 } else { 0.0 }) as u32;
+        w.people = w.people.min(0xF_FFFF);
+        w.commerce = if all > 0.0 { shops / all } else { 0.3 };
     }
 }
 
@@ -542,14 +1183,19 @@ mod tests {
 
     fn town() -> Citizens {
         let t = GeneratedTown::generate(Seed(1), 3000.0);
-        Citizens::new(t.world)
+        people(t.world)
+    }
+
+    fn people(world: Arc<TownWorld>) -> Citizens {
+        let signals = crate::traffic::Traffic::new(world.clone()).signals();
+        Citizens::new(world, signals)
     }
 
     #[test]
     fn molehaven_has_people_who_keep_clear_of_its_furniture() {
         let t = GeneratedTown::generate(Seed(1), 40_000.0);
         let l = molehaven_layout(&t.world.underground).expect("the town has Molehaven");
-        let c = Citizens::new(t.world.clone());
+        let c = people(t.world.clone());
         let (_, centre, ways) = &c.moles;
         assert!(ways.len() >= 30, "{} mole people", ways.len());
         let mut moved = 0;
@@ -619,14 +1265,62 @@ mod tests {
             assert!(a.pos.is_finite());
             assert!(a.look < LOOKS);
         }
-        let walking = people.iter().filter(|c| c.speed > 0.0).count();
-        assert!(walking * 2 > people.len(), "most people should be walking");
+        // Over a few minutes, many are walking (the rest pause, chat or
+        // wait at the kerb for the lights: about half the time in a town
+        // centre).
+        let (mut walking, mut all) = (0, 0);
+        for k in 0..12 {
+            let seen = c.near(p, 300.0, 50.0 + k as f64 * 23.0, 1000);
+            walking += seen.iter().filter(|c| c.speed > 0.0).count();
+            all += seen.len();
+        }
+        assert!(walking * 5 > all * 2, "only {walking} of {all} walking");
+    }
+
+    #[test]
+    fn people_cross_roads_with_traffic_only_while_the_lights_say_walk() {
+        let t = GeneratedTown::generate(Seed(1), 20_000.0);
+        let signals = crate::traffic::Traffic::new(t.world.clone()).signals();
+        let c = Citizens::new(t.world, signals.clone());
+        let p = c.world.spawn_line().0;
+        let (mut on_road, mut seen, mut unsafe_) = (0, 0, 0);
+        for k in 0..60 {
+            let time = 500.0 + k as f64 * 3.7;
+            for x in c.near(p, 300.0, time, 3000) {
+                // Molehaven is under the streets.
+                if x.look >= LOOKS {
+                    continue;
+                }
+                seen += 1;
+                let q = x.pos.truncate_xz();
+                let cell = cell_of(q);
+                let over = c.grid.get(&cell).into_iter().flatten().any(|&i| {
+                    let r = &c.world.roads[i as usize];
+                    has_traffic(r) && c.walks[i as usize].nearest(q).1 < r.half - 0.6
+                });
+                if !over {
+                    continue;
+                }
+                on_road += 1;
+                let j = signals.junction_near(q, 40.0);
+                if !j.is_some_and(|j| signals.walking(j, time)) {
+                    unsafe_ += 1;
+                }
+            }
+        }
+        assert!(on_road > 0, "nobody crossed in {seen} sightings");
+        // A very few odd corners (streets meeting at a sliver of an angle)
+        // still let someone step on the road out of turn.
+        assert!(
+            unsafe_ * 100 <= on_road,
+            "{unsafe_} of {on_road} people on the road with no walk light"
+        );
     }
 
     #[test]
     fn finding_people_near_a_player_is_quick() {
         let t = GeneratedTown::generate(Seed(1), 40_000.0);
-        let c = Citizens::new(t.world);
+        let c = people(t.world);
         let p = c.world.spawn_line().0;
         let start = std::time::Instant::now();
         let near = c.near(p, 260.0, 100.0, 600);

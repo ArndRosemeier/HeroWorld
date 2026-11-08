@@ -42,6 +42,9 @@ pub const SKY_BIT: u64 = 1 << 40;
 pub const STEP: f64 = 0.1;
 /// A car's length (m): positions are its middle.
 const CAR_LEN: f64 = 4.8;
+/// A street car's width and roof height (m), for bumping into.
+const CAR_WIDTH: f64 = 2.0;
+const CAR_HEIGHT: f64 = 1.45;
 /// Lanes closer than this where they cross (m) conflict.
 const CONFLICT: f64 = 2.4;
 /// How far ahead a driver looks for a junction to give way at (m).
@@ -61,10 +64,29 @@ const JUNCTION: f64 = 16.0;
 /// Longest stretch of lane one crossing takes up (m; they are found within
 /// this).
 const MAX_ZONE: f64 = 20.0;
-/// Traffic lights: one cycle (s), green for each half but for an all-red
-/// moment at its end.
-const CYCLE: f64 = 24.0;
+/// Traffic lights: one cycle (s). Each way has its green, an all-red
+/// moment follows each, and then every way is red while people on foot
+/// cross, in every direction at once (a "scramble", as the 1950s
+/// introduced them), before an all-red moment again.
+pub const CYCLE: f64 = 36.0;
 const ALL_RED: f64 = 2.0;
+/// The walk phase (s).
+pub const WALK: f64 = 8.0;
+/// Each way's green (s).
+const GREEN: f64 = (CYCLE - 3.0 * ALL_RED - WALK) * 0.5;
+/// Cars stop this far before a junction's first crossing: clear of the
+/// crosswalk in front of it.
+const CROSSWALK: f64 = 4.0;
+/// A car stops this far (m) short of someone standing in its lane.
+const HOLD_GAP: f64 = 2.5;
+/// Cars see people in the road and trouble this far ahead (m).
+const HOLD_LOOK: f64 = 60.0;
+/// Someone this near a lane's middle (m) is in the way.
+const IN_LANE: f64 = 2.3;
+/// Junctions nearer each other than this (m) run their lights in step.
+const IN_STEP: f64 = 45.0;
+/// A red light is seen this far ahead (m).
+const RED_LOOK: f64 = 45.0;
 /// The last seconds of green show amber.
 const AMBER: f64 = 3.0;
 
@@ -75,6 +97,117 @@ pub enum Signal {
     Amber,
     Green,
 }
+/// A town's traffic lights: where each junction is and where it is in its
+/// cycle. Cars stop at them; people on foot cross in their walk phase.
+#[derive(Clone, Debug, Default)]
+pub struct Signals {
+    /// Each junction's middle and the axis its phase 0 runs along.
+    junctions: Vec<(DVec2, DVec2)>,
+    /// Where each junction's lights are in their cycle at time 0.
+    offsets: Vec<f64>,
+    /// Junctions by grid cell.
+    grid: BTreeMap<(i64, i64), Vec<u32>>,
+}
+
+impl Signals {
+    fn new(junctions: Vec<(DVec2, DVec2)>, offsets: Vec<f64>) -> Self {
+        let mut grid: BTreeMap<(i64, i64), Vec<u32>> = BTreeMap::new();
+        for (j, (c, _)) in junctions.iter().enumerate() {
+            grid.entry(cell_of(*c)).or_default().push(j as u32);
+        }
+        Self {
+            junctions,
+            offsets,
+            grid,
+        }
+    }
+
+    /// The junction nearest `at` within `r` (at most [`CELL`]) m.
+    pub fn junction_near(&self, at: DVec2, r: f64) -> Option<u32> {
+        let c = cell_of(at);
+        let mut best: Option<(f64, u32)> = None;
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                for &j in self.grid.get(&(c.0 + dx, c.1 + dz)).into_iter().flatten() {
+                    let d = self.junctions[j as usize].0.distance(at);
+                    if d <= r && best.is_none_or(|(b, k)| (d, j) < (b, k)) {
+                        best = Some((d, j));
+                    }
+                }
+            }
+        }
+        best.map(|(_, j)| j)
+    }
+
+    /// The junction a traffic light at `at` belongs to, and the phase of
+    /// the traffic it faces (it looks along `facing`, at the cars coming
+    /// in); none if no junction is near.
+    pub fn light_of(&self, at: DVec2, facing: DVec2) -> Option<(u32, u8)> {
+        let j = self.junction_near(at, 40.0)?;
+        let axis = self.junctions[j as usize].1;
+        let phase = u8::from(facing.dot(axis).abs() < std::f64::consts::FRAC_1_SQRT_2);
+        Some((j, phase))
+    }
+
+    /// What a light of `phase` at junction `j` shows at `time`.
+    pub fn signal(&self, j: u32, phase: u8, time: f64) -> Signal {
+        if !self.green(j, phase, time) {
+            return Signal::Red;
+        }
+        // Amber for the last few seconds of green.
+        if self.green(j, phase, time + AMBER) {
+            Signal::Green
+        } else {
+            Signal::Amber
+        }
+    }
+
+    /// Where junction `j` is in its cycle at `time` (0 to [`CYCLE`]).
+    fn cycle_at(&self, j: u32, time: f64) -> f64 {
+        (time + self.offsets[j as usize]).rem_euclid(CYCLE)
+    }
+
+    /// Whether `phase` has green at junction `j` at `time`.
+    fn green(&self, j: u32, phase: u8, time: f64) -> bool {
+        let u = self.cycle_at(j, time);
+        if phase == 0 {
+            u < GREEN
+        } else {
+            (GREEN + ALL_RED..GREEN * 2.0 + ALL_RED).contains(&u)
+        }
+    }
+
+    /// Whether people on foot cross at junction `j` at `time` (or the cars
+    /// are about to stop for them).
+    pub fn walking(&self, j: u32, time: f64) -> bool {
+        let u = self.cycle_at(j, time);
+        u >= GREEN * 2.0 + ALL_RED * 1.5
+    }
+
+    /// When someone at junction `j`'s kerb at `time` steps out to cross
+    /// `len` metres, and by when they must be over: they go in the walk
+    /// phase, a moment after the cars have stopped, and only if they can
+    /// make it across at a brisk pace before it ends.
+    pub fn crossing(&self, j: u32, time: f64, len: f64) -> (f64, f64) {
+        const BRISK: f64 = 2.2;
+        let walk = GREEN * 2.0 + ALL_RED * 2.0;
+        let u = self.cycle_at(j, time);
+        let base = time - u;
+        let first = walk + 1.0;
+        let last = (walk + WALK + ALL_RED * 0.4 - len / BRISK).max(first);
+        let start = if u < first {
+            base + first
+        } else if u <= last {
+            time
+        } else {
+            base + CYCLE + first
+        };
+        // The walk phase stepped out in.
+        let window = start - (start - base).rem_euclid(CYCLE) + walk;
+        (start, window + WALK + ALL_RED * 0.4)
+    }
+}
+
 /// Room (m) between the cars either side for a car to come back.
 const ROOM_BACK: f64 = 40.0;
 /// Driving: comfortable acceleration and braking (m/s²), time gap kept to
@@ -226,10 +359,12 @@ pub struct Traffic {
     world: Arc<TownWorld>,
     /// Where each street lane is crossed by others, by `from`.
     zones: Vec<Vec<Zone>>,
-    /// Where each junction's lights are in their cycle at time 0.
-    offsets: Vec<f64>,
-    /// Each junction's middle and the axis its phase 0 runs along.
-    junctions: Vec<(DVec2, DVec2)>,
+    /// The junctions and their lights.
+    signals: Arc<Signals>,
+    /// What street cars stop for, by lane: distances along it (round the
+    /// loop) of heroes standing in the road and of trouble ahead (see
+    /// [`Self::set_blockers`]).
+    holds: Vec<Vec<f64>>,
     /// The street cars now and one step ago, by lane, in order along it.
     cars: Vec<Vec<Car>>,
     prev: Vec<Vec<Car>>,
@@ -323,10 +458,10 @@ impl Traffic {
             sky,
             grid,
             zones: Vec::new(),
-            offsets: Vec::new(),
-            junctions: Vec::new(),
+            signals: Arc::new(Signals::default()),
             cars: Vec::new(),
             prev: Vec::new(),
+            holds: Vec::new(),
             time: 0.0,
             world,
         }
@@ -545,8 +680,40 @@ impl Traffic {
                 );
             }
         }
+        // Junctions close together run in step (one offset for a group),
+        // so their walk phases come at once: whoever crosses between them
+        // has every car round them waiting.
+        let mut centre = vec![(DVec2::ZERO, 0.0); number.len()];
+        for (i, a) in all.iter().enumerate() {
+            centre[at[i].0 as usize].0 += a.2;
+            centre[at[i].0 as usize].1 += 1.0;
+        }
+        let centre: Vec<DVec2> = centre.iter().map(|&(p, n)| p / f64::max(n, 1.0)).collect();
+        let mut group: Vec<usize> = (0..centre.len()).collect();
+        let mut by_cell: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+        for (j, c) in centre.iter().enumerate() {
+            by_cell.entry(cell_of(*c)).or_default().push(j);
+        }
+        for (j, c) in centre.iter().enumerate() {
+            let k = cell_of(*c);
+            for dx in -1..=1 {
+                for dz in -1..=1 {
+                    for &o in by_cell.get(&(k.0 + dx, k.1 + dz)).into_iter().flatten() {
+                        if o > j && c.distance(centre[o]) < IN_STEP {
+                            let (a, b) = (root(&mut group, j), root(&mut group, o));
+                            if a != b {
+                                group[a.max(b)] = a.min(b);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let mut rng = self.seed.child("lights").rng();
-        self.offsets = (0..number.len()).map(|_| rng.range(0.0, CYCLE)).collect();
+        let firsts: Vec<f64> = (0..number.len()).map(|_| rng.range(0.0, CYCLE)).collect();
+        let offsets: Vec<f64> = (0..number.len())
+            .map(|j| firsts[root(&mut group, j)])
+            .collect();
         let mut sum = vec![(DVec2::ZERO, 0.0); number.len()];
         for (i, a) in all.iter().enumerate() {
             sum[at[i].0 as usize].0 += a.2;
@@ -556,11 +723,12 @@ impl Traffic {
         for &(j, axis) in number.values() {
             axes[j as usize] = axis;
         }
-        self.junctions = sum
+        let junctions = sum
             .iter()
             .zip(axes)
             .map(|(&(p, n), axis)| (p / f64::max(n, 1.0), axis))
             .collect();
+        self.signals = Arc::new(Signals::new(junctions, offsets));
         for (li, zs) in self.zones.iter_mut().enumerate() {
             for (zi, z) in zs.iter_mut().enumerate() {
                 let (j, ph) = lookup[&(li, zi)];
@@ -583,40 +751,23 @@ impl Traffic {
     /// the traffic it faces (it looks along `facing`, at the cars coming
     /// in); none if no junction is near.
     pub fn light_of(&self, at: DVec2, facing: DVec2) -> Option<(u32, u8)> {
-        let (j, (c, axis)) = self
-            .junctions
-            .iter()
-            .enumerate()
-            .min_by(|a, b| a.1 .0.distance(at).total_cmp(&b.1 .0.distance(at)))?;
-        if c.distance(at) > 40.0 {
-            return None;
-        }
-        let phase = u8::from(facing.dot(*axis).abs() < std::f64::consts::FRAC_1_SQRT_2);
-        Some((j as u32, phase))
+        self.signals.light_of(at, facing)
     }
 
     /// What a light of `phase` at junction `j` shows at `time`.
     pub fn signal(&self, j: u32, phase: u8, time: f64) -> Signal {
-        if !self.green(j, phase, time) {
-            return Signal::Red;
-        }
-        // Amber for the last few seconds of green.
-        if self.green(j, phase, time + AMBER) {
-            Signal::Green
-        } else {
-            Signal::Amber
-        }
+        self.signals.signal(j, phase, time)
+    }
+
+    /// The town's junctions and their lights (people on foot cross by
+    /// them, see [`crate::citizens`]).
+    pub fn signals(&self) -> Arc<Signals> {
+        self.signals.clone()
     }
 
     /// Whether `phase` has green at junction `j` at `time`.
     fn green(&self, j: u32, phase: u8, time: f64) -> bool {
-        let u = (time + self.offsets[j as usize]).rem_euclid(CYCLE);
-        let half = CYCLE * 0.5;
-        if phase == 0 {
-            u < half - ALL_RED
-        } else {
-            (half..CYCLE - ALL_RED).contains(&u)
-        }
+        self.signals.green(j, phase, time)
     }
 
     /// Every street car where it would be at `time` with no junctions to
@@ -656,13 +807,16 @@ impl Traffic {
     }
 
     /// Drives the street cars on to `time` (a step at a time; far behind or
-    /// back in time, they are put there instead).
+    /// back in time, they are put there instead). The last step reaches
+    /// `time` or just past it, so a car drawn at `time` sits between its
+    /// last two steps and glides from frame to frame, never snapping from
+    /// step to step.
     pub fn advance_to(&mut self, time: f64) {
         if time < self.time - 1.0 || time - self.time > CATCH_UP {
             self.reset_at(time);
             return;
         }
-        while self.time + STEP <= time + 1e-9 {
+        while self.time < time - 1e-9 {
             self.step();
         }
     }
@@ -730,6 +884,17 @@ impl Traffic {
                         lead_v = 0.0;
                     }
                 }
+                // Someone in the road, or trouble ahead: stop short of it,
+                // and never drive on into them.
+                let mut room = room;
+                if let Some(d) = self.hold_ahead(li, c.s) {
+                    let short = d - CAR_LEN * 0.5 - HOLD_GAP;
+                    if short < gap {
+                        gap = short;
+                        lead_v = 0.0;
+                    }
+                    room = room.min(short.max(0.0));
+                }
                 // Following the car (or stop line) ahead.
                 let want = STANDSTILL
                     + (c.v * HEADWAY + c.v * (c.v - lead_v) / (2.0 * (ACCEL * BRAKE).sqrt()))
@@ -756,6 +921,72 @@ impl Traffic {
         }
         self.prev = std::mem::replace(&mut self.cars, next);
         self.time += STEP;
+    }
+
+    /// How far ahead of a car at `s` on lane `li` the nearest hold is.
+    fn hold_ahead(&self, li: usize, s: f64) -> Option<f64> {
+        let holds = self.holds.get(li)?;
+        if holds.is_empty() {
+            return None;
+        }
+        let len = self.ground[li].path.len();
+        let at = s.rem_euclid(len);
+        let i = holds.partition_point(|h| *h < at);
+        let next = holds.get(i).copied().unwrap_or(holds[0]);
+        let d = ahead(at, next, len);
+        (d <= HOLD_LOOK).then_some(d)
+    }
+
+    /// What street cars stop for from now on: heroes standing in the road
+    /// (their feet; those in the air or on the pavement are passed), and
+    /// trouble (where, and how far round it cars keep away). Every machine
+    /// sets this from what it sees, before driving on.
+    pub fn set_blockers(&mut self, standing: &[DVec3], trouble: &[(DVec2, f64)]) {
+        self.holds = vec![Vec::new(); self.ground.len()];
+        for p in standing {
+            let q = DVec2::new(p.x, p.z);
+            if (p.y - self.world.road_height(q)).abs() < 2.5 {
+                self.hold_lanes(q, IN_LANE);
+            }
+        }
+        for &(c, r) in trouble {
+            self.hold_lanes(c, r);
+        }
+        for h in &mut self.holds {
+            h.sort_by(f64::total_cmp);
+            h.dedup_by(|a, b| (*a - *b).abs() < 3.0);
+        }
+    }
+
+    /// Every street lane coming within `r` of `c`: a hold where it comes in.
+    fn hold_lanes(&mut self, c: DVec2, r: f64) {
+        let (c0, c1) = (cell_of(c - DVec2::splat(r)), cell_of(c + DVec2::splat(r)));
+        let mut found: Vec<(usize, f64)> = Vec::new();
+        for x in c0.0..=c1.0 {
+            for (_, list) in self.grid.range((x, c0.1)..=(x, c1.1)) {
+                for &(flies, lane, s0, s1) in list {
+                    if flies {
+                        continue;
+                    }
+                    let path = &self.ground[lane as usize].path;
+                    let len = path.len();
+                    let inside = |s: f64| path.sample(s).0.distance(c) < r;
+                    let mut was = inside(s0 - 1.0);
+                    let mut s = s0;
+                    while s <= s1 + 1.0 {
+                        let now = inside(s);
+                        if now && !was {
+                            found.push((lane as usize, s.rem_euclid(len)));
+                        }
+                        was = now;
+                        s += 1.0;
+                    }
+                }
+            }
+        }
+        for (lane, s) in found {
+            self.holds[lane].push(s);
+        }
     }
 
     /// Parked car `k` on lane `li` next step: back on the road halfway
@@ -804,8 +1035,13 @@ impl Traffic {
     }
 
     /// The crossings ahead of a car whose front is at `front` on lane
-    /// `li`, nearest first, within [`LOOK`]: (distance to it, crossing).
-    fn zones_ahead(&self, li: u32, front: f64) -> impl Iterator<Item = (f64, &Zone)> + '_ {
+    /// `li`, nearest first, within `look` m: (distance to it, crossing).
+    fn zones_ahead(
+        &self,
+        li: u32,
+        front: f64,
+        look: f64,
+    ) -> impl Iterator<Item = (f64, &Zone)> + '_ {
         let len = self.ground[li as usize].path.len();
         let fm = front.rem_euclid(len);
         let zs = &self.zones[li as usize];
@@ -814,7 +1050,7 @@ impl Traffic {
             .iter()
             .chain(zs[..i].iter())
             .map(move |z| (ahead(fm, z.from, len), z))
-            .take_while(|(d, _)| *d <= LOOK)
+            .take_while(move |(d, _)| *d <= look)
     }
 
     /// If car `k` on lane `li` must give way at a crossing ahead, how far
@@ -831,9 +1067,6 @@ impl Traffic {
     ) -> Option<f64> {
         let len = self.ground[li as usize].path.len();
         let front = c.s + CAR_LEN * 0.5;
-        if c.wait() >= STUCK {
-            return None;
-        }
         let mine = c.wait() >= PATIENT;
         // In a junction already: drive on out of it.
         let fm = front.rem_euclid(len);
@@ -843,10 +1076,28 @@ impl Traffic {
             .map(|b| &zs[(i + zs.len() - b) % zs.len()])
             .take_while(|z| ahead(z.from, fm, len) < MAX_ZONE + CAR_LEN)
             .any(|z| ahead(z.from, fm, len) < ahead(z.from, z.to, len) + CAR_LEN);
+        // A red light ahead, seen from afar: stop before the crosswalk,
+        // unless too close to stop. Even a car stuck for long waits while
+        // people cross.
+        let next = self
+            .zones_ahead(li, front, RED_LOOK)
+            .find(|(d, _)| !(inside && *d < CAR_LEN * 2.0));
+        if let Some((d, z)) = next {
+            if !inside
+                && !self.green(z.junction, z.phase, self.time)
+                && d > c.v * c.v / (2.0 * BRAKE) + 0.5
+                && (c.wait() < STUCK || self.signals.walking(z.junction, self.time))
+            {
+                return Some((d - CROSSWALK).max(0.0));
+            }
+        }
+        if c.wait() >= STUCK {
+            return None;
+        }
         // The junction ahead: its crossings on this lane.
         let mut cluster: Vec<(f64, &Zone)> = Vec::new();
         let mut end = 0.0;
-        for (d, z) in self.zones_ahead(li, front) {
+        for (d, z) in self.zones_ahead(li, front, LOOK) {
             if inside && d < CAR_LEN * 2.0 {
                 continue;
             }
@@ -856,17 +1107,10 @@ impl Traffic {
             cluster.push((d, z));
             end = f64::max(end, d + ahead(z.from, z.to, len));
         }
-        let (first, fz) = *cluster.first()?;
-        let stop = Some((first - 1.0).max(0.0));
+        let (first, _) = *cluster.first()?;
+        let stop = Some((first - CROSSWALK).max(0.0));
         // No room past it: wait before it, whatever the others do.
         if room.1 < 3.0 && room.0 + room.1 * 2.0 < end + CAR_LEN + 1.0 {
-            return stop;
-        }
-        // A red light, unless too close to stop.
-        if !inside
-            && !self.green(fz.junction, fz.phase, self.time)
-            && first > c.v * c.v / (2.0 * BRAKE) + 0.5
-        {
             return stop;
         }
         if c.wait() >= IMPATIENT {
@@ -1104,6 +1348,31 @@ impl Traffic {
         } else {
             &self.ground[i as usize]
         }
+    }
+
+    /// The street cars within `r` of any of `around` at `time`, as solid
+    /// boxes (for heroes to bump into and stand on).
+    pub fn car_solids(&self, around: &[DVec3], r: f64, time: f64) -> Vec<crate::collision::Solid> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut out = Vec::new();
+        for p in around {
+            for v in self.near(DVec2::new(p.x, p.z), r, time, 64) {
+                if v.flies() || !seen.insert(v.id) {
+                    continue;
+                }
+                let fwd = DVec2::new(v.dir.x, v.dir.z).normalize_or(DVec2::Y);
+                out.push(crate::collision::Solid {
+                    origin: DVec2::new(v.pos.x, v.pos.z),
+                    along: -fwd.perp(),
+                    inward: fwd,
+                    min: DVec2::new(-CAR_WIDTH * 0.5, -CAR_LEN * 0.5),
+                    max: DVec2::new(CAR_WIDTH * 0.5, CAR_LEN * 0.5),
+                    y0: v.pos.y,
+                    y1: v.pos.y + CAR_HEIGHT,
+                });
+            }
+        }
+        out
     }
 
     /// Vehicle `id` at `time`; `None` if there is no such vehicle.
@@ -1387,6 +1656,66 @@ mod tests {
             phases.entry(j).or_default().insert(p);
         }
         assert!(phases.values().any(|p| p.len() == 2));
+    }
+
+    #[test]
+    fn cars_stop_for_someone_standing_in_the_road() {
+        let mut t = traffic();
+        t.advance_to(40.0);
+        // Someone steps into a lane ahead of a moving car.
+        let (li, k) = t
+            .cars
+            .iter()
+            .enumerate()
+            .find_map(|(li, cars)| {
+                cars.iter()
+                    .position(|c| !c.parked && c.v > 5.0)
+                    .map(|k| (li, k))
+            })
+            .expect("a moving car");
+        let len = t.ground[li].path.len();
+        let ahead_s = t.cars[li][k].s + 30.0;
+        let (p, _) = t.ground[li].path.sample(ahead_s);
+        let feet = DVec3::new(p.x, t.world.road_height(p), p.y);
+        for _ in 0..200 {
+            t.set_blockers(&[feet], &[]);
+            t.advance_to(t.time() + STEP);
+        }
+        let c = t.cars[li][k];
+        let gap = ahead(c.s.rem_euclid(len), ahead_s.rem_euclid(len), len);
+        assert!(c.v < 0.3, "still driving at {:.1} m/s", c.v);
+        assert!(
+            gap > CAR_LEN * 0.5 && gap < 15.0,
+            "stopped {gap:.1} m short of them"
+        );
+        // They step out of the way: it drives on.
+        for _ in 0..100 {
+            t.set_blockers(&[], &[]);
+            t.advance_to(t.time() + STEP);
+        }
+        assert!(t.cars[li][k].v > 2.0, "the car drives on");
+        // Trouble ahead: nobody drives into it.
+        let (c, _) = t.ground[li].path.sample(t.cars[li][k].s + 40.0);
+        for _ in 0..200 {
+            t.set_blockers(&[], &[(c, 20.0)]);
+            t.advance_to(t.time() + STEP);
+        }
+        for (li, cars) in t.cars.iter().enumerate() {
+            for (k, car) in cars.iter().enumerate() {
+                if car.parked || car.v < 1.0 {
+                    continue;
+                }
+                let v = t
+                    .vehicle(id_of(false, li as u32, k as u64), t.time())
+                    .unwrap();
+                let d = DVec2::new(v.pos.x, v.pos.z).distance(c);
+                // Those already inside drive out; none drive in.
+                if d < 12.0 {
+                    let next = t.ground[li].path.sample(car.s + 2.0).0.distance(c);
+                    assert!(next > d - 0.5, "a car drives into the trouble");
+                }
+            }
+        }
     }
 
     #[test]
