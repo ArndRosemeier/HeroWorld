@@ -251,8 +251,16 @@ been within 300 m (plus four times its height) of for 10 minutes is repaired. Cl
 damaged building out of its town cell for an Engine breakable building that carries the
 town's own facade, cut up by element, so it looks the same until it breaks; sparks, dust,
 explosions and scorch/impact decals at every hit. A collateral tally per player waits for
-incidents (M9). Still open: props, cars and trees that bend and break; frost and crack decals
-from powers (M7); the frame rate during a big tower's collapse on the target PC.
+incidents (M9).
+
+**0.023:** street props break too (`hw-sim/src/props.rs`): lamps, traffic lights, trees, pillars
+and statues fall over the way they were hit, cars land on their roofs, benches, bins, shrubs and
+kiosks are crushed; each kind has a strength (a statue needs about level 6). A blast stops at
+the first prop in its way. Broken props go to clients and saves like building damage and are
+put back off camera; clients move the instance in the kind's LOD set, and broken lamps go dark
+at night. Still open: props that bend rather than snap, and loose debris you can kick; frost
+and crack decals from powers (M7); the frame rate during a big tower's collapse on the target
+PC.
 
 - `hw-gen` building plans become Engine `BuildingPlan`s: wall panels per bay and floor, slabs,
   columns, roof pieces, interior walls, each with its material strength.

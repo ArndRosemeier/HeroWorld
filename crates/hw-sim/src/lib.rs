@@ -12,6 +12,7 @@ pub mod destruction;
 pub mod host;
 pub mod physics;
 pub mod predict;
+pub mod props;
 pub mod save;
 
 use bevy_ecs::prelude::*;
@@ -286,6 +287,8 @@ pub struct Sim {
     pub bubbles: Bubbles,
     /// Broken buildings (see [`destruction`]).
     pub damage: Damage,
+    /// Broken street props (see [`props`]).
+    pub street: props::PropDamage,
     /// Every hero's level until heroes have their own (milestone 7): it sets
     /// how hard they hit, so what they can break.
     pub hero_level: u8,
@@ -309,6 +312,7 @@ impl Sim {
         let mut sim = Self::with_solids(seed, town.obstacles.clone());
         sim.spawn = town.world.spawn_line();
         sim.town_population = town.population();
+        sim.street = props::PropDamage::new(town.world.clone());
         sim
     }
 
@@ -333,6 +337,7 @@ impl Sim {
             physics: Physics::new(solids),
             bubbles: Bubbles::default(),
             damage: Damage::default(),
+            street: props::PropDamage::default(),
             hero_level: 1,
         }
     }
@@ -367,6 +372,7 @@ impl Sim {
             let solids = self.solids();
             let at: Vec<DVec3> = heroes.iter().map(|h| h.2).collect();
             self.damage.repair_unseen(&solids, &at, self.tick, TICK_HZ);
+            self.street.repair_unseen(&at, self.tick, TICK_HZ);
         }
         self.step_physics(&heroes);
         self.tick += 1;
@@ -411,25 +417,34 @@ impl Sim {
             let (at, radius, strength) = match kind {
                 ImpactKind::Punch => (chest + aim * 0.9, power.punch_radius, power.punch),
                 ImpactKind::Blast => {
-                    let Some(p) = destruction::raycast(&solids, chest, aim, BLAST_RANGE) else {
+                    let wall = destruction::raycast(&solids, chest, aim, BLAST_RANGE);
+                    let reach = wall.map_or(BLAST_RANGE, |p| p.distance(chest));
+                    // A lamp post or car in the way takes the blast first.
+                    let Some(p) = self.street.raycast(chest, aim, reach).or(wall) else {
                         continue;
                     };
                     (p, power.blast_radius, power.blast)
                 }
             };
-            // A punch at thin air hits nothing.
-            if kind == ImpactKind::Punch && !solids.solid_at(at) && !solids.solid_at(at + aim * 0.4)
-            {
+            let (props, spent) = self.street.hit(at, aim, radius, strength, tick);
+            props::charge(&mut self.damage.collateral, Some(owner), spent);
+            // A punch at thin air hits nothing (a prop it broke counts).
+            let solid = solids.solid_at(at) || solids.solid_at(at + aim * 0.4);
+            let broken = if kind == ImpactKind::Blast || solid {
+                self.damage
+                    .hit(&solids, at, radius, strength, Some(owner), tick)
+                    .broken
+            } else {
+                0
+            };
+            if kind == ImpactKind::Punch && !solid && props == 0 {
                 continue;
             }
-            let r = self
-                .damage
-                .hit(&solids, at, radius, strength, Some(owner), tick);
             self.damage.tell(ToClient::Impact {
                 at: at.as_vec3().to_array(),
                 dir: aim.as_vec3().to_array(),
                 kind,
-                broke: r.broken > 0,
+                broke: broken + props > 0,
             });
         }
     }
@@ -437,7 +452,9 @@ impl Sim {
     /// Reliable news for every client since the last call: damage, repairs,
     /// impacts.
     pub fn take_news(&mut self) -> Vec<ToClient> {
-        self.damage.take_news()
+        let mut news = self.street.take_news();
+        news.extend(self.damage.take_news());
+        news
     }
 
     fn step_physics(&mut self, heroes: &[(PlayerId, NetId, DVec3)]) {

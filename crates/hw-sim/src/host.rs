@@ -172,6 +172,9 @@ impl Host {
             for m in self.sim.damage.snapshot() {
                 r.rel_out.push(m);
             }
+            for m in self.sim.street.snapshot() {
+                r.rel_out.push(m);
+            }
             self.remotes.insert(id, r);
         }
         self.players.insert(

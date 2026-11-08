@@ -242,6 +242,16 @@ pub enum ToClient {
         kind: ImpactKind,
         broke: bool,
     },
+    /// Street props broke: (index into the town's props, which way it fell
+    /// as a yaw byte). `live` as for [`ToClient::Damage`].
+    PropsBroken {
+        props: Vec<(u32, u8)>,
+        live: bool,
+    },
+    /// Props put back.
+    PropsRepaired {
+        props: Vec<u32>,
+    },
 }
 
 /// Most broken elements in one [`ToClient::Damage`] (it must fit a packet
@@ -271,6 +281,8 @@ impl ToClient {
             ToClient::Damage { broken, .. } => 4 + 1 + 1 + 4 * broken.len().min(255),
             ToClient::Repaired { .. } => 4,
             ToClient::Impact { .. } => 12 + 6 + 1 + 1,
+            ToClient::PropsBroken { props, .. } => 1 + 1 + 5 * props.len().min(255),
+            ToClient::PropsRepaired { props } => 1 + 4 * props.len().min(255),
         }
     }
 
@@ -317,6 +329,20 @@ impl ToClient {
                     ImpactKind::Blast => 1,
                 })
                 .bool(*broke);
+            }
+            ToClient::PropsBroken { props, live } => {
+                let n = props.len().min(255);
+                w.u8(8).bool(*live).u8(n as u8);
+                for (i, fell) in &props[..n] {
+                    w.u32(*i).u8(*fell);
+                }
+            }
+            ToClient::PropsRepaired { props } => {
+                let n = props.len().min(255);
+                w.u8(9).u8(n as u8);
+                for i in &props[..n] {
+                    w.u32(*i);
+                }
             }
         }
     }
@@ -371,6 +397,23 @@ impl ToClient {
                     kind,
                     broke: r.bool()?,
                 }
+            }
+            8 => {
+                let live = r.bool()?;
+                let n = r.u8()? as usize;
+                let mut props = Vec::with_capacity(n);
+                for _ in 0..n {
+                    props.push((r.u32()?, r.u8()?));
+                }
+                ToClient::PropsBroken { props, live }
+            }
+            9 => {
+                let n = r.u8()? as usize;
+                let mut props = Vec::with_capacity(n);
+                for _ in 0..n {
+                    props.push(r.u32()?);
+                }
+                ToClient::PropsRepaired { props }
             }
             _ => return Err(WireError),
         })
@@ -805,6 +848,14 @@ mod tests {
                     },
                 ),
                 (3, ToClient::Repaired { building: 5 }),
+                (
+                    5,
+                    ToClient::PropsBroken {
+                        props: vec![(3, 200), (9001, 0)],
+                        live: false,
+                    },
+                ),
+                (6, ToClient::PropsRepaired { props: vec![3] }),
                 (
                     4,
                     ToClient::Impact {

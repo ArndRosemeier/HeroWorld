@@ -1,6 +1,6 @@
 //! The host's world save: what has changed in the world it generates from its
 //! seed: the clock, where the loose props lie, and the broken elements of
-//! every damaged building (incidents join it with the milestone that adds
+//! every damaged building and broken street prop (incidents join it with the milestone that adds
 //! them). Heroes are not in
 //! it: each player keeps their own hero on their own PC.
 //!
@@ -13,7 +13,7 @@ use bevy_ecs::prelude::*;
 use std::path::Path;
 
 /// Format version written in the first line.
-pub const SAVE_VERSION: u32 = 2;
+pub const SAVE_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorldSave {
@@ -23,6 +23,8 @@ pub struct WorldSave {
     pub crates: Vec<PropState>,
     /// Damaged buildings: index and broken elements.
     pub damage: Vec<(usize, Vec<u32>)>,
+    /// Broken street props: index and which way each fell (a yaw byte).
+    pub props: Vec<(u32, u8)>,
 }
 
 impl WorldSave {
@@ -44,6 +46,9 @@ impl WorldSave {
             }
             out += "\n";
         }
+        for (i, fell) in &self.props {
+            out += &format!("prop {i} {fell}\n");
+        }
         out
     }
 
@@ -62,6 +67,7 @@ impl WorldSave {
         let (mut seed, mut population, mut tick) = (None, None, 0);
         let mut crates = Vec::new();
         let mut damage = Vec::new();
+        let mut props = Vec::new();
         for (n, line) in lines.enumerate() {
             let bad = || format!("line {}: {line}", n + 2);
             let mut words = line.split_whitespace();
@@ -89,6 +95,11 @@ impl WorldSave {
                     let v = v.filter(|v| !v.is_empty()).ok_or_else(bad)?;
                     damage.push((v[0] as usize, v[1..].to_vec()));
                 }
+                "prop" => {
+                    let i = rest.first().and_then(|v| v.parse().ok()).ok_or_else(bad)?;
+                    let fell = rest.get(1).and_then(|v| v.parse().ok()).ok_or_else(bad)?;
+                    props.push((i, fell));
+                }
                 _ => {}
             }
         }
@@ -98,6 +109,7 @@ impl WorldSave {
             tick,
             crates,
             damage,
+            props,
         })
     }
 
@@ -139,6 +151,12 @@ impl Sim {
             tick: self.tick,
             crates: crates.into_iter().map(|(_, c)| c).collect(),
             damage: self.damage.broken(),
+            props: self
+                .street
+                .broken
+                .iter()
+                .map(|(i, b)| (*i, b.fell))
+                .collect(),
         }
     }
 
@@ -160,6 +178,8 @@ impl Sim {
         for (i, ids) in &save.damage {
             self.damage.apply(&solids, *i, ids, self.tick);
         }
+        self.street.clear();
+        self.street.apply(&save.props, self.tick);
         Ok(())
     }
 }

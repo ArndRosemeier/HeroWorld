@@ -12,7 +12,7 @@ use engine::vegetation::{shrub_model, tree_model, TreeSpecies};
 use glam::DVec3;
 use hw_gen::urban::props::{CarModel, LampStyle, Prop, PropKind, Species};
 use hw_gen::urban::world::TownWorld;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
 
 /// The props of a town, spawned once for the whole town (Engine's LOD sets
@@ -20,13 +20,23 @@ use std::f64::consts::TAU;
 pub struct PropView {
     pub sets: Vec<LodId>,
     pub count: usize,
+    /// Per set: every instance's place as it stands, and its model's bounds.
+    places: Vec<Vec<Place>>,
+    bounds: Vec<(Vec3, Vec3)>,
+    /// Per prop: its set and instance.
+    slot: Vec<(usize, usize)>,
+    /// Sets whose places changed since the last [`PropView::flush`].
+    dirty: BTreeSet<usize>,
 }
 
 impl PropView {
     pub fn spawn(world: &mut World, town: &TownWorld) -> EngineResult<Self> {
         let mut groups: BTreeMap<PropKind, Vec<Place>> = BTreeMap::new();
+        let mut at = Vec::with_capacity(town.props.len());
         for p in &town.props {
-            groups.entry(p.kind).or_default().push(place(p));
+            let g = groups.entry(p.kind).or_default();
+            at.push(g.len());
+            g.push(place(p));
         }
         // Growing trees takes a moment: grow every model at once.
         let kinds: Vec<PropKind> = groups.keys().copied().collect();
@@ -41,13 +51,98 @@ impl PropView {
                 .collect()
         });
         let mut sets = Vec::new();
+        let mut bounds = Vec::new();
         for (kind, levels) in kinds.iter().zip(levels) {
-            sets.push(world.spawn_lod_at(levels?, &groups[kind])?);
+            let levels = levels?;
+            bounds.push(
+                levels
+                    .first()
+                    .and_then(|l| l.mesh.bounds())
+                    .unwrap_or((Vec3::ZERO, Vec3::ONE)),
+            );
+            sets.push(world.spawn_lod_at(levels, &groups[kind])?);
         }
+        let slot = town
+            .props
+            .iter()
+            .zip(at)
+            .map(|(p, j)| (kinds.binary_search(&p.kind).unwrap_or(0), j))
+            .collect();
         Ok(Self {
             sets,
             count: town.props.len(),
+            places: kinds
+                .iter()
+                .map(|k| groups.remove(k).unwrap_or_default())
+                .collect(),
+            bounds,
+            slot,
+            dirty: BTreeSet::new(),
         })
+    }
+
+    /// Draws prop `i` broken, fallen the way `fell` says (a yaw byte, see
+    /// `hw_sim::props`), or whole again (`None`).
+    pub fn set_broken(&mut self, town: &TownWorld, i: usize, fell: Option<u8>) {
+        let (Some(p), Some(&(k, j))) = (town.props.get(i), self.slot.get(i)) else {
+            return;
+        };
+        let mut at = place(p);
+        if let Some(fell) = fell {
+            at = broken_place(p, at, self.bounds[k], fell);
+        }
+        self.places[k][j] = at;
+        self.dirty.insert(k);
+    }
+
+    /// Sends changed places to Engine.
+    pub fn flush(&mut self, world: &mut World) -> EngineResult<()> {
+        for k in std::mem::take(&mut self.dirty) {
+            world.set_lod_places(self.sets[k], &self.places[k])?;
+        }
+        Ok(())
+    }
+}
+
+/// Where a broken prop lies: posts and trees fallen over (their foot where
+/// it stood, laid along `fell`), cars on their roofs, benches, bins, shrubs
+/// and kiosks crushed flat.
+fn broken_place(p: &Prop, whole: Place, (_, hi): (Vec3, Vec3), fell: u8) -> Place {
+    use hw_sim::props::{byte_to_yaw, toughness, Breaks};
+    let Some((_, how)) = toughness(p.kind) else {
+        return whole;
+    };
+    let yaw = byte_to_yaw(fell);
+    let s = p.scale as f32;
+    match how {
+        Breaks::Topples => {
+            // Pitch +90 turns the model's +y onto its +z, which the yaw turns
+            // along the fall. Trees lean on
+            // their crowns rather than lying flat.
+            // (Its +z, the front, ends up underneath.)
+            let tree = matches!(p.kind, PropKind::Tree(..));
+            let pitch = if tree { 76.0 } else { 90.0 };
+            let lift = if tree { 0.0 } else { hi.z.max(0.05) * s };
+            Place {
+                position: whole.position + Vec3::Y * lift,
+                yaw_degrees: yaw.to_degrees() as f32,
+                pitch_degrees: pitch,
+                ..whole
+            }
+        }
+        Breaks::Flips => {
+            let shove = Vec3::new(yaw.sin() as f32, 0.0, yaw.cos() as f32) * 0.6;
+            Place {
+                position: whole.position + shove + Vec3::Y * (hi.y * s),
+                roll_degrees: 180.0,
+                ..whole
+            }
+        }
+        Breaks::Smashed => Place {
+            stretch: Vec3::new(1.15, 0.18, 1.15),
+            tint: Color::rgb(140, 133, 128),
+            ..whole
+        },
     }
 }
 

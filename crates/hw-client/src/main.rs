@@ -680,7 +680,36 @@ fn main() -> EngineResult<()> {
             }
             // Damage: broken buildings, repairs, impacts.
             let joined = session.joined();
-            let news = session.take_news();
+            let mut news = session.take_news();
+            // Broken and mended street props: their places, and lamps on them.
+            news.retain(|m| match m {
+                hw_net::ToClient::PropsBroken { props, .. } => {
+                    for &(i, fell) in props {
+                        if let Some(v) = extras.props.as_mut() {
+                            v.set_broken(&generated.world, i as usize, Some(fell));
+                        }
+                        if let Some(l) = extras.lights.as_mut() {
+                            l.set_broken(i, true);
+                        }
+                    }
+                    false
+                }
+                hw_net::ToClient::PropsRepaired { props } => {
+                    for &i in props {
+                        if let Some(v) = extras.props.as_mut() {
+                            v.set_broken(&generated.world, i as usize, None);
+                        }
+                        if let Some(l) = extras.lights.as_mut() {
+                            l.set_broken(i, false);
+                        }
+                    }
+                    false
+                }
+                _ => true,
+            });
+            if let Some(v) = extras.props.as_mut() {
+                v.flush(world)?;
+            }
             damage
                 .get_or_insert_with(|| DamageView::new(joined))
                 .news(world, &mut town, &solids, news);
@@ -916,6 +945,7 @@ struct TownExtras {
     lods: Vec<LodId>,
     entities: Vec<EntityId>,
     lights: Option<hw_client::nightlights::NightLights>,
+    props: Option<hw_client::propview::PropView>,
 }
 
 impl TownExtras {
@@ -929,6 +959,7 @@ impl TownExtras {
         if let Some(mut l) = self.lights.take() {
             l.clear(world);
         }
+        self.props = None;
     }
 }
 
@@ -944,9 +975,10 @@ fn spawn_extras(world: &mut World, generated: &GeneratedTown) -> EngineResult<To
     let landmarks = hw_client::landmarkview::LandmarkView::spawn(world, &generated.world)?;
     let waterfront = hw_client::waterfrontview::WaterfrontView::spawn(world, &generated.world)?;
     Ok(TownExtras {
-        lods: props.sets.into_iter().chain(landmarks.sets).collect(),
+        lods: props.sets.iter().copied().chain(landmarks.sets).collect(),
         entities: waterfront.entities,
         lights: Some(hw_client::nightlights::NightLights::new(&generated.world)),
+        props: Some(props),
     })
 }
 

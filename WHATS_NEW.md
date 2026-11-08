@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.023 (2026-11-08)
+
+- Street props break too: punch a lamp post or a tree and it falls over the way you hit it, cars
+  land on their roofs, benches, bins and kiosks get crushed. Broken street lamps go dark at night.
+  A blast now hits the first lamp or car in its way. Bronze statues need a stronger hero.
+
 ## 0.022 (2026-11-08)
 
 - Furnished interiors: lobbies with deco rugs, front desks and palms; offices with desks, banker's lamps and typewriters; flats with streamlined sofas, radio cabinets and rounded fridges; shops with stocked shelves; labs with glowing flasks and Aether coils; and a glowing Aether lift ring in every core.

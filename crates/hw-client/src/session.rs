@@ -319,6 +319,22 @@ impl Session {
         let span = a.distance(b).max(plan.site.size.x);
         let eye = mid + out * (span * 0.9 + 16.0);
         let look_at = DVec3::new(mid.x, base + 4.0, mid.y);
+        // The street between: lamps, trees and cars knocked over, some one
+        // way, some the other.
+        let street = mid + out * (span * 0.45 + 6.0);
+        let strong = hero_power(20);
+        let near: Vec<usize> = (0..town.world.props.len())
+            .filter(|&i| town.world.props[i].pos.distance(street) < span * 0.5 + 10.0)
+            .collect();
+        for (k, i) in near.into_iter().enumerate() {
+            let p = town.world.props[i];
+            let side = DVec2::new(out.y, -out.x) * if k % 2 == 0 { 1.0 } else { -1.0 };
+            let dir = (side - out * 0.4).normalize();
+            let at = DVec3::new(p.pos.x, p.y + 1.0, p.pos.y);
+            host.sim
+                .street
+                .hit(at, DVec3::new(dir.x, 0.0, dir.y), 0.5, strong.punch, tick);
+        }
         Some((DVec3::new(eye.x, base + 7.0, eye.y), look_at))
     }
 
