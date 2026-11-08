@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.053 (2026-11-08)
+
+- Escape opens a menu in the game: settings, the controls, and quit (no more quitting by accident).
+- New settings: picture quality from Low to Ultra, "keep it smooth" at 60 fps, vertical sync,
+  field of view, look speed and inverted mouse.
+
 ## 0.052 (2026-11-08)
 
 - Car windows and bubble canopies are see-through tinted glass now, so you can see the seats,

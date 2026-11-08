@@ -149,6 +149,8 @@ pub struct Title {
     /// The creator, while it is open; true when it changes the looks of
     /// the hero we have (else it makes a new one).
     creator: Option<(Creator, bool)>,
+    /// A picture setting changed on the Settings card: apply it.
+    picture_changed: bool,
     /// Your hero in the foreground: the model shown and the one wanted.
     hero: Option<ShownHero>,
     /// Looks wanted for the hero in the foreground, not yet asked for.
@@ -207,6 +209,7 @@ impl Title {
             catalog: None,
             no_people: false,
             creator: None,
+            picture_changed: false,
             hero: None,
             asked: None,
             hero_rect: None,
@@ -373,11 +376,7 @@ impl Title {
     }
 
     fn apply_volumes(&self, world: &mut World) {
-        let a = world.audio_mut();
-        a.set_bus_volume(Bus::Music, self.profile.music);
-        a.set_bus_volume(Bus::Ui, self.profile.sounds);
-        a.set_bus_volume(Bus::Effects, self.profile.sounds);
-        a.set_bus_volume(Bus::Ambience, self.profile.sounds);
+        crate::settings::apply_volumes(world, &self.profile);
     }
 
     /// The camera's place this frame: (eye, yaw, pitch in degrees).
@@ -515,6 +514,9 @@ impl Title {
             choice = self.draw(frame.ui.ctx(), loading, ready, &mut sfx);
             if self.panel == Panel::Settings {
                 self.apply_volumes(world);
+            }
+            if std::mem::take(&mut self.picture_changed) {
+                crate::settings::apply(world, &self.profile);
             }
             if let Some(c) = choice.take() {
                 if c == Choice::Quit {
@@ -1013,16 +1015,9 @@ impl Title {
                             }
                             Panel::Settings => {
                                 heading(ui, "Settings");
-                                ui.label("Music");
-                                ui.add(
-                                    egui::Slider::new(&mut self.profile.music, 0.0..=1.0)
-                                        .show_value(false),
-                                );
-                                ui.label("Sounds");
-                                ui.add(
-                                    egui::Slider::new(&mut self.profile.sounds, 0.0..=1.0)
-                                        .show_value(false),
-                                );
+                                if crate::settings::settings_ui(ui, &mut self.profile, HERO_RED) {
+                                    self.picture_changed = true;
+                                }
                                 if ui
                                     .checkbox(
                                         &mut self.profile.reduced_motion,
@@ -1032,6 +1027,7 @@ impl Title {
                                 {
                                     self.still = self.profile.reduced_motion;
                                 }
+                                ui.collapsing("Controls", crate::settings::controls_ui);
                                 if ui.button("Done").clicked() {
                                     sfx.push(Sfx::Click);
                                     self.profile.save();

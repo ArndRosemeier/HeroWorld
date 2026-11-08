@@ -20,6 +20,7 @@
 //! taxi when it lands beside you, and it flies you there above the roofs
 //! (G again hops out). Cars drive the streets; hover cars and taxis fly
 //! lanes over the main roads.
+//! Escape opens the menu (settings, controls, quit; see `settings.rs`).
 //! O switches to a free-flying camera and back. C cuts buildings open
 //! around where you look (F moves the cut there), Z/X pick the floor.
 //!
@@ -119,6 +120,8 @@ struct HeroCamera {
     yaw: f32,
     pitch: f32,
     distance: f32,
+    /// Degrees per pixel of mouse, and -1 for inverted up and down.
+    look: (f32, f32),
 }
 
 impl HeroCamera {
@@ -136,9 +139,9 @@ impl HeroCamera {
     ) {
         let input = &frame.input;
         if input.mouse_down(MouseButton::Right) || world.pointer_lock() {
-            let (yaw, pitch) = input.look_delta(0.15);
+            let (yaw, pitch) = input.look_delta(self.look.0);
             self.yaw = (self.yaw + yaw).rem_euclid(360.0);
-            self.pitch = (self.pitch + pitch).clamp(-80.0, 80.0);
+            self.pitch = (self.pitch + pitch * self.look.1).clamp(-80.0, 80.0);
         }
         let zoom = input.axis(Key::R, Key::T) * frame.dt.min(0.1) * 12.0;
         self.distance = (self.distance + zoom).clamp(0.0, Self::MAX_DISTANCE);
@@ -721,7 +724,9 @@ fn main() -> EngineResult<()> {
         }
         hero_cam_yaw = 135.0;
     }
+    let mut menu = hw_client::settings::GameMenu::new(&profile);
     let mut hero_cam = HeroCamera {
+        look: menu.look,
         yaw: hero_cam_yaw,
         pitch: match view.as_str() {
             "inside" => -35.0,
@@ -761,6 +766,11 @@ fn main() -> EngineResult<()> {
         move |world, frame| {
             if frame.first {
                 world.set_view_distance(6000.0)?;
+                // The player's settings (screenshots keep full detail).
+                let mut p = profile.clone();
+                p.smooth &= !shooting;
+                hw_client::settings::apply(world, &p);
+                hw_client::settings::apply_volumes(world, &p);
                 world.set_physical_sky(Some(PhysicalSky::at_hour(game_hour())));
                 world.set_moons(moons())?;
                 if let Some(t) = title_screen.as_mut() {
@@ -943,6 +953,7 @@ fn main() -> EngineResult<()> {
                     }
                     my_look = t.profile.look.clone();
                     t.profile.save();
+                    menu = hw_client::settings::GameMenu::new(&t.profile);
                     t.leave(world);
                     title_screen = None;
                 }
@@ -956,6 +967,11 @@ fn main() -> EngineResult<()> {
                 return Ok(());
             };
             version_corner(&frame.ui, &mut whats_new, session.room_code());
+            // Escape: the menu (settings, controls, quit).
+            if menu.show(&frame.ui, world) {
+                world.request_exit();
+            }
+            hero_cam.look = menu.look;
             // Our looks go to the others once (a hero from before the
             // creator is dressed by name as soon as the catalog is in).
             if my_look.is_none() && title_screen.is_none() {

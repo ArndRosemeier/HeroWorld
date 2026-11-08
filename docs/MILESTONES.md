@@ -483,6 +483,13 @@ Everything above, made to hold together for two friends on a weekend evening.
 
 **Done when:** Arnd and a friend play a whole evening from level 1 without a restart.
 
+**Status (0.053):** settings. Picture quality presets (Engine's Low/Medium/High/Ultra), "keep it
+smooth" (Engine's frame-rate tuner holds 60 fps by pulling far detail in), vertical sync, field
+of view, look speed and inverted look, kept in the profile (`hw-client/src/settings.rs`). On the
+title's Settings card, with the controls, and in the game behind Escape (back, settings,
+controls, quit; Escape frees a locked mouse first). `HW_MENU=main|settings|controls` opens it for
+screenshots.
+
 ## Sound, music and pictures
 
 OpenRouter is available for images, sound effects and music (Arnd's model preferences are in

@@ -25,6 +25,7 @@ pub mod propmesh;
 pub mod propview;
 pub mod radioview;
 pub mod robotview;
+pub mod settings;
 pub mod signalview;
 pub mod title;
 pub mod townmesh;

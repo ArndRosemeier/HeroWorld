@@ -21,6 +21,15 @@ pub struct Profile {
     pub sounds: f32,
     /// Keep the title still (no swooping letters, no drifting camera).
     pub reduced_motion: bool,
+    /// Picture: the quality preset's name (see `engine::quality::Quality`),
+    /// holding 60 fps by trading far detail, vertical sync, field of view.
+    pub quality: String,
+    pub smooth: bool,
+    pub vsync: bool,
+    pub fov: f32,
+    /// Mouse: look speed (1 is the default) and inverted up and down.
+    pub look_speed: f32,
+    pub invert_y: bool,
     /// The hero file: karma, affinities, origin and powers. None until an
     /// origin is chosen.
     pub hero: Option<Sheet>,
@@ -38,6 +47,12 @@ impl Default for Profile {
             music: 0.8,
             sounds: 0.9,
             reduced_motion: false,
+            quality: "high".into(),
+            smooth: true,
+            vsync: true,
+            fov: 55.0,
+            look_speed: 1.0,
+            invert_y: false,
             hero: None,
             look: None,
         }
@@ -83,6 +98,19 @@ impl Profile {
             music: f("music", d.music),
             sounds: f("sounds", d.sounds),
             reduced_motion: v["reduced_motion"].as_bool().unwrap_or(d.reduced_motion),
+            quality: v["quality"]
+                .as_str()
+                .filter(|q| engine::quality::Quality::from_name(q).is_some())
+                .map_or(d.quality, |q| q.to_ascii_lowercase()),
+            smooth: v["smooth"].as_bool().unwrap_or(d.smooth),
+            vsync: v["vsync"].as_bool().unwrap_or(d.vsync),
+            fov: v["fov"]
+                .as_f64()
+                .map_or(d.fov, |x| (x as f32).clamp(45.0, 90.0)),
+            look_speed: v["look_speed"]
+                .as_f64()
+                .map_or(d.look_speed, |x| (x as f32).clamp(0.3, 3.0)),
+            invert_y: v["invert_y"].as_bool().unwrap_or(d.invert_y),
             hero: sheet_from_json(&v["hero"]),
             look: serde_json::from_value::<CharacterConfig>(v["look"].clone()).ok(),
         }
@@ -96,6 +124,12 @@ impl Profile {
             "music": self.music,
             "sounds": self.sounds,
             "reduced_motion": self.reduced_motion,
+            "quality": self.quality,
+            "smooth": self.smooth,
+            "vsync": self.vsync,
+            "fov": self.fov,
+            "look_speed": self.look_speed,
+            "invert_y": self.invert_y,
             "hero": self.hero.as_ref().map(sheet_to_json),
             "look": self.look.as_ref().and_then(|l| serde_json::to_value(l).ok()),
         })
@@ -193,6 +227,12 @@ mod tests {
             music: 0.25,
             sounds: 0.5,
             reduced_motion: true,
+            quality: "low".into(),
+            smooth: false,
+            vsync: false,
+            fov: 70.0,
+            look_speed: 1.6,
+            invert_y: true,
             hero: Some(hw_sim::progress::starter()),
             look: Some(CharacterConfig {
                 hair: Some("ponytail01".into()),
@@ -201,11 +241,13 @@ mod tests {
             }),
         };
         assert_eq!(Profile::from_json(&p.to_json()), p);
-        let junk = json!({"name": 7, "music": 9.0, "seed": "x"});
+        let junk = json!({"name": 7, "music": 9.0, "seed": "x", "quality": "max", "fov": 500});
         let q = Profile::from_json(&junk);
         assert_eq!(q.name, "Hero");
         assert_eq!(q.music, 1.0);
         assert_eq!(q.seed, 1);
+        assert_eq!(q.quality, "high");
+        assert_eq!(q.fov, 90.0);
         assert_eq!(q.hero, None);
         assert_eq!(q.look, None);
         // A hero file with a power from a later version keeps the rest.
