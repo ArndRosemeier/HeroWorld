@@ -436,6 +436,13 @@ last 3 s of green) or green (`Traffic::signal`), the same cycle the cars obey. T
 (`propmesh::traffic_light`) has dark lenses; `hw-client/src/signalview.rs` draws the lit one
 over them from three instanced sets. Broken lights go dark. `HW_VIEW=signals` looks at one.
 
+**Status (0.049):** Molehaven has its people: stallkeepers and shoppers at the market, mole folk
+walking from their doors to the market and back, strollers round the well, neighbours chatting
+in the side chambers. They are citizens like the street's (a pure function of seed and time,
+`hw-sim/src/citizens.rs`, looks `LOOKS..LOOKS + MOLE_LOOKS`, built by `people::mole_person`),
+and keep clear of the furniture laid out by `hw_gen::urban::underground::molehaven_layout`.
+`HW_VIEW=market` looks at them. Left: opening doors.
+
 ### M11. Robots and the colossus
 
 - Non-human robots from AssetGenerator rigs with breakable parts as Engine prefabs, plus

@@ -737,3 +737,79 @@ mod tests {
         }
     }
 }
+
+/// Where Molehaven's furniture stands, for drawing it and for its people
+/// to walk round it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MolehavenLayout {
+    pub floor: f64,
+    /// The well in the hall's middle: centre and radius.
+    pub well: (DVec2, f64),
+    pub houses: Vec<MoleHouse>,
+    /// Market stalls round the well: centre, and the way the counter faces
+    /// (out from the well). The awning reaches 1.6 m to each side and from
+    /// -0.8 to +1.2 m along that way.
+    pub stalls: Vec<(DVec2, DVec2)>,
+}
+
+/// A mushroom house.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MoleHouse {
+    pub at: DVec2,
+    /// Stem radius and height, and the cap's radius.
+    pub stem: f64,
+    pub height: f64,
+    pub cap: f64,
+    /// The way its round door faces; none in the side chambers.
+    pub door: Option<DVec2>,
+}
+
+/// Molehaven's houses, stalls and well, if the town has the cavern.
+pub fn molehaven_layout(u: &Underground) -> Option<MolehavenLayout> {
+    use hw_core::det;
+    use std::f64::consts::TAU;
+    let c = u.cavern.as_ref()?;
+    let hall = &u.voids[*c.chambers.first()?];
+    let mut houses = Vec::new();
+    // Ten round the hall, doors to its middle.
+    for k in 0..10 {
+        let a = TAU * k as f64 / 10.0 + 0.3;
+        let l = DVec2::new(
+            det::cos(a) * (hall.max.x - 6.0),
+            det::sin(a) * (hall.max.y - 6.0),
+        );
+        let at = hall.world(l);
+        let stem = 2.0 + (k % 3) as f64 * 0.4;
+        houses.push(MoleHouse {
+            at,
+            stem,
+            height: 3.6 + (k % 2) as f64,
+            cap: stem * 2.1,
+            door: Some((c.centre - at).normalize_or(DVec2::X)),
+        });
+    }
+    // One in each side chamber.
+    for &i in &c.chambers[1..] {
+        let v = &u.voids[i];
+        houses.push(MoleHouse {
+            at: v.world((v.min + v.max) * 0.5),
+            stem: 2.4,
+            height: 4.4,
+            cap: 5.0,
+            door: None,
+        });
+    }
+    let stalls = (0..5)
+        .map(|k| {
+            let a = TAU * k as f64 / 5.0 + 0.6;
+            let d = DVec2::new(det::cos(a), det::sin(a));
+            (c.centre + d * 9.0, d)
+        })
+        .collect();
+    Some(MolehavenLayout {
+        floor: c.floor,
+        well: (c.centre, 2.34),
+        houses,
+        stalls,
+    })
+}

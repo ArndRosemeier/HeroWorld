@@ -49,7 +49,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `skylanes`, `lift`, `tunnel`, `molehaven` or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven` or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -257,7 +257,7 @@ fn main() -> EngineResult<()> {
                     p.request(Who::Villain(kind, look), 0);
                 }
             }
-            for look in 0..hw_sim::citizens::LOOKS {
+            for look in 0..hw_sim::citizens::LOOKS + hw_sim::citizens::MOLE_LOOKS {
                 p.request(Who::Citizen(look), generated.world.seed.0);
             }
             Some(p)
@@ -575,6 +575,16 @@ fn main() -> EngineResult<()> {
             let yaw = d.x.atan2(d.y).to_degrees() as f32;
             let pitch = ((h * 0.5 - 3.0) / d.length()).atan().to_degrees() as f32;
             FlyCamera::new((p.x as f32, ground(p) as f32 + 3.0, p.y as f32), yaw, pitch)
+        }
+        "market" if generated.world.underground.cavern.is_some() => {
+            // Molehaven's market from above: the well, the stalls and the
+            // mole people about them.
+            let c = generated.world.underground.cavern.as_ref().expect("cavern");
+            let a = 0.6 + std::f64::consts::TAU / 10.0;
+            let p = c.centre + DVec2::new(a.cos(), a.sin()) * 14.0;
+            let d = c.centre - p;
+            let yaw = d.x.atan2(d.y).to_degrees() as f32;
+            FlyCamera::new((p.x as f32, c.floor as f32 + 8.0, p.y as f32), yaw, -26.0)
         }
         "lift" | "tunnel" | "molehaven" => {
             // The underground: a lift pavilion on the street, a utility
@@ -1362,8 +1372,9 @@ fn main() -> EngineResult<()> {
                 let mut done = p.finished();
                 done.append(&mut held);
                 if frame.first && std::env::var_os("HW_WAIT_PEOPLE").is_some() {
-                    let all =
-                        hw_sim::citizens::LOOKS as usize + 1 + 2 * people::VILLAIN_LOOKS as usize;
+                    let all = (hw_sim::citizens::LOOKS + hw_sim::citizens::MOLE_LOOKS) as usize
+                        + 1
+                        + 2 * people::VILLAIN_LOOKS as usize;
                     let more = p.wait(all.saturating_sub(done.len()));
                     done.extend(more);
                 }

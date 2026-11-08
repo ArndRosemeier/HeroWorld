@@ -15,6 +15,7 @@
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
 use hw_gen::geom::Polyline;
+use hw_gen::urban::underground::{molehaven_layout, Underground};
 use hw_gen::urban::world::{TownWorld, WorldRoad};
 use std::collections::BTreeMap;
 
@@ -106,6 +107,8 @@ pub struct Citizens {
     /// Streets by grid cell (each street in every cell it passes).
     grid: BTreeMap<(i64, i64), Vec<u32>>,
     world: std::sync::Arc<TownWorld>,
+    /// Molehaven's people: its floor, its middle, and each one's way.
+    moles: (f64, DVec2, Vec<MoleWay>),
 }
 
 impl Citizens {
@@ -168,18 +171,20 @@ impl Citizens {
             }
             joins.push(ends);
         }
+        let moles = plan_moles(&world.underground);
         Self {
             seed,
             walks,
             joins,
             grid,
             world,
+            moles,
         }
     }
 
     /// How many citizens the town has out on its streets.
     pub fn count(&self) -> u64 {
-        self.walks.iter().map(|w| w.people as u64).sum()
+        self.walks.iter().map(|w| w.people as u64).sum::<u64>() + self.moles.2.len() as u64
     }
 
     /// Every citizen within `radius` of `around` at `time` (seconds of game
@@ -200,6 +205,17 @@ impl Citizens {
         homes.sort();
         homes.dedup();
         let mut out = Vec::new();
+        // Molehaven's people, when the cavern is near.
+        let (_, centre, ways) = &self.moles;
+        if !ways.is_empty() && centre.distance(around) < radius + 60.0 {
+            for n in 0..ways.len() as u64 {
+                if let Some(c) = self.citizen((MOLE_HOME << 20) | n, time) {
+                    if c.pos.truncate_xz().distance(around) <= radius {
+                        out.push(c);
+                    }
+                }
+            }
+        }
         for road in homes {
             for n in 0..self.walks[road as usize].people {
                 let id = ((road as u64) << 20) | n as u64;
@@ -221,6 +237,9 @@ impl Citizens {
 
     /// Citizen `id` at `time`; `None` if there is no such citizen.
     pub fn citizen(&self, id: u64, time: f64) -> Option<Citizen> {
+        if id >> 20 == MOLE_HOME {
+            return self.mole(id, time);
+        }
         let road = (id >> 20) as usize;
         let n = (id & 0xF_FFFF) as u32;
         let home = self.walks.get(road)?;
@@ -270,6 +289,55 @@ impl Citizens {
             dir = dir.perp() * if back { -side } else { side };
         }
         Some(self.at(id, p, dir, if moving { speed } else { 0.0 }, look))
+    }
+
+    /// One of Molehaven's people at `time`.
+    fn mole(&self, id: u64, time: f64) -> Option<Citizen> {
+        let (floor, _, ways) = &self.moles;
+        let way = *ways.get((id & 0xF_FFFF) as usize)?;
+        let s = self.seed.child("mole").child(id);
+        let mut rng = s.rng();
+        let look = LOOKS + (s.child("look").0 % MOLE_LOOKS as u64) as u32;
+        let (p, facing, speed) = match way {
+            MoleWay::Stand(p, d) => (p, d, 0.0),
+            MoleWay::Errand(a, b) => {
+                let speed = rng.range(0.8, 1.1);
+                let pause = rng.range(6.0, 20.0);
+                let length = a.distance(b).max(0.1);
+                let dir = (b - a) / length;
+                let walk_t = length / speed;
+                let period = 2.0 * (walk_t + pause);
+                let t = (time + rng.range(0.0, period)).rem_euclid(period);
+                if t < walk_t {
+                    (a + dir * t * speed, dir, speed)
+                } else if t < walk_t + pause {
+                    (b, dir, 0.0)
+                } else if t < 2.0 * walk_t + pause {
+                    (b - dir * (t - walk_t - pause) * speed, -dir, speed)
+                } else {
+                    (a, -dir, 0.0)
+                }
+            }
+            MoleWay::Stroll { centre, r, sign } => {
+                // Evenly spread on their ring, all at one pace.
+                let k = (id & 0xF_FFFF) as f64;
+                let speed = 0.9;
+                let a = k * 2.399 + sign * time * speed / r;
+                let (sa, ca) = (hw_core::det::sin(a), hw_core::det::cos(a));
+                (
+                    centre + DVec2::new(ca, sa) * r,
+                    DVec2::new(-sa, ca) * sign,
+                    speed,
+                )
+            }
+        };
+        Some(Citizen {
+            id,
+            pos: DVec3::new(p.x, floor + 0.02, p.y),
+            facing: facing.normalize_or(DVec2::Y),
+            speed,
+            look,
+        })
     }
 
     fn at(&self, id: u64, p: DVec2, facing: DVec2, speed: f64, look: u32) -> Citizen {
@@ -397,6 +465,76 @@ impl Xz for DVec3 {
     }
 }
 
+// ---- Molehaven's people -------------------------------------------------
+
+/// Citizens with a look of [`LOOKS`] or more are mole people; there are
+/// this many mole looks.
+pub const MOLE_LOOKS: u32 = 4;
+/// The "street" mole people's ids carry (they live in no street).
+const MOLE_HOME: u64 = 0xF_FFFF;
+/// Where the market's shoppers walk to, from the well (m): past the stalls
+/// (9 m out, their awnings 1.2 m further).
+const MARKET_RING: f64 = 11.2;
+
+/// How one of Molehaven's people spends the day.
+#[derive(Clone, Copy, Debug)]
+enum MoleWay {
+    /// Stands (a stallkeeper, a shopper, neighbours chatting).
+    Stand(DVec2, DVec2),
+    /// From a house door to a market stall and back, pausing at each.
+    Errand(DVec2, DVec2),
+    /// Round and round the well.
+    Stroll { centre: DVec2, r: f64, sign: f64 },
+}
+
+/// Molehaven's people: where each spends its day.
+fn plan_moles(u: &Underground) -> (f64, DVec2, Vec<MoleWay>) {
+    let Some(l) = molehaven_layout(u) else {
+        return (0.0, DVec2::ZERO, Vec::new());
+    };
+    let mut ways = Vec::new();
+    let (well, well_r) = l.well;
+    for &(at, d) in &l.stalls {
+        // The keeper behind the counter, a shopper in front.
+        ways.push(MoleWay::Stand(at - d * 1.3, d));
+        ways.push(MoleWay::Stand(at + d * 1.5, -d));
+    }
+    for h in &l.houses {
+        match h.door {
+            Some(door) => {
+                let front = h.at + door * (h.stem * 1.35 + 0.8);
+                // To the market ring, just past the stalls' awnings, and
+                // back: straight towards the middle, so clear of the stalls
+                // and the other houses.
+                let out = front - well;
+                let market = well + out.normalize_or(DVec2::X) * MARKET_RING;
+                if out.length() > MARKET_RING + 1.5 {
+                    ways.push(MoleWay::Errand(front, market));
+                    ways.push(MoleWay::Errand(market, front));
+                } else {
+                    ways.push(MoleWay::Stand(front, door));
+                }
+            }
+            None => {
+                // Neighbours chatting by the house.
+                let a = h.at + DVec2::X * (h.stem * 1.35 + 0.7);
+                let b = a + DVec2::new(0.4, 1.0);
+                ways.push(MoleWay::Stand(a, (b - a).normalize()));
+                ways.push(MoleWay::Stand(b, (a - b).normalize()));
+            }
+        }
+    }
+    for k in 0..8 {
+        ways.push(MoleWay::Stroll {
+            centre: well,
+            // Inner ring one way, outer the other, evenly spaced.
+            r: well_r + 2.6 + (k % 2) as f64 * 0.9,
+            sign: if k % 2 == 0 { 1.0 } else { -1.0 },
+        });
+    }
+    (l.floor, well, ways)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +543,52 @@ mod tests {
     fn town() -> Citizens {
         let t = GeneratedTown::generate(Seed(1), 3000.0);
         Citizens::new(t.world)
+    }
+
+    #[test]
+    fn molehaven_has_people_who_keep_clear_of_its_furniture() {
+        let t = GeneratedTown::generate(Seed(1), 40_000.0);
+        let l = molehaven_layout(&t.world.underground).expect("the town has Molehaven");
+        let c = Citizens::new(t.world.clone());
+        let (_, centre, ways) = &c.moles;
+        assert!(ways.len() >= 30, "{} mole people", ways.len());
+        let mut moved = 0;
+        for k in 0..240 {
+            let time = k as f64 * 5.0;
+            let near = c.near(*centre, 80.0, time, 1000);
+            let moles: Vec<_> = near.iter().filter(|p| p.look >= LOOKS).collect();
+            assert_eq!(
+                moles.len(),
+                ways.len(),
+                "all of them are seen near the cavern"
+            );
+            for m in moles {
+                let p = m.pos.truncate_xz();
+                assert!((m.pos.y - l.floor).abs() < 0.1, "on the cavern floor");
+                assert!(
+                    t.world.underground.at(p).next().is_some(),
+                    "{p} is inside the cavern"
+                );
+                assert!(p.distance(l.well.0) > l.well.1 + 0.5, "{p} in the well");
+                for h in &l.houses {
+                    assert!(p.distance(h.at) > h.stem * 1.35 + 0.4, "{p} in a house");
+                }
+                for &(at, d) in &l.stalls {
+                    let q = p - at;
+                    let (along, side) = (q.dot(d), q.dot(d.perp()).abs());
+                    // Behind the counter is the keeper's place.
+                    let keeper = (along + 1.3).abs() < 0.01 && side < 0.01;
+                    assert!(
+                        keeper || !(side < 1.4 && along > -0.6 && along < 0.9),
+                        "{p} walks through a stall"
+                    );
+                }
+                if m.speed > 0.0 {
+                    moved += 1;
+                }
+            }
+        }
+        assert!(moved > 0, "some of them walk about");
     }
 
     #[test]

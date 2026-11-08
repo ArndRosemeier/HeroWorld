@@ -681,6 +681,42 @@ pub fn villain(
     c
 }
 
+/// One of Molehaven's people: short and stocky, pale from a life
+/// underground, big dark goggles against the light, in earth-brown work
+/// clothes.
+pub fn mole_person(builder: &CharacterBuilder, look: u32) -> actors_generator::CharacterConfig {
+    let seed = name_seed(&format!("mole person {look}"));
+    let mut c = golden_age(builder.catalog(), seed, false);
+    let mut rng = hw_core::Seed(seed as u64).child("mole").rng();
+    let catalog = builder.catalog();
+    let has = |id: &str| catalog.garments.iter().any(|g| g.id == id);
+    let b = &mut c.body;
+    b.height = rng.range(0.0, 0.15);
+    b.weight = rng.range(0.6, 0.8);
+    b.muscle = rng.range(0.5, 0.7);
+    b.proportions = 0.3;
+    b.age_years = rng.range(25.0, 70.0);
+    c.skin = actors_generator::SkinKind::Procedural;
+    let skins = ["#e6c9c3", "#dcbcb8", "#d9c4b4", "#e8d2c8"];
+    c.skin_color = Some(skins[look as usize % skins.len()].to_string());
+    c.eye_color = Some("#c9a0ff".into());
+    c.eye_glow = 0.35;
+    c.hair_color = Some("#d8d4cc".into());
+    c.outfit = ["worksuit", "tinted-glasses", "gloves-short", "work-boots"]
+        .iter()
+        .filter(|g| has(g))
+        .map(|g| g.to_string())
+        .collect();
+    let browns = ["#6b4a2e", "#5a4632", "#7a5a3a", "#4e3b2a"];
+    c.garment_colors.insert(
+        "worksuit".into(),
+        browns[look as usize % browns.len()].into(),
+    );
+    c.garment_colors
+        .insert("gloves-short".into(), "#3a2c20".into());
+    c
+}
+
 /// Builds one character (on the worker); `config` is a made hero's looks.
 pub fn build(
     builder: &mut CharacterBuilder,
@@ -700,6 +736,9 @@ pub fn build(
     builder.allow(&allow(hero));
     let config = match (who, config) {
         (Who::Villain(kind, look), _) => villain(builder, *kind, *look),
+        (Who::Citizen(look), _) if *look >= hw_sim::citizens::LOOKS => {
+            mole_person(builder, *look - hw_sim::citizens::LOOKS)
+        }
         // Made looks, from this PC or a friend's: kept to the hero rules.
         (_, Some(c)) => crate::looks::hero_rules(&hero_catalog(builder.catalog()), c),
         _ => golden_age(builder.catalog(), rseed, hero),

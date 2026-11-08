@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.049 (2026-11-08)
+
+- Molehaven is alive: short, pale mole folk in goggles keep the market stalls, run errands from
+  their mushroom houses, stroll round the glowing well and chat in the side caves.
+
 ## 0.048 (2026-11-08)
 
 - Flying taxis and hover cars have a cabin you can see through the bubble: red leather benches,
