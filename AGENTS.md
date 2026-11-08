@@ -18,6 +18,7 @@ file; when they change, re-export the snapshot here.
 | `hw-sim` | the server and the truth: entities, bubbles, physics, combat, destruction, saves (bevy_ecs); `host::Host` wraps it with players, interest and a socket; binary `hw-headless` | hw-core, hw-gen, hw-net, engine (`engine::physics::PhysicsWorld` only) |
 | `hw-net` | protocol, UDP sockets and the GameHub relay, client connection, reliable messages, replication (per-client acks, change-only updates); later host migration | hw-core |
 | `hw-client` | Engine client: rendering, input, camera, UI, prediction; binary `heroworld` | all of the above, engine |
+| `dupcheck` (`tools/`) | a dev tool: finds duplicated code (`scripts/dupcheck.sh`) | std only |
 
 ## Rules
 
@@ -50,7 +51,14 @@ file; when they change, re-export the snapshot here.
 scripts/check.sh        # cargo fmt --check, clippy -D warnings, cargo test --workspace
 scripts/screenshot.sh   # renders the client headless to screenshots/client.png
 cargo run -p hw-gen --example city_map -- 1 screenshots/city.svg   # a city plan as a map
+scripts/dupcheck.sh     # duplicated code: same-name functions, body clones, repeated snippets
 ```
+
+Duplicated code: run `scripts/dupcheck.sh` now and then (after a milestone, before adding a
+helper you suspect exists) and read `reports/repeated-code.md` first. It is a reading list, not
+a gate; how to read it is in [`tools/dupcheck/README.md`](tools/dupcheck/README.md). Shared
+geometry already lives in `hw_gen::geom` (`Polyline`, `signed_area`), `hw_gen::water::segment_distance`
+and `hw_gen::urban::roadgrid` (roads near a point): use those rather than writing them again.
 
 Playing together on one machine: `HW_HOST=1 cargo run -p hw-client` in one window,
 `HW_JOIN=127.0.0.1:7777 cargo run -p hw-client` in another (or `cargo run -p hw-sim --bin

@@ -9,6 +9,7 @@
 //! shaft). Collision, the carved ground and the drawn linings all come from
 //! the same voids.
 
+use super::roadgrid::{key, keys_around, Key, RoadGrid};
 use super::world::{TownWorld, DECK, WATER_LEVEL};
 use glam::{DVec2, DVec3};
 use std::collections::BTreeMap;
@@ -24,8 +25,6 @@ const PASSAGE_HEIGHT: f64 = 3.2;
 pub const SHAFT_HALF: f64 = 1.7;
 /// Molehaven's floor below the lowest ground over it.
 pub const CAVERN_DEPTH: f64 = 27.0;
-/// Grid cell for finding voids by place.
-const CELL: f64 = 32.0;
 
 /// What a void is (for drawing it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -150,7 +149,7 @@ pub struct Underground {
 impl Underground {
     /// Voids whose rectangle reaches `p` (plan).
     pub fn at(&self, p: DVec2) -> impl Iterator<Item = (usize, &Void)> + '_ {
-        let k = cell_of(p);
+        let k = key(p);
         self.grid
             .get(&k)
             .into_iter()
@@ -161,7 +160,7 @@ impl Underground {
 
     /// Voids near `p` (within `r`, roughly).
     pub fn near(&self, p: DVec2, r: f64) -> Vec<usize> {
-        let (a, b) = (cell_of(p - DVec2::splat(r)), cell_of(p + DVec2::splat(r)));
+        let (a, b) = (key(p - DVec2::splat(r)), key(p + DVec2::splat(r)));
         let mut out = Vec::new();
         for x in a.0..=b.0 {
             for (_, list) in self.grid.range((x, a.1)..=(x, b.1)) {
@@ -221,7 +220,7 @@ impl Underground {
             let c = v.corners();
             let lo = c.iter().fold(DVec2::splat(f64::MAX), |a, p| a.min(*p));
             let hi = c.iter().fold(DVec2::splat(f64::MIN), |a, p| a.max(*p));
-            let (a, b) = (cell_of(lo), cell_of(hi));
+            let (a, b) = (key(lo), key(hi));
             for x in a.0..=b.0 {
                 for y in a.1..=b.1 {
                     self.grid.entry((x, y)).or_default().push(i as u32);
@@ -231,68 +230,38 @@ impl Underground {
     }
 }
 
-fn cell_of(p: DVec2) -> (i64, i64) {
-    ((p.x / CELL).floor() as i64, (p.y / CELL).floor() as i64)
-}
-
-fn seg_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
-    let ab = b - a;
-    let t = ((p - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
-    p.distance(a + ab * t)
-}
-
 /// What stands on the ground, to find free spots for lift pavilions.
 struct Ground<'a> {
     w: &'a TownWorld,
-    roads: BTreeMap<(i64, i64), Vec<(usize, usize)>>,
-    buildings: BTreeMap<(i64, i64), Vec<usize>>,
-    props: BTreeMap<(i64, i64), Vec<usize>>,
+    roads: RoadGrid<'a>,
+    buildings: BTreeMap<Key, Vec<usize>>,
+    props: BTreeMap<Key, Vec<usize>>,
 }
 
 impl<'a> Ground<'a> {
     fn new(w: &'a TownWorld) -> Self {
-        let mut roads: BTreeMap<(i64, i64), Vec<(usize, usize)>> = BTreeMap::new();
-        for (ri, r) in w.roads.iter().enumerate() {
-            for si in 0..r.pts.len().saturating_sub(1) {
-                let (a, b) = (r.pts[si], r.pts[si + 1]);
-                let reach = r.half + r.pavement + 2.0;
-                let lo = a.min(b) - DVec2::splat(reach);
-                let hi = a.max(b) + DVec2::splat(reach);
-                let (c0, c1) = (cell_of(lo), cell_of(hi));
-                for x in c0.0..=c1.0 {
-                    for y in c0.1..=c1.1 {
-                        roads.entry((x, y)).or_default().push((ri, si));
-                    }
-                }
-            }
-        }
-        let mut buildings: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+        let mut buildings: BTreeMap<Key, Vec<usize>> = BTreeMap::new();
         for (i, b) in w.buildings.iter().enumerate() {
             let c = b.site.corners();
             let lo = c.iter().fold(DVec2::splat(f64::MAX), |a, p| a.min(*p));
             let hi = c.iter().fold(DVec2::splat(f64::MIN), |a, p| a.max(*p));
-            let (c0, c1) = (cell_of(lo), cell_of(hi));
+            let (c0, c1) = (key(lo), key(hi));
             for x in c0.0..=c1.0 {
                 for y in c0.1..=c1.1 {
                     buildings.entry((x, y)).or_default().push(i);
                 }
             }
         }
-        let mut props: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+        let mut props: BTreeMap<Key, Vec<usize>> = BTreeMap::new();
         for (i, p) in w.props.iter().enumerate() {
-            props.entry(cell_of(p.pos)).or_default().push(i);
+            props.entry(key(p.pos)).or_default().push(i);
         }
         Self {
             w,
-            roads,
+            roads: RoadGrid::new(w, 2.0),
             buildings,
             props,
         }
-    }
-
-    fn cells(p: DVec2, r: f64) -> impl Iterator<Item = (i64, i64)> {
-        let (a, b) = (cell_of(p - DVec2::splat(r)), cell_of(p + DVec2::splat(r)));
-        (a.0..=b.0).flat_map(move |x| (a.1..=b.1).map(move |y| (x, y)))
     }
 
     /// Is a circle of radius `r` at `p` free of roads (and pavements),
@@ -301,16 +270,10 @@ impl<'a> Ground<'a> {
         if self.w.ground(p) < DECK + 1.0 {
             return false;
         }
-        for k in Self::cells(p, r) {
-            if let Some(list) = self.roads.get(&k) {
-                for &(ri, si) in list {
-                    let road = &self.w.roads[ri];
-                    let d = seg_distance(p, road.pts[si], road.pts[si + 1]);
-                    if d < road.half + road.pavement + r + 0.3 {
-                        return false;
-                    }
-                }
-            }
+        if self.roads.touches(p, r + 0.3, None) {
+            return false;
+        }
+        for k in keys_around(p, r) {
             if let Some(list) = self.buildings.get(&k) {
                 for &i in list {
                     let s = &self.w.buildings[i].site;

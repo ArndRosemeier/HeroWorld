@@ -1,0 +1,10 @@
+[package]
+name = "dupcheck"
+description = "Finds duplicated Rust code: same-name functions, body clones under any name, repeated snippets. A Rust port of Toolbox's duplicate-candidates and repeated-code. std only."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true

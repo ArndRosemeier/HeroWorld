@@ -14,11 +14,13 @@
 
 use super::growth::Era;
 use super::plots::region_of;
+use super::roadgrid::{key, keys_around, Key, RoadGrid};
 use super::roads::RoadClass;
 use super::streets::StreetStyle;
 use super::world::{TownWorld, WorldRoad, DECK};
 use crate::building::BuildingUse;
 use crate::style::Region;
+use crate::water::segment_distance;
 use glam::DVec2;
 use hw_core::{Rng, Seed};
 use std::collections::BTreeMap;
@@ -153,28 +155,9 @@ impl<'a> Walk<'a> {
     }
 }
 
-pub(super) type Key = (i64, i64);
-const GRID: f64 = 32.0;
-
-pub(super) fn key(p: DVec2) -> Key {
-    ((p.x / GRID).floor() as i64, (p.y / GRID).floor() as i64)
-}
-
-pub(super) fn keys_around(p: DVec2, r: f64) -> impl Iterator<Item = Key> {
-    let (a, b) = (key(p - DVec2::splat(r)), key(p + DVec2::splat(r)));
-    (a.0..=b.0).flat_map(move |x| (a.1..=b.1).map(move |z| (x, z)))
-}
-
-pub(super) fn seg_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
-    let ab = b - a;
-    let t = ((p - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
-    p.distance(a + ab * t)
-}
-
 struct Placer<'a> {
     w: &'a TownWorld,
-    /// Road segments by grid cell: (road, segment).
-    roads: BTreeMap<Key, Vec<(usize, usize)>>,
+    roads: RoadGrid<'a>,
     buildings: BTreeMap<Key, Vec<usize>>,
     taken: BTreeMap<Key, Vec<(DVec2, f64)>>,
     out: Vec<Prop>,
@@ -182,20 +165,6 @@ struct Placer<'a> {
 
 impl<'a> Placer<'a> {
     fn new(w: &'a TownWorld) -> Self {
-        let mut roads: BTreeMap<Key, Vec<(usize, usize)>> = BTreeMap::new();
-        for (ri, r) in w.roads.iter().enumerate() {
-            let reach = r.half + r.pavement;
-            for (si, s) in r.pts.windows(2).enumerate() {
-                let lo = s[0].min(s[1]) - DVec2::splat(reach);
-                let hi = s[0].max(s[1]) + DVec2::splat(reach);
-                let (a, b) = (key(lo), key(hi));
-                for x in a.0..=b.0 {
-                    for z in a.1..=b.1 {
-                        roads.entry((x, z)).or_default().push((ri, si));
-                    }
-                }
-            }
-        }
         let mut buildings: BTreeMap<Key, Vec<usize>> = BTreeMap::new();
         for (i, b) in w.buildings.iter().enumerate() {
             let c = b.site.corners();
@@ -210,7 +179,7 @@ impl<'a> Placer<'a> {
         }
         Placer {
             w,
-            roads,
+            roads: RoadGrid::new(w, 0.0),
             buildings,
             taken: BTreeMap::new(),
             out: Vec::new(),
@@ -220,16 +189,13 @@ impl<'a> Placer<'a> {
     /// Does a circle of radius `r` at `p` reach onto a carriageway (of any
     /// road but `own`), or with `pavements` onto any road at all?
     fn on_road(&self, p: DVec2, r: f64, own: Option<usize>, pavements: bool) -> bool {
-        let Some(list) = self.roads.get(&key(p)) else {
-            return false;
-        };
-        list.iter().any(|&(ri, si)| {
+        self.roads.at(key(p)).iter().any(|&(ri, si)| {
             if Some(ri) == own {
                 return false;
             }
             let road = &self.w.roads[ri];
             let reach = road.half + if pavements { road.pavement } else { 0.0 };
-            seg_distance(p, road.pts[si], road.pts[si + 1]) < reach + r
+            segment_distance(p, road.pts[si], road.pts[si + 1]) < reach + r
         })
     }
 

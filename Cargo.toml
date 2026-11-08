@@ -6,6 +6,7 @@ members = [
     "crates/hw-sim",
     "crates/hw-net",
     "crates/hw-client",
+    "tools/dupcheck",
 ]
 # The client pulls in Engine (wgpu, winit): leave it out of plain `cargo test`
 # runs on machines without the system libraries; `cargo test --workspace` builds it.
@@ -14,6 +15,7 @@ default-members = [
     "crates/hw-gen",
     "crates/hw-sim",
     "crates/hw-net",
+    "tools/dupcheck",
 ]
 
 [workspace.package]

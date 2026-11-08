@@ -21,6 +21,7 @@ use hw_gen::building::BuildingPlan;
 use hw_gen::urban::growth::CentreKind;
 use hw_gen::urban::landmarks::LandmarkKind;
 use hw_gen::urban::world::TownWorld;
+use hw_gen::water::segment_distance;
 use hw_net::PlayerId;
 use std::sync::Arc;
 
@@ -388,23 +389,17 @@ fn express_height(town: Option<&TownWorld>, a: DVec3, b: DVec3) -> f64 {
         for bd in &t.buildings {
             let s = &bd.site;
             let c = s.origin + s.along * s.size.x * 0.5 + s.inward * s.size.y * 0.5;
-            if seg_dist(c, a2, b2) < 60.0 + s.size.max_element() {
+            if segment_distance(c, a2, b2) < 60.0 + s.size.max_element() {
                 top = top.max(bd.base + s.height() + 12.0 + CLEAR);
             }
         }
         for l in &t.landmarks {
-            if seg_dist(l.pos, a2, b2) < 80.0 {
+            if segment_distance(l.pos, a2, b2) < 80.0 {
                 top = top.max(l.base + l.height + CLEAR);
             }
         }
     }
     (top / 10.0).ceil() * 10.0
-}
-
-fn seg_dist(p: DVec2, a: DVec2, b: DVec2) -> f64 {
-    let ab = b - a;
-    let t = ((p - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
-    p.distance(a + ab * t)
 }
 
 /// The town's taxi stands: its centre, landmarks, the waterfront, the old

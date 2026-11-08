@@ -8,11 +8,10 @@
 
 use super::growth::CentreKind;
 use super::land::Cover;
-use super::props::{key, keys_around, seg_distance, Key};
+use super::roadgrid::RoadGrid;
 use super::world::{TownWorld, WATER_LEVEL};
 use crate::building::BuildingSite;
 use glam::DVec2;
-use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LandmarkKind {
@@ -58,7 +57,7 @@ impl Landmark {
 
 /// Picks the landmarks' places (buildings are cleared off them afterwards).
 pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
-    let roads = RoadIndex::new(w);
+    let roads = RoadGrid::new(w, 0.0);
     let core = w
         .town
         .growth
@@ -183,7 +182,7 @@ fn rim(w: &TownWorld, p: DVec2, r: f64) -> (f64, f64) {
 #[allow(clippy::too_many_arguments)]
 fn best_spot(
     w: &TownWorld,
-    roads: &RoadIndex,
+    roads: &RoadGrid,
     centre: DVec2,
     reach: f64,
     step: f64,
@@ -204,52 +203,13 @@ fn best_spot(
                 continue;
             }
             let (lo, hi) = rim(w, p, plaza);
-            if lo < WATER_LEVEL + 1.2 || hi - lo > slope || roads.near(p, plaza + 0.8) {
+            if lo < WATER_LEVEL + 1.2 || hi - lo > slope || roads.touches(p, plaza + 0.8, None) {
                 continue;
             }
             best = Some((p, s));
         }
     }
     best
-}
-
-/// Road segments by grid cell, to ask quickly whether a disc touches a road.
-struct RoadIndex<'a> {
-    w: &'a TownWorld,
-    cells: BTreeMap<Key, Vec<(usize, usize)>>,
-}
-
-impl<'a> RoadIndex<'a> {
-    fn new(w: &'a TownWorld) -> Self {
-        let mut cells: BTreeMap<Key, Vec<(usize, usize)>> = BTreeMap::new();
-        for (ri, r) in w.roads.iter().enumerate() {
-            let reach = r.half + r.pavement;
-            for (si, s) in r.pts.windows(2).enumerate() {
-                let (a, b) = (
-                    key(s[0].min(s[1]) - DVec2::splat(reach)),
-                    key(s[0].max(s[1]) + DVec2::splat(reach)),
-                );
-                for x in a.0..=b.0 {
-                    for z in a.1..=b.1 {
-                        cells.entry((x, z)).or_default().push((ri, si));
-                    }
-                }
-            }
-        }
-        RoadIndex { w, cells }
-    }
-
-    /// Does a disc reach onto any road or its pavements?
-    fn near(&self, p: DVec2, r: f64) -> bool {
-        keys_around(p, r).any(|k| {
-            self.cells.get(&k).is_some_and(|l| {
-                l.iter().any(|&(ri, si)| {
-                    let road = &self.w.roads[ri];
-                    seg_distance(p, road.pts[si], road.pts[si + 1]) < road.half + road.pavement + r
-                })
-            })
-        })
-    }
 }
 
 #[cfg(test)]

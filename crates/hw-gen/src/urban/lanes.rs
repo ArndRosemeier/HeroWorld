@@ -16,6 +16,7 @@
 //! of time (see `hw_sim::traffic`).
 
 use super::world::{TownWorld, WorldRoad};
+use crate::geom::{locate, Polyline};
 use glam::DVec2;
 use hw_core::{det, Seed};
 use std::collections::BTreeMap;
@@ -56,14 +57,8 @@ impl LaneLoop {
         if len <= 0.0 || self.pts.len() < 2 {
             return (self.pts.first().copied().unwrap_or_default(), DVec2::Y);
         }
-        let s = s.rem_euclid(len);
-        let k = match self.at.binary_search_by(|v| v.total_cmp(&s)) {
-            Ok(i) => i.min(self.pts.len() - 2),
-            Err(i) => i.saturating_sub(1).min(self.pts.len() - 2),
-        };
+        let (k, t) = locate(&self.at, s.rem_euclid(len));
         let (a, b) = (self.pts[k], self.pts[k + 1]);
-        let seg = (self.at[k + 1] - self.at[k]).max(1e-9);
-        let t = ((s - self.at[k]) / seg).clamp(0.0, 1.0);
         (a.lerp(b, t), (b - a).normalize_or(DVec2::Y))
     }
 
@@ -90,73 +85,6 @@ impl LaneLoop {
     }
 }
 
-/// A road's centre line, measured.
-struct Line {
-    pts: Vec<DVec2>,
-    at: Vec<f64>,
-}
-
-impl Line {
-    fn new(pts: &[DVec2]) -> Self {
-        let mut pts = pts.to_vec();
-        pts.dedup_by(|a, b| a.distance(*b) < 1e-6);
-        if pts.len() < 2 {
-            let p = pts.first().copied().unwrap_or_default();
-            pts = vec![p, p + DVec2::X * 0.01];
-        }
-        let mut at = vec![0.0];
-        for w in pts.windows(2) {
-            at.push(at.last().unwrap() + w[0].distance(w[1]));
-        }
-        Self { pts, at }
-    }
-
-    fn len(&self) -> f64 {
-        *self.at.last().unwrap()
-    }
-
-    fn point(&self, s: f64) -> DVec2 {
-        let s = s.clamp(0.0, self.len());
-        let k = match self.at.binary_search_by(|v| v.total_cmp(&s)) {
-            Ok(i) => i.min(self.pts.len() - 2),
-            Err(i) => i.saturating_sub(1).min(self.pts.len() - 2),
-        };
-        let seg = (self.at[k + 1] - self.at[k]).max(1e-9);
-        self.pts[k].lerp(self.pts[k + 1], ((s - self.at[k]) / seg).clamp(0.0, 1.0))
-    }
-
-    /// Distance along the line of the point nearest `p`, and how far off.
-    fn nearest(&self, p: DVec2) -> (f64, f64) {
-        let mut best = (0.0, f64::MAX);
-        for k in 0..self.pts.len() - 1 {
-            let (a, b) = (self.pts[k], self.pts[k + 1]);
-            let ab = b - a;
-            let t = ((p - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
-            let d = p.distance(a + ab * t);
-            if d < best.1 {
-                best = (self.at[k] + t * (self.at[k + 1] - self.at[k]), d);
-            }
-        }
-        best
-    }
-
-    /// The line from `s0` to `s1` (either way round).
-    fn slice(&self, s0: f64, s1: f64) -> Vec<DVec2> {
-        let (lo, hi) = (s0.min(s1), s0.max(s1));
-        let mut out = vec![self.point(lo)];
-        for (i, &a) in self.at.iter().enumerate() {
-            if a > lo + 1e-6 && a < hi - 1e-6 {
-                out.push(self.pts[i]);
-            }
-        }
-        out.push(self.point(hi));
-        if s0 > s1 {
-            out.reverse();
-        }
-        out
-    }
-}
-
 /// A piece of road between two junctions.
 struct Edge {
     road: usize,
@@ -174,9 +102,9 @@ pub fn plan_lanes(
     offset: impl Fn(&WorldRoad) -> f64,
     seed: Seed,
 ) -> Vec<LaneLoop> {
-    let lines: Vec<Line> = roads
+    let lines: Vec<Polyline> = roads
         .iter()
-        .map(|&r| Line::new(&world.roads[r].pts))
+        .map(|&r| Polyline::new(&world.roads[r].pts))
         .collect();
     let half = |i: usize| world.roads[roads[i]].half;
     // Roads by grid cell.

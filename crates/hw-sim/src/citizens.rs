@@ -14,6 +14,7 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
+use hw_gen::geom::Polyline;
 use hw_gen::urban::world::{TownWorld, WorldRoad};
 use std::collections::BTreeMap;
 
@@ -70,9 +71,7 @@ impl Leg {
 
 /// A street's pavement centre line, measured.
 struct Walk {
-    pts: Vec<DVec2>,
-    /// Distance along the line at each point.
-    at: Vec<f64>,
+    line: Polyline,
     /// Pavement offset from the centre line.
     offset: f64,
     /// Walkers living on this street.
@@ -81,36 +80,20 @@ struct Walk {
 
 impl Walk {
     fn len(&self) -> f64 {
-        *self.at.last().unwrap_or(&0.0)
+        self.line.len()
     }
 
     /// Point and direction at distance `s`, `side` = -1 left or 1 right.
     fn sample(&self, s: f64, side: f64) -> (DVec2, DVec2) {
-        let s = s.clamp(0.0, self.len());
-        let k = match self.at.binary_search_by(|v| v.total_cmp(&s)) {
-            Ok(i) => i.min(self.pts.len() - 2),
-            Err(i) => i.saturating_sub(1).min(self.pts.len() - 2),
-        };
-        let (a, b) = (self.pts[k], self.pts[k + 1]);
-        let seg = (self.at[k + 1] - self.at[k]).max(1e-9);
-        let t = ((s - self.at[k]) / seg).clamp(0.0, 1.0);
+        let (k, t) = self.line.locate(s);
+        let (a, b) = (self.line.pts[k], self.line.pts[k + 1]);
         let dir = (b - a).normalize_or_zero();
         (a.lerp(b, t) + dir.perp() * self.offset * side, dir)
     }
 
     /// Distance along the line of the point nearest `p` (and how far off).
     fn nearest(&self, p: DVec2) -> (f64, f64) {
-        let mut best = (0.0, f64::MAX);
-        for k in 0..self.pts.len() - 1 {
-            let (a, b) = (self.pts[k], self.pts[k + 1]);
-            let ab = b - a;
-            let t = ((p - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
-            let d = p.distance(a + ab * t);
-            if d < best.1 {
-                best = (self.at[k] + t * (self.at[k + 1] - self.at[k]), d);
-            }
-        }
-        best
+        self.line.nearest(p)
     }
 }
 
@@ -139,13 +122,14 @@ impl Citizens {
         let mut grid: BTreeMap<(i64, i64), Vec<u32>> = BTreeMap::new();
         for (i, w) in walks.iter().enumerate() {
             let mut cells = Vec::new();
-            for p in &w.pts {
+            for p in &w.line.pts {
                 cells.push(cell_of(*p));
             }
-            for k in 0..w.pts.len().saturating_sub(1) {
-                let n = (w.pts[k].distance(w.pts[k + 1]) / (CELL * 0.5)).ceil() as usize;
+            let pts = &w.line.pts;
+            for k in 0..pts.len().saturating_sub(1) {
+                let n = (pts[k].distance(pts[k + 1]) / (CELL * 0.5)).ceil() as usize;
                 for j in 1..n {
-                    cells.push(cell_of(w.pts[k].lerp(w.pts[k + 1], j as f64 / n as f64)));
+                    cells.push(cell_of(pts[k].lerp(pts[k + 1], j as f64 / n as f64)));
                 }
             }
             cells.sort();
@@ -157,7 +141,7 @@ impl Citizens {
         let mut joins = Vec::with_capacity(walks.len());
         for (i, w) in walks.iter().enumerate() {
             let mut ends: [Vec<(u32, f64)>; 2] = [Vec::new(), Vec::new()];
-            for (e, p) in [w.pts[0], *w.pts.last().expect("walk has points")]
+            for (e, p) in [w.line.pts[0], *w.line.pts.last().expect("walk has points")]
                 .into_iter()
                 .enumerate()
             {
@@ -380,17 +364,9 @@ fn cell_of(p: DVec2) -> (i64, i64) {
 }
 
 fn walk_of(r: &WorldRoad, core: DVec2, reach: f64, seed: Seed) -> Walk {
-    let mut pts = r.pts.clone();
-    pts.dedup_by(|a, b| a.distance(*b) < 1e-6);
-    if pts.len() < 2 {
-        pts = vec![r.pts[0], r.pts[0] + DVec2::X * 0.01];
-    }
-    let mut at = vec![0.0];
-    for w in pts.windows(2) {
-        at.push(at.last().unwrap() + w[0].distance(w[1]));
-    }
-    let len = *at.last().unwrap();
-    let mid = pts[pts.len() / 2];
+    let line = Polyline::new(&r.pts);
+    let len = line.len();
+    let mid = line.pts[line.pts.len() / 2];
     let t = (mid.distance(core) / reach).clamp(0.0, 1.0);
     // Busy at the core, quiet at the edge (smoothly).
     let k = 1.0 - t * t * (3.0 - 2.0 * t);
@@ -405,8 +381,7 @@ fn walk_of(r: &WorldRoad, core: DVec2, reach: f64, seed: Seed) -> Walk {
     let want = len * density;
     let people = (want.floor() + if seed.unit() < want.fract() { 1.0 } else { 0.0 }) as u32;
     Walk {
-        pts,
-        at,
+        line,
         offset: r.half + r.pavement * 0.5,
         people: people.min(0xF_FFFF),
     }

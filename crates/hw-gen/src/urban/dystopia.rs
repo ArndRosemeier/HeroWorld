@@ -7,6 +7,7 @@
 //! lights, barricades.
 
 use super::{contains, inner_point, CentreKind, Era, Growth, Piece};
+use crate::water::segment_distance;
 use glam::DVec2;
 use hw_core::Seed;
 use std::collections::BTreeMap;
@@ -177,14 +178,8 @@ impl Dystopia {
 
 fn outline_distance(o: &[DVec2], p: DVec2) -> f64 {
     (0..o.len())
-        .map(|k| seg_distance(p, o[k], o[(k + 1) % o.len()]))
+        .map(|k| segment_distance(p, o[k], o[(k + 1) % o.len()]))
         .fold(f64::MAX, f64::min)
-}
-
-fn seg_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
-    let ab = b - a;
-    let t = ((p - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
-    p.distance(a + ab * t)
 }
 
 #[cfg(test)]

@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.039 (2026-11-08)
+
+- Under the hood: a tidy-up of repeated code in town building. Towns come out exactly as before.
+
 ## 0.038 (2026-11-08)
 
 - Make your own hero: New hero opens the hero creator. Pick a body, face, hair and costume in a

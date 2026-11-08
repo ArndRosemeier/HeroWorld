@@ -4,10 +4,10 @@
 //! A wall runs along a road's outer edge wherever the water starts just
 //! beyond it, unless another road paves that side or a bridge leaves there.
 
-use super::props::{key, keys_around, seg_distance, Key};
+use super::roadgrid::RoadGrid;
 use super::world::{TownWorld, WATER_LEVEL};
+use crate::water::segment_distance;
 use glam::DVec2;
-use std::collections::BTreeMap;
 
 /// Spacing of the samples along a wall (m).
 pub const WALL_STEP: f64 = 2.0;
@@ -44,7 +44,7 @@ impl WaterSteps {
 }
 
 pub fn plan_waterfront(w: &TownWorld) -> (Vec<QuayWall>, Vec<WaterSteps>) {
-    let roads = Roads::new(w);
+    let roads = RoadGrid::new(w, 0.0);
     let wet = |p: DVec2| w.ground(p) < WATER_LEVEL + 0.05;
     let mut walls = Vec::new();
     for (ri, r) in w.roads.iter().enumerate() {
@@ -82,9 +82,9 @@ pub fn plan_waterfront(w: &TownWorld) -> (Vec<QuayWall>, Vec<WaterSteps>) {
                 let ok = wet(beyond)
                     // On a bridge the street itself is over the water.
                     && !wet(c)
-                    && !roads.paved(e + n * 0.6, 0.2, ri)
+                    && !roads.touches(e + n * 0.6, 0.2, Some(ri))
                     && !w.bridges.iter().any(|b| {
-                        seg_distance(e, b.a, b.b) < b.half + 1.5 && seg_distance(c, b.a, b.b) > 0.5
+                        segment_distance(e, b.a, b.b) < b.half + 1.5 && segment_distance(c, b.a, b.b) > 0.5
                     });
                 if !ok {
                     flush(&mut cur);
@@ -148,47 +148,6 @@ fn resample(pts: &[DVec2], step: f64) -> Vec<(DVec2, DVec2)> {
         carry = s - l;
     }
     out
-}
-
-/// Road segments by grid cell.
-struct Roads<'a> {
-    w: &'a TownWorld,
-    cells: BTreeMap<Key, Vec<(usize, usize)>>,
-}
-
-impl<'a> Roads<'a> {
-    fn new(w: &'a TownWorld) -> Self {
-        let mut cells: BTreeMap<Key, Vec<(usize, usize)>> = BTreeMap::new();
-        for (ri, r) in w.roads.iter().enumerate() {
-            let reach = r.half + r.pavement;
-            for (si, s) in r.pts.windows(2).enumerate() {
-                let (a, b) = (
-                    key(s[0].min(s[1]) - DVec2::splat(reach)),
-                    key(s[0].max(s[1]) + DVec2::splat(reach)),
-                );
-                for x in a.0..=b.0 {
-                    for z in a.1..=b.1 {
-                        cells.entry((x, z)).or_default().push((ri, si));
-                    }
-                }
-            }
-        }
-        Roads { w, cells }
-    }
-
-    /// Is a disc on any road but `own` (pavements included)?
-    fn paved(&self, p: DVec2, r: f64, own: usize) -> bool {
-        keys_around(p, r).any(|k| {
-            self.cells.get(&k).is_some_and(|l| {
-                l.iter().any(|&(ri, si)| {
-                    let road = &self.w.roads[ri];
-                    ri != own
-                        && seg_distance(p, road.pts[si], road.pts[si + 1])
-                            < road.half + road.pavement + r
-                })
-            })
-        })
-    }
 }
 
 #[cfg(test)]

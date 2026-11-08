@@ -20,6 +20,7 @@ use super::{inner_point, Piece, Town, OUTLINE};
 use crate::building::{BuildingSite, BuildingUse, CORE_SIZE, CORRIDOR_WIDTH};
 use crate::city::{DistrictKind, BUILDING_GAP};
 use crate::style::{Quarter, Region, Vernacular};
+use crate::water::segment_distance;
 use glam::DVec2;
 use hw_core::{Rng, Seed, StableId};
 
@@ -537,12 +538,6 @@ fn apart(o: &BuildingSite, c: &[DVec2; 4], along: DVec2, inward: DVec2) -> bool 
     })
 }
 
-fn point_segment(p: DVec2, a: DVec2, b: DVec2) -> f64 {
-    let ab = b - a;
-    let t = ((p - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
-    p.distance(a + ab * t)
-}
-
 /// Distance between two segments (0 if they cross).
 fn segment_gap(p: DVec2, q: DVec2, a: DVec2, b: DVec2) -> f64 {
     let (d1, d2) = ((q - p).perp_dot(a - p), (q - p).perp_dot(b - p));
@@ -550,15 +545,15 @@ fn segment_gap(p: DVec2, q: DVec2, a: DVec2, b: DVec2) -> f64 {
     if d1 * d2 < 0.0 && d3 * d4 < 0.0 {
         return 0.0;
     }
-    point_segment(p, a, b)
-        .min(point_segment(q, a, b))
-        .min(point_segment(a, p, q))
-        .min(point_segment(b, p, q))
+    segment_distance(p, a, b)
+        .min(segment_distance(q, a, b))
+        .min(segment_distance(a, p, q))
+        .min(segment_distance(b, p, q))
 }
 
 fn polyline_distance(pts: &[DVec2], p: DVec2) -> f64 {
     pts.windows(2)
-        .map(|w| point_segment(p, w[0], w[1]))
+        .map(|w| segment_distance(p, w[0], w[1]))
         .fold(f64::MAX, f64::min)
 }
 

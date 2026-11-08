@@ -25,16 +25,19 @@ pub struct Poly {
     pub tags: Vec<EdgeTag>,
 }
 
-/// Twice the signed area of a point loop (positive = counter-clockwise in x/z).
-fn area2(pts: &[DVec2]) -> f64 {
+/// Shoelace area of a point loop (positive counter-clockwise in x/z).
+pub fn signed_area(pts: &[DVec2]) -> f64 {
     let n = pts.len();
-    (0..n).map(|i| pts[i].perp_dot(pts[(i + 1) % n])).sum()
+    (0..n)
+        .map(|k| pts[k].perp_dot(pts[(k + 1) % n]))
+        .sum::<f64>()
+        * 0.5
 }
 
 impl Poly {
     /// A polygon from points in either winding; all edges get `tag`.
     pub fn new(mut pts: Vec<DVec2>, tag: EdgeTag) -> Self {
-        if area2(&pts) < 0.0 {
+        if signed_area(&pts) < 0.0 {
             pts.reverse();
         }
         let tags = vec![tag; pts.len()];
@@ -50,7 +53,7 @@ impl Poly {
     }
 
     pub fn area(&self) -> f64 {
-        area2(&self.pts) * 0.5
+        signed_area(&self.pts)
     }
 
     pub fn centroid(&self) -> DVec2 {
@@ -317,6 +320,95 @@ impl Rect {
                 || (p.x - self.max.x).abs() < eps
                 || (p.y - self.min.y).abs() < eps
                 || (p.y - self.max.y).abs() < eps)
+    }
+}
+
+/// Segment `k` and fraction `t` at distance `s` along a polyline whose
+/// points lie at distances `at` (two or more, increasing). `s` is not clamped
+/// (`t` is).
+pub fn locate(at: &[f64], s: f64) -> (usize, f64) {
+    let last = at.len() - 2;
+    let k = match at.binary_search_by(|v| v.total_cmp(&s)) {
+        Ok(i) => i.min(last),
+        Err(i) => i.saturating_sub(1).min(last),
+    };
+    let seg = (at[k + 1] - at[k]).max(1e-9);
+    (k, ((s - at[k]) / seg).clamp(0.0, 1.0))
+}
+
+/// A line through points, measured: a road's centre line, a pavement.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Polyline {
+    pub pts: Vec<DVec2>,
+    /// Distance along the line at each point.
+    pub at: Vec<f64>,
+}
+
+impl Polyline {
+    /// Repeated points are dropped; a line of fewer than two points becomes
+    /// a 1 cm stub, so every query has a segment.
+    pub fn new(pts: &[DVec2]) -> Self {
+        let mut pts = pts.to_vec();
+        pts.dedup_by(|a, b| a.distance(*b) < 1e-6);
+        if pts.len() < 2 {
+            let p = pts.first().copied().unwrap_or_default();
+            pts = vec![p, p + DVec2::X * 0.01];
+        }
+        let mut at = vec![0.0];
+        for w in pts.windows(2) {
+            at.push(at[at.len() - 1] + w[0].distance(w[1]));
+        }
+        Self { pts, at }
+    }
+
+    pub fn len(&self) -> f64 {
+        *self.at.last().unwrap_or(&0.0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pts.len() < 2
+    }
+
+    /// Segment and fraction at distance `s` (clamped to the line).
+    pub fn locate(&self, s: f64) -> (usize, f64) {
+        locate(&self.at, s.clamp(0.0, self.len()))
+    }
+
+    /// The point at distance `s` (clamped to the line).
+    pub fn point(&self, s: f64) -> DVec2 {
+        let (k, t) = self.locate(s);
+        self.pts[k].lerp(self.pts[k + 1], t)
+    }
+
+    /// Distance along the line of the point nearest `p`, and how far off.
+    pub fn nearest(&self, p: DVec2) -> (f64, f64) {
+        let mut best = (0.0, f64::MAX);
+        for k in 0..self.pts.len() - 1 {
+            let (a, b) = (self.pts[k], self.pts[k + 1]);
+            let ab = b - a;
+            let t = ((p - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
+            let d = p.distance(a + ab * t);
+            if d < best.1 {
+                best = (self.at[k] + t * (self.at[k + 1] - self.at[k]), d);
+            }
+        }
+        best
+    }
+
+    /// The line from `s0` to `s1` (either way round).
+    pub fn slice(&self, s0: f64, s1: f64) -> Vec<DVec2> {
+        let (lo, hi) = (s0.min(s1), s0.max(s1));
+        let mut out = vec![self.point(lo)];
+        for (i, &a) in self.at.iter().enumerate() {
+            if a > lo + 1e-6 && a < hi - 1e-6 {
+                out.push(self.pts[i]);
+            }
+        }
+        out.push(self.point(hi));
+        if s0 > s1 {
+            out.reverse();
+        }
+        out
     }
 }
 

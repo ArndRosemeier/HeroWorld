@@ -313,14 +313,7 @@ fn cross(a: DVec2, b: DVec2, c: DVec2, d: DVec2) -> Option<(f64, f64, DVec2)> {
     ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then(|| (t, u, a + r * t))
 }
 
-/// Shoelace area (positive counter-clockwise in x/y).
-pub fn signed_area(pts: &[DVec2]) -> f64 {
-    let n = pts.len();
-    (0..n)
-        .map(|k| pts[k].perp_dot(pts[(k + 1) % n]))
-        .sum::<f64>()
-        * 0.5
-}
+pub use crate::geom::signed_area;
 
 /// Removes there-and-back spikes (dead ends walked both ways).
 fn despike(mut pts: Vec<DVec2>) -> Vec<DVec2> {
