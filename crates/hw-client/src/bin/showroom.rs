@@ -1,7 +1,8 @@
 //! A showroom for vehicles and props: one model (or a row of them) on a
 //! plain floor in daylight, for close-up screenshots while modelling.
 //!
-//! HW_SHOW=cruiser|bubble|hover|taxi|wheel|cars (default cars)
+//! HW_SHOW=cruiser|bubble|hover|taxi|ambulance|wheel|cars|street|lamps|barricades|plaza,
+//! or one prop (kiosk, pillar, fountain, jersey, drum, ...; default cars)
 //! HW_LOD=near|mid|far  HW_PAINT=0..7  HW_YAW=degrees  HW_DIST=metres  HW_PITCH=degrees
 //!
 //! xvfb-run -a env ENGINE_SCREENSHOT=$PWD/screenshots/show.png HW_SHOW=cruiser \
@@ -36,7 +37,7 @@ fn model(name: &str, lod: Lod, paint: u8) -> Mesh {
 
 fn prop(name: &str, lod: Lod) -> Mesh {
     use hw_client::propmesh as pm;
-    use hw_gen::urban::props::LampStyle;
+    use hw_gen::urban::props::{BarricadePiece, LampStyle};
     match name {
         "lantern" => pm::lamp(LampStyle::Lantern, lod),
         "deco" => pm::lamp(LampStyle::Deco, lod),
@@ -47,6 +48,13 @@ fn prop(name: &str, lod: Lod) -> Mesh {
         "hydrant" => pm::hydrant(lod),
         "mailbox" => pm::mailbox(lod),
         "bollard" => pm::bollard(lod),
+        "kiosk" => pm::kiosk(lod),
+        "pillar" => pm::ad_pillar(lod),
+        "fountain" => pm::fountain(lod),
+        "jersey" => pm::barricade(BarricadePiece::Jersey, lod),
+        "sawhorse" => pm::barricade(BarricadePiece::Sawhorse, lod),
+        "sandbags" => pm::barricade(BarricadePiece::Sandbags, lod),
+        "drum" => pm::barricade(BarricadePiece::Drum, lod),
         _ => Mesh::new(),
     }
 }
@@ -63,12 +71,20 @@ fn main() -> EngineResult<()> {
         vec!["cruiser", "bubble", "hover", "taxi"]
     } else if show == "street" {
         vec!["bench", "bin", "hydrant", "mailbox", "bollard"]
+    } else if show == "barricades" {
+        vec!["jersey", "sawhorse", "sandbags", "drum"]
+    } else if show == "plaza" {
+        vec!["kiosk", "pillar"]
     } else if show == "lamps" {
         vec!["lantern", "deco", "atomic", "traffic"]
     } else {
         vec![show.as_str()]
     };
-    let spacing = if show == "street" { 1.6f32 } else { 3.4 };
+    let spacing = match show.as_str() {
+        "street" => 1.6f32,
+        "barricades" => 2.0,
+        _ => 3.4,
+    };
     let width = spacing * (names.len() as f32 - 1.0);
     let meshes: Vec<Mesh> = names
         .iter()

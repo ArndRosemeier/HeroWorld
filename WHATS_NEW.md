@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.045 (2026-11-08)
+
+- Barricades rebuilt: concrete jersey barriers with a red and white band, striped sawhorses
+  with a warning lamp, plump sandbag walls and ribbed oil drums with a fire in them.
+- The news kiosk has a curved counter window, a glowing sign band and a saucer roof; the ad
+  pillars are green iron with posters all round; the fountains have a moulded basin, a bowl and
+  a glowing atom on a gilt stem.
+- Traffic light lenses are dark glass when off, ready to show the real signal.
+
 ## 0.044 (2026-11-08)
 
 - Street furniture up close: cast-iron lamp posts with glowing globes, atomic saucer lamps with

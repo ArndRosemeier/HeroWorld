@@ -178,23 +178,20 @@ pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
             LodLevel::new(make(Lod::Far), d[2]),
         ]
     };
-    let two = |near: Mesh, near_m: f32, far: Mesh, far_m: f32| {
-        vec![LodLevel::new(near, near_m), LodLevel::new(far, far_m)]
-    };
     Ok(match kind {
         PropKind::Tree(s, v) => tree_model(species(s), v as u32)?.lod_levels(),
         PropKind::Shrub(v) => shrub_model(v as u32)?.lod_levels(),
         PropKind::Lamp(style) => three(&|l| pm::lamp(style, l), [30.0, 140.0, 700.0]),
         PropKind::Car(m, paint) => parked_car_levels(m, paint),
         PropKind::TrafficLight => three(&pm::traffic_light, [30.0, 160.0, 500.0]),
-        PropKind::Fountain => vec![LodLevel::new(fountain(), 900.0)],
+        PropKind::Fountain => three(&pm::fountain, [40.0, 200.0, 900.0]),
         PropKind::Bench => three(&pm::bench, [25.0, 80.0, 160.0]),
         PropKind::Bin => three(&pm::bin, [20.0, 60.0, 120.0]),
         PropKind::Hydrant => three(&pm::hydrant, [20.0, 60.0, 120.0]),
         PropKind::Mailbox => three(&pm::mailbox, [25.0, 80.0, 180.0]),
         PropKind::Bollard => three(&pm::bollard, [20.0, 60.0, 150.0]),
-        PropKind::Kiosk => two(kiosk(true), 200.0, kiosk(false), 600.0),
-        PropKind::AdPillar => vec![LodLevel::new(ad_pillar(), 250.0)],
+        PropKind::Kiosk => three(&pm::kiosk, [40.0, 200.0, 600.0]),
+        PropKind::AdPillar => three(&pm::ad_pillar, [30.0, 120.0, 250.0]),
         PropKind::Statue(pose) => vec![LodLevel::new(statue_mesh(pose), 500.0)],
         PropKind::Barricade(piece) => crate::edgeview::piece_levels(piece),
     })
@@ -209,34 +206,26 @@ fn bx(b: &mut MeshBuilder, lo: DVec3, hi: DVec3, c: Color) {
 
 /// A closed ellipsoid.
 fn ellipsoid(b: &mut MeshBuilder, c: DVec3, r: DVec3, seg: usize, rings: usize, col: Color) {
-    let at = |i: usize, k: usize| {
-        let a = TAU * (i % seg) as f64 / seg as f64;
-        let e = std::f64::consts::PI * (k as f64 / rings as f64 - 0.5);
-        c + DVec3::new(
-            r.x * e.cos() * a.cos(),
-            r.y * e.sin(),
-            r.z * e.cos() * a.sin(),
-        )
-    };
-    for k in 0..rings {
-        for i in 0..seg {
-            let (p0, p1, p2, p3) = (at(i, k), at(i + 1, k), at(i + 1, k + 1), at(i, k + 1));
-            let out = (p0 + p1 + p2 + p3) * 0.25 - c;
-            if k == 0 {
-                b.tri([p0, p2, p3], out, col);
-            } else if k + 1 == rings {
-                b.tri([p0, p1, p2], out, col);
-            } else {
-                b.quad([p0, p1, p2, p3], out, col);
-            }
-        }
-    }
-}
-
-fn glow(b: &mut MeshBuilder, f: impl FnOnce(&mut MeshBuilder)) {
-    b.surf = Surf::Glow;
-    f(b);
-    b.surf = Surf::Plain;
+    // Smooth, with at least enough sides to read round up close.
+    let seg = (seg * 2).max(16);
+    let rings = (rings * 2).max(8);
+    let rows: Vec<Vec<DVec3>> = (0..=rings)
+        .map(|k| {
+            let e = std::f64::consts::PI * (k as f64 / rings as f64 - 0.5);
+            (0..seg)
+                .map(|i| {
+                    let a = TAU * i as f64 / seg as f64;
+                    c + DVec3::new(
+                        r.x * e.cos() * a.cos(),
+                        r.y * e.sin(),
+                        r.z * e.cos() * a.sin(),
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    let surf = b.surf;
+    crate::carmesh::surface(b, &rows, true, |_, _| Some((surf, col)));
 }
 
 fn metal(b: &mut MeshBuilder, f: impl FnOnce(&mut MeshBuilder)) {
@@ -244,18 +233,6 @@ fn metal(b: &mut MeshBuilder, f: impl FnOnce(&mut MeshBuilder)) {
     f(b);
     b.surf = Surf::Plain;
 }
-
-fn glass(b: &mut MeshBuilder, f: impl FnOnce(&mut MeshBuilder)) {
-    b.surf = Surf::Glass;
-    f(b);
-    b.surf = Surf::Plain;
-}
-
-fn c3(t: (u8, u8, u8)) -> Color {
-    rgb(t.0, t.1, t.2)
-}
-
-// ---------------------------------------------------------------- lamps
 
 // ---------------------------------------------------------------- cars
 
@@ -343,107 +320,6 @@ pub fn sky_car_levels(paint: u8) -> Vec<LodLevel> {
 }
 
 // ---------------------------------------------------------------- street
-
-/// A round news kiosk: cream walls, a glowing sign band, a red saucer roof
-/// and an atom on a mast.
-fn kiosk(near: bool) -> Mesh {
-    let mut b = MeshBuilder::new();
-    let seg = if near { 16 } else { 8 };
-    let cream = rgb(236, 226, 200);
-    let red = rgb(196, 54, 44);
-    b.cylinder(DVec3::ZERO, (1.25, 1.25), 0.5, seg, true, red);
-    b.cylinder(DVec3::Y * 0.5, (1.2, 1.2), 1.7, seg, false, cream);
-    // The counter window, dark glass towards the street.
-    glass(&mut b, |b| {
-        bx(
-            b,
-            DVec3::new(-0.75, 1.0, 1.0),
-            DVec3::new(0.75, 1.9, 1.23),
-            rgb(50, 70, 90),
-        )
-    });
-    // The sign band all round.
-    glow(&mut b, |b| {
-        b.cylinder(
-            DVec3::Y * 2.2,
-            (1.24, 1.24),
-            0.45,
-            seg,
-            false,
-            rgb(255, 210, 120),
-        )
-    });
-    b.cylinder(DVec3::Y * 2.65, (1.2, 1.9), 0.25, seg, false, red);
-    b.cylinder(DVec3::Y * 2.9, (1.9, 0.0), 0.7, seg, true, red);
-    if near {
-        metal(&mut b, |b| {
-            b.cylinder(
-                DVec3::Y * 3.5,
-                (0.04, 0.04),
-                0.8,
-                4,
-                false,
-                rgb(200, 206, 214),
-            )
-        });
-        glow(&mut b, |b| {
-            ellipsoid(
-                b,
-                DVec3::Y * 4.4,
-                DVec3::splat(0.14),
-                8,
-                4,
-                rgb(140, 230, 255),
-            )
-        });
-    }
-    b.finish()
-}
-
-/// A round advertising pillar in green iron, posters all round, a dome cap.
-fn ad_pillar() -> Mesh {
-    let mut b = MeshBuilder::new();
-    let green = rgb(40, 82, 60);
-    b.cylinder(DVec3::ZERO, (0.62, 0.62), 0.3, 14, true, green);
-    // Posters: bands of colour round the drum.
-    let posters = [
-        (232, 196, 90),
-        (210, 70, 60),
-        (90, 150, 200),
-        (240, 236, 220),
-        (220, 120, 170),
-        (120, 190, 120),
-    ];
-    let seg = 12;
-    for i in 0..seg {
-        let (a0, a1) = (
-            TAU * i as f64 / seg as f64,
-            TAU * (i + 1) as f64 / seg as f64,
-        );
-        let at = |a: f64, y: f64| DVec3::new(0.55 * a.cos(), y, 0.55 * a.sin());
-        let mid = (a0 + a1) * 0.5;
-        let out = DVec3::new(mid.cos(), 0.0, mid.sin());
-        let c = posters[(i * 5 + i / 3) % posters.len()];
-        b.quad(
-            [at(a0, 0.3), at(a1, 0.3), at(a1, 2.5), at(a0, 2.5)],
-            out,
-            c3(c),
-        );
-    }
-    b.cylinder(DVec3::Y * 2.5, (0.62, 0.66), 0.15, 14, false, green);
-    b.dome(DVec3::Y * 2.65, 0.66, 14, 4, green);
-    metal(&mut b, |b| {
-        b.cylinder(
-            DVec3::Y * 3.25,
-            (0.06, 0.0),
-            0.35,
-            6,
-            false,
-            rgb(214, 170, 72),
-        )
-    });
-    b.finish()
-}
 
 /// A bronze hero on a stone plinth, facing +z.
 pub fn statue_mesh(pose: u8) -> Mesh {
@@ -572,48 +448,6 @@ pub fn statue(b: &mut MeshBuilder, pose: u8) {
 }
 
 /// A cast-iron mooring bollard: a squat post with a flared cap.
-/// A round basin with a bowl on a column and a glowing atom on top.
-fn fountain() -> Mesh {
-    let mut b = MeshBuilder::new();
-    let stone = rgb(208, 200, 184);
-    b.cylinder(DVec3::ZERO, (3.2, 3.2), 0.6, 32, true, stone);
-    glass(&mut b, |b| {
-        b.cylinder(
-            DVec3::Y * 0.6,
-            (2.95, 2.95),
-            0.02,
-            32,
-            true,
-            rgb(70, 130, 160),
-        )
-    });
-    b.cylinder(DVec3::Y * 0.62, (0.3, 0.25), 1.2, 12, false, stone);
-    b.cylinder(DVec3::Y * 1.8, (0.25, 1.1), 0.4, 16, true, stone);
-    glow(&mut b, |b| {
-        ellipsoid(
-            b,
-            DVec3::Y * 2.55,
-            DVec3::splat(0.25),
-            12,
-            6,
-            rgb(140, 230, 255),
-        );
-        for k in 0..3 {
-            let a = TAU * k as f64 / 3.0;
-            let r = DVec3::new(0.55 * a.cos(), 0.12 * (a * 2.0).sin(), 0.55 * a.sin());
-            ellipsoid(
-                b,
-                DVec3::Y * 2.55 + r,
-                DVec3::splat(0.07),
-                8,
-                4,
-                rgb(255, 160, 220),
-            );
-        }
-    });
-    b.finish()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
