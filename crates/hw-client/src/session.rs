@@ -195,6 +195,16 @@ impl Session {
         }
     }
 
+    /// The game clock in seconds (the server's ticks), `frac` of a tick
+    /// on: citizens and anything else made from time read it, so every
+    /// player sees them alike.
+    pub fn time(&self, frac: f64) -> f64 {
+        match self {
+            Session::Local { host, .. } => (host.sim.tick as f64 + frac) * hw_sim::DT,
+            Session::Remote { interp, .. } => interp.render_tick() * hw_sim::DT,
+        }
+    }
+
     /// Puts our hero somewhere (single player only; for tests and screenshots).
     pub fn teleport(&mut self, pos: DVec3) {
         if let Session::Local { host, me, .. } = self {

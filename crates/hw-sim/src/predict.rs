@@ -121,6 +121,11 @@ impl Default for Interpolator {
 }
 
 impl Interpolator {
+    /// The server tick being drawn (fractional): the game clock others see.
+    pub fn render_tick(&self) -> f64 {
+        self.render_tick
+    }
+
     pub fn new() -> Self {
         Self {
             buffer: VecDeque::new(),

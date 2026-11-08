@@ -34,6 +34,10 @@ hw-sim = { path = "crates/hw-sim" }
 hw-net = { path = "crates/hw-net" }
 engine = { git = "https://github.com/ArndRosemeier/Engine", branch = "main" }
 bevy_ecs = { version = "0.20", default-features = false, features = ["std"] }
+# Characters: the Rust port of Actors (pinned; bump the rev to follow it).
+# actors-engine follows Engine main, so both resolve to the one Engine above.
+actors-engine = { git = "https://github.com/ArndRosemeier/Actors", rev = "86655e2db3d8234598b052a98a0d636676d882f7" }
+actors-generator = { git = "https://github.com/ArndRosemeier/Actors", rev = "86655e2db3d8234598b052a98a0d636676d882f7" }
 glam = "0.33"
 libm = "0.2"
 # The GameHub lobby and relay: a WebSocket over TLS (ring, so Windows builds need no extra tools).

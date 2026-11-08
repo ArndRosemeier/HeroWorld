@@ -16,6 +16,10 @@ rem Fetch the newest version if this is a git checkout and nothing is changed lo
 where git >nul 2>nul
 if not errorlevel 1 if exist .git git pull --ff-only
 
+rem People are built from the Actors packs: download them once (and again when the version changes).
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\fetch-packs.ps1
+if errorlevel 1 echo Could not fetch the Actors packs; the game starts without people.
+
 set HW_HOST=
 set HW_JOIN=
 if /i "%~1"=="host" set HW_HOST=1

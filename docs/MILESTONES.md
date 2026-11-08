@@ -49,7 +49,7 @@ and baked clips). Humans are done; animals, robots and the creator's screens are
 | # | Milestone | Lane | Needs | Can run alongside |
 | --- | --- | --- | --- | --- |
 | M1 | A town worth walking through | World | (in progress) | M2, M5, assets |
-| M2 | People: the hero and the crowd are Actors | Characters | — | M1, M5 |
+| M2 | People: the hero and the crowd are Actors | Characters | (built, needs a play test) | M1, M5 |
 | M3 | Hero creator and hero file | Characters | M2 | M5, M6, M8 |
 | M4 | Title screen | Front end | M2 (hero on it), title music | M5, M6, M8 |
 | M5 | The server on Engine physics, real netcode | Server | (built, needs a play test) | M1, M2 |
@@ -117,6 +117,14 @@ Characters come from Actors from here on. This is the first half of the Actors i
 **Done when:** a busy street at noon shows a few hundred citizens walking their routes at a
 steady frame rate, and the hero walks, runs and flies with real animation; two players see
 each other animated.
+
+**Status (0.018):** built. Heroes are Actors characters with idle, walk, jog, sprint, jump,
+fall, landing, and fly and hover clips posed in the game (`hw-client/src/poses.rs`, the packs
+have none), tipped and banked in flight; citizens walk the pavements as a pure function of
+(town seed, id, time) in `hw-sim/src/citizens.rs`, drawn as Engine crowds in 24 golden-age
+looks; K knocks people over and they get up. Still open: Engine navigation (`build_nav`) for
+plazas and building floors (citizens keep to street pavements for now), home and work in the
+citizens' routes, and the hero's look comes from the player number until M3's hero file.
 
 **Actors work this needs** (in the Actors repo, can run in parallel): a golden-age outfit
 theme (suits, hats, dresses, uniforms of the era), an allow preset for HeroWorld (humans, adult,

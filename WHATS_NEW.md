@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.018 (2026-11-08)
+
+- The town has people! Hundreds of citizens walk the pavements, wait at corners and chat, dressed for the golden age: suits and fedoras, flapper dresses and cloche hats, work clothes and caps.
+- Your hero is a real person now, with proper animation: standing, walking, jogging, sprinting, jumping, falling and landing.
+- Flying looks like flying: fist first and body flat at speed, standing up to climb, diving head first, banking into turns, and treading air when you hover.
+- Press K to knock the people around you over (a test for now). They tumble and get back up.
+- The first start downloads the people's clothes and bodies once (about 440 MB).
+
 ## 0.017 (2026-11-08)
 
 - News kiosks with saucer roofs and glowing signs on the wide pavements, round advertising pillars in the old quarters.

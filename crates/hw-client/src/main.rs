@@ -9,7 +9,8 @@
 //! (or press P to lock the pointer) and move the mouse to look, WASD to run,
 //! Space to jump, R/T to zoom in and out (all the way in is first person).
 //! V to fly: steer with WASD and the camera, Space climbs, Ctrl sinks,
-//! Shift goes faster; V again drops you.
+//! Shift goes faster; V again drops you. K knocks the people around you
+//! over (a test of ragdolls; they get up again).
 //! Buildings are open: walk in through a door, and in the lift (the core in
 //! the middle) hold Space to rise and Ctrl to sink; step out at any floor.
 //! Tab switches to a free-flying camera and back. C cuts buildings open
@@ -34,6 +35,9 @@
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
+//! `HW_WAIT_PEOPLE=1` waits at the start until every character is built
+//! (for screenshots); `HW_PACKS` points at the Actors packs (default
+//! `assets/packs`, fetched by `scripts/fetch-packs`);
 //! `ENGINE_ZFIGHT=1` marks z-fighting with magenta posts (the `zfight` tool
 //! checks a whole city without the game).
 
@@ -43,6 +47,9 @@ use engine::prelude::*;
 use engine::stream::{StreamSettings, WorldStream};
 use glam::{DVec2, Vec3};
 use hw_client::citymesh;
+use hw_client::crowdview::CrowdView;
+use hw_client::heroview::{tipped_origin, HeroAnim};
+use hw_client::people::{self, People, Who};
 use hw_client::profile::Profile;
 use hw_client::title::{self, Choice, Title};
 use hw_client::townmesh::{TownGround, TownView};
@@ -155,6 +162,31 @@ fn main() -> EngineResult<()> {
             }
         };
     let mut solids = generated.obstacles.clone();
+    let mut citizens = hw_sim::citizens::Citizens::new(generated.world.clone());
+    // People from Actors, built on a worker thread from the packs.
+    let actors = match people::packs_dir() {
+        Some(dir) => {
+            let p = People::start(dir);
+            if std::env::var_os("HW_JOIN").is_none() {
+                // Our own hero first (the local player is player 1).
+                p.request(Who::Hero("player 1".into()), 0);
+            }
+            for look in 0..hw_sim::citizens::LOOKS {
+                p.request(Who::Citizen(look), generated.world.seed.0);
+            }
+            Some(p)
+        }
+        None => {
+            eprintln!(
+                "No Actors packs found: heroes are drawn as placeholders and the streets stay empty. Run scripts/fetch-packs (start.bat does it)."
+            );
+            None
+        }
+    };
+    let mut models: BTreeMap<Who, std::sync::Arc<AnimatedModel>> = BTreeMap::new();
+    let mut asked: BTreeSet<Who> = [Who::Hero("player 1".into())].into();
+    let mut crowd = CrowdView::new();
+    let mut anims: BTreeMap<hw_core::NetId, HeroAnim> = BTreeMap::new();
     let mut town = TownView::new(generated.world.clone());
     let ground = {
         let w = generated.world.clone();
@@ -341,8 +373,8 @@ fn main() -> EngineResult<()> {
         },
         distance: 7.0,
     };
-    let mut hero_entities: BTreeMap<hw_core::NetId, EntityId> = BTreeMap::new();
-    let mut facings: BTreeMap<hw_core::NetId, f32> = BTreeMap::new();
+    // Each hero's entity, and whether it is the Actors character yet.
+    let mut hero_entities: BTreeMap<hw_core::NetId, (EntityId, bool)> = BTreeMap::new();
     let mut tick_clock = 0.0f64;
     // The hero's flight toggle (V); sent with every input.
     let mut hero_flies = std::env::var_os("HW_FLY").is_some() || view == "sky";
@@ -397,6 +429,8 @@ fn main() -> EngineResult<()> {
                     generated = g;
                     solids = generated.obstacles.clone();
                     town = TownView::new(generated.world.clone());
+                    citizens = hw_sim::citizens::Citizens::new(generated.world.clone());
+                    crowd.clear(world);
                     set_town_stream(world, &generated)?;
                     extras = spawn_extras(world, &generated)?;
                 }
@@ -600,10 +634,27 @@ fn main() -> EngineResult<()> {
                 tick_clock = 0.0;
             }
 
+            // People finished on the worker thread (HW_WAIT_PEOPLE=1 waits
+            // for all of them at the start, for screenshots).
+            if let Some(p) = &actors {
+                let mut done = p.finished();
+                if frame.first && std::env::var_os("HW_WAIT_PEOPLE").is_some() {
+                    let all = hw_sim::citizens::LOOKS as usize + 1;
+                    let more = p.wait(all.saturating_sub(done.len()));
+                    done.extend(more);
+                }
+                for b in done {
+                    if let Who::Citizen(look) = b.who {
+                        crowd.add_look(world, look, &b)?;
+                    }
+                    models.insert(b.who.clone(), b.model.clone());
+                }
+            }
+
             // Draw heroes.
             let heroes = session.entities(frame.dt as f64);
-            facings.retain(|id, _| heroes.iter().any(|h| h.id == *id));
-            hero_entities.retain(|id, e| {
+            anims.retain(|id, _| heroes.iter().any(|h| h.id == *id));
+            hero_entities.retain(|id, (e, _)| {
                 let keep = heroes.iter().any(|h| h.id == *id);
                 if !keep {
                     world.despawn(*e);
@@ -613,32 +664,101 @@ fn main() -> EngineResult<()> {
             let mine = session.my_hero();
             for h in &heroes {
                 let vel = Vec3::from_array(h.vel);
-                // Face where you run; keep the last heading when standing.
-                let facing = facings.entry(h.id).or_insert(0.0);
-                if vel.x.abs() + vel.z.abs() > 0.3 {
-                    *facing = vel.x.atan2(vel.z).to_degrees();
-                }
-                let facing = *facing;
-                let mut place = Place::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32)
-                    .with_yaw_deg(facing);
                 if h.kind == hw_net::EntityKind::Crate {
                     // Physics bodies turn every way; Place turns yaw, pitch, roll in that order.
                     let (y, x, z) = glam::Quat::from_array(h.rot).to_euler(glam::EulerRot::YXZ);
-                    place = place
+                    let place = Place::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32)
                         .with_yaw_deg(y.to_degrees())
                         .with_pitch_deg(x.to_degrees())
                         .with_roll_deg(z.to_degrees());
-                }
-                match hero_entities.get(&h.id) {
-                    Some(&e) => world.set_place(e, place)?,
-                    None => {
-                        let mesh = match h.kind {
-                            hw_net::EntityKind::Crate => citymesh::crate_mesh(),
-                            hw_net::EntityKind::Hero => citymesh::hero_mesh(mine == Some(h.id)),
-                        };
-                        let e = world.place(mesh, place)?;
-                        hero_entities.insert(h.id, e);
+                    match hero_entities.get(&h.id) {
+                        Some(&(e, _)) => world.set_place(e, place)?,
+                        None => {
+                            let e = world.place(citymesh::crate_mesh(), place)?;
+                            hero_entities.insert(h.id, (e, false));
+                        }
                     }
+                    continue;
+                }
+                let feet = Vec3::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32);
+                // Our own flight we know; others' is told from their motion.
+                let flying = (mine == Some(h.id))
+                    .then(|| hero_flies || solids.in_lift(glam::DVec3::from_array(h.pos)));
+                let anim = anims.entry(h.id).or_default();
+                let d = anim.step(vel, h.grounded, flying, frame.dt);
+                // Until the hero creator: a look per player, the same on
+                // every machine.
+                let who = Who::Hero(format!("player {}", h.owner.map_or(0, |o| o.0)));
+                let model = models.get(&who).cloned();
+                if model.is_none() && !asked.contains(&who) {
+                    if let Some(p) = &actors {
+                        p.request(who.clone(), 0);
+                        asked.insert(who.clone());
+                    }
+                }
+                let animated = model.is_some();
+                let place = Place::new(feet.x, feet.y, feet.z).with_yaw_deg(d.yaw);
+                let (e, was_animated) = match hero_entities.get(&h.id) {
+                    Some(&(e, a)) if a == animated => (e, a),
+                    old => {
+                        if let Some(&(e, _)) = old {
+                            world.despawn(e);
+                        }
+                        let e = match &model {
+                            Some(m) => {
+                                let e = world.spawn_animated_shared(m.clone(), place)?;
+                                world.set_animation_blend(e, 0.25)?;
+                                anim.shown = "";
+                                e
+                            }
+                            None => world.place(citymesh::hero_mesh(mine == Some(h.id)), place)?,
+                        };
+                        hero_entities.insert(h.id, (e, animated));
+                        (e, false)
+                    }
+                };
+                let _ = was_animated;
+                if animated {
+                    let o = tipped_origin(feet, &d);
+                    world.set_place(
+                        e,
+                        Place::new(o.x, o.y, o.z)
+                            .with_yaw_deg(d.yaw)
+                            .with_pitch_deg(d.pitch)
+                            .with_roll_deg(d.roll),
+                    )?;
+                    if anim.shown != d.clip {
+                        if d.once {
+                            world.play_animation_once(e, d.clip)?;
+                        } else {
+                            world.play_animation(e, d.clip)?;
+                        }
+                        // Feet find the ground when standing on it.
+                        let on_ground =
+                            matches!(d.clip, "idle" | "walk" | "jog" | "sprint" | "jump land");
+                        let _ = world.set_foot_ik(e, on_ground.then(FootIk::default));
+                        anim.shown = d.clip;
+                    }
+                    world.set_animation_speed(e, d.rate)?;
+                } else {
+                    world.set_place(e, place)?;
+                }
+            }
+
+            // Citizens around the camera, at the game's time.
+            let eye = world.camera().eye();
+            crowd.update(
+                world,
+                &citizens,
+                DVec2::new(eye.x as f64, eye.z as f64),
+                session.time(tick_clock / hw_sim::DT),
+                frame.dt as f64,
+            )?;
+            // K knocks the people around the hero over (a test of ragdolls).
+            if !flying && input.pressed(Key::K) {
+                if let Some(p) = session.my_position(&heroes) {
+                    let n = crowd.knock_down(world, p.as_vec3() + Vec3::Y, 6.0);
+                    eprintln!("knocked over {n}");
                 }
             }
 

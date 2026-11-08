@@ -6,6 +6,7 @@
 //! ([`TICK_HZ`]). [`host::Host`] puts a network socket around it.
 
 pub mod bubbles;
+pub mod citizens;
 pub mod collision;
 pub mod host;
 pub mod physics;

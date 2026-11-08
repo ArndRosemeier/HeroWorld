@@ -12,6 +12,13 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      # The Actors packs people are built from (tests that build characters
+      # skip without them). Cached by version.
+      - uses: actions/cache@v4
+        with:
+          path: assets/packs
+          key: actors-packs-${{ hashFiles('assets/actors-packs.version') }}
+      - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-packs.ps1
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
