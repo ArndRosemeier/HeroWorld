@@ -89,6 +89,7 @@ fn beam_colour(kind: IncidentKind) -> Color {
         IncidentKind::Breakout => rgb(150, 255, 110),
         IncidentKind::CarCrash => rgb(120, 200, 255),
         IncidentKind::Fire => rgb(255, 130, 40),
+        IncidentKind::Colossus => rgb(255, 40, 60),
     }
 }
 

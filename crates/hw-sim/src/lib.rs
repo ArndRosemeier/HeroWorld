@@ -19,6 +19,7 @@ pub mod predict;
 pub mod progress;
 pub mod props;
 pub mod quarter;
+pub mod robots;
 pub mod save;
 pub mod taxi;
 pub mod traffic;
@@ -413,14 +414,22 @@ impl Sim {
         sim.incidents = incidents::Incidents::new(town.world.clone());
         let solids = sim.solids();
         let corners = quarter::corners(&town.world);
-        for c in &corners {
+        for (k, c) in corners.iter().enumerate() {
             let y = solids.ground_at(c.at).max(GROUND_Y);
-            sim.add_villain_corner(
+            let i = sim.add_villain_corner(
                 DVec3::new(c.at.x, y, c.at.y),
                 c.facing,
                 c.extra,
                 quarter::WAKE,
             );
+            // A robo-sentry guards the tower's gate and some corners; a
+            // mutant alpha leads others.
+            let lead = match k % 4 {
+                0 => Some(combat::EnemyKind::Sentry),
+                2 => Some(combat::EnemyKind::Alpha),
+                _ => None,
+            };
+            sim.world.resource_mut::<Fights>().spots[i].lead = lead;
         }
         for l in quarter::lookouts(&town.world, &corners) {
             if let Some(p) = quarter::perch(&solids, &l) {
@@ -428,6 +437,53 @@ impl Sim {
             }
         }
         sim
+    }
+
+    /// Breaks the first `n` weak points (knees, then the cannon) of every
+    /// colossus that still has them standing (screenshots, tests).
+    pub fn break_colossus(&mut self, n: u8) {
+        let tanks: Vec<NetId> = self
+            .world
+            .query::<(&Net, &Enemy)>()
+            .iter(&self.world)
+            .filter(|(_, e)| e.kind == combat::EnemyKind::Colossus)
+            .map(|(n, _)| n.0)
+            .collect();
+        for (m, mut f) in self
+            .world
+            .query::<(&robots::Mount, &mut Fighter)>()
+            .iter_mut(&mut self.world)
+        {
+            if tanks.contains(&m.on) && m.part < n && f.standing() {
+                f.health = 0.0;
+                f.status = Status::Down;
+                f.until = self.tick;
+            }
+        }
+    }
+
+    /// A colossus attack: the walking tank at `at`, marching along `facing`
+    /// (tests and screenshots; in the game it is an incident). Returns its ID.
+    pub fn add_colossus(&mut self, at: DVec3, facing: DVec2) -> NetId {
+        let i = {
+            let mut f = self.world.resource_mut::<Fights>();
+            f.spots.push(Spot {
+                size: Some(1),
+                only: Some(combat::EnemyKind::Colossus),
+                once: true,
+                ..Spot::corner(at, facing)
+            });
+            f.spots.len() - 1
+        };
+        let heroes = self.world.query::<&Hero>().iter(&self.world).count();
+        combat::spawn_group(&mut self.world, self.tick, i, heroes.max(1));
+        self.world
+            .query::<(&Net, &Enemy)>()
+            .iter(&self.world)
+            .filter(|(_, e)| e.kind == combat::EnemyKind::Colossus && e.spot == i)
+            .map(|(n, _)| n.0)
+            .next()
+            .expect("the colossus was made")
     }
 
     /// A simulation with the given solids (tests use flat ground).
@@ -487,6 +543,7 @@ impl Sim {
     pub fn step(&mut self) {
         self.schedule.run(&mut self.world);
         combat::step(&mut self.world, self.tick);
+        self.machines_break_the_city();
         self.incidents.step(&mut self.world, self.tick);
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
@@ -516,6 +573,31 @@ impl Sim {
         self.tick += 1;
         self.world.resource_mut::<Now>().0 = self.tick;
         self.track.run(&mut self.world);
+    }
+
+    /// The colossus's feet, hull and shells break what they hit.
+    fn machines_break_the_city(&mut self) {
+        let blows = std::mem::take(&mut self.world.resource_mut::<Fights>().city);
+        if blows.is_empty() {
+            return;
+        }
+        let solids = self.solids();
+        for (at, radius, power) in blows {
+            let (_, _) = self.street.hit(at, DVec3::Y, radius, power, self.tick);
+            let (_, _) = self.wrecks.hit(at, DVec3::Y, radius, power, self.tick);
+            let broke = self
+                .damage
+                .hit(&solids, at, radius, power, None, self.tick)
+                .broken;
+            if broke > 0 {
+                self.damage.tell(ToClient::Impact {
+                    at: at.as_vec3().to_array(),
+                    dir: [0.0, -1.0, 0.0],
+                    kind: ImpactKind::Blast,
+                    broke: true,
+                });
+            }
+        }
     }
 
     /// Heroes punch and blast what is in front of them.
@@ -1145,34 +1227,37 @@ impl Sim {
                 Option<&Hero>,
                 Option<&Orientation>,
                 (Has<Prop>, Option<&Enemy>, Has<Drone>, Option<&CombatView>),
-                (&LastChange, Option<&taxi::Fare>),
+                (&LastChange, Option<&taxi::Fare>, Option<&robots::Mount>),
             )>()
             .iter(&self.world)
-            .map(|(n, m, h, o, (prop, enemy, drone, view), (c, fare))| {
-                (
-                    EntityState {
-                        id: n.0,
-                        kind: if prop {
-                            EntityKind::Crate
-                        } else if fare.is_some() {
-                            EntityKind::Taxi
-                        } else if let Some(e) = enemy {
-                            e.kind.entity_kind()
-                        } else if drone {
-                            EntityKind::Drone
-                        } else {
-                            EntityKind::Hero
+            .map(
+                |(n, m, h, o, (prop, enemy, drone, view), (c, fare, mount))| {
+                    (
+                        EntityState {
+                            id: n.0,
+                            kind: if prop {
+                                EntityKind::Crate
+                            } else if fare.is_some() {
+                                EntityKind::Taxi
+                            } else if let Some(e) = enemy {
+                                e.kind.entity_kind()
+                            } else if drone {
+                                EntityKind::Drone
+                            } else {
+                                EntityKind::Hero
+                            },
+                            combat: view.map(|v| v.0),
+                            pos: m.0.pos.to_array(),
+                            vel: m.0.vel.as_vec3().to_array(),
+                            rot: o.map_or(hw_net::protocol::NO_ROTATION, |o| o.0),
+                            grounded: m.0.grounded,
+                            owner: h.map(|h| h.owner).or(fare.map(|f| f.0)),
+                            mount: mount.map(|m| (m.on, m.part)),
                         },
-                        combat: view.map(|v| v.0),
-                        pos: m.0.pos.to_array(),
-                        vel: m.0.vel.as_vec3().to_array(),
-                        rot: o.map_or(hw_net::protocol::NO_ROTATION, |o| o.0),
-                        grounded: m.0.grounded,
-                        owner: h.map(|h| h.owner).or(fare.map(|f| f.0)),
-                    },
-                    c.0,
-                )
-            })
+                        c.0,
+                    )
+                },
+            )
             .collect();
         out.sort_by_key(|(e, _)| e.id);
         out

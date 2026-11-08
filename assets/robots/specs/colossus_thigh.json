@@ -1,0 +1,282 @@
+{
+ "textures": {
+  "texels_per_metre": 96,
+  "max_size": 512
+ },
+ "spec_version": 1,
+ "id": "colossus_thigh",
+ "generator": "prop.assembly",
+ "params": {
+  "settle": false,
+  "bevel": 0.015,
+  "detail": 0.25,
+  "pieces": [
+   {
+    "group": [
+     {
+      "cylinder": {
+       "a": [
+        0,
+        0.35,
+        0
+       ],
+       "b": [
+        4.2,
+        0.35,
+        4.4
+       ],
+       "radius": 0.32
+      },
+      "slot": "hull"
+     },
+     {
+      "cylinder": {
+       "a": [
+        0,
+        -0.35,
+        0
+       ],
+       "b": [
+        4.2,
+        -0.35,
+        4.4
+       ],
+       "radius": 0.32
+      },
+      "slot": "hull"
+     },
+     {
+      "cylinder": {
+       "a": [
+        1.26,
+        -0.35,
+        1.32
+       ],
+       "b": [
+        1.26,
+        0.35,
+        1.32
+       ],
+       "radius": 0.16
+      },
+      "slot": "brass"
+     },
+     {
+      "cylinder": {
+       "a": [
+        2.7300000000000004,
+        -0.35,
+        2.8600000000000003
+       ],
+       "b": [
+        2.7300000000000004,
+        0.35,
+        2.8600000000000003
+       ],
+       "radius": 0.16
+      },
+      "slot": "brass"
+     }
+    ]
+   },
+   {
+    "cylinder": {
+     "a": [
+      0.6,
+      0,
+      -0.5
+     ],
+     "b": [
+      2.3100000000000005,
+      0,
+      1.7200000000000004
+     ],
+     "radius": 0.22
+    },
+    "slot": "chrome"
+   },
+   {
+    "cylinder": {
+     "a": [
+      2.3100000000000005,
+      0,
+      1.7200000000000004
+     ],
+     "b": [
+      3.8000000000000003,
+      0,
+      3.8000000000000003
+     ],
+     "radius": 0.3
+    },
+    "slot": "brass"
+   },
+   {
+    "sphere": {
+     "centre": [
+      0,
+      0,
+      0
+     ],
+     "radius": 0.8
+    },
+    "slot": "chrome"
+   },
+   {
+    "cylinder": {
+     "a": [
+      4.2,
+      -0.85,
+      4.4
+     ],
+     "b": [
+      4.2,
+      0.85,
+      4.4
+     ],
+     "radius": 0.45
+    },
+    "slot": "brass"
+   }
+  ]
+ },
+ "materials": {
+  "hull": {
+   "base_color": [
+    0.035,
+    0.11,
+    0.06,
+    1
+   ],
+   "roughness": 0.4,
+   "metallic": 0.35,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.025,
+        0.075,
+        0.04
+       ],
+       "scale": 0.7,
+       "coverage": 0.4,
+       "contrast": 1.5,
+       "amount": 0.6
+      }
+     },
+     {
+      "mottle": {
+       "color": [
+        0.12,
+        0.08,
+        0.04
+       ],
+       "scale": 5,
+       "coverage": 0.15,
+       "contrast": 3,
+       "amount": 0.5,
+       "roughness": 0.8,
+       "seed": 4
+      }
+     },
+     {
+      "facing": {
+       "color": [
+        0.16,
+        0.07,
+        0.03
+       ],
+       "direction": [
+        0,
+        0,
+        -1
+       ],
+       "angle": 55,
+       "soft": 30,
+       "breakup": 0.6,
+       "scale": 2,
+       "amount": 0.55,
+       "roughness": 0.85
+      }
+     },
+     {
+      "edges": {
+       "color": [
+        0.42,
+        0.38,
+        0.28
+       ],
+       "radius": 0.08,
+       "breakup": 0.6,
+       "amount": 0.6,
+       "roughness": 0.3
+      }
+     }
+    ]
+   }
+  },
+  "brass": {
+   "base_color": [
+    0.6,
+    0.42,
+    0.14,
+    1
+   ],
+   "roughness": 0.28,
+   "metallic": 1.0,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.28,
+        0.2,
+        0.07
+       ],
+       "scale": 12,
+       "coverage": 0.3,
+       "contrast": 2,
+       "roughness": 0.55
+      }
+     }
+    ]
+   }
+  },
+  "chrome": {
+   "base_color": [
+    0.82,
+    0.83,
+    0.86,
+    1
+   ],
+   "roughness": 0.12,
+   "metallic": 1.0,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.66,
+        0.67,
+        0.7
+       ],
+       "scale": 10,
+       "coverage": 0.2,
+       "contrast": 2,
+       "amount": 0.5,
+       "roughness": 0.25
+      }
+     }
+    ]
+   }
+  }
+ },
+ "qa": {
+  "max_triangles": 30000,
+  "require_uvs": true,
+  "require_manifold": true,
+  "require_origin_at_base": false,
+  "max_dimension_m": 7.5
+ }
+}

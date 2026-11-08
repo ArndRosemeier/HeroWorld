@@ -1,0 +1,180 @@
+{
+ "textures": {
+  "texels_per_metre": 256,
+  "max_size": 512
+ },
+ "spec_version": 1,
+ "id": "sentry_thigh",
+ "generator": "prop.assembly",
+ "params": {
+  "settle": false,
+  "bevel": 0.004,
+  "detail": 0.35,
+  "pieces": [
+   {
+    "cylinder": {
+     "a": [
+      0,
+      0,
+      -0.05
+     ],
+     "b": [
+      0,
+      0,
+      -0.45
+     ],
+     "radius": 0.1,
+     "radius_b": 0.085
+    },
+    "slot": "enamel"
+   },
+   {
+    "torus": {
+     "centre": [
+      0,
+      0,
+      -0.12
+     ],
+     "radius": 0.1,
+     "thickness": 0.022,
+     "axis": "z"
+    },
+    "slot": "brass"
+   },
+   {
+    "sphere": {
+     "centre": [
+      0,
+      0,
+      -0.5
+     ],
+     "radius": 0.1
+    },
+    "slot": "chrome"
+   }
+  ]
+ },
+ "materials": {
+  "enamel": {
+   "base_color": [
+    0.035,
+    0.11,
+    0.06,
+    1
+   ],
+   "roughness": 0.38,
+   "metallic": 0.35,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.02,
+        0.06,
+        0.035
+       ],
+       "scale": 3,
+       "coverage": 0.35,
+       "contrast": 2
+      }
+     },
+     {
+      "facing": {
+       "color": [
+        0.16,
+        0.07,
+        0.03
+       ],
+       "direction": [
+        0,
+        0,
+        -1
+       ],
+       "angle": 55,
+       "soft": 30,
+       "breakup": 0.6,
+       "scale": 9,
+       "amount": 0.5,
+       "roughness": 0.85
+      }
+     },
+     {
+      "edges": {
+       "color": [
+        0.45,
+        0.4,
+        0.3
+       ],
+       "radius": 0.012,
+       "breakup": 0.6,
+       "amount": 0.7,
+       "roughness": 0.3
+      }
+     }
+    ]
+   }
+  },
+  "brass": {
+   "base_color": [
+    0.6,
+    0.42,
+    0.14,
+    1
+   ],
+   "roughness": 0.28,
+   "metallic": 1.0,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.28,
+        0.2,
+        0.07
+       ],
+       "scale": 12,
+       "coverage": 0.3,
+       "contrast": 2,
+       "roughness": 0.55
+      }
+     }
+    ]
+   }
+  },
+  "chrome": {
+   "base_color": [
+    0.82,
+    0.83,
+    0.86,
+    1
+   ],
+   "roughness": 0.12,
+   "metallic": 1.0,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.66,
+        0.67,
+        0.7
+       ],
+       "scale": 10,
+       "coverage": 0.2,
+       "contrast": 2,
+       "amount": 0.5,
+       "roughness": 0.25
+      }
+     }
+    ]
+   }
+  }
+ },
+ "qa": {
+  "max_triangles": 5000,
+  "require_uvs": true,
+  "require_manifold": true,
+  "require_origin_at_base": false,
+  "max_dimension_m": 0.8
+ }
+}

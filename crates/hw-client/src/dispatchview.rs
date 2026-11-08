@@ -20,10 +20,13 @@ pub const SIGNAL_HEIGHT: f64 = 260.0;
 /// The emblem's radius (m).
 const EMBLEM: f64 = 34.0;
 
-/// Does this call light the Hero Signal? The worst trouble does (a
-/// colossus will too, once there are colossi).
+/// Does this call light the Hero Signal? The worst trouble does, and the
+/// colossus above all.
 pub fn lights_signal(kind: IncidentKind) -> bool {
-    matches!(kind, IncidentKind::Rampage | IncidentKind::Breakout)
+    matches!(
+        kind,
+        IncidentKind::Rampage | IncidentKind::Breakout | IncidentKind::Colossus
+    )
 }
 
 /// The Hero Signal in the sky.

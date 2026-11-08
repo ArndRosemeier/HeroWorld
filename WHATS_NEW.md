@@ -3,6 +3,16 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.040 (2026-11-08)
+
+- The colossus is loose! Now and then the Doctor's walking tank strides out of the Tesla tower
+  and the Hero Signal calls everyone. Shoot out its glowing knees to bring it down, then hit the
+  Aether core under the hatch before it gets up again, angrier. Watch for its cannon shells,
+  stomps and discharges, and the robo-sentries it drops. Best with friends.
+- Robo-sentries guard some villain corners and break-outs: they shoot from range and their dish
+  shields the villains around them. Knock the dish off first.
+- Mutant alphas lead some gangs and rampages. When one crouches, get out of the way: it leaps.
+
 ## 0.039 (2026-11-08)
 
 - Under the hood: a tidy-up of repeated code in town building. Towns come out exactly as before.

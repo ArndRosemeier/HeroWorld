@@ -172,6 +172,8 @@ pub struct FightView {
     /// Next punch from our hero is a cross (alternating with the jab).
     cross: bool,
     clock: f32,
+    /// Where robots' guns are this frame (rays start there).
+    pub muzzles: BTreeMap<NetId, Vec3>,
 }
 
 impl Default for FightView {
@@ -201,6 +203,7 @@ impl FightView {
             guns: std::collections::HashMap::new(),
             cross: false,
             clock: 0.0,
+            muzzles: BTreeMap::new(),
         }
     }
 
@@ -306,6 +309,11 @@ impl FightView {
         self.hitstop.contains_key(&id)
     }
 
+    /// Shakes the camera (a stomp, a shell landing near).
+    pub fn add_shake(&mut self, strength: f32) {
+        self.shake = self.shake.max(strength);
+    }
+
     /// Camera shake to add to the eye this frame.
     pub fn shake(&self) -> Vec3 {
         if self.shake <= 0.001 {
@@ -337,11 +345,16 @@ impl FightView {
             let mine = me == Some(e.from);
             let on_me = me == Some(e.to);
             let from_ent = ents.get(&e.from).map(|x| x.0);
-            let origin = hand(world, from_ent).unwrap_or_else(|| {
-                all.iter()
-                    .find(|s| s.id == e.from)
-                    .map_or(at, |s| pos(s) + Vec3::Y * 1.3)
-            });
+            let origin = self
+                .muzzles
+                .get(&e.from)
+                .copied()
+                .or_else(|| hand(world, from_ent))
+                .unwrap_or_else(|| {
+                    all.iter()
+                        .find(|s| s.id == e.from)
+                        .map_or(at, |s| pos(s) + Vec3::Y * 1.3)
+                });
             match e.kind {
                 FxKind::Strike => {
                     let clip = if self.cross {
@@ -545,6 +558,24 @@ impl FightView {
                         self.say("Patched up at the hospital");
                     }
                 }
+                // The machines' and bosses' blows on heroes: numbers and a
+                // shake here, the big effects in `robotview`.
+                FxKind::Shell | FxKind::Stomp | FxKind::Pulse | FxKind::Leap
+                    if e.from != e.to && e.amount > 0 =>
+                {
+                    self.blow(e, at, false, on_me, egui::Color32::from_rgb(255, 90, 70));
+                }
+                FxKind::LeapWindup => self.act(e.from, "jump start", 0.9),
+                FxKind::ShellWindup
+                | FxKind::Shell
+                | FxKind::StompWindup
+                | FxKind::Stomp
+                | FxKind::PulseWindup
+                | FxKind::Pulse
+                | FxKind::Leap
+                | FxKind::PartBroken
+                | FxKind::Rise
+                | FxKind::Kneel => {}
             }
         }
     }
@@ -934,7 +965,7 @@ impl FightView {
             if c.health == 255 && !targeted {
                 continue;
             }
-            let Some(p) = project(pos(e) + Vec3::Y * 2.15) else {
+            let Some(p) = project(pos(e) + Vec3::Y * crate::robotview::bar_height(e.kind)) else {
                 continue;
             };
             let w = 46.0;
@@ -997,7 +1028,10 @@ impl FightView {
         // The target frame, top centre.
         if let Some(t) = self.target.and_then(|t| all.iter().find(|e| e.id == t)) {
             if let Some(c) = t.combat {
-                let (name, rank) = enemy_name(t.kind);
+                let (mut name, rank) = enemy_name(t.kind);
+                if let Some((on, _)) = t.mount {
+                    name = crate::robotview::part_name(all, on, t.id);
+                }
                 let col = con_colour(c.level, mine);
                 let w = 300.0;
                 let r = egui::Rect::from_min_size(
@@ -1300,7 +1334,7 @@ fn hand(world: &World, e: Option<EntityId>) -> Option<Vec3> {
     Some(m.w_axis.truncate())
 }
 
-fn sparks(world: &mut World, at: Vec3, dir: Vec3, count: u32, colour: Color) {
+pub fn sparks(world: &mut World, at: Vec3, dir: Vec3, count: u32, colour: Color) {
     let p = world.particles_mut();
     let _ = p.burst(
         ParticleEmitter::sparks(at, dir.normalize_or(Vec3::Y), count)
@@ -1380,7 +1414,7 @@ fn beam(world: &mut World, a: Vec3, b: Vec3, core: Color, edge: Color) {
     }
 }
 
-fn glow_at(world: &mut World, at: Vec3, colour: Color, size: f32) {
+pub fn glow_at(world: &mut World, at: Vec3, colour: Color, size: f32) {
     let _ = world.particles_mut().burst(
         ParticleEmitter::new(at)
             .with_mode(ParticleMode::Burst)
@@ -1437,7 +1471,7 @@ fn shell(world: &mut World, at: Vec3, colour: Color, count: u32) {
 }
 
 /// A shockwave: a ring of light racing out over the ground, dust, a scorch.
-fn shockwave(world: &mut World, feet: Vec3, core: Color, edge: Color, radius: f32) {
+pub fn shockwave(world: &mut World, feet: Vec3, core: Color, edge: Color, radius: f32) {
     let p = world.particles_mut();
     let _ = p.burst(
         ParticleEmitter::new(feet + Vec3::Y * 0.3)

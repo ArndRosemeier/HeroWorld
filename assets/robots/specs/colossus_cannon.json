@@ -1,0 +1,274 @@
+{
+ "textures": {
+  "texels_per_metre": 96,
+  "max_size": 512
+ },
+ "spec_version": 1,
+ "id": "colossus_cannon",
+ "generator": "prop.assembly",
+ "params": {
+  "settle": false,
+  "bevel": 0.012,
+  "detail": 0.25,
+  "pieces": [
+   {
+    "cylinder": {
+     "a": [
+      0,
+      0.5,
+      0
+     ],
+     "b": [
+      0,
+      -1.2,
+      0
+     ],
+     "radius": 0.55
+    },
+    "slot": "hull"
+   },
+   {
+    "cylinder": {
+     "a": [
+      0,
+      -1.2,
+      0
+     ],
+     "b": [
+      0,
+      -6.2,
+      0
+     ],
+     "radius": 0.32,
+     "radius_b": 0.28
+    },
+    "slot": "chrome"
+   },
+   {
+    "torus": {
+     "centre": [
+      0,
+      -1.6,
+      0
+     ],
+     "radius": 0.36,
+     "thickness": 0.07,
+     "axis": "y"
+    },
+    "slot": "brass",
+    "repeat": {
+     "count": 5,
+     "step": [
+      0,
+      -0.9,
+      0
+     ]
+    }
+   },
+   {
+    "cylinder": {
+     "a": [
+      0,
+      -6.1,
+      0
+     ],
+     "b": [
+      0,
+      -6.8,
+      0
+     ],
+     "radius": 0.42
+    },
+    "slot": "brass"
+   },
+   {
+    "box": {
+     "size": [
+      0.9,
+      0.12,
+      0.16
+     ]
+    },
+    "at": [
+     0,
+     -6.45,
+     0
+    ],
+    "slot": "rubber",
+    "repeat": {
+     "count": 2,
+     "step": [
+      0,
+      -0.22,
+      0
+     ]
+    }
+   },
+   {
+    "cylinder": {
+     "a": [
+      0,
+      -6.75,
+      0
+     ],
+     "b": [
+      0,
+      -6.82,
+      0
+     ],
+     "radius": 0.2
+    },
+    "slot": "rubber"
+   }
+  ]
+ },
+ "materials": {
+  "hull": {
+   "base_color": [
+    0.035,
+    0.11,
+    0.06,
+    1
+   ],
+   "roughness": 0.4,
+   "metallic": 0.35,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.025,
+        0.075,
+        0.04
+       ],
+       "scale": 0.7,
+       "coverage": 0.4,
+       "contrast": 1.5,
+       "amount": 0.6
+      }
+     },
+     {
+      "mottle": {
+       "color": [
+        0.12,
+        0.08,
+        0.04
+       ],
+       "scale": 5,
+       "coverage": 0.15,
+       "contrast": 3,
+       "amount": 0.5,
+       "roughness": 0.8,
+       "seed": 4
+      }
+     },
+     {
+      "facing": {
+       "color": [
+        0.16,
+        0.07,
+        0.03
+       ],
+       "direction": [
+        0,
+        0,
+        -1
+       ],
+       "angle": 55,
+       "soft": 30,
+       "breakup": 0.6,
+       "scale": 2,
+       "amount": 0.55,
+       "roughness": 0.85
+      }
+     },
+     {
+      "edges": {
+       "color": [
+        0.42,
+        0.38,
+        0.28
+       ],
+       "radius": 0.08,
+       "breakup": 0.6,
+       "amount": 0.6,
+       "roughness": 0.3
+      }
+     }
+    ]
+   }
+  },
+  "chrome": {
+   "base_color": [
+    0.82,
+    0.83,
+    0.86,
+    1
+   ],
+   "roughness": 0.12,
+   "metallic": 1.0,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.66,
+        0.67,
+        0.7
+       ],
+       "scale": 10,
+       "coverage": 0.2,
+       "contrast": 2,
+       "amount": 0.5,
+       "roughness": 0.25
+      }
+     }
+    ]
+   }
+  },
+  "brass": {
+   "base_color": [
+    0.6,
+    0.42,
+    0.14,
+    1
+   ],
+   "roughness": 0.28,
+   "metallic": 1.0,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.28,
+        0.2,
+        0.07
+       ],
+       "scale": 12,
+       "coverage": 0.3,
+       "contrast": 2,
+       "roughness": 0.55
+      }
+     }
+    ]
+   }
+  },
+  "rubber": {
+   "base_color": [
+    0.025,
+    0.025,
+    0.028,
+    1
+   ],
+   "roughness": 0.75,
+   "metallic": 0.0
+  }
+ },
+ "qa": {
+  "max_triangles": 20000,
+  "require_uvs": true,
+  "require_manifold": true,
+  "require_origin_at_base": false,
+  "max_dimension_m": 8.0
+ }
+}

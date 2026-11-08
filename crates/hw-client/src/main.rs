@@ -82,6 +82,7 @@ use hw_client::looks;
 use hw_client::people::{self, People, VillainKind, Who};
 use hw_client::powersview::{PowerAction, PowersView};
 use hw_client::profile::Profile;
+use hw_client::robotview::RobotView;
 use hw_client::title::{self, Choice, Title};
 use hw_client::townmesh::{TownGround, TownView};
 use hw_core::Seed;
@@ -290,6 +291,7 @@ fn main() -> EngineResult<()> {
     }
     // The fight: targets, effects, the screen.
     let mut fight = FightView::new();
+    let mut robots = RobotView::new();
     let mut radio = hw_client::radioview::Radio::default();
     let mut signal = hw_client::dispatchview::Signal::default();
     let mut town_map = view == "map";
@@ -1199,6 +1201,20 @@ fn main() -> EngineResult<()> {
                             .to_degrees();
                         fly = FlyCamera::new((p.x, p.y, p.z), yaw, pitch + 22.0);
                     }
+                    // `HW_VIEW=colossus`: the walking tank from in front, a
+                    // little above, as a hero would meet it.
+                    if view == "colossus" && radio.calls.len() == 1 && radio.calls.contains_key(id)
+                    {
+                        let c = Vec3::from_array(*at);
+                        let a = hw_sim::props::byte_to_yaw(*yaw) as f32 + 0.5;
+                        let p = c + Vec3::new(a.sin(), 0.0, a.cos()) * 16.0 + Vec3::Y * 52.0;
+                        let d = c + Vec3::Y * 4.0 - p;
+                        let yaw = d.x.atan2(d.z).to_degrees();
+                        let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                            .atan()
+                            .to_degrees();
+                        fly = FlyCamera::new((p.x, p.y, p.z), yaw, pitch);
+                    }
                     // `HW_VIEW=signal`: from a rooftop, up at the emblem.
                     if view == "signal" && radio.calls.len() == 1 && radio.calls.contains_key(id) {
                         let c = Vec3::from_array(*at)
@@ -1395,8 +1411,18 @@ fn main() -> EngineResult<()> {
                     }
                     continue;
                 }
+                // Machines are drawn from their parts (`robotview`).
+                if h.kind.is_robot() {
+                    continue;
+                }
                 let feet = Vec3::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32);
                 let villain = h.kind.is_enemy();
+                // The mutant alpha is a brute a head and a half taller.
+                let size = if h.kind == hw_net::EntityKind::Alpha {
+                    1.35
+                } else {
+                    1.0
+                };
                 // Our own flight we know; others' is told from their motion.
                 let flying = (mine == Some(h.id))
                     .then(|| hero_flies || solids.in_lift(glam::DVec3::from_array(h.pos)));
@@ -1421,7 +1447,7 @@ fn main() -> EngineResult<()> {
                 // A look per player until the hero creator, the same on
                 // every machine; villains by kind, a few looks each.
                 let who = match h.kind {
-                    hw_net::EntityKind::Brute => {
+                    hw_net::EntityKind::Brute | hw_net::EntityKind::Alpha => {
                         Who::Villain(VillainKind::Brute, h.id.0 % people::VILLAIN_LOOKS)
                     }
                     hw_net::EntityKind::Technician => {
@@ -1463,7 +1489,9 @@ fn main() -> EngineResult<()> {
                     }
                 }
                 let animated = model.is_some();
-                let place = Place::new(feet.x, feet.y, feet.z).with_yaw_deg(d.yaw);
+                let place = Place::new(feet.x, feet.y, feet.z)
+                    .with_yaw_deg(d.yaw)
+                    .with_scale(size);
                 // A new model (their looks arrived) means a new body.
                 let same = !animated || hero_who.get(&h.id) == Some(&who);
                 let (e, _) = match hero_entities.get(&h.id) {
@@ -1521,7 +1549,8 @@ fn main() -> EngineResult<()> {
                     Place::new(o.x, o.y, o.z)
                         .with_yaw_deg(d.yaw)
                         .with_pitch_deg(d.pitch)
-                        .with_roll_deg(d.roll),
+                        .with_roll_deg(d.roll)
+                        .with_scale(size),
                 )?;
                 // Fighting clips over walking; a stance while squaring up.
                 let in_fight = h.combat.is_some_and(|c| c.target.is_some()) && slow && villain;
@@ -1575,7 +1604,11 @@ fn main() -> EngineResult<()> {
             // then what happened in fights this frame.
             fight.statuses(world, &heroes, &mut hero_entities);
             let (events, now) = session.take_fx();
+            fight.muzzles = robots.muzzles(world);
             fight.on_fx(world, &events, now, mine, &hero_entities, &heroes);
+            let muzzles = fight.muzzles.clone();
+            robots.on_fx(world, &mut fight, &events, &heroes, &muzzles, mine);
+            robots.update(world, &heroes, frame.dt)?;
             let me_state = mine.and_then(|id| heroes.iter().find(|e| e.id == id));
             fight.update(world, frame.dt, &heroes, me_state);
             // Our sheet as the host has it: a level up shows, the file is kept.

@@ -127,6 +127,16 @@ pub enum EntityKind {
     Drone,
     /// A flying taxi; its `owner` is the fare.
     Taxi,
+    /// The mad scientist's robo-sentry: a lieutenant with a ray cannon and
+    /// a shield projector on its back.
+    Sentry,
+    /// A mutant alpha: a boss brute that leaps onto heroes.
+    Alpha,
+    /// The walking tank: the colossus.
+    Colossus,
+    /// A weak point on a robot (a knee, a cannon, a shield dish); its
+    /// `mount` says which robot and which part.
+    WeakPoint,
 }
 
 impl EntityKind {
@@ -138,6 +148,10 @@ impl EntityKind {
             EntityKind::Technician => 3,
             EntityKind::Drone => 4,
             EntityKind::Taxi => 5,
+            EntityKind::Sentry => 6,
+            EntityKind::Alpha => 7,
+            EntityKind::Colossus => 8,
+            EntityKind::WeakPoint => 9,
         }
     }
 
@@ -149,6 +163,10 @@ impl EntityKind {
             3 => Ok(EntityKind::Technician),
             4 => Ok(EntityKind::Drone),
             5 => Ok(EntityKind::Taxi),
+            6 => Ok(EntityKind::Sentry),
+            7 => Ok(EntityKind::Alpha),
+            8 => Ok(EntityKind::Colossus),
+            9 => Ok(EntityKind::WeakPoint),
             _ => Err(WireError),
         }
     }
@@ -157,7 +175,23 @@ impl EntityKind {
 impl EntityKind {
     /// Villains a hero fights.
     pub fn is_enemy(self) -> bool {
-        matches!(self, EntityKind::Brute | EntityKind::Technician)
+        matches!(
+            self,
+            EntityKind::Brute
+                | EntityKind::Technician
+                | EntityKind::Sentry
+                | EntityKind::Alpha
+                | EntityKind::Colossus
+                | EntityKind::WeakPoint
+        )
+    }
+
+    /// Drawn as a machine (prefab parts), not as a person.
+    pub fn is_robot(self) -> bool {
+        matches!(
+            self,
+            EntityKind::Sentry | EntityKind::Colossus | EntityKind::WeakPoint
+        )
     }
 }
 
@@ -311,6 +345,12 @@ pub const EFFECT_CARRYING: u8 = 4;
 pub const EFFECT_CAN_FLY: u8 = 8;
 /// Super jump is owned (higher jumps).
 pub const EFFECT_SUPER_JUMP: u8 = 16;
+/// A robot's armour is shut: blows glance off (the colossus walking).
+pub const EFFECT_ARMOURED: u8 = 32;
+/// The colossus is down on its belly, its core open.
+pub const EFFECT_KNEELING: u8 = 64;
+/// The colossus is enraged (its second wind).
+pub const EFFECT_ENRAGED: u8 = 128;
 
 /// Bytes a [`CombatState`] takes.
 const COMBAT_BYTES: usize = 9;
@@ -334,6 +374,8 @@ pub struct EntityState {
     pub owner: Option<PlayerId>,
     /// Health, energy and status, for anything that fights.
     pub combat: Option<CombatState>,
+    /// A weak point's robot and which part of it it is.
+    pub mount: Option<(NetId, u8)>,
 }
 
 impl Default for EntityState {
@@ -347,6 +389,7 @@ impl Default for EntityState {
             grounded: false,
             owner: None,
             combat: None,
+            mount: None,
         }
     }
 }
@@ -356,6 +399,7 @@ const F_OWNER: u8 = 2;
 const F_VEL: u8 = 4;
 const F_ROT: u8 = 8;
 const F_COMBAT: u8 = 16;
+const F_MOUNT: u8 = 32;
 
 impl EntityState {
     fn flags(&self) -> u8 {
@@ -375,6 +419,9 @@ impl EntityState {
         if self.combat.is_some() {
             f |= F_COMBAT;
         }
+        if self.mount.is_some() {
+            f |= F_MOUNT;
+        }
         f
     }
 
@@ -388,6 +435,7 @@ impl EntityState {
             + if f & F_ROT != 0 { 16 } else { 0 }
             + if f & F_OWNER != 0 { 2 } else { 0 }
             + if f & F_COMBAT != 0 { COMBAT_BYTES } else { 0 }
+            + if f & F_MOUNT != 0 { 5 } else { 0 }
     }
 
     fn write(&self, w: &mut Writer) {
@@ -417,13 +465,16 @@ impl EntityState {
                 .u32(c.target.map_or(0, |t| t.0))
                 .u8(c.effects);
         }
+        if let Some((on, part)) = self.mount {
+            w.u32(on.0).u8(part);
+        }
     }
 
     fn read(r: &mut Reader) -> Result<Self, WireError> {
         let id = NetId(r.u32()?);
         let kind = EntityKind::from_code(r.u8()?)?;
         let f = r.u8()?;
-        if f >> 5 != 0 {
+        if f >> 6 != 0 {
             return Err(WireError);
         }
         let pos = [r.f64()?, r.f64()?, r.f64()?];
@@ -460,6 +511,11 @@ impl EntityState {
         } else {
             None
         };
+        let mount = if f & F_MOUNT != 0 {
+            Some((NetId(r.u32()?), r.u8()?))
+        } else {
+            None
+        };
         Ok(Self {
             id,
             kind,
@@ -468,6 +524,7 @@ impl EntityState {
             rot,
             grounded: f & F_GROUNDED != 0,
             owner,
+            mount,
             combat,
         })
     }
@@ -512,6 +569,27 @@ pub enum FxKind {
     LevelUp,
     /// `to` earned karma (`amount`).
     Karma,
+    /// The colossus aims its cannon: a shell will land at `at`.
+    ShellWindup,
+    /// A shell landed at `at` (`to`: a hero it hit, or `from`).
+    Shell,
+    /// The colossus rears up to stomp round `at`.
+    StompWindup,
+    /// The stomp's shockwave (`to`: a hero it hit, or `from`).
+    Stomp,
+    /// The core charges: an Aether discharge round `at` is coming.
+    PulseWindup,
+    /// The discharge (`to`: a hero it hit, or `from`).
+    Pulse,
+    /// A mutant alpha crouches to leap onto `at`.
+    LeapWindup,
+    /// It landed (`to`: a hero it hit, or `from`).
+    Leap,
+    /// A robot part was blown off (`to`: the weak point).
+    PartBroken,
+    /// The colossus stands up again (its second wind) or goes down.
+    Rise,
+    Kneel,
 }
 
 impl FxKind {
@@ -534,6 +612,17 @@ impl FxKind {
             FxKind::LevelUp => 15,
             FxKind::Karma => 16,
             FxKind::ThrowHit => 17,
+            FxKind::ShellWindup => 18,
+            FxKind::Shell => 19,
+            FxKind::StompWindup => 20,
+            FxKind::Stomp => 21,
+            FxKind::PulseWindup => 22,
+            FxKind::Pulse => 23,
+            FxKind::LeapWindup => 24,
+            FxKind::Leap => 25,
+            FxKind::PartBroken => 26,
+            FxKind::Rise => 27,
+            FxKind::Kneel => 28,
         }
     }
 
@@ -556,6 +645,17 @@ impl FxKind {
             15 => FxKind::LevelUp,
             16 => FxKind::Karma,
             17 => FxKind::ThrowHit,
+            18 => FxKind::ShellWindup,
+            19 => FxKind::Shell,
+            20 => FxKind::StompWindup,
+            21 => FxKind::Stomp,
+            22 => FxKind::PulseWindup,
+            23 => FxKind::Pulse,
+            24 => FxKind::LeapWindup,
+            25 => FxKind::Leap,
+            26 => FxKind::PartBroken,
+            27 => FxKind::Rise,
+            28 => FxKind::Kneel,
             _ => return Err(WireError),
         })
     }

@@ -12,6 +12,7 @@
 
 use crate::collision::{Body, Obstacles, BODY_HEIGHT};
 use crate::progress::{is_movement, themes, Affinity};
+use crate::robots::{self, Colossus, Mount};
 use crate::{
     nav, step_hero, Control, Hero, Ids, LastChange, Motion, Net, Orientation, Prop, Solids, DT,
     GROUND_Y, TICK_HZ,
@@ -21,7 +22,8 @@ use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
 use hw_net::{
     CombatState, EntityKind, Fx, FxKind, InputState, PlayerId, Power, Sheet, Status,
-    EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_HELD, EFFECT_SHIELD, EFFECT_SUPER_JUMP,
+    EFFECT_ARMOURED, EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_HELD, EFFECT_SHIELD,
+    EFFECT_SUPER_JUMP,
 };
 use std::collections::BTreeMap;
 
@@ -217,6 +219,14 @@ pub enum EnemyKind {
     Brute,
     /// Ranged.
     Technician,
+    /// A lieutenant: the robo-sentry, a ray cannon and a shield projector.
+    Sentry,
+    /// A boss: the mutant alpha, who leaps onto heroes.
+    Alpha,
+    /// The walking tank (see [`crate::robots`]).
+    Colossus,
+    /// A breakable part of a robot (see [`Mount`]).
+    WeakPoint,
 }
 
 /// How a kind of villain fights.
@@ -265,6 +275,54 @@ pub fn enemy_spec(k: EnemyKind) -> EnemySpec {
             aggro: 20.0,
             karma: 6.0,
         },
+        EnemyKind::Sentry => EnemySpec {
+            name: "Robo-Sentry",
+            rank: "Lieutenant",
+            health: 150.0,
+            damage: 10.0,
+            attack_every: 2.4,
+            windup: 0.8,
+            reach: 26.0,
+            speed: 0.5,
+            aggro: 24.0,
+            karma: 20.0,
+        },
+        EnemyKind::Alpha => EnemySpec {
+            name: "Mutant Alpha",
+            rank: "Boss",
+            health: 300.0,
+            damage: 14.0,
+            attack_every: 2.0,
+            windup: 0.6,
+            reach: 2.8,
+            speed: 0.95,
+            aggro: 24.0,
+            karma: 45.0,
+        },
+        EnemyKind::Colossus => EnemySpec {
+            name: "The Doctor's Colossus",
+            rank: "Colossus",
+            health: robots::CORE_HEALTH,
+            damage: 20.0,
+            attack_every: 6.0,
+            windup: 1.6,
+            reach: 140.0,
+            speed: 0.0,
+            aggro: 150.0,
+            karma: 400.0,
+        },
+        EnemyKind::WeakPoint => EnemySpec {
+            name: "Weak point",
+            rank: "Part",
+            health: 240.0,
+            damage: 0.0,
+            attack_every: 1.0,
+            windup: 0.0,
+            reach: 0.0,
+            speed: 0.0,
+            aggro: 0.0,
+            karma: 25.0,
+        },
     }
 }
 
@@ -273,13 +331,31 @@ impl EnemyKind {
         match self {
             EnemyKind::Brute => EntityKind::Brute,
             EnemyKind::Technician => EntityKind::Technician,
+            EnemyKind::Sentry => EntityKind::Sentry,
+            EnemyKind::Alpha => EntityKind::Alpha,
+            EnemyKind::Colossus => EntityKind::Colossus,
+            EnemyKind::WeakPoint => EntityKind::WeakPoint,
         }
+    }
+
+    /// Machines and bosses: no knockback, no police drone for the machines.
+    pub fn heavy(self) -> bool {
+        !matches!(self, EnemyKind::Brute | EnemyKind::Technician)
+    }
+
+    /// Lifted away by a police drone when beaten (people and sentries).
+    pub fn carried_off(self) -> bool {
+        !matches!(self, EnemyKind::Colossus | EnemyKind::WeakPoint)
     }
 
     pub fn from_entity(k: EntityKind) -> Option<Self> {
         match k {
             EntityKind::Brute => Some(EnemyKind::Brute),
             EntityKind::Technician => Some(EnemyKind::Technician),
+            EntityKind::Sentry => Some(EnemyKind::Sentry),
+            EntityKind::Alpha => Some(EnemyKind::Alpha),
+            EntityKind::Colossus => Some(EnemyKind::Colossus),
+            EntityKind::WeakPoint => Some(EnemyKind::WeakPoint),
             _ => None,
         }
     }
@@ -319,6 +395,8 @@ pub struct Fighter {
     pub shield_until: u64,
     /// What it holds over its head to throw.
     pub carrying: Option<NetId>,
+    /// Effects a robot's state adds ([`EFFECT_ARMOURED`] and the like).
+    pub marks: u8,
 }
 
 impl Fighter {
@@ -342,6 +420,7 @@ impl Fighter {
             held_until: 0,
             shield_until: 0,
             carrying: None,
+            marks: 0,
         }
     }
 
@@ -423,7 +502,8 @@ impl Fighter {
                 | (self.shielded(tick) as u8 * EFFECT_SHIELD)
                 | (self.carrying.is_some() as u8 * EFFECT_CARRYING)
                 | (self.kit.has(Power::Flight) as u8 * EFFECT_CAN_FLY)
-                | (self.kit.has(Power::SuperJump) as u8 * EFFECT_SUPER_JUMP),
+                | (self.kit.has(Power::SuperJump) as u8 * EFFECT_SUPER_JUMP)
+                | self.marks,
         }
     }
 }
@@ -448,6 +528,10 @@ pub struct Enemy {
     /// Up on a roof: it holds its place and shoots down, farther and
     /// sooner, and never walks off the edge.
     pub perch: bool,
+    /// A boss's trick (the alpha's leap) is ready again at this tick.
+    pub next_trick: u64,
+    /// The alpha in the air: (took off, lands, from, to).
+    pub leap: Option<(u64, u64, DVec3, DVec3)>,
 }
 
 /// A perched villain notices and reaches this much farther.
@@ -504,6 +588,8 @@ pub struct Spot {
     pub once: bool,
     /// On a roof (`center` on top of it): its group stands up there.
     pub perch: bool,
+    /// A lieutenant or boss in front of the group.
+    pub lead: Option<EnemyKind>,
 }
 
 impl Spot {
@@ -521,6 +607,7 @@ impl Spot {
             only: None,
             once: false,
             perch: false,
+            lead: None,
         }
     }
 }
@@ -570,6 +657,9 @@ pub struct Fights {
     pub throws: Vec<Throw>,
     /// Villains' paths round walls.
     pub paths: BTreeMap<NetId, Path>,
+    /// Blows at the city this tick (the colossus's feet and shells):
+    /// (where, radius, power); the simulation breaks buildings with them.
+    pub city: Vec<(DVec3, f32, f32)>,
 }
 
 impl Default for Fights {
@@ -582,24 +672,29 @@ impl Default for Fights {
             rewards: Vec::new(),
             throws: Vec::new(),
             paths: BTreeMap::new(),
+            city: Vec::new(),
         }
     }
 }
 
 /// One fighter gathered for a tick.
-struct Actor {
-    e: Entity,
-    id: NetId,
-    body: Body,
-    f: Fighter,
-    enemy: Option<Enemy>,
-    hero: Option<(PlayerId, InputState)>,
+pub(crate) struct Actor {
+    pub(crate) e: Entity,
+    pub(crate) id: NetId,
+    pub(crate) body: Body,
+    pub(crate) f: Fighter,
+    pub(crate) enemy: Option<Enemy>,
+    pub(crate) hero: Option<(PlayerId, InputState)>,
     /// Who beat it this tick, and the affinity of the power that did.
     beaten_by: Option<(NetId, Option<Affinity>)>,
+    /// A weak point's robot.
+    pub(crate) mount: Option<Mount>,
+    /// The walking tank's own state.
+    pub(crate) colossus: Option<Colossus>,
 }
 
 impl Actor {
-    fn chest(&self) -> DVec3 {
+    pub(crate) fn chest(&self) -> DVec3 {
         self.body.pos + DVec3::Y * (BODY_HEIGHT * 0.6)
     }
 }
@@ -642,7 +737,7 @@ pub fn clear_line(solids: &Obstacles, a: DVec3, b: DVec3) -> bool {
     })
 }
 
-fn ticks(seconds: f64) -> u64 {
+pub(crate) fn ticks(seconds: f64) -> u64 {
     (seconds * TICK_HZ as f64).round() as u64
 }
 
@@ -667,11 +762,30 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
         .child(spot.groups as u64);
     let side = spot.facing.perp();
     let mut n = 0;
-    for (k, (kind, level)) in roster(gseed, size, level).into_iter().enumerate() {
-        let kind = spot.only.unwrap_or(kind);
-        // Brutes in a loose front row, technicians a few metres behind.
-        let row = if kind == EnemyKind::Brute { 1.5 } else { -3.5 };
-        let across = (k as f64 - (size as f64 - 1.0) * 0.5) * 1.6;
+    let mut group: Vec<(EnemyKind, u8)> = roster(gseed, size, level)
+        .into_iter()
+        .map(|(kind, level)| (spot.only.unwrap_or(kind), level))
+        .collect();
+    // A lieutenant or boss takes the place of the first in line.
+    if let (Some(lead), Some(first)) = (spot.lead, group.first_mut()) {
+        *first = (
+            lead,
+            level.saturating_add(1).min(crate::progress::MAX_LEVEL),
+        );
+    }
+    let count = group.len();
+    for (k, (kind, level)) in group.into_iter().enumerate() {
+        // Brutes in a loose front row, shooters a few metres behind.
+        let row = match kind {
+            EnemyKind::Technician | EnemyKind::Sentry => -3.5,
+            EnemyKind::Colossus => 0.0,
+            _ => 1.5,
+        };
+        let across = if kind == EnemyKind::Colossus {
+            0.0
+        } else {
+            (k as f64 - (count as f64 - 1.0) * 0.5) * 1.6
+        };
         let p = DVec2::new(spot.center.x, spot.center.z) + spot.facing * row + side * across;
         let y = if spot.perch {
             solids.floor_under(p, spot.center.y + 1.0)
@@ -679,27 +793,22 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
             solids.ground_at(p).max(GROUND_Y)
         };
         let home = DVec3::new(p.x, y, p.y);
-        let id = world.resource_mut::<Ids>().0.allocate();
-        let fighter = Fighter::enemy(kind, level);
-        world.spawn((
-            Net(id),
-            Motion(Body {
-                pos: home,
-                vel: DVec3::ZERO,
-                grounded: true,
-            }),
-            fighter,
-            CombatView(fighter.view(tick)),
-            Enemy {
-                kind,
-                spot: spot_index,
+        let id = spawn_enemy(world, tick, kind, level, spot_index, home, heroes);
+        if kind == EnemyKind::Colossus {
+            let yaw = spot.facing.x.atan2(spot.facing.y);
+            robots::spawn_colossus(world, tick, id, spot_index, home, yaw, level, heroes);
+        } else if kind == EnemyKind::Sentry {
+            robots::spawn_parts(
+                world,
+                tick,
+                id,
+                spot_index,
                 home,
-                windup: None,
-                next_attack: tick,
-                perch: spot.perch,
-            },
-            LastChange(tick),
-        ));
+                level,
+                heroes,
+                &[robots::DISH],
+            );
+        }
         n += 1;
     }
     let mut f = world.resource_mut::<Fights>();
@@ -708,6 +817,52 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
     s.members = n;
     s.respawn_at = None;
     n
+}
+
+/// Spawns one villain of `kind` at `home` for `spot`; returns its ID.
+pub(crate) fn spawn_enemy(
+    world: &mut World,
+    tick: u64,
+    kind: EnemyKind,
+    level: u8,
+    spot: usize,
+    home: DVec3,
+    heroes: usize,
+) -> NetId {
+    let id = world.resource_mut::<Ids>().0.allocate();
+    let mut fighter = Fighter::enemy(kind, level);
+    // The colossus and its parts take a team: tougher for more heroes.
+    if matches!(kind, EnemyKind::Colossus | EnemyKind::WeakPoint) {
+        let k = 1.0 + 0.6 * heroes.saturating_sub(1) as f32;
+        fighter.max_health *= k;
+        fighter.health = fighter.max_health;
+    }
+    world.spawn((
+        Net(id),
+        Motion(Body {
+            pos: home,
+            vel: DVec3::ZERO,
+            grounded: true,
+        }),
+        fighter,
+        CombatView(fighter.view(tick)),
+        Enemy {
+            kind,
+            spot,
+            home,
+            windup: None,
+            next_attack: tick,
+            perch: world
+                .resource::<Fights>()
+                .spots
+                .get(spot)
+                .is_some_and(|s| s.perch),
+            next_trick: tick + ticks(4.0),
+            leap: None,
+        },
+        LastChange(tick),
+    ));
+    id
 }
 
 /// Height over a hero's feet where a lifted thing rides.
@@ -739,9 +894,10 @@ pub(crate) fn step(world: &mut World, tick: u64) {
             &Fighter,
             Option<&Enemy>,
             Option<(&Hero, &Control)>,
+            (Option<&Mount>, Option<&Colossus>),
         )>()
         .iter(world)
-        .map(|(e, n, m, f, en, h)| Actor {
+        .map(|(e, n, m, f, en, h, (mount, colossus))| Actor {
             e,
             id: n.0,
             body: m.0,
@@ -749,6 +905,8 @@ pub(crate) fn step(world: &mut World, tick: u64) {
             enemy: en.copied(),
             hero: h.map(|(h, c)| (h.owner, c.0)),
             beaten_by: None,
+            mount: mount.copied(),
+            colossus: colossus.copied(),
         })
         .collect();
     actors.sort_by_key(|a| a.id);
@@ -767,6 +925,8 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     land_throws(&mut actors, &mut throws, tick, &mut out);
     throws.append(&mut out.throws);
     enemies_act(&mut actors, &solids, tick, &mut out.fx, &mut paths);
+    let mut city = Vec::new();
+    robots::act(&mut actors, &solids, tick, &mut out.fx, &mut city);
     statuses(&mut actors, &drones, tick, &mut out, &mut spawn_drones);
     regenerate(&mut actors, tick);
     pay_out(&actors, &mut out);
@@ -956,6 +1116,17 @@ pub(crate) fn step(world: &mut World, tick: u64) {
                 *e = en;
             }
         }
+        if let (Some(c), Some(mut x)) = (a.colossus, em.get_mut::<Colossus>()) {
+            if *x != c {
+                *x = c;
+            }
+        }
+        if let Some(c) = a.colossus {
+            let rot = robots::yaw_rotation(c.yaw);
+            if let Some(mut o) = em.get_mut::<Orientation>() {
+                o.set_if_neq(Orientation(rot));
+            }
+        }
         let view = a.f.view(tick);
         if let Some(mut v) = em.get_mut::<CombatView>() {
             v.set_if_neq(CombatView(view));
@@ -1091,12 +1262,14 @@ pub(crate) fn step(world: &mut World, tick: u64) {
             f.spots[i].respawn_at = Some(tick);
         }
     }
+    robots::tidy(world, tick);
     let mut f = world.resource_mut::<Fights>();
     f.events = fx;
     f.rewards = out.rewards;
+    f.city = city;
 }
 
-fn event(tick: u64, kind: FxKind, from: NetId, to: NetId, at: impl Into<DVec3>) -> Fx {
+pub(crate) fn event(tick: u64, kind: FxKind, from: NetId, to: NetId, at: impl Into<DVec3>) -> Fx {
     let at: DVec3 = at.into();
     Fx {
         tick,
@@ -1115,7 +1288,7 @@ fn event(tick: u64, kind: FxKind, from: NetId, to: NetId, at: impl Into<DVec3>) 
 /// share), knocking it back if `knock` (or if the blow defeats it). The
 /// power's `affinity` is remembered for the karma of a defeat. Returns
 /// (knocked, defeated, damage dealt).
-fn hit(
+pub(crate) fn hit(
     actors: &mut [Actor],
     from: usize,
     to: usize,
@@ -1128,11 +1301,17 @@ fn hit(
     let from_pos = actors[from].body.pos;
     actors[from].f.last_combat = tick;
     let t = &mut actors[to];
-    let dealt = if t.f.shielded(tick) {
+    let mut dealt = if t.f.shielded(tick) {
         damage * (1.0 - SHIELD_BLOCKS)
     } else {
         damage
     };
+    // Shut armour: blows glance off.
+    if t.f.marks & EFFECT_ARMOURED != 0 {
+        dealt *= robots::ARMOUR_LETS_THROUGH;
+    }
+    let heavy = t.enemy.is_some_and(|e| e.kind.heavy());
+    let knock = knock && !heavy;
     t.f.health = (t.f.health - dealt).max(0.0);
     t.f.last_combat = tick;
     let mut push = DVec2::new(t.body.pos.x - from_pos.x, t.body.pos.z - from_pos.z);
@@ -1142,6 +1321,9 @@ fn hit(
     if villain && defeated {
         t.f.status = Status::Down;
         t.f.until = tick + ticks(POLICE_DELAY);
+        if heavy {
+            t.body.vel = DVec3::ZERO;
+        }
         t.f.queued = None;
         t.f.held_until = 0;
         t.beaten_by = Some((from_id, affinity));
@@ -1154,7 +1336,7 @@ fn hit(
         t.f.status = Status::Knocked;
         t.f.until = tick + ticks(KNOCKED_SECONDS);
     }
-    let knocked = villain && (knock || defeated);
+    let knocked = villain && (knock || defeated) && !heavy;
     if knocked {
         let speed = if knock { 9.0 } else { 5.0 };
         t.body.vel = DVec3::new(push.x * speed, 5.0, push.y * speed);
@@ -1540,11 +1722,21 @@ fn enemies_act(
         let Some(mut en) = actors[i].enemy else {
             continue;
         };
+        // Machines that are not people-sized move in `robots`.
+        if matches!(en.kind, EnemyKind::Colossus | EnemyKind::WeakPoint) {
+            continue;
+        }
+        if en.leap.is_some() {
+            leap(actors, i, &mut en, tick, fx);
+            actors[i].enemy = Some(en);
+            continue;
+        }
         let mut spec = enemy_spec(en.kind);
         if en.perch {
             spec.aggro *= PERCH_RANGE;
             spec.reach *= PERCH_RANGE;
         }
+        let ranged = matches!(en.kind, EnemyKind::Technician | EnemyKind::Sentry);
         let mut input = InputState::default();
         let getting_up = tick < actors[i].f.busy_until;
         let held = actors[i].f.held(tick);
@@ -1624,12 +1816,9 @@ fn enemies_act(
                                 let d = actors[t].body.pos.distance(actors[i].body.pos);
                                 let lands = actors[t].f.standing()
                                     && d <= spec.reach + 0.6
-                                    && (en.kind == EnemyKind::Brute || seen);
+                                    && (!ranged || seen);
                                 let dmg = spec.damage * level_scale(actors[i].f.level);
-                                let kind = match en.kind {
-                                    EnemyKind::Brute => FxKind::Punch,
-                                    EnemyKind::Technician => FxKind::Ray,
-                                };
+                                let kind = if ranged { FxKind::Ray } else { FxKind::Punch };
                                 let mut e = event(
                                     tick,
                                     kind,
@@ -1647,10 +1836,29 @@ fn enemies_act(
                             }
                         }
                     } else {
-                        let (near, far) = match en.kind {
-                            EnemyKind::Brute => (0.0, 1.6),
-                            EnemyKind::Technician => (7.0, 16.0),
-                        };
+                        let (near, far) = if ranged { (7.0, 16.0) } else { (0.0, 1.6) };
+                        // The alpha leaps onto a hero who keeps away.
+                        if en.kind == EnemyKind::Alpha
+                            && tick >= en.next_trick
+                            && (LEAP_MIN..LEAP_MAX).contains(&dist)
+                            && seen
+                            && actors[j].body.grounded
+                        {
+                            let take_off = tick + ticks(LEAP_WINDUP);
+                            let land = take_off + ticks(LEAP_SECONDS);
+                            en.leap = Some((take_off, land, here, there));
+                            en.next_trick = land + ticks(LEAP_EVERY);
+                            en.next_attack = land + ticks(0.8);
+                            fx.push(event(
+                                tick,
+                                FxKind::LeapWindup,
+                                actors[i].id,
+                                actors[j].id,
+                                there,
+                            ));
+                            actors[i].enemy = Some(en);
+                            continue;
+                        }
                         let mut go = DVec2::ZERO;
                         if en.perch {
                             // Holds its place up there; out of sight, it
@@ -1672,9 +1880,10 @@ fn enemies_act(
                             let at = tick + ticks(spec.windup);
                             en.windup = Some((at, actors[j].id));
                             en.next_attack = at + ticks(spec.attack_every);
-                            let kind = match en.kind {
-                                EnemyKind::Brute => FxKind::PunchWindup,
-                                EnemyKind::Technician => FxKind::RayWindup,
+                            let kind = if ranged {
+                                FxKind::RayWindup
+                            } else {
+                                FxKind::PunchWindup
                             };
                             fx.push(event(
                                 tick,
@@ -1733,6 +1942,61 @@ fn enemies_act(
     }
 }
 
+/// The alpha's leap: it lands on the hero who kept away (between these
+/// distances, m), after a crouch everyone can see.
+pub const LEAP_MIN: f64 = 7.0;
+pub const LEAP_MAX: f64 = 24.0;
+pub const LEAP_WINDUP: f64 = 0.9;
+pub const LEAP_SECONDS: f64 = 1.1;
+pub const LEAP_EVERY: f64 = 9.0;
+/// The landing hurts everyone this near (m), by this share of a punch.
+pub const LEAP_AREA: f64 = 4.5;
+const LEAP_DAMAGE: f32 = 1.5;
+
+/// One tick of an alpha's leap: a crouch, an arc, a landing that hurts.
+fn leap(actors: &mut [Actor], i: usize, en: &mut Enemy, tick: u64, fx: &mut Vec<Fx>) {
+    let Some((take_off, land, from, to)) = en.leap else {
+        return;
+    };
+    if !actors[i].f.standing() || actors[i].f.held(tick) {
+        en.leap = None;
+        return;
+    }
+    if tick < take_off {
+        actors[i].body.vel = DVec3::ZERO;
+        return;
+    }
+    let span = (land - take_off).max(1) as f64;
+    let t = ((tick - take_off) as f64 / span).min(1.0);
+    let arc = |t: f64| from.lerp(to, t) + DVec3::Y * (4.0 * 6.0 * t * (1.0 - t));
+    let next = arc(((tick + 1 - take_off) as f64 / span).min(1.0));
+    let now = arc(t);
+    actors[i].body.pos = now;
+    actors[i].body.vel = (next - now) / DT;
+    actors[i].body.grounded = false;
+    if tick < land {
+        return;
+    }
+    en.leap = None;
+    actors[i].body.pos = to;
+    actors[i].body.vel = DVec3::ZERO;
+    actors[i].body.grounded = true;
+    let me = actors[i].id;
+    let dmg = enemy_spec(EnemyKind::Alpha).damage * LEAP_DAMAGE * level_scale(actors[i].f.level);
+    for k in 0..actors.len() {
+        let a = &actors[k];
+        if a.hero.is_none() || !a.f.standing() || a.body.pos.distance(to) > LEAP_AREA {
+            continue;
+        }
+        let (_, defeat, dealt) = hit(actors, i, k, dmg, false, tick, None);
+        let mut e = event(tick, FxKind::Leap, me, actors[k].id, actors[k].chest());
+        e.amount = dealt.round() as u16;
+        e.defeat = defeat;
+        fx.push(e);
+    }
+    fx.push(event(tick, FxKind::Leap, me, me, to));
+}
+
 fn statuses(
     actors: &mut [Actor],
     drones: &[(Entity, NetId, Body, Drone)],
@@ -1750,7 +2014,8 @@ fn statuses(
                 actors[i].f.busy_until = tick + ticks(GET_UP_SECONDS);
             }
             Status::Down if actors[i].enemy.is_some() => {
-                if tick >= actors[i].f.until && !fetched(actors[i].id, spawn_drones) {
+                let carried = actors[i].enemy.is_some_and(|e| e.kind.carried_off());
+                if carried && tick >= actors[i].f.until && !fetched(actors[i].id, spawn_drones) {
                     spawn_drones.push((actors[i].id, actors[i].body.pos, false));
                 }
             }
@@ -1806,10 +2071,13 @@ fn regenerate(actors: &mut [Actor], tick: u64) {
         }
         let calm = tick.saturating_sub(a.f.last_combat) > ticks(COMBAT_SECONDS);
         let k = if calm { 1 } else { 0 };
+        let machine = a
+            .enemy
+            .is_some_and(|e| matches!(e.kind, EnemyKind::Colossus | EnemyKind::WeakPoint));
         let (h, e) = if a.enemy.is_some() {
-            // Villains heal only once nobody fights them.
+            // Villains heal only once nobody fights them (machines never).
             (
-                if calm && a.f.target.is_none() {
+                if calm && a.f.target.is_none() && !machine {
                     10.0
                 } else {
                     0.0

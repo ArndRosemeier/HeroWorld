@@ -1,0 +1,186 @@
+{
+ "textures": {
+  "texels_per_metre": 256,
+  "max_size": 512
+ },
+ "spec_version": 1,
+ "id": "sentry_dish",
+ "generator": "prop.assembly",
+ "params": {
+  "settle": false,
+  "bevel": 0.003,
+  "detail": 0.35,
+  "pieces": [
+   {
+    "cylinder": {
+     "a": [
+      0,
+      0,
+      0
+     ],
+     "b": [
+      0,
+      0.12,
+      0.62
+     ],
+     "radius": 0.04
+    },
+    "slot": "chrome"
+   },
+   {
+    "torus": {
+     "centre": [
+      0,
+      0.12,
+      0.62
+     ],
+     "radius": 0.06,
+     "thickness": 0.02,
+     "axis": "y"
+    },
+    "slot": "brass"
+   },
+   {
+    "lathe": {
+     "profile": [
+      [
+       0.0,
+       0.0
+      ],
+      [
+       0.34,
+       0.12
+      ],
+      [
+       0.36,
+       0.15
+      ],
+      [
+       0.33,
+       0.14
+      ],
+      [
+       0.0,
+       0.03
+      ]
+     ]
+    },
+    "slot": "brass",
+    "rotate": [
+     -20,
+     0,
+     0
+    ],
+    "at": [
+     0,
+     0.14,
+     0.62
+    ]
+   },
+   {
+    "cylinder": {
+     "a": [
+      0,
+      0.14,
+      0.64
+     ],
+     "b": [
+      0,
+      0.2,
+      0.86
+     ],
+     "radius": 0.012
+    },
+    "slot": "chrome",
+    "repeat": {
+     "around": 3
+    }
+   },
+   {
+    "sphere": {
+     "centre": [
+      0,
+      0.19,
+      0.86
+     ],
+     "radius": 0.05
+    },
+    "slot": "glow"
+   }
+  ]
+ },
+ "materials": {
+  "brass": {
+   "base_color": [
+    0.6,
+    0.42,
+    0.14,
+    1
+   ],
+   "roughness": 0.28,
+   "metallic": 1.0,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.28,
+        0.2,
+        0.07
+       ],
+       "scale": 12,
+       "coverage": 0.3,
+       "contrast": 2,
+       "roughness": 0.55
+      }
+     }
+    ]
+   }
+  },
+  "chrome": {
+   "base_color": [
+    0.82,
+    0.83,
+    0.86,
+    1
+   ],
+   "roughness": 0.12,
+   "metallic": 1.0,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.66,
+        0.67,
+        0.7
+       ],
+       "scale": 10,
+       "coverage": 0.2,
+       "contrast": 2,
+       "amount": 0.5,
+       "roughness": 0.25
+      }
+     }
+    ]
+   }
+  },
+  "glow": {
+   "base_color": [
+    0.45,
+    1.0,
+    0.55,
+    1
+   ],
+   "roughness": 0.3,
+   "metallic": 0.0
+  }
+ },
+ "qa": {
+  "max_triangles": 6000,
+  "require_uvs": true,
+  "require_manifold": true,
+  "require_origin_at_base": false,
+  "max_dimension_m": 1.2
+ }
+}

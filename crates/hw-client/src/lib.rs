@@ -21,6 +21,7 @@ pub mod powersview;
 pub mod profile;
 pub mod propview;
 pub mod radioview;
+pub mod robotview;
 pub mod title;
 pub mod townmesh;
 pub mod trafficview;

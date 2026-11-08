@@ -86,6 +86,7 @@ impl Session {
                 "breakout" => Some(IncidentKind::Breakout),
                 "crash" => Some(IncidentKind::CarCrash),
                 "fire" => Some(IncidentKind::Fire),
+                "colossus" => Some(IncidentKind::Colossus),
                 _ => None,
             };
         }
@@ -195,6 +196,14 @@ impl Session {
                 host.sim.set_input(*me, input);
                 for e in host.tick() {
                     println!("{e:?}");
+                }
+                // Screenshots: `HW_COLOSSUS_BREAK=<n>` breaks the first n of the
+                // colossus's parts (knees, then the cannon) once it is out.
+                if let Some(n) = std::env::var("HW_COLOSSUS_BREAK")
+                    .ok()
+                    .and_then(|v| v.parse::<u8>().ok())
+                {
+                    host.sim.break_colossus(n);
                 }
             }
             Session::Remote {

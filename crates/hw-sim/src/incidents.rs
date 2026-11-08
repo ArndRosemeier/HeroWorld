@@ -25,6 +25,7 @@ use bevy_ecs::prelude::*;
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
 use hw_gen::building::BuildingUse;
+use hw_gen::urban::landmarks::LandmarkKind;
 use hw_gen::urban::world::TownWorld;
 use hw_net::ToClient;
 use std::sync::Arc;
@@ -42,6 +43,12 @@ pub const REWARD: f64 = 120.0;
 /// Incidents start this far from a hero (m).
 pub const NEAREST: f64 = 150.0;
 pub const FARTHEST: f64 = 800.0;
+/// A colossus nobody answers goes home after this long (s).
+pub const COLOSSUS_TIMEOUT: f64 = 600.0;
+/// The colossus comes out at most this often (s), and not before the team
+/// reaches this level.
+pub const COLOSSUS_GAP: f64 = 1500.0;
+pub const COLOSSUS_LEVEL: u8 = 3;
 /// A hero this near a trapped person can help them out (m).
 pub const RESCUE_REACH: f64 = 3.5;
 /// Carrying the hurt this near the medic hands them over (m).
@@ -66,16 +73,19 @@ pub enum IncidentKind {
     CarCrash,
     /// A house on fire, people inside.
     Fire,
+    /// The mad scientist's walking tank marches out of his quarter.
+    Colossus,
 }
 
 impl IncidentKind {
-    pub const ALL: [IncidentKind; 6] = [
+    pub const ALL: [IncidentKind; 7] = [
         IncidentKind::Mugging,
         IncidentKind::Robbery,
         IncidentKind::Rampage,
         IncidentKind::Breakout,
         IncidentKind::CarCrash,
         IncidentKind::Fire,
+        IncidentKind::Colossus,
     ];
 
     pub fn code(self) -> u8 {
@@ -95,6 +105,7 @@ impl IncidentKind {
             IncidentKind::Breakout => "Lab breakout",
             IncidentKind::CarCrash => "Car crash, people trapped",
             IncidentKind::Fire => "Fire, people inside",
+            IncidentKind::Colossus => "The colossus is loose!",
         }
     }
 
@@ -122,6 +133,7 @@ impl IncidentKind {
             IncidentKind::Robbery => (4, None, 1),
             IncidentKind::Rampage => (3, Some(EnemyKind::Brute), 2),
             IncidentKind::Breakout => (5, Some(EnemyKind::Technician), 2),
+            IncidentKind::Colossus => (1, Some(EnemyKind::Colossus), 3),
             IncidentKind::CarCrash | IncidentKind::Fire => (0, None, 0),
         }
     }
@@ -136,6 +148,24 @@ impl IncidentKind {
             // Per person got out.
             IncidentKind::CarCrash => 3.0,
             IncidentKind::Fire => 2.5,
+            IncidentKind::Colossus => 1.5,
+        }
+    }
+
+    /// The lieutenant or boss in front of its group.
+    fn lead(self) -> Option<EnemyKind> {
+        match self {
+            IncidentKind::Rampage => Some(EnemyKind::Alpha),
+            IncidentKind::Breakout => Some(EnemyKind::Sentry),
+            _ => None,
+        }
+    }
+
+    /// Seconds it waits for heroes before it ends unanswered.
+    fn timeout(self) -> f64 {
+        match self {
+            IncidentKind::Colossus => COLOSSUS_TIMEOUT,
+            _ => TIMEOUT_SECONDS,
         }
     }
 }
@@ -270,6 +300,8 @@ pub struct Incidents {
     pub carried_start: bool,
     /// Spots of incidents that ended, free to use again.
     free: Vec<usize>,
+    /// When the colossus last came out.
+    last_colossus: Option<u64>,
     news: Vec<ToClient>,
 }
 
@@ -425,6 +457,26 @@ impl Incidents {
 
     /// Answered, resolved or timed out.
     fn settle(&mut self, world: &mut World, tick: u64, heroes: &[(NetId, DVec3, u8)]) {
+        // The walking tank moves on: its call follows it.
+        let tanks: Vec<(usize, DVec3)> = world
+            .query::<(&combat::Enemy, &Motion)>()
+            .iter(world)
+            .filter(|(e, _)| e.kind == EnemyKind::Colossus)
+            .map(|(e, m)| (e.spot, m.0.pos))
+            .collect();
+        for inc in self.open.iter_mut() {
+            let Some(at) = inc
+                .spot
+                .and_then(|s| tanks.iter().find(|t| t.0 == s))
+                .map(|t| t.1)
+            else {
+                continue;
+            };
+            if at.distance(inc.at) > 20.0 {
+                inc.at = at;
+                self.news.push(inc.news());
+            }
+        }
         let mut ended = Vec::new();
         for (k, inc) in self.open.iter_mut().enumerate() {
             if heroes.iter().any(|h| h.1.distance(inc.at) < ANSWER) {
@@ -548,11 +600,28 @@ impl Incidents {
             (IncidentKind::Breakout, 0.12),
             (IncidentKind::CarCrash, 0.14),
             (IncidentKind::Fire, 0.14),
+            (IncidentKind::Colossus, 0.08),
         ];
+        // The walking tank comes out of the Tesla tower now and then, once
+        // the team can take it, and never two at once.
+        let tower = town
+            .landmarks
+            .iter()
+            .find(|l| l.kind == LandmarkKind::TeslaTower)
+            .map(|l| (l.pos + l.dir * (l.plaza + 14.0), l.dir));
+        let team = world.resource::<Fights>().team_level;
+        let colossus_ok = tower.is_some()
+            && !self.open.iter().any(|i| i.kind == IncidentKind::Colossus)
+            && (self.next_kind == Some(IncidentKind::Colossus)
+                || (team >= COLOSSUS_LEVEL
+                    && self
+                        .last_colossus
+                        .is_none_or(|t| tick >= t + ticks(COLOSSUS_GAP))));
         kinds.retain(|(k, _)| match k {
             IncidentKind::Breakout => !labs.is_empty(),
             IncidentKind::Robbery => !shops.is_empty(),
             IncidentKind::Fire => !homes.is_empty(),
+            IncidentKind::Colossus => colossus_ok,
             _ => !streets.is_empty(),
         });
         let total: f64 = kinds.iter().map(|k| k.1).sum();
@@ -573,10 +642,12 @@ impl Incidents {
                 kind = k;
             }
         }
+        let tower_place: Vec<(DVec2, DVec2)> = tower.into_iter().collect();
         let places = match kind {
             IncidentKind::Breakout => &labs,
             IncidentKind::Robbery => &shops,
             IncidentKind::Fire => &homes,
+            IncidentKind::Colossus => &tower_place,
             _ => &streets,
         };
         let (p, face) = *rng.pick(places);
@@ -613,7 +684,7 @@ impl Incidents {
                 medic: Some(medic),
                 level,
                 started: tick,
-                expires: tick + ticks(TIMEOUT_SECONDS),
+                expires: tick + ticks(kind.timeout()),
                 answered: false,
                 state: State::Open,
             };
@@ -646,6 +717,7 @@ impl Incidents {
             size: Some(size),
             only,
             once: true,
+            lead: kind.lead(),
             ..Spot::corner(at, facing)
         };
         let index = {
@@ -681,10 +753,13 @@ impl Incidents {
             medic: None,
             level,
             started: tick,
-            expires: tick + ticks(TIMEOUT_SECONDS),
+            expires: tick + ticks(kind.timeout()),
             answered: false,
             state: State::Open,
         };
+        if kind == IncidentKind::Colossus {
+            self.last_colossus = Some(tick);
+        }
         self.news.push(inc.news());
         self.open.push(inc);
     }
