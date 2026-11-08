@@ -229,7 +229,11 @@ impl MeshBuilder {
         self.mesh
     }
 
-    fn point(&mut self, p: DVec3, color: Color) -> PointId {
+    /// A point of a face with normal `n`. Every point carries its face's
+    /// normal, so Engine builds the mesh indexed (a quad is 4 vertices, not
+    /// 6) and shading stays flat: points are never shared between faces
+    /// that face different ways.
+    fn point(&mut self, p: DVec3, n: DVec3, color: Color) -> PointId {
         let tex = if self.flat { None } else { self.tex };
         let color = match (self.surf, tex) {
             (Surf::Plain, Some(l)) => {
@@ -246,6 +250,8 @@ impl MeshBuilder {
         let m = self.target();
         let id = m.add_point(p.as_vec3()).expect("finite point");
         m.set_point_color(id, color).expect("point exists");
+        m.set_point_normal(id, n.normalize_or(DVec3::Y).as_vec3())
+            .expect("point exists");
         id
     }
 
@@ -257,7 +263,8 @@ impl MeshBuilder {
         } else {
             [0, 2, 1]
         };
-        let ids = order.map(|i| self.point(pts[i], color));
+        let n = n * if n.dot(outward) >= 0.0 { 1.0 } else { -1.0 };
+        let ids = order.map(|i| self.point(pts[i], n, color));
         self.target()
             .add_triangle(ids[0], ids[1], ids[2])
             .expect("tri");
@@ -350,7 +357,8 @@ impl MeshBuilder {
         } else {
             [0, 3, 2, 1]
         };
-        let ids = order.map(|i| self.point(pts[i], color));
+        let n = n * if n.dot(outward) >= 0.0 { 1.0 } else { -1.0 };
+        let ids = order.map(|i| self.point(pts[i], n, color));
         self.target().add_face(&ids).expect("quad");
     }
 
@@ -415,10 +423,15 @@ impl MeshBuilder {
         }
         let at = |p: DVec2, y: f64| DVec3::new(p.x, y, p.y);
         let centre = pts.iter().copied().sum::<DVec2>() / n as f64;
-        let c = self.point(at(centre, top), color);
+        // The top is one flat fan sharing its points.
+        let c = self.point(at(centre, top), DVec3::Y, color);
+        let ring: Vec<PointId> = pts
+            .iter()
+            .map(|&p| self.point(at(p, top), DVec3::Y, color))
+            .collect();
         for i in 0..n {
             let (a, b) = (pts[i], pts[(i + 1) % n]);
-            let (ia, ib) = (self.point(at(a, top), color), self.point(at(b, top), color));
+            let (ia, ib) = (ring[i], ring[(i + 1) % n]);
             // Fan triangle; order it to face up.
             let n3 = (at(a, top) - at(centre, top)).cross(at(b, top) - at(centre, top));
             if n3.y >= 0.0 {

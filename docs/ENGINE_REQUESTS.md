@@ -139,6 +139,19 @@ Not needed for the first playable city, but the design depends on them eventuall
   - `BuildingPlan::add` re-indexes the whole plan per element (quadratic); fine for ~1000
     elements (2 ms), but a bulk `add_all` would let big towers be planned off the frame.
 
+- **Leaner static meshes** (added 2026-11-08, from a memory check on a 40,000-person town): the
+  town's buildings are about 1.2 million faces, and each GPU vertex carries a full
+  `SurfaceMaterial` (four float4s, about 64 bytes) next to its position, normal, colour and UV,
+  while `World` also keeps the CPU `BuiltMesh` (another ~100 bytes per vertex) after upload.
+  The game took about 4.8 GB steady in the cloud's software renderer (where "GPU" memory is RAM
+  too). HeroWorld now gives faces their own normals so they build indexed (4 vertices per quad,
+  not 6) and merges distant windows, which brought it to about 4.2 GB. What would help most:
+  - a per-vertex material index into a small per-mesh table (most meshes use 1 to 4 materials)
+    instead of the whole material per vertex;
+  - a way to drop the CPU copy of a static mesh after upload (or keep only what picking and the
+    z-fight finder need);
+  - flat-shaded meshes built indexed without having to set a normal on every point.
+
 ## Ground rules
 
 These stay in HeroWorld, not in Engine, so Engine stays a general game engine:

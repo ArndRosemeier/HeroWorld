@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.029 (2026-11-08)
+
+- The town needs much less memory (about a fifth less at its peak), so big towns load more
+  safely on smaller PCs. Faraway buildings are drawn more simply; up close nothing changes.
+
 ## 0.028 (2026-11-08)
 
 - Cars on the move can be wrecked now: punch or blast one and it stops dead in a shower of

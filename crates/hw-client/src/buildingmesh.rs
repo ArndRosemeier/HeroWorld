@@ -28,6 +28,9 @@ use std::f64::consts::PI;
 pub enum Detail {
     Near,
     Far,
+    /// Far across town: neighbouring windows that look alike merge into one
+    /// band, so a facade costs a few faces per floor instead of one per window.
+    Distant,
 }
 
 /// Thickness of roof slabs (and of terraces where a storey steps back).
@@ -92,6 +95,7 @@ struct Ctx<'a> {
     base: f64,
     u: DVec3,
     v: DVec3,
+    detail: Detail,
 }
 
 impl Ctx<'_> {
@@ -400,6 +404,7 @@ pub fn exterior(
         base: crate::citymesh::BLOCK_TOP,
         u: DVec3::new(site.along.x, 0.0, site.along.y),
         v: DVec3::new(site.inward.x, 0.0, site.inward.y),
+        detail,
     };
     let look = &plan.look;
     c.b.tex = Some(wall_layer(look));
@@ -409,7 +414,7 @@ pub fn exterior(
         for level in i..=j {
             match detail {
                 Detail::Near => near_floor(&mut c, level, level == i),
-                Detail::Far => far_floor(&mut c, level),
+                Detail::Far | Detail::Distant => far_floor(&mut c, level),
             }
         }
         if detail == Detail::Near && look.piers == Piers::Full {
@@ -508,18 +513,50 @@ fn far_floor(c: &mut Ctx, level: usize) {
             wall,
         );
     }
+    // Each opening as (side, from, to, bottom, top, colour, material).
+    let mut panes: Vec<(Side, f64, f64, f64, f64, Color, Surf)> = Vec::new();
     for op in plan.openings.iter().filter(|op| op.floor as usize == level) {
         if hidden_by_tower(plan, op) {
             continue;
         }
-        let w = Wall { side: op.side, o };
-        let (t0, t1) = (op.along - op.width * 0.5, op.along + op.width * 0.5);
         let ya = (f.elevation + op.sill).max(y0 + 0.05);
         let yb = f.elevation + op.sill + op.height;
         let (color, surf) = match op.kind {
             OpeningKind::Window | OpeningKind::Entrance => pane(plan, look, op, false),
             OpeningKind::Door => (shade(look.frame, 0.8), Surf::Plain),
         };
+        let t = (op.along - op.width * 0.5, op.along + op.width * 0.5);
+        panes.push((op.side, t.0, t.1, ya, yb, color, surf));
+    }
+    if c.detail == Detail::Distant {
+        // Runs of alike windows (same wall, height and look, under a
+        // window's width apart) become one band.
+        panes.sort_by(|a, b| {
+            (a.0 as u8)
+                .cmp(&(b.0 as u8))
+                .then(a.3.total_cmp(&b.3))
+                .then(a.1.total_cmp(&b.1))
+        });
+        let mut merged: Vec<(Side, f64, f64, f64, f64, Color, Surf)> = Vec::new();
+        for p in panes {
+            match merged.last_mut() {
+                Some(m)
+                    if m.0 == p.0
+                        && (m.3 - p.3).abs() < 0.01
+                        && (m.4 - p.4).abs() < 0.01
+                        && m.5 == p.5
+                        && m.6 == p.6
+                        && p.1 - m.2 < (p.2 - p.1).max(1.0) =>
+                {
+                    m.2 = m.2.max(p.2);
+                }
+                _ => merged.push(p),
+            }
+        }
+        panes = merged;
+    }
+    for (side, t0, t1, ya, yb, color, surf) in panes {
+        let w = Wall { side, o };
         c.surf(surf);
         let q = w.rect(t0, t1, ya, yb, PANE_OFFSET);
         c.quad(q, w.out(), color);

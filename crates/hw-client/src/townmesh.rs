@@ -22,6 +22,8 @@ pub const LOAD: f64 = 1300.0;
 const UNLOAD: f64 = LOAD + 250.0;
 /// Buildings within about this distance of the camera get full detail.
 pub const NEAR_DETAIL: f64 = 220.0;
+/// Beyond about this distance windows merge into bands.
+pub const DISTANT_DETAIL: f64 = 620.0;
 /// Buildings within this distance of the cut focus are cut open.
 pub const CUT_RADIUS: f64 = 110.0;
 /// Faces per mesh, well inside a GPU buffer.
@@ -246,8 +248,10 @@ impl TownView {
             let d = cell_centre(*k).distance(eye);
             let detail = if d < NEAR_DETAIL + CELL * 0.71 {
                 Detail::Near
-            } else {
+            } else if d < DISTANT_DETAIL {
                 Detail::Far
+            } else {
+                Detail::Distant
             };
             (d, detail)
         };
