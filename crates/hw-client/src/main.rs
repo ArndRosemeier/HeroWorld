@@ -373,7 +373,7 @@ fn main() -> EngineResult<()> {
     let (spawn, spawn_dir) = generated.world.spawn_line();
     let mut hero_cam_yaw = 30.0f32;
     let mut fly = match view.as_str() {
-        "street" => {
+        "street" | "citizen" | "alpha" => {
             let p = spawn - spawn_dir * 8.0;
             let yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, ground(p) as f32 + 6.0, p.y as f32), yaw, 8.0)
@@ -1001,7 +1001,10 @@ fn main() -> EngineResult<()> {
                 return Ok(());
             }
             if music_fade_at.is_some_and(|at| frame.time > at) {
-                world.stop_music(8.0);
+                // The title theme fades, unless a colossus fight took over.
+                if !robots.music_on() {
+                    world.stop_music(8.0);
+                }
                 music_fade_at = None;
             }
             let Some(session) = session.as_mut() else {
@@ -1667,9 +1670,10 @@ fn main() -> EngineResult<()> {
                 // A look per player until the hero creator, the same on
                 // every machine; villains by kind, a few looks each.
                 let who = match h.kind {
-                    hw_net::EntityKind::Brute | hw_net::EntityKind::Alpha => {
+                    hw_net::EntityKind::Brute => {
                         Who::Villain(VillainKind::Brute, h.id.0 % people::VILLAIN_LOOKS)
                     }
+                    hw_net::EntityKind::Alpha => Who::Villain(VillainKind::Alpha, 0),
                     hw_net::EntityKind::Technician => {
                         Who::Villain(VillainKind::Technician, h.id.0 % people::VILLAIN_LOOKS)
                     }
@@ -1836,6 +1840,7 @@ fn main() -> EngineResult<()> {
             let muzzles = fight.muzzles.clone();
             robots.on_fx(world, &mut fight, &events, &heroes, &muzzles, mine);
             robots.update(world, &heroes, frame.dt)?;
+            robots.music(world, &heroes);
             // `HW_VIEW=sentry`: a close-up of the first robo-sentry (with
             // HW_INCIDENT=colossus HW_COLOSSUS_BREAK=2, the ones it drops).
             if view == "sentry" {
@@ -1844,6 +1849,19 @@ fn main() -> EngineResult<()> {
                     let side = Vec3::new(ahead.z, 0.0, -ahead.x);
                     let p = at + ahead * 4.2 + side * 1.8 + Vec3::Y * 2.0;
                     let d = at + Vec3::Y * 1.2 - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
+            // `HW_VIEW=alpha` (with HW_INCIDENT=rampage): a close-up of the
+            // mutant alpha, from the side its fight faces.
+            if view == "alpha" {
+                if let Some(a) = heroes.iter().find(|e| e.kind == hw_net::EntityKind::Alpha) {
+                    let at = Vec3::new(a.pos[0] as f32, a.pos[1] as f32, a.pos[2] as f32);
+                    let p = at + Vec3::new(3.6, 2.4, 3.6);
+                    let d = at + Vec3::Y * 1.4 - p;
                     let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
                         .atan()
                         .to_degrees();
@@ -1885,6 +1903,20 @@ fn main() -> EngineResult<()> {
                 session.time(tick_clock / hw_sim::DT),
                 frame.dt as f64,
             )?;
+            // `HW_VIEW=citizen`: a close-up of the nearest passer-by.
+            if view == "citizen" {
+                if let Some(at) = crowd.nearest(world, eye) {
+                    let yaw = at.yaw_degrees.to_radians();
+                    let ahead = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+                    let side = Vec3::new(ahead.z, 0.0, -ahead.x);
+                    let p = at.position + ahead * 2.2 + side * 0.6 + Vec3::Y * 1.6;
+                    let d = at.position + Vec3::Y * 1.3 - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
             // Cars on the streets, hover cars and taxis in the sky lanes.
             // Cars stop for heroes and villains in the road and short of
             // trouble, as the server's do.

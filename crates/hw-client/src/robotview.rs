@@ -154,7 +154,24 @@ pub struct RobotView {
     /// Warning rings on the ground: decal and seconds left.
     rings: Vec<(DecalId, f32)>,
     sounds: Option<Sounds>,
+    music: Music,
 }
+
+/// How near (m) the camera must be to a standing colossus for its fight
+/// music, and how far away it fades again.
+const MUSIC_NEAR: f32 = 260.0;
+const MUSIC_FAR: f32 = 340.0;
+
+/// The colossus fight's music: decoded off the main thread when a colossus
+/// comes near (three minutes of music is large once decoded), dropped again
+/// when the fight is over.
+#[derive(Default)]
+struct Music {
+    loading: Option<std::sync::mpsc::Receiver<EngineResult<Sound>>>,
+    playing: bool,
+}
+
+const COLOSSUS_THEME: &[u8] = include_bytes!("../assets/robots/colossus_theme.ogg");
 
 fn pos(e: &EntityState) -> Vec3 {
     Vec3::new(e.pos[0] as f32, e.pos[1] as f32, e.pos[2] as f32)
@@ -1022,6 +1039,60 @@ impl RobotView {
                 _ => {}
             }
         }
+    }
+
+    /// Plays the colossus fight's music while a colossus still standing is
+    /// near the camera, and fades it out when it falls or the camera leaves.
+    /// Call once a frame after [`RobotView::update`].
+    pub fn music(&mut self, world: &mut World, all: &[EntityState]) {
+        let eye = world.camera().eye();
+        let reach = if self.music.playing || self.music.loading.is_some() {
+            MUSIC_FAR
+        } else {
+            MUSIC_NEAR
+        };
+        let fight = all.iter().any(|e| {
+            e.kind == EntityKind::Colossus
+                && e.combat.is_none_or(|c| c.status != Status::Down)
+                && pos(e).distance(eye) < reach
+        });
+        if !fight {
+            self.music.loading = None;
+            if self.music.playing {
+                world.stop_music(6.0);
+                self.music.playing = false;
+            }
+            return;
+        }
+        if self.music.playing {
+            return;
+        }
+        match &self.music.loading {
+            None => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(Sound::from_bytes(COLOSSUS_THEME.to_vec()));
+                });
+                self.music.loading = Some(rx);
+            }
+            Some(rx) => {
+                if let Ok(s) = rx.try_recv() {
+                    self.music.loading = None;
+                    match s {
+                        Ok(s) => {
+                            world.play_music(MusicTrack::new().layer(s), 2.0);
+                            self.music.playing = true;
+                        }
+                        Err(e) => eprintln!("colossus music: {e}"),
+                    }
+                }
+            }
+        }
+    }
+
+    /// Is the colossus fight's music on (so nothing else fades it)?
+    pub fn music_on(&self) -> bool {
+        self.music.playing || self.music.loading.is_some()
     }
 
     /// A robo-sentry on screen: where it stands and the way it faces

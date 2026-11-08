@@ -459,7 +459,9 @@ Wrecked cars' doors (and bubble cars' canopies) spring open, each wreck its own 
 
 **Done when:** the walking tank fight is the best ten minutes of the slice.
 
-**Status (0.056):** built, needs a play test with friends. 0.056 raised the parts to full
+**Status (0.061):** built, needs a play test with friends. 0.061 added the colossus's own Lyria
+battle theme (`colossus_theme.ogg`, plays within 260 m of a standing colossus) and gave the
+alpha its own look (`VillainKind::Alpha`). 0.056 raised the parts to full
 quality (detail 1, 768 texels/m on the sentry, 256 on the tank; maps capped at 1024, 2048 for
 hull and turret, because Engine copies a part's maps per placement), keeps the tank on main roads
 at least 11 m wide (`hw-sim/src/streets.rs`, A* along road centre lines; legs 30 degrees off the

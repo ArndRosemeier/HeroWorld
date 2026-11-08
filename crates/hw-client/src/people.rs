@@ -17,6 +17,7 @@ use actors_generator::{
     HeightRange, RandomOptions, SeededRandom,
 };
 use engine::anim::AnimatedModel;
+use engine::mesh::AlbedoMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
@@ -94,6 +95,10 @@ pub enum VillainKind {
     Greaser,
     /// A Velvet Syndicate gunsel: a pinstripe suit and a tilted fedora.
     Gunsel,
+    /// The mutant alpha who leads a rampage: the heaviest brute there is,
+    /// darker, bald, with long tusks and blazing eyes (drawn a head and a
+    /// half taller). One look, built when an alpha first shows.
+    Alpha,
 }
 
 impl VillainKind {
@@ -230,10 +235,11 @@ impl People {
                     let r = build(&mut builder, &job.who, job.seed, job.config.as_ref());
                     if let Ok(b) = &r {
                         eprintln!(
-                            "built {:?} in {:.2} s ({} meshes)",
+                            "built {:?} in {:.2} s ({} meshes, {} MB of maps)",
                             b.who,
                             t.elapsed().as_secs_f64(),
-                            b.model.meshes.len()
+                            b.model.meshes.len(),
+                            map_bytes(&b.model) >> 20
                         );
                     }
                     if tx.send(r).is_err() {
@@ -676,6 +682,26 @@ pub fn villain(
                 ["#4d4a36", "#3e4a5a", "#5a3e30"][(look as usize) % 3],
             );
         }
+        VillainKind::Alpha => {
+            let b = &mut c.body;
+            b.gender = 1.0;
+            b.age_years = 40.0;
+            b.muscle = 1.0;
+            b.weight = 1.0;
+            b.height = 1.0;
+            b.proportions = 0.2;
+            c.skin = actors_generator::SkinKind::Procedural;
+            c.skin_color = Some("#4c7a36".into());
+            c.eye_color = Some("#fff04a".into());
+            c.eye_glow = 1.0;
+            c.tusks = 0.7;
+            c.beard = "none".into();
+            c.hair = None;
+            c.outfit = keep(&["tank-top", "cargo-pants", "work-boots"]);
+            colour(&mut c, "tank-top", "#5a2a24");
+            colour(&mut c, "cargo-pants", "#2f2b24");
+            colour(&mut c, "work-boots", "#2a2622");
+        }
         VillainKind::Technician => {
             let b = &mut c.body;
             b.age_years = rng.range(24.0, 55.0);
@@ -765,6 +791,52 @@ pub fn mole_person(builder: &CharacterBuilder, look: u32) -> actors_generator::C
     c
 }
 
+/// Citizens' maps are halved down to no smaller than this (texels).
+const CROWD_MAP_MIN: u32 = 512;
+
+/// Halves `map` (2x2 box filter) if both sides stay at least `min`.
+fn halve(map: &mut AlbedoMap, min: u32) {
+    if map.width / 2 >= min && map.height / 2 >= min {
+        let (w, h) = (map.width / 2, map.height / 2);
+        let src = map.width as usize;
+        let mut out = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                for c in 0..4 {
+                    let at = |dx: usize, dy: usize| {
+                        map.rgba[((y * 2 + dy) * src + x * 2 + dx) * 4 + c] as u32
+                    };
+                    let sum = at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1);
+                    out[(y * w as usize + x) * 4 + c] = ((sum + 2) / 4) as u8;
+                }
+            }
+        }
+        *map = AlbedoMap {
+            width: w,
+            height: h,
+            rgba: out,
+        };
+    }
+}
+
+/// The bytes of a model's texture maps, as decoded.
+pub fn map_bytes(model: &AnimatedModel) -> usize {
+    model
+        .meshes
+        .iter()
+        .flat_map(|m| {
+            [
+                m.albedo.as_ref(),
+                m.maps.normal.as_ref(),
+                m.maps.orm.as_ref(),
+                m.maps.emissive.as_ref(),
+            ]
+        })
+        .flatten()
+        .map(|a| a.rgba.len())
+        .sum()
+}
+
 /// Builds one character (on the worker); `config` is a made hero's looks.
 pub fn build(
     builder: &mut CharacterBuilder,
@@ -820,9 +892,58 @@ pub fn build(
     if matches!(who, Who::Citizen(_)) {
         poses::add_hands_up_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
+    if !hero {
+        // Citizens and villains are seen from a few metres at the nearest,
+        // and every look is held several times over (its crowd, each full
+        // character): half-size maps keep a town's people to a quarter of
+        // the memory. Heroes keep theirs.
+        for m in &mut c.model.meshes {
+            for map in [
+                m.albedo.as_mut(),
+                m.maps.normal.as_mut(),
+                m.maps.orm.as_mut(),
+                m.maps.emissive.as_mut(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                halve(map, CROWD_MAP_MIN);
+            }
+        }
+    }
     Ok(Built {
         who: who.clone(),
         model: Arc::new(c.model),
         walk: walk.into(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn citizen_maps_come_down_by_half_but_not_below_the_floor() {
+        let mut big = AlbedoMap {
+            width: 4,
+            height: 2,
+            rgba: [[0u8, 100, 200, 255], [255, 100, 0, 255]]
+                .iter()
+                .cycle()
+                .take(8)
+                .flatten()
+                .copied()
+                .collect(),
+        };
+        halve(&mut big, 1);
+        assert_eq!((big.width, big.height), (2, 1));
+        assert_eq!(&big.rgba[..4], &[128, 100, 100, 255]);
+        let mut small = AlbedoMap {
+            width: 2,
+            height: 2,
+            rgba: vec![9; 16],
+        };
+        halve(&mut small, 2);
+        assert_eq!((small.width, small.height, small.rgba.len()), (2, 2, 16));
+    }
 }

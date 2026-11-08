@@ -17,3 +17,19 @@ differ from run to run.
 
 Processing: silence trimmed, loudness normalised (`loudnorm I=-16:TP=-1.5`), mono Vorbis
 (q 4), cut to length with a 0.5 s fade out.
+
+## Music
+
+`colossus_theme.ogg` plays while a standing colossus is within 260 m of the camera (it fades
+out past 340 m or when the tank falls). Made with `google/lyria-3-pro-preview` (the second of
+two takes; it holds its tempo to the end):
+
+> Instrumental boss battle music for a retro 1950s superhero game: a giant walking robot tank
+> stomps through a chrome city. Big brassy golden-age sci-fi orchestra, urgent driving timpani
+> and snare ostinato, menacing low brass riff for the robot, theremin wails, stabbing strings,
+> heroic trumpet answering the threat. Tense, exciting, larger than life but still fun, like a
+> 1950s B-movie monster attack scored by a cartoon adventure orchestra. Steady tempo
+> throughout, no long quiet intro, no ending fade, so it loops. No vocals.
+
+Processing: leading silence trimmed, `loudnorm I=-16:TP=-1.5`, stereo Vorbis q 3, and the last
+3 s crossfaded with the first 3 s so it loops without a seam.

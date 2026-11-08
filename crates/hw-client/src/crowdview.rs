@@ -61,6 +61,22 @@ impl CrowdView {
         }
     }
 
+    /// The citizen shown nearest `eye`, where they stand (for the
+    /// `HW_VIEW=citizen` close-up).
+    pub fn nearest(&self, world: &World, eye: Vec3) -> Option<Place> {
+        self.shown
+            .values()
+            .filter_map(|s| {
+                let crowd = *self.crowds.get(&s.look)?;
+                world.crowd_agent_place(crowd, s.agent).ok()
+            })
+            .min_by(|a, b| {
+                a.position
+                    .distance(eye)
+                    .total_cmp(&b.position.distance(eye))
+            })
+    }
+
     /// How many looks are ready.
     pub fn looks(&self) -> usize {
         self.crowds.len()

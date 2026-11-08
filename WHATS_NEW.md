@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.061 (2026-11-08)
+
+- The walking tank has its own battle music: a brassy 1950s monster-attack march that starts when
+  it stomps near you and fades when it falls.
+- The game needs much less memory: townspeople and villains use lighter textures (they look the
+  same), so big towns run on smaller PCs.
+- The mutant alpha who leads a rampage finally looks the part: bald, darker, bigger tusks and
+  blazing eyes.
+
 ## 0.060 (2026-11-08)
 
 - If the host leaves a world opened online, the game goes on: another player takes over, and
