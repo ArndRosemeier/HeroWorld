@@ -63,7 +63,8 @@ struct Scene {
     cars: Vec<LodId>,
     fire: Vec<EmitterId>,
     people: Vec<EntityId>,
-    /// The ambulance and its medic.
+    /// The ambulance, and its medic.
+    van: Option<LodId>,
     ambulance: Vec<EntityId>,
     /// The hurt person, lying or in someone's arms.
     hurt: Option<EntityId>,
@@ -300,12 +301,12 @@ impl Radio {
         };
         call.casualty = Some(c);
         let scene = self.scenes.entry(id).or_default();
-        if scene.ambulance.is_empty() {
+        if scene.van.is_none() {
             let deg = c.yaw.to_degrees();
             let place = Place::new(c.medic.x, c.medic.y, c.medic.z).with_yaw_deg(deg);
-            if let Ok(e) = world.place(ambulance(), place) {
-                scene.ambulance.push(e);
-            }
+            scene.van = world
+                .spawn_lod_at(crate::propview::ambulance_levels(), &[place])
+                .ok();
             // The medic waits at the back doors, waving them over.
             let back = c.medic - Vec3::new(c.yaw.sin(), 0.0, c.yaw.cos()) * 3.8;
             let place = Place::new(back.x, back.y, back.z).with_yaw_deg(deg + 180.0);
@@ -358,6 +359,9 @@ impl Radio {
         if let Some(scene) = self.scenes.remove(&id) {
             for e in scene.ambulance.into_iter().chain(scene.hurt) {
                 world.despawn(e);
+            }
+            if let Some(l) = scene.van {
+                world.despawn_lod(l);
             }
             for l in scene.cars {
                 world.despawn_lod(l);
@@ -511,128 +515,6 @@ impl Radio {
 
 /// The medic's look in [`person`]: all in white.
 const MEDIC_LOOK: u32 = 4;
-
-/// A streamlined ambulance, retro-future: white with a red stripe and
-/// crosses, a rounded nose, tail fins and a red bubble light on the roof.
-/// Faces +z, wheels on the ground.
-fn ambulance() -> Mesh {
-    let mut b = MeshBuilder::new();
-    let white = rgb(238, 238, 230);
-    let red = rgb(200, 30, 36);
-    let chrome = rgb(170, 175, 185);
-    let glass = rgb(40, 60, 80);
-    let tyre = rgb(25, 25, 28);
-    let z = DVec3::Z;
-    // The body, and the tall box at the back where the patient lies.
-    b.oriented_box(
-        DVec3::new(0.0, 1.0, 0.0),
-        z,
-        DVec3::new(2.9, 0.55, 1.05),
-        white,
-    );
-    b.oriented_box(
-        DVec3::new(0.0, 1.95, -0.7),
-        z,
-        DVec3::new(2.2, 0.45, 1.0),
-        white,
-    );
-    // The cab's roof, lower, and its windscreen.
-    b.oriented_box(
-        DVec3::new(0.0, 1.75, 1.85),
-        z,
-        DVec3::new(0.55, 0.22, 0.95),
-        white,
-    );
-    b.quad(
-        [
-            DVec3::new(-0.92, 1.55, 2.45),
-            DVec3::new(0.92, 1.55, 2.45),
-            DVec3::new(0.88, 1.95, 2.42),
-            DVec3::new(-0.88, 1.95, 2.42),
-        ],
-        z,
-        glass,
-    );
-    // The rounded nose.
-    b.oriented_box(
-        DVec3::new(0.0, 0.85, 3.0),
-        z,
-        DVec3::new(0.25, 0.4, 0.95),
-        white,
-    );
-    // The stripe along both sides and the crosses on them and on the roof.
-    for sx in [-1.0, 1.0] {
-        let x = sx * 1.07;
-        b.oriented_box(
-            DVec3::new(x, 1.15, 0.0),
-            z,
-            DVec3::new(2.95, 0.1, 0.02),
-            red,
-        );
-        b.oriented_box(
-            DVec3::new(x, 1.95, -0.8),
-            z,
-            DVec3::new(0.12, 0.38, 0.02),
-            red,
-        );
-        b.oriented_box(
-            DVec3::new(x, 1.95, -0.8),
-            z,
-            DVec3::new(0.38, 0.12, 0.02),
-            red,
-        );
-        // A tail fin.
-        b.hexa(
-            [
-                DVec3::new(sx * 0.9, 2.4, -2.9),
-                DVec3::new(sx * 1.0, 2.4, -2.9),
-                DVec3::new(sx * 1.0, 2.4, -1.9),
-                DVec3::new(sx * 0.9, 2.4, -1.9),
-            ],
-            [
-                DVec3::new(sx * 0.9, 3.0, -3.1),
-                DVec3::new(sx * 1.0, 3.0, -3.1),
-                DVec3::new(sx * 1.0, 3.0, -2.8),
-                DVec3::new(sx * 0.9, 3.0, -2.8),
-            ],
-            red,
-        );
-        // Wheels.
-        for wz in [-1.9, 1.9] {
-            b.oriented_box(
-                DVec3::new(sx * 0.95, 0.38, wz),
-                z,
-                DVec3::new(0.38, 0.38, 0.14),
-                tyre,
-            );
-        }
-    }
-    b.oriented_box(
-        DVec3::new(0.0, 2.41, -0.8),
-        z,
-        DVec3::new(0.12, 0.01, 0.4),
-        red,
-    );
-    b.oriented_box(
-        DVec3::new(0.0, 2.41, -0.8),
-        z,
-        DVec3::new(0.4, 0.01, 0.12),
-        red,
-    );
-    // Chrome bumpers.
-    for (bz, w) in [(3.27, 0.06), (-2.95, 0.06)] {
-        b.oriented_box(
-            DVec3::new(0.0, 0.55, bz),
-            z,
-            DVec3::new(w, 0.1, 1.08),
-            chrome,
-        );
-    }
-    // The bubble light, lit.
-    b.surf = Surf::Glow;
-    b.dome(DVec3::new(0.0, 1.97, 1.85), 0.22, 10, 4, rgb(255, 60, 50));
-    b.finish()
-}
 
 /// Someone hurt, lying on their back along x (carried across the arms).
 fn lying(look: u32) -> Mesh {

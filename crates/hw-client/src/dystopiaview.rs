@@ -1,6 +1,7 @@
 //! The mad scientist's quarter as the camera sees it: the air turns a sick
 //! green-grey and thick, the colour drains out of the town, and his Tesla
-//! tower spits green sparks.
+//! tower spits green sparks. Around it, walls are tagged and the streets
+//! in are barricaded ([`crate::edgeview`]).
 //!
 //! One fog volume around the camera carries the look; how strongly follows
 //! how deep the camera is in the quarter
@@ -40,6 +41,8 @@ pub struct DystopiaView {
     crown: Option<Vec3>,
     clock: f32,
     sparks: u32,
+    /// Graffiti and barricades at its edge.
+    edge: crate::edgeview::EdgeView,
 }
 
 impl DystopiaView {
@@ -60,6 +63,7 @@ impl DystopiaView {
             crown,
             clock: 0.0,
             sparks: 0,
+            edge: crate::edgeview::EdgeView::new(town),
         }
     }
 
@@ -106,6 +110,7 @@ impl DystopiaView {
                 }
             }
         }
+        self.edge.update(world, town)?;
         // The tower sparks now and then while anyone is near enough to see.
         if let Some(crown) = self.crown {
             self.clock += dt;
@@ -126,6 +131,7 @@ impl DystopiaView {
     }
 
     pub fn clear(&mut self, world: &mut World) {
+        self.edge.clear(world);
         if let Some(id) = self.volume.take() {
             world.remove_fog_volume(id);
         }

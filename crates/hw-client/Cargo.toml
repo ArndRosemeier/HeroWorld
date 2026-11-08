@@ -24,3 +24,5 @@ serde_json = { workspace = true }
 actors-engine = { workspace = true }
 actors-generator = { workspace = true }
 actors-human = { workspace = true }
+# Graffiti decals (PNG); the same image crate Engine uses.
+image = { version = "0.25", default-features = false, features = ["png"] }

@@ -19,6 +19,7 @@
 //! replace it.
 
 pub mod dystopia;
+pub mod edge;
 pub mod graph;
 pub mod growth;
 pub mod land;

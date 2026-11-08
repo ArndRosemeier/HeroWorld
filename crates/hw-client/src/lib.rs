@@ -9,6 +9,7 @@ pub mod crowdview;
 pub mod damageview;
 pub mod dispatchview;
 pub mod dystopiaview;
+pub mod edgeview;
 pub mod fightview;
 pub mod heroview;
 pub mod interior;

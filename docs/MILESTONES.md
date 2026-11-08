@@ -387,6 +387,15 @@ never walks off the edge, notices heroes in the street below without a clear lin
 the edge to see them, and reaches 1.6 times as far; one knocked off stays down.
 `HW_VIEW=rooftop` looks at the first one.
 
+**Status (0.041):** the quarter's frayed edge (`hw-gen/src/urban/edge.rs`,
+`hw-client/src/edgeview.rs`). Walls in the 70 m band around the quarter (and in it) carry
+graffiti: four images made with OpenRouter (`assets/graffiti/`, prompts in its README), drawn
+as Engine decals, the 60 nearest the camera at a time. Where a street runs into the quarter,
+concrete barriers and striped sawhorses reach in from both kerbs and leave one lane open, with
+sandbags on the pavements and a burning oil drum. In the band one street lamp in five is out
+and one in three flickers. `WORLD_VERSION` 17. `HW_VIEW=edge` and `HW_VIEW=graffiti` look at
+them. Not yet: barricades are scenery only (no collision).
+
 ### M10. Traffic, taxis and the underground (in progress)
 
 - Ground traffic on the streets (AssetGenerator cars with spinning wheels and opening doors as

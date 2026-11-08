@@ -419,6 +419,204 @@ pub fn moving_car_levels(model: CarModel, paint: u8) -> Vec<LodLevel> {
     ]
 }
 
+/// The ambulance that waits for a rescue's hurt: a long 1950s coach-built
+/// ambulance, white with a red stripe and crosses, a tall rear compartment
+/// with frosted windows and a rounded roof, tail fins, a chrome grille and
+/// twin red bubble lights. Nose to +z; close up and far.
+pub fn ambulance_levels() -> Vec<LodLevel> {
+    let make = |near: bool| {
+        let mut b = MeshBuilder::new();
+        let seg = if near { 14 } else { 6 };
+        let white = rgb(242, 240, 232);
+        let red = rgb(196, 30, 40);
+        let chrome = rgb(225, 228, 232);
+        let window = rgb(40, 62, 78);
+        let frosted = rgb(196, 210, 214);
+        // The long lower body, its nose rounded off.
+        taper(
+            &mut b,
+            (0.32, 1.0, -3.05, 2.95),
+            (0.95, 1.03, -3.12, 2.85),
+            white,
+        );
+        ellipsoid(
+            &mut b,
+            DVec3::new(0.0, 0.7, 2.75),
+            DVec3::new(1.0, 0.36, 0.5),
+            seg,
+            seg / 2 + 1,
+            white,
+        );
+        // The rear compartment, its roof rounded, running over the cab.
+        taper(
+            &mut b,
+            (0.95, 1.03, -3.1, 0.75),
+            (1.78, 0.98, -3.02, 0.7),
+            white,
+        );
+        ellipsoid(
+            &mut b,
+            DVec3::new(0.0, 1.78, -1.15),
+            DVec3::new(0.98, 0.16, 1.92),
+            seg,
+            seg / 2 + 1,
+            white,
+        );
+        // The cab: a raked windscreen up to the roofline.
+        glass(&mut b, |b| {
+            taper(b, (0.95, 0.98, 0.75, 1.95), (1.74, 0.92, 0.7, 1.05), window)
+        });
+        taper(&mut b, (1.74, 0.92, 0.7, 1.05), (1.8, 0.9, 0.7, 1.0), white);
+        for sx in [-1.0, 1.0] {
+            let x = sx * 1.035;
+            // Frosted windows down the side of the compartment.
+            glass(&mut b, |b| {
+                for (z0, z1) in [(-2.75, -1.35), (-1.15, 0.45)] {
+                    bx(
+                        b,
+                        DVec3::new(x - 0.01, 1.12, z0),
+                        DVec3::new(x + 0.01, 1.58, z1),
+                        frosted,
+                    );
+                }
+            });
+            // The red stripe and a cross between the windows' frames.
+            bx(
+                &mut b,
+                DVec3::new(x - 0.012, 0.8, -3.05),
+                DVec3::new(x + 0.012, 0.9, 2.8),
+                red,
+            );
+            bx(
+                &mut b,
+                DVec3::new(x - 0.015, 1.27, -1.33),
+                DVec3::new(x + 0.015, 1.43, -1.17),
+                red,
+            );
+            // Tail fins with red lamps.
+            let q = |y: f64, za: f64, zb: f64, w: f64| {
+                [
+                    DVec3::new(sx * 0.86, y, za),
+                    DVec3::new(sx * (0.86 + w), y, za),
+                    DVec3::new(sx * (0.86 + w), y, zb),
+                    DVec3::new(sx * 0.86, y, zb),
+                ]
+            };
+            b.hexa(q(0.9, -3.12, -1.9, 0.16), q(1.22, -3.22, -2.8, 0.1), white);
+        }
+        // A red cross on the rear doors and on the roof.
+        bx(
+            &mut b,
+            DVec3::new(-0.08, 1.05, -3.145),
+            DVec3::new(0.08, 1.55, -3.12),
+            red,
+        );
+        bx(
+            &mut b,
+            DVec3::new(-0.25, 1.22, -3.145),
+            DVec3::new(0.25, 1.38, -3.12),
+            red,
+        );
+        bx(
+            &mut b,
+            DVec3::new(-0.1, 1.94, -1.75),
+            DVec3::new(0.1, 1.95, -0.95),
+            red,
+        );
+        bx(
+            &mut b,
+            DVec3::new(-0.4, 1.94, -1.45),
+            DVec3::new(0.4, 1.95, -1.25),
+            red,
+        );
+        if near {
+            metal(&mut b, |b| {
+                // Bumpers, a wide grille with bars, a siren on the roof.
+                for z in [-3.18, 3.18] {
+                    bx(
+                        b,
+                        DVec3::new(-1.04, 0.34, z - 0.07),
+                        DVec3::new(1.04, 0.5, z + 0.07),
+                        chrome,
+                    );
+                }
+                bx(
+                    b,
+                    DVec3::new(-0.75, 0.5, 3.12),
+                    DVec3::new(0.75, 0.74, 3.16),
+                    chrome,
+                );
+                for k in 0..7 {
+                    let x = -0.6 + 0.2 * k as f64;
+                    bx(
+                        b,
+                        DVec3::new(x - 0.02, 0.5, 3.15),
+                        DVec3::new(x + 0.02, 0.74, 3.2),
+                        rgb(150, 152, 160),
+                    );
+                }
+                for sx in [-1.0, 1.0] {
+                    bx(
+                        b,
+                        DVec3::new(sx * 1.04 - 0.01, 0.58, -2.9),
+                        DVec3::new(sx * 1.04 + 0.01, 0.64, 2.7),
+                        chrome,
+                    );
+                }
+                xcyl(b, DVec3::new(0.0, 1.98, 0.35), 0.1, 0.36, seg, chrome);
+            });
+            glow(&mut b, |b| {
+                for x in [-0.72, 0.72] {
+                    ellipsoid(
+                        b,
+                        DVec3::new(x, 0.78, 3.1),
+                        DVec3::splat(0.12),
+                        8,
+                        4,
+                        c3(WARM),
+                    );
+                }
+                for x in [-0.93, 0.93] {
+                    bx(
+                        b,
+                        DVec3::new(x - 0.05, 1.08, -3.26),
+                        DVec3::new(x + 0.05, 1.22, -3.16),
+                        rgb(255, 50, 40),
+                    );
+                }
+            });
+        }
+        // Twin red bubble lights over the windscreen.
+        glow(&mut b, |b| {
+            for x in [-0.45, 0.45] {
+                ellipsoid(
+                    b,
+                    DVec3::new(x, 1.86, 0.55),
+                    DVec3::new(0.13, 0.15, 0.13),
+                    10,
+                    6,
+                    rgb(255, 50, 45),
+                );
+            }
+        });
+        wheels(
+            &mut b,
+            0.98,
+            &[-1.95, 1.95],
+            0.38,
+            seg,
+            rgb(24, 24, 26),
+            chrome,
+            near,
+        );
+        b.finish()
+    };
+    vec![
+        LodLevel::new(make(true), 140.0),
+        LodLevel::new(make(false), 700.0),
+    ]
+}
+
 /// One wheel of `model`, centred, its axle along x: tyre, whitewalls and a
 /// spoked chrome hub on both faces, so it can be seen to turn.
 pub fn wheel_levels(model: CarModel) -> Option<Vec<LodLevel>> {

@@ -53,6 +53,17 @@ impl NightLights {
             if held && i % 3 != 0 {
                 continue;
             }
+            // In the band around it the town frays: one lamp in five is
+            // out, and one in three flickers.
+            let fraying = !held
+                && town
+                    .town
+                    .dystopia
+                    .as_ref()
+                    .is_some_and(|d| d.zone(p.pos) == hw_gen::urban::dystopia::Zone::Edge);
+            if fraying && i % 5 == 1 {
+                continue;
+            }
             let at = |fwd: f64, up: f64| {
                 let q = p.pos + p.dir * fwd;
                 Vec3::new(q.x as f32, (p.y + up * p.scale) as f32, q.y as f32)
@@ -75,6 +86,11 @@ impl NightLights {
                 Lamp {
                     color: rgb(170, 230, 140),
                     flicker: 0.7,
+                    ..lamp
+                }
+            } else if fraying && i % 3 == 0 {
+                Lamp {
+                    flicker: 0.5,
                     ..lamp
                 }
             } else {

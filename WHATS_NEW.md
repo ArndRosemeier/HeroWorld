@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.041 (2026-11-08)
+
+- Near the mad scientist's quarter the town frays: graffiti on the walls, flickering and dead
+  street lamps, and barricades half across every street that leads in.
+
 ## 0.040 (2026-11-08)
 
 - The colossus is loose! Now and then the Doctor's walking tank strides out of the Tesla tower

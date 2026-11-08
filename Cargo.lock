@@ -1606,6 +1606,7 @@ dependencies = [
  "hw-gen",
  "hw-net",
  "hw-sim",
+ "image",
  "serde_json",
 ]
 

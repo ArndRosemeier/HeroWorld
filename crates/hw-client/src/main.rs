@@ -488,6 +488,34 @@ fn main() -> EngineResult<()> {
             let (up, pitch) = if sky { (30.0, 4.0) } else { (6.0, -10.0) };
             FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, pitch)
         }
+        "graffiti" => {
+            // In front of a tagged wall at the quarter's edge.
+            let w = &generated.world;
+            let tags = hw_gen::urban::edge::tags(w);
+            match tags.iter().find(|t| t.image == 0).or(tags.first()) {
+                Some(t) => {
+                    let at = DVec2::new(t.at.x, t.at.z);
+                    let p = at + t.normal * 7.0 + t.normal.perp() * 2.0;
+                    let d = at - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, t.at.y as f32 + 0.3, p.y as f32), yaw, -3.0)
+                }
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
+        "edge" => {
+            // Outside the quarter, looking in past its first barricade.
+            let w = &generated.world;
+            match hw_gen::urban::edge::barricades(w).first() {
+                Some(b) => {
+                    let p = b.at - b.along * 14.0 + b.along.perp() * (b.half + 1.0);
+                    let d = b.at + b.along * 10.0 - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, ground(p) as f32 + 2.2, p.y as f32), yaw, -6.0)
+                }
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
         "rooftop" => {
             // Across the street from the quarter's first rooftop lookout, a
             // little above its roof.
