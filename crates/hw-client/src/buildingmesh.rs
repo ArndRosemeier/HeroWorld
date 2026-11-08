@@ -53,6 +53,37 @@ fn shade(c: Rgb, k: f64) -> Color {
 }
 
 /// Drawing in one building's coordinates.
+/// Night: some rooms have their lights on, their windows glowing. Set once
+/// before the town is built (the hour is fixed for a session).
+pub static NIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The colour and surface of a window's glass: lit rooms glow at night.
+/// Every window of a room is lit or dark together.
+fn pane(plan: &BuildingPlan, look: &Look, op: &Opening, shop: bool) -> (Color, Surf) {
+    let dark = (col(look.glass), Surf::Glass);
+    if !NIGHT.load(std::sync::atomic::Ordering::Relaxed) || op.kind == OpeningKind::Door {
+        return dark;
+    }
+    let o = plan.site.origin;
+    let mut h = (o.x * 7.31).to_bits() ^ (o.y * 3.17).to_bits().rotate_left(17);
+    h ^= (op.floor as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^= (op.room as u64 + 1).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    h ^= h >> 29;
+    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h ^= h >> 32;
+    let roll = (h % 1000) as f64 / 1000.0;
+    let share = if shop { 0.75 } else { 0.38 };
+    if roll >= share {
+        return dark;
+    }
+    let tone = match h >> 40 & 7 {
+        0 => rgb(190, 214, 255),
+        1 | 2 => rgb(255, 190, 120),
+        _ => rgb(255, 214, 150),
+    };
+    (tone, Surf::Glow)
+}
+
 struct Ctx<'a> {
     b: &'a mut MeshBuilder,
     plan: &'a BuildingPlan,
@@ -486,7 +517,7 @@ fn far_floor(c: &mut Ctx, level: usize) {
         let ya = (f.elevation + op.sill).max(y0 + 0.05);
         let yb = f.elevation + op.sill + op.height;
         let (color, surf) = match op.kind {
-            OpeningKind::Window | OpeningKind::Entrance => (col(look.glass), Surf::Glass),
+            OpeningKind::Window | OpeningKind::Entrance => pane(plan, look, op, false),
             OpeningKind::Door => (shade(look.frame, 0.8), Surf::Plain),
         };
         c.surf(surf);
@@ -738,8 +769,9 @@ fn opening(c: &mut Ctx, w: &Wall, f: &Floor, op: &Opening, t: (f64, f64), y: (f6
             );
         }
         OpeningKind::Entrance | OpeningKind::Window => {
-            c.surf(Surf::Glass);
-            c.quad(w.rect(t0, t1, ya, yb, -r), w.out(), col(look.glass));
+            let (glass, surf) = pane(plan, look, op, shop);
+            c.surf(surf);
+            c.quad(w.rect(t0, t1, ya, yb, -r), w.out(), glass);
             c.surf(Surf::Plain);
             // Mullions and a transom.
             let width = t1 - t0;
@@ -961,9 +993,10 @@ fn porthole(c: &mut Ctx, w: &Wall, op: &Opening, f: &Floor) {
         let a = std::f64::consts::TAU * k as f64 / seg as f64;
         w.at(op.along + rad * a.cos(), cy + rad * a.sin(), d)
     };
-    c.surf(Surf::Glass);
+    let (glass, surf) = pane(c.plan, look, op, false);
+    c.surf(surf);
     let disc: Vec<DVec3> = (0..seg).map(|k| pt(k, r, 0.03)).collect();
-    c.polygon(&disc, w.out(), col(look.glass));
+    c.polygon(&disc, w.out(), glass);
     c.surf(Surf::Metal);
     for k in 0..seg {
         let q = [

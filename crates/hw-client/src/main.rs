@@ -135,6 +135,11 @@ impl HeroCamera {
 }
 
 fn main() -> EngineResult<()> {
+    // Lit windows are baked into the buildings: decide before any is built.
+    hw_client::buildingmesh::NIGHT.store(
+        hw_client::nightlights::dark_at(game_hour()),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let env_num = |name: &str| std::env::var(name).ok().and_then(|s| s.parse::<u64>().ok());
     let view = std::env::var("HW_VIEW").unwrap_or_else(|_| "hero".into());
     let profile = Profile::load();
