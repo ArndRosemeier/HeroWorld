@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.042 (2026-11-08)
+
+- The barricades at the mad scientist's quarter are solid now: you can't walk through them, but
+  you can smash them, and nobody bills you for it.
+
 ## 0.041 (2026-11-08)
 
 - Near the mad scientist's quarter the town frays: graffiti on the walls, flickering and dead

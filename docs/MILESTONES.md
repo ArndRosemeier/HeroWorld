@@ -394,7 +394,14 @@ as Engine decals, the 60 nearest the camera at a time. Where a street runs into 
 concrete barriers and striped sawhorses reach in from both kerbs and leave one lane open, with
 sandbags on the pavements and a burning oil drum. In the band one street lamp in five is out
 and one in three flickers. `WORLD_VERSION` 17. `HW_VIEW=edge` and `HW_VIEW=graffiti` look at
-them. Not yet: barricades are scenery only (no collision).
+them.
+
+**Status (0.042):** barricades are solid and breakable. Each piece is a street prop
+(`PropKind::Barricade`: jersey barrier, striped sawhorse, sandbags, burning drum, placed by
+`props::barricade_props`), so it breaks and is put back unseen like the rest; while it stands its
+box (`BarricadePiece::block`) is in the solids, which drop it when it breaks
+(`Obstacles::set_prop_broken`, on the server and on every client). Breaking the villains'
+barricades costs no collateral. `WORLD_VERSION` 18.
 
 ### M10. Traffic, taxis and the underground (in progress)
 

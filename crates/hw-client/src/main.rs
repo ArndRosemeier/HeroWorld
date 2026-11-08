@@ -1277,6 +1277,8 @@ fn main() -> EngineResult<()> {
                         if let Some(v) = extras.props.as_mut() {
                             v.set_broken(&generated.world, i as usize, Some(fell));
                         }
+                        // A barricade knocked down no longer blocks the way.
+                        generated.obstacles.set_prop_broken(i, true);
                         if let Some(l) = extras.lights.as_mut() {
                             l.set_broken(i, true);
                         }
@@ -1314,6 +1316,7 @@ fn main() -> EngineResult<()> {
                         if let Some(v) = extras.props.as_mut() {
                             v.set_broken(&generated.world, i as usize, None);
                         }
+                        generated.obstacles.set_prop_broken(i, false);
                         if let Some(l) = extras.lights.as_mut() {
                             l.set_broken(i, false);
                         }

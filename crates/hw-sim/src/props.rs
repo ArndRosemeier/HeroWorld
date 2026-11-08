@@ -4,9 +4,10 @@
 //! which props are broken (and how), clients draw them so, and props nobody
 //! has been near for a while are put back ([`crate::destruction::REPAIR_SECONDS`]).
 
+use crate::collision::Obstacles;
 use crate::destruction::{REPAIR_DISTANCE, REPAIR_SECONDS};
 use glam::{DVec2, DVec3};
-use hw_gen::urban::props::{Prop, PropKind};
+use hw_gen::urban::props::{BarricadePiece, Prop, PropKind};
 use hw_gen::urban::world::TownWorld;
 use hw_net::{PlayerId, ToClient};
 use std::collections::BTreeMap;
@@ -43,6 +44,10 @@ pub fn toughness(kind: PropKind) -> Option<(f32, Breaks)> {
         PropKind::Kiosk => (380.0, Breaks::Smashed),
         PropKind::Statue(_) => (900.0, Breaks::Topples),
         PropKind::Bollard => (700.0, Breaks::Topples),
+        PropKind::Barricade(BarricadePiece::Jersey) => (600.0, Breaks::Topples),
+        PropKind::Barricade(BarricadePiece::Sawhorse) => (50.0, Breaks::Smashed),
+        PropKind::Barricade(BarricadePiece::Sandbags) => (180.0, Breaks::Smashed),
+        PropKind::Barricade(BarricadePiece::Drum) => (60.0, Breaks::Topples),
         PropKind::Fountain => return None,
     })
 }
@@ -62,6 +67,10 @@ pub fn trunk(kind: PropKind) -> (f64, f64) {
         PropKind::Lamp(_) | PropKind::TrafficLight => (0.2, 5.0),
         PropKind::Bin | PropKind::Hydrant | PropKind::Bollard => (0.3, 0.9),
         PropKind::Mailbox => (0.35, 1.4),
+        PropKind::Barricade(p) => {
+            let (hx, hz, h) = p.block();
+            (hx.max(hz), h)
+        }
     }
 }
 
@@ -73,6 +82,8 @@ fn cost(kind: PropKind) -> f64 {
         PropKind::Kiosk => 6_000.0,
         PropKind::Tree(..) => 2_500.0,
         PropKind::TrafficLight | PropKind::Lamp(_) => 1_800.0,
+        // The villains' own: nobody minds.
+        PropKind::Barricade(_) => 0.0,
         _ => 500.0,
     }
 }
@@ -101,6 +112,8 @@ pub struct PropDamage {
     grid: BTreeMap<(i64, i64), Vec<u32>>,
     pub broken: BTreeMap<u32, Broken>,
     news: Vec<ToClient>,
+    /// The solids blocking props (barricades) stand in, kept in step.
+    solids: Option<Arc<Obstacles>>,
 }
 
 fn key(p: DVec2) -> (i64, i64) {
@@ -117,6 +130,19 @@ impl PropDamage {
             town: Some(town),
             grid,
             ..Default::default()
+        }
+    }
+
+    /// Keeps the boxes of blocking props in `solids` in step with breaks
+    /// and repairs.
+    pub fn with_solids(mut self, solids: Arc<Obstacles>) -> Self {
+        self.solids = Some(solids);
+        self
+    }
+
+    fn sync(&self, i: u32, broken: bool) {
+        if let Some(s) = &self.solids {
+            s.set_prop_broken(i, broken);
         }
     }
 
@@ -183,6 +209,7 @@ impl PropDamage {
                 },
             );
             spent += cost(p.kind);
+            self.sync(i, true);
             fresh.push((i, fell));
         }
         for chunk in fresh.chunks(hw_net::protocol::MAX_DAMAGE_IDS) {
@@ -221,6 +248,7 @@ impl PropDamage {
     pub fn apply(&mut self, props: &[(u32, u8)], tick: u64) {
         for &(i, fell) in props {
             if self.prop(i).is_some() {
+                self.sync(i, true);
                 self.broken.insert(
                     i,
                     Broken {
@@ -252,6 +280,7 @@ impl PropDamage {
         }
         for i in &fixed {
             self.broken.remove(i);
+            self.sync(*i, false);
         }
         for chunk in fixed.chunks(hw_net::protocol::MAX_DAMAGE_IDS) {
             self.news.push(ToClient::PropsRepaired {
@@ -276,6 +305,9 @@ impl PropDamage {
     }
 
     pub fn clear(&mut self) {
+        for &i in self.broken.keys() {
+            self.sync(i, false);
+        }
         self.broken.clear();
         self.news.clear();
     }

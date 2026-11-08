@@ -88,6 +88,36 @@ pub enum PropKind {
     AdPillar,
     /// A bronze hero on a stone plinth; the number picks the pose.
     Statue(u8),
+    /// A piece of a barricade where a street runs into the villains'
+    /// quarter ([`super::edge::barricades`]).
+    Barricade(BarricadePiece),
+}
+
+/// The pieces barricades are made of. Each faces along the street (its
+/// +z), its length across it (x).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum BarricadePiece {
+    /// A concrete jersey barrier, 2 m long.
+    Jersey,
+    /// A wooden sawhorse with a striped plank, 1.6 m.
+    Sawhorse,
+    /// A wall of sandbags, 1.2 m.
+    Sandbags,
+    /// An oil drum with a fire in it.
+    Drum,
+}
+
+impl BarricadePiece {
+    /// The box it fills: half its length (x), half its depth (z), its
+    /// height. Bodies cannot pass through it while it stands.
+    pub fn block(self) -> (f64, f64, f64) {
+        match self {
+            BarricadePiece::Jersey => (1.0, 0.32, 0.85),
+            BarricadePiece::Sawhorse => (0.8, 0.12, 1.0),
+            BarricadePiece::Sandbags => (0.6, 0.3, 0.55),
+            BarricadePiece::Drum => (0.3, 0.3, 0.9),
+        }
+    }
 }
 
 /// Poses of [`PropKind::Statue`].
@@ -120,7 +150,66 @@ pub fn plan_props(w: &TownWorld) -> Vec<Prop> {
     p.junctions(seed.child("junctions"));
     p.parks(region, seed.child("parks"));
     p.gardens(region, seed.child("gardens"));
+    // Last, so the props before keep their numbers in towns without them.
+    p.out.extend(barricade_props(w));
     p.out
+}
+
+/// The pieces of every barricade: jersey barriers in from both kerbs (one
+/// lane left open), a striped sawhorse behind each run, sandbags across the
+/// pavements and a burning drum on one of them.
+fn barricade_props(w: &TownWorld) -> Vec<Prop> {
+    let mut out = Vec::new();
+    for b in super::edge::barricades(w) {
+        let across = b.along.perp();
+        let mut rng = Seed(b.seed).rng();
+        let put = |piece: BarricadePiece, x: f64, z: f64, out: &mut Vec<Prop>| {
+            let pos = b.at + across * x + b.along * z;
+            out.push(Prop {
+                kind: PropKind::Barricade(piece),
+                pos,
+                y: w.road_height(pos),
+                dir: b.along,
+                scale: 1.0,
+            });
+        };
+        let reach = (b.half - 1.8).max(0.0);
+        for sx in [-1.0f64, 1.0] {
+            if reach > 0.8 {
+                let n = (reach / 2.0).ceil() as usize;
+                for k in 0..n {
+                    // From the kerb in; the last one ends at the lane.
+                    let x = (b.half - 1.0 - 2.0 * k as f64).max(b.half - reach + 1.0);
+                    put(BarricadePiece::Jersey, sx * x, 0.0, &mut out);
+                }
+                // At the lane's edge, behind the barriers.
+                let x = (b.half - reach + 0.8).min(b.half - 0.8);
+                put(
+                    BarricadePiece::Sawhorse,
+                    sx * x,
+                    1.6 + rng.range(-0.3, 0.3),
+                    &mut out,
+                );
+            }
+            let n = ((b.pavement - 0.4) / 1.2).floor() as usize;
+            for k in 0..n {
+                put(
+                    BarricadePiece::Sandbags,
+                    sx * (b.half + 0.8 + 1.2 * k as f64),
+                    0.4,
+                    &mut out,
+                );
+            }
+        }
+        let side = if rng.chance(0.5) { -1.0 } else { 1.0 };
+        put(
+            BarricadePiece::Drum,
+            side * (b.half + b.pavement * 0.5),
+            -1.4,
+            &mut out,
+        );
+    }
+    out
 }
 
 /// Positions along a polyline by arc length.

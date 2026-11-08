@@ -178,6 +178,9 @@ pub struct Obstacles {
     terrain: Option<Terrain>,
     /// Tunnels, lift shafts and caverns below the ground.
     under: Option<Arc<Underground>>,
+    /// Street props that block the way (barricades): prop index to its
+    /// collider.
+    props: BTreeMap<u32, usize>,
 }
 
 /// Where the open ground is water, and the bridges over it.
@@ -290,7 +293,33 @@ impl Obstacles {
                 y1: br.deck,
             });
         }
+        // Barricades: a box for each piece while it stands.
+        for (i, p) in world.props.iter().enumerate() {
+            let hw_gen::urban::props::PropKind::Barricade(piece) = p.kind else {
+                continue;
+            };
+            let (hx, hz, h) = piece.block();
+            let inward = p.dir.normalize_or(DVec2::Y);
+            let along = DVec2::new(inward.y, -inward.x);
+            out.props.insert(i as u32, out.colliders.len());
+            out.add(Solid {
+                origin: p.pos - along * hx - inward * hz,
+                along,
+                inward,
+                min: DVec2::ZERO,
+                max: DVec2::new(hx * 2.0, hz * 2.0),
+                y0: p.y - 0.1,
+                y1: p.y + h,
+            });
+        }
         out
+    }
+
+    /// A blocking street prop broken (its box gone) or whole again.
+    pub fn set_prop_broken(&self, prop: u32, broken: bool) {
+        if let Some(&c) = self.props.get(&prop) {
+            self.set_damage(c, broken.then(Vec::new), true);
+        }
     }
 
     /// Adds a free-standing box (tests, props).

@@ -188,6 +188,7 @@ pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
         PropKind::Kiosk => two(kiosk(true), 200.0, kiosk(false), 600.0),
         PropKind::AdPillar => vec![LodLevel::new(ad_pillar(), 250.0)],
         PropKind::Statue(pose) => vec![LodLevel::new(statue_mesh(pose), 500.0)],
+        PropKind::Barricade(piece) => crate::edgeview::piece_levels(piece),
     })
 }
 

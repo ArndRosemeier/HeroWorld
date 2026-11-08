@@ -158,3 +158,30 @@ fn technicians_shoot_down_from_the_quarters_roofs() {
         "nobody shot at the hero below"
     );
 }
+
+#[test]
+fn barricades_block_the_way_until_knocked_down() {
+    use hw_gen::urban::props::{BarricadePiece, PropKind};
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    let (i, p) = town
+        .world
+        .props
+        .iter()
+        .enumerate()
+        .find(|(_, p)| p.kind == PropKind::Barricade(BarricadePiece::Jersey))
+        .expect("a barricade");
+    let solids = sim.solids();
+    let top = |s: &hw_sim::collision::Obstacles| s.floor_under(p.pos, p.y + 5.0);
+    assert!(top(&solids) > p.y + 0.6, "nothing stands there");
+    // A hard blow knocks it over: the way is open.
+    let at = DVec3::new(p.pos.x, p.y + 0.5, p.pos.y);
+    let (n, cost) = sim.street.hit(at, DVec3::X, 2.0, 2000.0, 1);
+    assert!(n >= 1);
+    assert_eq!(cost, 0.0, "the villains' barricades cost nothing");
+    assert!(sim.street.broken.contains_key(&(i as u32)));
+    assert!(top(&solids) < p.y + 0.3, "still blocks the way when broken");
+    // Put back unseen, it blocks again.
+    sim.street.repair_unseen(&[], u64::MAX, TICK_HZ);
+    assert!(top(&solids) > p.y + 0.6);
+}

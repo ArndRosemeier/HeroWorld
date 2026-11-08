@@ -408,7 +408,7 @@ impl Sim {
         let mut sim = Self::with_solids(seed, town.obstacles.clone());
         sim.set_spawn(town.world.spawn_line());
         sim.town_population = town.population();
-        sim.street = props::PropDamage::new(town.world.clone());
+        sim.street = props::PropDamage::new(town.world.clone()).with_solids(town.obstacles.clone());
         sim.taxis = taxi::Taxis::new(town.world.clone());
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.world.clone()));
         sim.incidents = incidents::Incidents::new(town.world.clone());

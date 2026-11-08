@@ -1,6 +1,8 @@
 //! The frayed edge of the mad scientist's quarter as the camera sees it:
-//! graffiti on the walls ([`hw_gen::urban::edge::tags`]) and barricades
-//! where the streets run in ([`hw_gen::urban::edge::barricades`]).
+//! graffiti on the walls ([`hw_gen::urban::edge::tags`]), and the pieces
+//! of the barricades where the streets run in (street props,
+//! [`hw_gen::urban::props::BarricadePiece`], drawn by
+//! [`crate::propview`] with the meshes here, so they break like the rest).
 //!
 //! Graffiti are decals, which Engine keeps in a shared pool: only those
 //! near the camera are spawned, and they are refreshed as it moves.
@@ -8,8 +10,8 @@
 use crate::citymesh::{MeshBuilder, Surf};
 use engine::prelude::*;
 use glam::{DVec3, Vec3};
-use hw_core::Seed;
-use hw_gen::urban::edge::{self, Barricade, Tag, TAG_IMAGES};
+use hw_gen::urban::edge::{self, Tag, TAG_IMAGES};
+use hw_gen::urban::props::BarricadePiece;
 use hw_gen::urban::world::TownWorld;
 use std::sync::Mutex;
 
@@ -51,9 +53,6 @@ fn kinds(world: &mut World) -> Option<Vec<DecalKind>> {
 
 pub struct EdgeView {
     tags: Vec<Tag>,
-    barricades: Vec<Barricade>,
-    built: bool,
-    entities: Vec<EntityId>,
     decals: Vec<DecalId>,
     /// Where the camera was when the near graffiti were last picked.
     picked_at: Option<Vec3>,
@@ -63,24 +62,12 @@ impl EdgeView {
     pub fn new(town: &TownWorld) -> Self {
         Self {
             tags: edge::tags(town),
-            barricades: edge::barricades(town),
-            built: false,
-            entities: Vec::new(),
             decals: Vec::new(),
             picked_at: None,
         }
     }
 
-    pub fn update(&mut self, world: &mut World, town: &TownWorld) -> EngineResult<()> {
-        if !self.built {
-            self.built = true;
-            for b in &self.barricades {
-                let y = town.ground(b.at);
-                let yaw = b.along.x.atan2(b.along.y).to_degrees() as f32;
-                let place = Place::new(b.at.x as f32, y as f32, b.at.y as f32).with_yaw_deg(yaw);
-                self.entities.push(world.place(barricade_mesh(b), place)?);
-            }
-        }
+    pub fn update(&mut self, world: &mut World) -> EngineResult<()> {
         if self.tags.is_empty() {
             return Ok(());
         }
@@ -116,99 +103,130 @@ impl EdgeView {
     }
 
     pub fn clear(&mut self, world: &mut World) {
-        for e in self.entities.drain(..) {
-            world.despawn(e);
-        }
         for d in self.decals.drain(..) {
             world.remove_decal(d);
         }
         self.picked_at = None;
-        self.built = false;
     }
 }
 
-/// A barricade across a street, facing +z (into the quarter): concrete
-/// barriers and striped sawhorses from both kerbs, leaving one lane open,
-/// sandbags along the pavements and a burning oil drum.
-fn barricade_mesh(b: &Barricade) -> Mesh {
+/// One barricade piece, facing +z, its length across x (see
+/// [`BarricadePiece::block`]): close up and far.
+pub fn piece_levels(piece: BarricadePiece) -> Vec<LodLevel> {
+    vec![
+        LodLevel::new(piece_mesh(piece, true), 120.0),
+        LodLevel::new(piece_mesh(piece, false), 500.0),
+    ]
+}
+
+fn piece_mesh(piece: BarricadePiece, near: bool) -> Mesh {
     let mut m = MeshBuilder::new();
-    let mut rng = Seed(b.seed).rng();
-    let concrete = rgb(150, 148, 140);
-    let wood = rgb(120, 92, 60);
-    let yellow = rgb(235, 190, 40);
-    let black = rgb(30, 30, 30);
-    let sand = rgb(170, 150, 110);
-    let h = b.half;
-    let reach = (h - 1.8).max(0.0);
-    for sx in [-1.0f64, 1.0] {
-        if reach > 0.8 {
-            // A jersey barrier out from the kerb.
-            let (x0, x1) = (sx * h, sx * (h - reach));
-            let (lo, hi) = (x0.min(x1), x0.max(x1));
-            m.hexa(
+    let seg = if near { 14 } else { 6 };
+    let (hx, hz, h) = piece.block();
+    match piece {
+        BarricadePiece::Jersey => {
+            // Concrete, wide at the foot, narrow on top, with a red and
+            // white band.
+            let q = |y: f64, d: f64| {
                 [
-                    DVec3::new(lo, 0.0, -0.32),
-                    DVec3::new(hi, 0.0, -0.32),
-                    DVec3::new(hi, 0.0, 0.32),
-                    DVec3::new(lo, 0.0, 0.32),
-                ],
-                [
-                    DVec3::new(lo, 0.85, -0.1),
-                    DVec3::new(hi, 0.85, -0.1),
-                    DVec3::new(hi, 0.85, 0.1),
-                    DVec3::new(lo, 0.85, 0.1),
-                ],
-                concrete,
-            );
-            // A sawhorse behind it, striped yellow and black.
-            let z = 1.6 + rng.range(-0.3, 0.3);
-            for x in [lo + 0.2, hi - 0.2] {
-                m.oriented_box(
-                    DVec3::new(x, 0.45, z),
-                    DVec3::Z,
-                    DVec3::new(0.25, 0.45, 0.04),
-                    wood,
-                );
+                    DVec3::new(-hx, y, -d),
+                    DVec3::new(hx, y, -d),
+                    DVec3::new(hx, y, d),
+                    DVec3::new(-hx, y, d),
+                ]
+            };
+            let concrete = rgb(158, 156, 148);
+            m.hexa(q(0.0, hz), q(0.25, hz * 0.95), concrete);
+            m.hexa(q(0.25, hz * 0.95), q(h, hz * 0.32), concrete);
+            if near {
+                let n = 5;
+                let w = hx * 2.0 / n as f64;
+                for k in 0..n {
+                    let x = -hx + w * (k as f64 + 0.5);
+                    let c = if k % 2 == 0 {
+                        rgb(200, 40, 40)
+                    } else {
+                        rgb(236, 234, 226)
+                    };
+                    m.oriented_box(
+                        DVec3::new(x, h - 0.12, 0.0),
+                        DVec3::Z,
+                        DVec3::new(hz * 0.33, 0.08, w * 0.5),
+                        c,
+                    );
+                }
             }
-            let n = ((hi - lo) / 0.45).floor().max(1.0) as usize;
-            let w = (hi - lo) / n as f64;
+        }
+        BarricadePiece::Sawhorse => {
+            let wood = rgb(120, 92, 60);
+            for x in [-hx + 0.15, hx - 0.15] {
+                for dz in [-1.0, 1.0] {
+                    let foot = DVec3::new(x, 0.0, dz * hz);
+                    let top = DVec3::new(x, h - 0.15, 0.0);
+                    crate::landmarkview::strut(&mut m, foot, top, 0.07, wood);
+                }
+            }
+            // The plank, striped yellow and black.
+            let n = 6;
+            let w = hx * 2.0 / n as f64;
             for k in 0..n {
-                let x = lo + w * (k as f64 + 0.5);
-                let c = if k % 2 == 0 { yellow } else { black };
+                let x = -hx + w * (k as f64 + 0.5);
+                let c = if k % 2 == 0 {
+                    rgb(235, 190, 40)
+                } else {
+                    rgb(30, 30, 30)
+                };
                 m.oriented_box(
-                    DVec3::new(x, 0.9, z),
+                    DVec3::new(x, h - 0.12, 0.0),
                     DVec3::Z,
                     DVec3::new(0.04, 0.12, w * 0.5),
                     c,
                 );
             }
         }
-        // Sandbags along the pavement, two layers.
-        let (p0, p1) = (h + 0.3, h + b.pavement - 0.3);
-        if p1 > p0 + 0.6 {
-            for layer in 0..2 {
-                let mut x = p0 + layer as f64 * 0.3;
-                while x + 0.6 <= p1 {
-                    let c = DVec3::new(sx * (x + 0.3), 0.14 + layer as f64 * 0.26, 0.4);
-                    m.oriented_box(c, DVec3::Z, DVec3::new(0.2, 0.13, 0.3), sand);
-                    x += 0.62;
+        BarricadePiece::Sandbags => {
+            let sand = [rgb(170, 150, 110), rgb(156, 138, 100)];
+            for layer in 0..3 {
+                let shift = if layer % 2 == 0 { 0.0 } else { 0.2 };
+                let mut x = -hx + 0.2 + shift;
+                let mut k = 0;
+                while x + 0.2 <= hx + 1e-6 {
+                    let c = DVec3::new(x, 0.1 + layer as f64 * 0.18, 0.0);
+                    m.oriented_box(
+                        c,
+                        DVec3::Z,
+                        DVec3::new(hz * 0.9, 0.1, 0.2),
+                        sand[(k + layer) % 2],
+                    );
+                    x += 0.4;
+                    k += 1;
                 }
             }
         }
+        BarricadePiece::Drum => {
+            m.cylinder(DVec3::ZERO, (hx, hx), h - 0.04, seg, true, rgb(110, 50, 30));
+            for y in [0.25, 0.6] {
+                m.cylinder(
+                    DVec3::Y * y,
+                    (hx + 0.015, hx + 0.015),
+                    0.04,
+                    seg,
+                    false,
+                    rgb(80, 40, 26),
+                );
+            }
+            // The fire inside.
+            m.surf = Surf::Glow;
+            m.cylinder(
+                DVec3::Y * (h - 0.06),
+                (hx * 0.9, hx * 0.9),
+                0.06,
+                seg,
+                true,
+                rgb(255, 140, 40),
+            );
+            m.surf = Surf::Plain;
+        }
     }
-    // An oil drum burning on one pavement.
-    let side = if rng.chance(0.5) { -1.0 } else { 1.0 };
-    let drum = DVec3::new(side * (h + b.pavement * 0.5), 0.0, -1.2);
-    m.cylinder(drum, (0.3, 0.3), 0.9, 12, true, rgb(110, 50, 30));
-    m.surf = Surf::Glow;
-    m.cylinder(
-        drum + DVec3::Y * 0.86,
-        (0.27, 0.27),
-        0.06,
-        12,
-        true,
-        rgb(255, 140, 40),
-    );
-    m.surf = Surf::Plain;
     m.finish()
 }
