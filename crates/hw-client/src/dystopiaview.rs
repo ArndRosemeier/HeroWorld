@@ -98,7 +98,7 @@ impl DystopiaView {
             let fog = color.lerp(rgb(SMOG.0, SMOG.1, SMOG.2), s);
             let visibility = 1.978 / (density + (thick - density) * s).max(1e-5);
             let volume = FogVolume::new(eye, Vec3::splat(20_000.0))
-                .grade(ColorGrade::NEUTRAL.lerp(&grade(), s))
+                .grade(world.color_grade().lerp(&grade(), s))
                 .fog(fog, visibility.max(1.0))
                 .priority(10);
             match self.volume {

@@ -371,7 +371,7 @@ impl Title {
 
     /// Sets the scene once: golden hour, the moons, sound levels.
     pub fn enter(&mut self, world: &mut World) {
-        world.set_physical_sky(Some(PhysicalSky::at_hour(TITLE_HOUR)));
+        crate::lighting::set_sky(world, TITLE_HOUR);
         self.apply_volumes(world);
     }
 

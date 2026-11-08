@@ -166,6 +166,19 @@ Not needed for the first playable city, but the design depends on them eventuall
     parts (the robots' chrome and brass, some rooftop domes) render as white glare with black
     specks (NaN-looking); the same parts from the side, or from 50 m up, look right.
 
+- **Lighting a whole town** (added 2026-11-08, from the lighting pass, 0.066):
+  - **Far sun shadows for meshes.** Three cascades end at a few hundred metres (HeroWorld sets
+    500 m on High), so from the air the town beyond that has no building shadows at all and
+    looks like a model. A fourth, cached cascade (re-rendered only when the sun moves or a
+    building breaks) or a coarse far shadow map over the content distance would fix it.
+  - **Fog volumes that keep the base grade.** A `FogVolume` with a grade lerps from the base
+    toward its own; HeroWorld's always-on dystopia volume used `NEUTRAL` and so silently wiped
+    any `set_color_grade`. A grade that composes with the base (or an "inherit" option) would
+    stop that trap.
+  - **A day that runs.** Lit windows are baked into the building meshes, so the hour is fixed
+    per session; an emissive strength per mesh or material that can change at runtime would
+    let windows switch on at dusk and allow a slow day and night cycle.
+
 ## Ground rules
 
 These stay in HeroWorld, not in Engine, so Engine stays a general game engine:

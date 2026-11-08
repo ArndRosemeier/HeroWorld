@@ -17,6 +17,21 @@ pub fn quality(p: &Profile) -> Quality {
     Quality::from_name(&p.quality).unwrap_or_default()
 }
 
+/// What a quality level shows, in a line for the settings card.
+pub fn quality_hint(q: Quality) -> String {
+    let reach = crate::lighting::shadows(q).cascade_end_m[2];
+    let rest = match q {
+        Quality::Low => "no soft shading or bounced light, detail swaps close",
+        Quality::Medium => "soft shading in corners, reflections",
+        Quality::High => "plus light bouncing off walls and streets",
+        Quality::Ultra => "plus sharper shadows and detail kept half again as far",
+    };
+    format!(
+        "Sun shadows reach {reach:.0} m, {} lamps cast shadows; {rest}.",
+        crate::lighting::lamp_shadows(q)
+    )
+}
+
 /// Puts the profile's volumes into the world's sound buses.
 pub fn apply_volumes(world: &mut World, p: &Profile) {
     use engine::audio::Bus;
@@ -30,6 +45,7 @@ pub fn apply_volumes(world: &mut World, p: &Profile) {
 /// Puts the profile's picture settings into the world.
 pub fn apply(world: &mut World, p: &Profile) {
     world.set_quality(quality(p));
+    crate::lighting::apply_quality(world, quality(p));
     let _ = world.set_target_fps(p.smooth.then_some(SMOOTH_FPS));
     world.set_vsync(p.vsync);
     let near = world.camera().near();
@@ -78,6 +94,7 @@ pub fn settings_ui(ui: &mut egui::Ui, p: &mut Profile, accent: egui::Color32) ->
             }
         }
     });
+    ui.label(egui::RichText::new(quality_hint(quality(p))).weak());
     changed |= ui
         .checkbox(
             &mut p.smooth,

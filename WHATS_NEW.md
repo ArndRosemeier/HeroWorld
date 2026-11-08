@@ -3,6 +3,16 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.066 (2026-11-08)
+
+- A lighting pass: the game now plays in the warm light of mid-afternoon, so houses have a sunny
+  side and a shady side and throw long shadows down the street.
+- Sun shadows reach much farther (500 m on High, 700 m on Ultra), so flying over town the
+  houses below cast shadows too; more street lamps cast shadows at night.
+- A colour grade for every hour: richer colours by day, golden at sunset, and blue moonlit
+  nights where the lamps and lit windows glow warmer. The two moons are a little dimmer.
+- Settings: each quality level now says what it shows.
+
 ## 0.065 (2026-11-08)
 
 - Solid means solid: the plazas under the Aether Spire, the lighthouse and the Tesla tower are

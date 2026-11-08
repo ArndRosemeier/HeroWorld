@@ -96,8 +96,9 @@ use std::collections::{BTreeMap, BTreeSet};
 const BUILD_BUDGET_MS: f64 = 6.0;
 /// Milliseconds per frame for building the town behind the title.
 const TITLE_BUILD_MS: f64 = 20.0;
-/// The hour the game is played at (the title is at golden hour).
-const GAME_HOUR: f32 = 10.5;
+/// The hour the game is played at: mid-afternoon, a sun low enough to
+/// model the facades and throw long shadows (the title is at golden hour).
+const GAME_HOUR: f32 = 15.5;
 
 /// The hour of day: `HW_HOUR` (0 to 24, e.g. 22 for night) or [`GAME_HOUR`].
 fn game_hour() -> f32 {
@@ -834,7 +835,7 @@ fn main() -> EngineResult<()> {
                 if std::env::var_os("HW_CRASH_TEST").is_some() {
                     panic!("HW_CRASH_TEST asked for a crash");
                 }
-                world.set_physical_sky(Some(PhysicalSky::at_hour(game_hour())));
+                hw_client::lighting::set_sky(world, game_hour());
                 world.set_moons(moons())?;
                 if let Some(t) = title_screen.as_mut() {
                     t.enter(world);
@@ -2046,7 +2047,7 @@ fn main() -> EngineResult<()> {
                     from_pitch + (to_pitch - from_pitch) * k,
                 );
                 let hour = title::TITLE_HOUR + (game_hour() - title::TITLE_HOUR) * k;
-                world.set_physical_sky(Some(PhysicalSky::at_hour(hour)));
+                hw_client::lighting::set_sky(world, hour);
                 if k >= 1.0 {
                     swoop = None;
                 }
@@ -2147,8 +2148,8 @@ enum Waiting {
 fn moons() -> Vec<engine::sky::MoonSpec> {
     use engine::sky::MoonSpec;
     vec![
-        MoonSpec::new(1.7, 29.5, 0.5).tilt(14.0),
-        MoonSpec::new(0.7, 9.0, 0.44).tilt(-26.0).brightness(0.7),
+        MoonSpec::new(1.7, 29.5, 0.5).tilt(14.0).brightness(0.65),
+        MoonSpec::new(0.7, 9.0, 0.44).tilt(-26.0).brightness(0.45),
     ]
 }
 

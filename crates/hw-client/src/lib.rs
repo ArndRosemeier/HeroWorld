@@ -16,6 +16,7 @@ pub mod fightview;
 pub mod heroview;
 pub mod interior;
 pub mod landmarkview;
+pub mod lighting;
 pub mod looks;
 pub mod nightlights;
 pub mod people;
