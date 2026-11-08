@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.070 (2026-11-08)
+
+- Housekeeping only: a guide to how the game plays today (powers, villains, incidents, the town,
+  debug switches) is in docs/GAME_GUIDE.md. Nothing changes in the game.
+
 ## 0.069 (2026-11-08)
 
 - Half-timbered houses in the old towns of the north and the middle: real oak beams that
