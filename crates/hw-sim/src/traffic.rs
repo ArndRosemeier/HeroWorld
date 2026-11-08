@@ -65,6 +65,16 @@ const MAX_ZONE: f64 = 20.0;
 /// moment at its end.
 const CYCLE: f64 = 24.0;
 const ALL_RED: f64 = 2.0;
+/// The last seconds of green show amber.
+const AMBER: f64 = 3.0;
+
+/// What a traffic light shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Signal {
+    Red,
+    Amber,
+    Green,
+}
 /// Room (m) between the cars either side for a car to come back.
 const ROOM_BACK: f64 = 40.0;
 /// Driving: comfortable acceleration and braking (m/s²), time gap kept to
@@ -218,6 +228,8 @@ pub struct Traffic {
     zones: Vec<Vec<Zone>>,
     /// Where each junction's lights are in their cycle at time 0.
     offsets: Vec<f64>,
+    /// Each junction's middle and the axis its phase 0 runs along.
+    junctions: Vec<(DVec2, DVec2)>,
     /// The street cars now and one step ago, by lane, in order along it.
     cars: Vec<Vec<Car>>,
     prev: Vec<Vec<Car>>,
@@ -312,6 +324,7 @@ impl Traffic {
             grid,
             zones: Vec::new(),
             offsets: Vec::new(),
+            junctions: Vec::new(),
             cars: Vec::new(),
             prev: Vec::new(),
             time: 0.0,
@@ -534,6 +547,20 @@ impl Traffic {
         }
         let mut rng = self.seed.child("lights").rng();
         self.offsets = (0..number.len()).map(|_| rng.range(0.0, CYCLE)).collect();
+        let mut sum = vec![(DVec2::ZERO, 0.0); number.len()];
+        for (i, a) in all.iter().enumerate() {
+            sum[at[i].0 as usize].0 += a.2;
+            sum[at[i].0 as usize].1 += 1.0;
+        }
+        let mut axes = vec![DVec2::X; number.len()];
+        for &(j, axis) in number.values() {
+            axes[j as usize] = axis;
+        }
+        self.junctions = sum
+            .iter()
+            .zip(axes)
+            .map(|(&(p, n), axis)| (p / f64::max(n, 1.0), axis))
+            .collect();
         for (li, zs) in self.zones.iter_mut().enumerate() {
             for (zi, z) in zs.iter_mut().enumerate() {
                 let (j, ph) = lookup[&(li, zi)];
@@ -549,6 +576,35 @@ impl Traffic {
                     .copied()
                     .unwrap_or(1 - ph);
             }
+        }
+    }
+
+    /// The junction a traffic light at `at` belongs to, and the phase of
+    /// the traffic it faces (it looks along `facing`, at the cars coming
+    /// in); none if no junction is near.
+    pub fn light_of(&self, at: DVec2, facing: DVec2) -> Option<(u32, u8)> {
+        let (j, (c, axis)) = self
+            .junctions
+            .iter()
+            .enumerate()
+            .min_by(|a, b| a.1 .0.distance(at).total_cmp(&b.1 .0.distance(at)))?;
+        if c.distance(at) > 40.0 {
+            return None;
+        }
+        let phase = u8::from(facing.dot(*axis).abs() < std::f64::consts::FRAC_1_SQRT_2);
+        Some((j as u32, phase))
+    }
+
+    /// What a light of `phase` at junction `j` shows at `time`.
+    pub fn signal(&self, j: u32, phase: u8, time: f64) -> Signal {
+        if !self.green(j, phase, time) {
+            return Signal::Red;
+        }
+        // Amber for the last few seconds of green.
+        if self.green(j, phase, time + AMBER) {
+            Signal::Green
+        } else {
+            Signal::Amber
         }
     }
 
@@ -1285,6 +1341,52 @@ mod tests {
             "{:.0}% of cars turned off the road",
             parked * 100.0
         );
+    }
+
+    #[test]
+    fn traffic_light_props_show_their_junctions_cycle() {
+        use hw_gen::urban::props::PropKind;
+        let t = traffic();
+        let lights: Vec<_> = t
+            .world
+            .props
+            .iter()
+            .filter(|p| p.kind == PropKind::TrafficLight)
+            .collect();
+        assert!(!lights.is_empty(), "the town has traffic lights");
+        let found: Vec<(u32, u8)> = lights
+            .iter()
+            .filter_map(|p| t.light_of(p.pos, p.dir))
+            .collect();
+        assert!(
+            found.len() * 10 >= lights.len() * 8,
+            "most lights belong to a junction: {} of {}",
+            found.len(),
+            lights.len()
+        );
+        // Each light goes green, amber, red; crossing ways are never both
+        // green or amber at once.
+        for &(j, phase) in found.iter().take(40) {
+            let mut seen = [false; 3];
+            let mut time = 0.0;
+            while time < CYCLE * 2.0 {
+                let s = t.signal(j, phase, time);
+                seen[s as usize] = true;
+                let other = t.signal(j, 1 - phase, time);
+                assert!(
+                    s == Signal::Red || other == Signal::Red,
+                    "junction {j} shows go both ways at {time}"
+                );
+                time += 0.25;
+            }
+            assert_eq!(seen, [true; 3], "junction {j} phase {phase}");
+        }
+        // Lights at one junction facing crossing roads differ in phase.
+        let mut phases: BTreeMap<u32, std::collections::BTreeSet<u8>> = BTreeMap::new();
+        for &(j, p) in &found {
+            phases.entry(j).or_default().insert(p);
+        }
+        assert!(phases.values().any(|p| p.len() == 2));
     }
 
     #[test]

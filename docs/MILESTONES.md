@@ -428,7 +428,13 @@ away unseen. Street cars are a shared simulation (every machine
 steps it alike, late joiners are sent it): they follow the car ahead, junctions have two-phase
 lights with give-way inside a phase, nobody enters a junction they cannot leave, and a car
 stuck a minute turns off the road and comes back where there is room. Still to do: opening
-doors, the traffic-light props showing the lights' state, people in Molehaven.
+doors, people in Molehaven.
+
+**Status (0.047):** the traffic-light props show their junction's cycle: each light finds its
+junction (`Traffic::light_of`) and the phase of the cars it faces, and shows red, amber (the
+last 3 s of green) or green (`Traffic::signal`), the same cycle the cars obey. The light's model
+(`propmesh::traffic_light`) has dark lenses; `hw-client/src/signalview.rs` draws the lit one
+over them from three instanced sets. Broken lights go dark. `HW_VIEW=signals` looks at one.
 
 ### M11. Robots and the colossus
 

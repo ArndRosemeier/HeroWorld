@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.047 (2026-11-08)
+
+- Traffic lights work: red, amber and green change with the junction, and the cars obey them.
+  Knock a light over and it goes dark.
+- The ambulance at a rescue parks neatly along the kerb on a straight stretch, not on a corner.
+
 ## 0.046 (2026-11-08)
 
 - Molehaven looks the part: mushroom houses with swelling stems, curled caps with pale spots

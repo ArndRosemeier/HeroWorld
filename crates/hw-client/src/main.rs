@@ -49,7 +49,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay`, `wrecked`, `traffic`, `skylanes`, `lift`, `tunnel`, `molehaven` or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `skylanes`, `lift`, `tunnel`, `molehaven` or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -487,6 +487,24 @@ fn main() -> EngineResult<()> {
             let yaw = dir.x.atan2(dir.y).to_degrees() as f32;
             let (up, pitch) = if sky { (30.0, 4.0) } else { (6.0, -10.0) };
             FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, pitch)
+        }
+        "signals" => {
+            // Up the road at the traffic light nearest the start, its lamps
+            // and the junction behind it.
+            let lights = generated
+                .world
+                .props
+                .iter()
+                .filter(|p| p.kind == hw_gen::urban::props::PropKind::TrafficLight);
+            match lights.min_by(|a, b| a.pos.distance(spawn).total_cmp(&b.pos.distance(spawn))) {
+                Some(l) => {
+                    let p = l.pos + l.dir * 5.0 - l.dir.perp() * 1.5;
+                    let d = l.pos - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, l.y as f32 + 3.0, p.y as f32), yaw, 0.0)
+                }
+                None => FlyCamera::new((spawn.x as f32, 10.0, spawn.y as f32), 0.0, -10.0),
+            }
         }
         "graffiti" => {
             // In front of a tagged wall at the quarter's edge.
@@ -1265,10 +1283,10 @@ fn main() -> EngineResult<()> {
                     // `HW_VIEW=medic`: the camera by the ambulance.
                     if view == "medic" {
                         let c = Vec3::from_array(*medic);
-                        let a = hw_sim::props::byte_to_yaw(*yaw) as f32 + 0.9;
-                        let p = c + Vec3::new(a.sin(), 0.0, a.cos()) * 9.0 + Vec3::Y * 2.5;
+                        let a = hw_sim::props::byte_to_yaw(*yaw) as f32 + 0.7;
+                        let p = c + Vec3::new(a.sin(), 0.0, a.cos()) * 12.0 + Vec3::Y * 5.0;
                         let d = c - p;
-                        fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), -10.0);
+                        fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), -20.0);
                     }
                     false
                 }
@@ -1281,6 +1299,9 @@ fn main() -> EngineResult<()> {
                         generated.obstacles.set_prop_broken(i, true);
                         if let Some(l) = extras.lights.as_mut() {
                             l.set_broken(i, true);
+                        }
+                        if let Some(s) = extras.signals.as_mut() {
+                            s.set_broken(i, true);
                         }
                     }
                     false
@@ -1319,6 +1340,9 @@ fn main() -> EngineResult<()> {
                         generated.obstacles.set_prop_broken(i, false);
                         if let Some(l) = extras.lights.as_mut() {
                             l.set_broken(i, false);
+                        }
+                        if let Some(s) = extras.signals.as_mut() {
+                            s.set_broken(i, false);
                         }
                     }
                     false
@@ -1676,6 +1700,9 @@ fn main() -> EngineResult<()> {
             )?;
             // Cars on the streets, hover cars and taxis in the sky lanes.
             traffic.advance_to(session.time(tick_clock / hw_sim::DT));
+            if let Some(s) = extras.signals.as_mut() {
+                s.update(world, &traffic, session.time(tick_clock / hw_sim::DT))?;
+            }
             traffic_view.update(
                 world,
                 &traffic,
@@ -1881,6 +1908,7 @@ struct TownExtras {
     lods: Vec<LodId>,
     entities: Vec<EntityId>,
     lights: Option<hw_client::nightlights::NightLights>,
+    signals: Option<hw_client::signalview::SignalView>,
     props: Option<hw_client::propview::PropView>,
     under: Option<hw_client::undergroundview::UndergroundView>,
     dystopia: Option<hw_client::dystopiaview::DystopiaView>,
@@ -1898,6 +1926,9 @@ impl TownExtras {
             l.clear(world);
         }
         self.props = None;
+        if let Some(mut s) = self.signals.take() {
+            s.clear(world);
+        }
         if let Some(mut u) = self.under.take() {
             u.clear(world);
         }
@@ -1923,6 +1954,7 @@ fn spawn_extras(world: &mut World, generated: &GeneratedTown) -> EngineResult<To
         lods: props.sets.iter().copied().chain(landmarks.sets).collect(),
         entities: waterfront.entities,
         lights: Some(hw_client::nightlights::NightLights::new(&generated.world)),
+        signals: Some(hw_client::signalview::SignalView::new(&generated.world)),
         props: Some(props),
         under: Some(under),
         dystopia: Some(hw_client::dystopiaview::DystopiaView::new(&generated.world)),

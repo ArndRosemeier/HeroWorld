@@ -51,6 +51,8 @@ pub const COLOSSUS_GAP: f64 = 1500.0;
 pub const COLOSSUS_LEVEL: u8 = 3;
 /// A hero this near a trapped person can help them out (m).
 pub const RESCUE_REACH: f64 = 3.5;
+/// The ambulance parks this far from junctions (m).
+const MEDIC_CLEAR: f64 = 15.0;
 /// Carrying the hurt this near the medic hands them over (m).
 pub const MEDIC_REACH: f64 = 5.0;
 /// Seconds of holding the help key to lift someone lying hurt.
@@ -776,25 +778,59 @@ impl Incidents {
     }
 }
 
-/// Where an ambulance waits for a rescue at `p`: at the kerb of a street
-/// about [`MEDIC_AWAY`] off, facing along it.
+/// Where an ambulance waits for a rescue at `p`: parked at the kerb of a
+/// street about [`MEDIC_AWAY`] off, along it. Only straight stretches, clear
+/// of junctions, so it stands square with the kerb and not on a corner.
 fn medic_spot(town: &TownWorld, solids: &crate::collision::Obstacles, p: DVec2) -> (DVec3, DVec2) {
+    use hw_gen::water::segment_distance;
     let quarter = town.town.dystopia.as_ref();
-    let mut best: Option<(f64, DVec2, DVec2)> = None;
-    for r in &town.roads {
-        for w in r.pts.windows(2) {
-            let along = (w[1] - w[0]).normalize_or(DVec2::X);
-            let kerb = (w[0] + w[1]) * 0.5 + along.perp() * (r.half - 1.4).max(0.0);
-            if quarter.is_some_and(|d| d.contains(kerb)) {
+    // Every 4 m along every road: where, which way, how far off we'd like.
+    let mut spots: Vec<(f64, DVec2, DVec2, usize)> = Vec::new();
+    for (ri, r) in town.roads.iter().enumerate() {
+        let len: f64 = r.pts.windows(2).map(|w| w[0].distance(w[1])).sum();
+        let at = |s: f64| -> Option<(DVec2, DVec2)> {
+            let mut s = s;
+            for w in r.pts.windows(2) {
+                let l = w[0].distance(w[1]);
+                if s <= l && l > 1e-6 {
+                    let d = (w[1] - w[0]) / l;
+                    return Some((w[0] + d * s, d));
+                }
+                s -= l;
+            }
+            None
+        };
+        let mut s = MEDIC_CLEAR;
+        while s <= len - MEDIC_CLEAR {
+            let here = at(s);
+            let (back, ahead) = (at(s - 9.0), at(s + 9.0));
+            s += 4.0;
+            let (Some((c, d)), Some((_, db)), Some((_, da))) = (here, back, ahead) else {
+                continue;
+            };
+            // Straight for the ambulance's length and a little more.
+            if d.dot(db) < 0.995 || d.dot(da) < 0.995 {
                 continue;
             }
-            let off = (kerb.distance(p) - MEDIC_AWAY).abs();
-            if best.is_none_or(|b| off < b.0) {
-                best = Some((off, kerb, along));
+            let kerb = c + d.perp() * (r.half - 1.6).max(0.0);
+            if quarter.is_some_and(|q| q.contains(kerb)) {
+                continue;
             }
+            spots.push(((kerb.distance(p) - MEDIC_AWAY).abs(), kerb, d, ri));
         }
     }
-    let (at, along) = best.map_or((p + DVec2::X * 20.0, DVec2::X), |b| (b.1, b.2));
+    spots.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // The nearest fit with no other road joining beside it.
+    let clear = |kerb: DVec2, own: usize| {
+        town.roads.iter().enumerate().all(|(i, r)| {
+            i == own
+                || r.pts
+                    .windows(2)
+                    .all(|w| segment_distance(kerb, w[0], w[1]) > r.half + MEDIC_CLEAR * 0.5)
+        })
+    };
+    let pick = spots.iter().find(|s| clear(s.1, s.3)).or(spots.first());
+    let (at, along) = pick.map_or((p + DVec2::X * 20.0, DVec2::X), |b| (b.1, b.2));
     let y = solids.ground_at(at).max(GROUND_Y);
     (DVec3::new(at.x, y, at.y), along)
 }
