@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.071 (2026-11-08)
+
+- When a villain attacks you and you have no target yet, they become your target, so you
+  can hit back straight away.
+
 ## 0.070 (2026-11-08)
 
 - Housekeeping only: a guide to how the game plays today (powers, villains, incidents, the town,

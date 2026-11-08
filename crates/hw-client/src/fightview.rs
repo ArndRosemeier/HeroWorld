@@ -345,6 +345,10 @@ impl FightView {
             if (now_tick - e.tick as f64) * hw_sim::DT > LATE {
                 continue;
             }
+            // Attacked with nothing targeted: the attacker becomes the target.
+            if self.target.is_none() {
+                self.target = attacker(e, me, all);
+            }
             let at = Vec3::from(e.at);
             let mine = me == Some(e.from);
             let on_me = me == Some(e.to);
@@ -1337,6 +1341,27 @@ pub fn targetable(e: &EntityState) -> bool {
             .is_some_and(|c| matches!(c.status, Status::Standing | Status::Knocked))
 }
 
+/// The villain who attacked `me` in this event, if it can be targeted: a
+/// blow aimed at our hero (hit or miss) by someone else.
+pub fn attacker(e: &Fx, me: Option<NetId>, all: &[EntityState]) -> Option<NetId> {
+    let attack = matches!(
+        e.kind,
+        FxKind::Punch
+            | FxKind::Ray
+            | FxKind::ThrowHit
+            | FxKind::Shell
+            | FxKind::Stomp
+            | FxKind::Pulse
+            | FxKind::Leap
+    );
+    if !attack || me != Some(e.to) || e.from == e.to {
+        return None;
+    }
+    all.iter()
+        .find(|x| x.id == e.from && targetable(x))
+        .map(|x| x.id)
+}
+
 /// The villain nearest the crosshair (the line from `eye` along `look`),
 /// within range and in view; with `current` set, the next one after it.
 pub fn pick_target(
@@ -1953,6 +1978,39 @@ mod tests {
         assert_eq!(next, Some(NetId(1)));
         // Behind the camera is never picked; the cycle wraps.
         assert_eq!(pick_target(&all, eye, look, next), Some(NetId(2)));
+    }
+
+    #[test]
+    fn an_attacker_becomes_the_target_when_none_is_set() {
+        let me = NetId(9);
+        let all = vec![villain(1, [5.0, 0.0, 0.0])];
+        let mut punch = Fx {
+            tick: 0,
+            kind: FxKind::Punch,
+            from: NetId(1),
+            to: me,
+            at: [0.0; 3],
+            amount: 12,
+            knock: false,
+            defeat: false,
+            theme: 0,
+        };
+        assert_eq!(attacker(&punch, Some(me), &all), Some(NetId(1)));
+        // A blow on someone else, or a shell landing on nobody, picks no one.
+        punch.to = NetId(4);
+        assert_eq!(attacker(&punch, Some(me), &all), None);
+        punch.to = punch.from;
+        punch.kind = FxKind::Shell;
+        assert_eq!(attacker(&punch, Some(me), &all), None);
+        // Warnings are not attacks.
+        punch.to = me;
+        punch.kind = FxKind::Warn;
+        assert_eq!(attacker(&punch, Some(me), &all), None);
+        // A beaten villain is not picked.
+        punch.kind = FxKind::Ray;
+        let mut down = all.clone();
+        down[0].combat.as_mut().unwrap().status = Status::Down;
+        assert_eq!(attacker(&punch, Some(me), &down), None);
     }
 
     #[test]
