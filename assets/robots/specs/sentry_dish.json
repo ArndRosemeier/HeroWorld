@@ -1,7 +1,7 @@
 {
  "textures": {
-  "texels_per_metre": 256,
-  "max_size": 512
+  "texels_per_metre": 768,
+  "max_size": 1024
  },
  "spec_version": 1,
  "id": "sentry_dish",
@@ -9,7 +9,7 @@
  "params": {
   "settle": false,
   "bevel": 0.003,
-  "detail": 0.35,
+  "detail": 2.0,
   "pieces": [
    {
     "cylinder": {
@@ -177,7 +177,7 @@
   }
  },
  "qa": {
-  "max_triangles": 6000,
+  "max_triangles": 24000,
   "require_uvs": true,
   "require_manifold": true,
   "require_origin_at_base": false,

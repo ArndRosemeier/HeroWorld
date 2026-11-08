@@ -1,7 +1,7 @@
 {
  "textures": {
-  "texels_per_metre": 256,
-  "max_size": 512
+  "texels_per_metre": 768,
+  "max_size": 1024
  },
  "spec_version": 1,
  "id": "sentry_shin",
@@ -9,7 +9,7 @@
  "params": {
   "settle": false,
   "bevel": 0.004,
-  "detail": 0.35,
+  "detail": 2.0,
   "pieces": [
    {
     "lathe": {
@@ -221,7 +221,7 @@
   }
  },
  "qa": {
-  "max_triangles": 5000,
+  "max_triangles": 20000,
   "require_uvs": true,
   "require_manifold": true,
   "require_origin_at_base": false,

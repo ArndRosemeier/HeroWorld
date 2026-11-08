@@ -660,6 +660,10 @@ pub struct Fights {
     /// Blows at the city this tick (the colossus's feet and shells):
     /// (where, radius, power); the simulation breaks buildings with them.
     pub city: Vec<(DVec3, f32, f32)>,
+    /// The streets the colossus walks (none on a bare test ground).
+    pub streets: Option<std::sync::Arc<crate::streets::Streets>>,
+    /// Each colossus's route along them: (planned at tick, points left).
+    pub routes: BTreeMap<NetId, (u64, Vec<DVec2>)>,
 }
 
 impl Default for Fights {
@@ -673,6 +677,8 @@ impl Default for Fights {
             throws: Vec::new(),
             paths: BTreeMap::new(),
             city: Vec::new(),
+            streets: None,
+            routes: BTreeMap::new(),
         }
     }
 }
@@ -926,7 +932,19 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     throws.append(&mut out.throws);
     enemies_act(&mut actors, &solids, tick, &mut out.fx, &mut paths);
     let mut city = Vec::new();
-    robots::act(&mut actors, &solids, tick, &mut out.fx, &mut city);
+    let streets = world.resource::<Fights>().streets.clone();
+    let mut routes = std::mem::take(&mut world.resource_mut::<Fights>().routes);
+    robots::act(
+        &mut actors,
+        &solids,
+        streets.as_deref(),
+        &mut routes,
+        tick,
+        &mut out.fx,
+        &mut city,
+    );
+    routes.retain(|id, _| actors.iter().any(|a| a.id == *id && a.colossus.is_some()));
+    world.resource_mut::<Fights>().routes = routes;
     statuses(&mut actors, &drones, tick, &mut out, &mut spawn_drones);
     regenerate(&mut actors, tick);
     pay_out(&actors, &mut out);

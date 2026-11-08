@@ -80,12 +80,13 @@ MATERIALS = {
 def spec(
     ident: str, pieces: list, slots: list[str], tris: int, size: float, bevel: float, detail: float
 ) -> dict:
-    # Sentries are seen at a few metres, the colossus from far off: texture to match, and keep
-    # the files small enough to commit.
+    # Heroes fly right up to both robots, so texture for the close-up, but Engine keeps a
+    # copy of every map per placed part (four legs, many sentries): cap the maps so a
+    # fight with the colossus and its sentries stays within a few hundred MB.
     big = ident.startswith("colossus") and ident not in ("colossus_knee", "colossus_core")
     textures = {
-        "texels_per_metre": 96 if big else 256,
-        "max_size": 1024 if ident == "colossus_hull" else 512,
+        "texels_per_metre": 256 if big else 768,
+        "max_size": 2048 if ident in ("colossus_hull", "colossus_turret") else 1024,
     }
     return {
         "textures": textures,
@@ -157,7 +158,7 @@ def sentry_body() -> dict:
         sphere([0, -0.47, 0.92], 0.06, "glow"),
         torus([0, -0.46, 0.92], 0.07, 0.016, "y", "brass"),
         # Rivets round the upper band.
-        sphere([0.42, 0, 0.9], 0.018, "brass", segments=6, repeat={"around": 18, "start": 10}),
+        sphere([0.42, 0, 0.9], 0.018, "brass", segments=12, repeat={"around": 18, "start": 10}),
         # Shoulder balls.
         sphere([0.5, 0, 0.9], 0.15, "chrome", mirror="x"),
         # Neck and domed head.
@@ -175,7 +176,7 @@ def sentry_body() -> dict:
         # The dish mount on the back.
         box([0.2, 0.1, 0.22], [0, 0.46, 0.8], "enamel"),
     ]
-    return spec("sentry_body", p, ["enamel", "brass", "chrome", "rubber", "glow"], 16000, 2.0, 0.006, 0.35)
+    return spec("sentry_body", p, ["enamel", "brass", "chrome", "rubber", "glow"], 64000, 2.0, 0.006, 2.0)
 
 
 def sentry_dish() -> dict:
@@ -189,7 +190,7 @@ def sentry_dish() -> dict:
         cyl([0, 0.14, 0.64], [0, 0.2, 0.86], 0.012, "chrome", repeat={"around": 3}),
         sphere([0, 0.19, 0.86], 0.05, "glow"),
     ]
-    return spec("sentry_dish", p, ["brass", "chrome", "glow"], 6000, 1.2, 0.003, 0.35)
+    return spec("sentry_dish", p, ["brass", "chrome", "glow"], 24000, 1.2, 0.003, 2.0)
 
 
 def sentry_thigh() -> dict:
@@ -199,7 +200,7 @@ def sentry_thigh() -> dict:
         torus([0, 0, -0.12], 0.1, 0.022, "z", "brass"),
         sphere([0, 0, -0.5], 0.1, "chrome"),
     ]
-    return spec("sentry_thigh", p, ["enamel", "brass", "chrome"], 5000, 0.8, 0.004, 0.35)
+    return spec("sentry_thigh", p, ["enamel", "brass", "chrome"], 20000, 0.8, 0.004, 2.0)
 
 
 def sentry_shin() -> dict:
@@ -212,7 +213,7 @@ def sentry_shin() -> dict:
         box([0.26, 0.42, 0.1], [0, -0.06, -0.55], "rubber"),
         box([0.27, 0.12, 0.06], [0, -0.24, -0.52], "chrome"),
     ]
-    return spec("sentry_shin", p, ["enamel", "brass", "chrome", "rubber"], 5000, 0.8, 0.004, 0.35)
+    return spec("sentry_shin", p, ["enamel", "brass", "chrome", "rubber"], 20000, 0.8, 0.004, 2.0)
 
 
 def sentry_arm() -> dict:
@@ -226,7 +227,7 @@ def sentry_arm() -> dict:
         cyl([0.0, 0, -0.74], [0.09, 0, -0.86], 0.026, "chrome", mirror="x"),
         cyl([0.09, 0, -0.86], [0.03, 0, -1.02], 0.024, "chrome", rb=0.012, mirror="x"),
     ]
-    return spec("sentry_arm", p, ["rubber", "chrome", "brass"], 8000, 1.2, 0.003, 0.35)
+    return spec("sentry_arm", p, ["rubber", "chrome", "brass"], 32000, 1.2, 0.003, 2.0)
 
 
 def sentry_gun() -> dict:
@@ -241,7 +242,7 @@ def sentry_gun() -> dict:
         lathe([[0.0, -0.98], [0.1, -1.06], [0.1, -1.08], [0.0, -1.03]], "brass"),
         sphere([0, 0, -1.02], 0.04, "glow"),
     ]
-    return spec("sentry_gun", p, ["rubber", "chrome", "enamel", "brass", "glow"], 8000, 1.2, 0.003, 0.35)
+    return spec("sentry_gun", p, ["rubber", "chrome", "enamel", "brass", "glow"], 32000, 1.2, 0.003, 2.0)
 
 
 # ---------------------------------------------------------------------------------------
@@ -263,8 +264,8 @@ def colossus_hull() -> dict:
         torus([0, 0, 1.7], 5.02, 0.12, "z", "brass"),
         sphere([4.98, 0, 1.7], 0.26, "glow", repeat={"around": 14, "start": 13}),
         torus([4.98, 0, 1.7], 0.3, 0.06, "x", "brass", repeat={"around": 14, "start": 13}),
-        sphere([4.95, 0, 2.15], 0.05, "brass", segments=6, repeat={"around": 56}),
-        sphere([4.95, 0, 1.25], 0.05, "brass", segments=6, repeat={"around": 56}),
+        sphere([4.95, 0, 2.15], 0.05, "brass", segments=12, repeat={"around": 56}),
+        sphere([4.95, 0, 1.25], 0.05, "brass", segments=12, repeat={"around": 56}),
         # Armour plates round the top, with dark seams between.
         torus([0, 0, 2.62], 4.55, 0.07, "z", "rubber"),
         torus([0, 0, 3.32], 3.55, 0.06, "z", "rubber"),
@@ -284,7 +285,7 @@ def colossus_hull() -> dict:
         # The turret ring on top.
         cyl([0, 0, 3.5], [0, 0, 3.8], 2.4, "brass"),
     ]
-    return spec("colossus_hull", p, ["hull", "brass", "rubber", "chrome", "glow"], 90000, 11.0, 0.02, 0.25)
+    return spec("colossus_hull", p, ["hull", "brass", "rubber", "chrome", "glow"], 360000, 11.0, 0.02, 1.0)
 
 
 def colossus_turret() -> dict:
@@ -300,9 +301,9 @@ def colossus_turret() -> dict:
         box([0.6, 0.12, 0.08], [0.9, 0.13, 2.2], "glow"),
         cyl([-1.0, 0.8, 1.7], [-1.0, 0.9, 4.4], 0.035, "chrome"),
         sphere([-1.0, 0.9, 4.45], 0.09, "glow"),
-        sphere([2.25, 0, 0.25], 0.04, "brass", segments=6, repeat={"around": 36}),
+        sphere([2.25, 0, 0.25], 0.04, "brass", segments=12, repeat={"around": 36}),
     ]
-    return spec("colossus_turret", p, ["hull", "brass", "glow", "chrome"], 30000, 6.0, 0.015, 0.25)
+    return spec("colossus_turret", p, ["hull", "brass", "glow", "chrome"], 120000, 6.0, 0.015, 1.0)
 
 
 def colossus_cannon() -> dict:
@@ -316,7 +317,7 @@ def colossus_cannon() -> dict:
         box([0.9, 0.12, 0.16], [0, -6.45, 0], "rubber", repeat={"count": 2, "step": [0, -0.22, 0]}),
         cyl([0, -6.75, 0], [0, -6.82, 0], 0.2, "rubber"),
     ]
-    return spec("colossus_cannon", p, ["hull", "chrome", "brass", "rubber"], 20000, 8.0, 0.012, 0.25)
+    return spec("colossus_cannon", p, ["hull", "chrome", "brass", "rubber"], 80000, 8.0, 0.012, 1.0)
 
 
 # Leg geometry (in the leg's own frame: +X points out from the hull, Z up). The hip socket is
@@ -341,7 +342,7 @@ def colossus_thigh() -> dict:
         # Knee yoke (the actuator itself is its own part, it can be blown off).
         cyl([kx, -0.85, kz], [kx, 0.85, kz], 0.45, "brass"),
     ]
-    return spec("colossus_thigh", p, ["hull", "brass", "chrome"], 30000, 7.5, 0.015, 0.25)
+    return spec("colossus_thigh", p, ["hull", "brass", "chrome"], 120000, 7.5, 0.015, 1.0)
 
 
 def colossus_shin() -> dict:
@@ -362,7 +363,7 @@ def colossus_shin() -> dict:
     for dx, dy in ((1.0, 0.0), (0.55, 0.85), (0.55, -0.85)):
         p.append(cyl([fx + dx * 1.0, dy * 1.0, fz + 0.25], [fx + dx * 1.9, dy * 1.9, fz + 0.02],
                      0.2, "chrome", rb=0.04))
-    return spec("colossus_shin", p, ["hull", "brass", "chrome"], 30000, 13.0, 0.015, 0.25)
+    return spec("colossus_shin", p, ["hull", "brass", "chrome"], 120000, 13.0, 0.015, 1.0)
 
 
 def colossus_knee() -> dict:
@@ -373,7 +374,7 @@ def colossus_knee() -> dict:
         torus([0, 0, 0], 0.8, 0.09, "z", "brass"),
         cyl([0, -1.0, 0], [0, 1.0, 0], 0.2, "chrome"),
     ]
-    return spec("colossus_knee", p, ["glow", "brass", "chrome"], 12000, 2.2, 0.01, 0.25)
+    return spec("colossus_knee", p, ["glow", "brass", "chrome"], 48000, 2.2, 0.01, 1.0)
 
 
 def colossus_shell() -> dict:
@@ -384,7 +385,7 @@ def colossus_shell() -> dict:
               "hull", at=[0, 2.0, 0]),
         torus([0, 2.0, -0.05], 1.98, 0.08, "z", "brass"),
     ]
-    return spec("colossus_shell", p, ["hull", "brass"], 12000, 4.2, 0.0, 0.25)
+    return spec("colossus_shell", p, ["hull", "brass"], 48000, 4.2, 0.0, 1.0)
 
 
 def colossus_core() -> dict:
@@ -396,7 +397,7 @@ def colossus_core() -> dict:
         torus([0, 0, 0], 1.05, 0.08, "z", "brass"),
         cyl([0, 0, 1.0], [0, 0, 1.4], 0.3, "chrome"),
     ]
-    return spec("colossus_core", p, ["glow", "brass", "chrome"], 12000, 3.0, 0.01, 0.25)
+    return spec("colossus_core", p, ["glow", "brass", "chrome"], 48000, 3.0, 0.01, 1.0)
 
 
 def main() -> None:

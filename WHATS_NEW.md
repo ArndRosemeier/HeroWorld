@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.056 (2026-11-08)
+
+- The robots got a full-quality makeover: smoother curves, finer rivets, brass and chrome, and
+  sharper paint and rust close up.
+- The walking tank now keeps to the main roads instead of wading through houses, with its legs
+  tucked in to fit the street.
+- New robot sounds: the tank's footfalls, cannon, alarm, servos, the core charging and
+  discharging, parts blowing off and the crash when it goes down.
+
 ## 0.055 (2026-11-08)
 
 - If HeroWorld ever crashes it leaves a report, and the title tells you where it is next time:

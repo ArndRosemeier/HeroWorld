@@ -26,11 +26,13 @@ use crate::collision::{Body, Obstacles, BODY_HEIGHT};
 use crate::combat::{
     enemy_spec, event, hit, level_scale, spawn_enemy, ticks, Actor, Enemy, EnemyKind, Fights,
 };
+use crate::streets::Streets;
 use crate::{Motion, Net, Orientation, Solids, DT, GROUND_Y};
 use bevy_ecs::prelude::*;
 use glam::{DVec2, DVec3};
 use hw_core::NetId;
 use hw_net::{Fx, FxKind, Status, EFFECT_ARMOURED, EFFECT_ENRAGED, EFFECT_KNEELING};
+use std::collections::BTreeMap;
 
 /// The colossus's core health (before the level and the team size).
 pub const CORE_HEALTH: f32 = 1300.0;
@@ -49,6 +51,12 @@ const TURN: f64 = 14.0;
 const KEEP: f64 = 15.0;
 /// It goes for heroes this near (m), else walks on towards its goal.
 const NOTICE: f64 = 160.0;
+/// Seconds between route plans along the streets.
+const REPLAN: f64 = 3.0;
+/// A street point this near (m) is reached.
+const WAYPOINT: f64 = 3.0;
+/// How far off (m) it wanders to when nobody fights it.
+const WANDER: f64 = 600.0;
 /// Shells: the gap between them (s), calm and enraged, the warning before
 /// one lands (s), its blast (m), the cannon's reach (m).
 const SHELL_EVERY: (f64, f64) = (7.0, 4.5);
@@ -127,8 +135,8 @@ pub const HIP_UP: f64 = 0.9;
 pub const THIGH: (f64, f64) = (4.2, 4.4);
 pub const SHIN: (f64, f64) = (1.4, -10.9);
 /// Where the feet rest, out from the middle, standing and sprawled.
-pub const FOOT_OUT: f64 = 8.6;
-pub const FOOT_SPRAWL: f64 = 10.4;
+pub const FOOT_OUT: f64 = 8.0;
+pub const FOOT_SPRAWL: f64 = 9.4;
 /// One stride (m): each foot moves this far per gait cycle.
 pub const STRIDE: f64 = 4.8;
 /// The order the feet step in (diagonals in turn).
@@ -144,10 +152,11 @@ pub fn hull_height(k: f64) -> f64 {
     HULL_STAND + (HULL_KNEEL - HULL_STAND) * k.clamp(0.0, 1.0)
 }
 
-/// Direction of leg `k` from the hull's middle, in hull space (x, z):
-/// 45 degrees round from the front, a quarter turn apart.
+/// Direction of leg `k` from the hull's middle, in hull space (x, z): 30
+/// degrees off the fore-and-aft line (front right, back right, back left,
+/// front left), so the feet keep to a street about ten metres wide.
 pub fn leg_dir(k: usize) -> DVec2 {
-    let a = (45.0 + 90.0 * k as f64).to_radians();
+    let a = [30.0f64, 150.0, 210.0, 330.0][k % 4].to_radians();
     DVec2::new(a.sin(), a.cos())
 }
 
@@ -323,13 +332,16 @@ fn entity_of(world: &mut World, id: NetId) -> Option<Entity> {
 pub(crate) fn act(
     actors: &mut [Actor],
     solids: &Obstacles,
+    streets: Option<&Streets>,
+    routes: &mut BTreeMap<NetId, (u64, Vec<DVec2>)>,
     tick: u64,
     fx: &mut Vec<Fx>,
     city: &mut Vec<(DVec3, f32, f32)>,
 ) {
     for i in 0..actors.len() {
         if actors[i].colossus.is_some() {
-            colossus(actors, i, solids, tick, fx, city);
+            let route = routes.entry(actors[i].id).or_default();
+            colossus(actors, i, solids, streets, route, tick, fx, city);
         }
     }
     project_shields(actors, tick);
@@ -410,10 +422,13 @@ fn heroes_on_ground(actors: &[Actor], at: DVec3, reach: f64, ground: f64) -> Vec
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn colossus(
     actors: &mut [Actor],
     i: usize,
     solids: &Obstacles,
+    streets: Option<&Streets>,
+    route: &mut (u64, Vec<DVec2>),
     tick: u64,
     fx: &mut Vec<Fx>,
     city: &mut Vec<(DVec3, f32, f32)>,
@@ -494,8 +509,45 @@ fn colossus(
     let mut vel = DVec3::ZERO;
     if !down && c.kneel < 0.05 {
         let goal = foe.map_or(c.goal, |k| actors[k].body.pos);
-        let to = flat(here, goal);
-        let far = to.length() > if foe.is_some() { KEEP } else { 4.0 };
+        let near = flat(here, goal).length() <= if foe.is_some() { KEEP } else { 4.0 };
+        // Down the streets: it is too wide for anything but main roads.
+        let mut to = flat(here, goal);
+        let mut far = !near;
+        if let Some(streets) = streets.filter(|s| !s.is_empty()) {
+            let at = DVec2::new(here.x, here.z);
+            let stale = tick >= route.0 + ticks(REPLAN);
+            if route.1.is_empty() || stale {
+                route.0 = tick;
+                route.1 = streets
+                    .route(at, DVec2::new(goal.x, goal.z))
+                    .unwrap_or_default();
+            }
+            while route.1.len() > 1 && route.1[0].distance(at) < WAYPOINT {
+                route.1.remove(0);
+            }
+            match route.1.first() {
+                Some(&w) if w.distance(at) >= WAYPOINT * 0.5 => {
+                    to = w - at;
+                }
+                _ => {
+                    // At the end of the street route: stand, or pick a new
+                    // street end to wander to.
+                    far = false;
+                    if foe.is_none() {
+                        // Somewhere in town: a street point a few hundred
+                        // metres off (country roads lead out of it).
+                        let mut rng = hw_core::Seed(tick ^ actors[i].id.0 as u64).rng();
+                        let pick = (0..16)
+                            .map(|_| streets.node((rng.next_u64() % streets.len() as u64) as u32))
+                            .find(|p| (150.0..WANDER).contains(&p.distance(at)));
+                        if let Some(p) = pick {
+                            c.goal = DVec3::new(p.x, here.y, p.y);
+                        }
+                        route.1.clear();
+                    }
+                }
+            }
+        }
         if to.length() > 0.5 {
             let want = to.x.atan2(to.y);
             c.yaw = turn_towards(c.yaw, want, TURN.to_radians() * DT);

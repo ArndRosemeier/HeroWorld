@@ -152,6 +152,20 @@ Not needed for the first playable city, but the design depends on them eventuall
     z-fight finder need);
   - flat-shaded meshes built indexed without having to set a normal on every point.
 
+- **Articulated models that share their maps** (added 2026-11-08, M11): the colossus is AssetGenerator
+  parts on pivots (four thighs, four shins, four knees, the hull, turret, cannon and more),
+  and `World::place` takes each placed mesh by value, so every leg keeps its own CPU copy of the
+  part's albedo, normal and ORM maps, and the GPU shares a map only between meshes whose
+  material numbers also match. With 2048-texel maps the screenshot run ran out of 15 GB, so
+  the robot maps are capped at 1024 (2048 for the hull). What would help:
+  - placing one loaded model (`ModelScene`) many times, attached to pivots, sharing its maps
+    and vertex buffers (like `spawn_lod_like` does for LOD sets);
+  - LOD levels for such an attached model, swapped by camera distance, so close-ups can carry
+    4096-texel maps and many triangles.
+  - Seen in the cloud's software renderer: looking nearly straight down from 15-25 m, shiny
+    parts (the robots' chrome and brass, some rooftop domes) render as white glare with black
+    specks (NaN-looking); the same parts from the side, or from 50 m up, look right.
+
 ## Ground rules
 
 These stay in HeroWorld, not in Engine, so Engine stays a general game engine:

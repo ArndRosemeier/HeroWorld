@@ -459,7 +459,12 @@ Wrecked cars' doors (and bubble cars' canopies) spring open, each wreck its own 
 
 **Done when:** the walking tank fight is the best ten minutes of the slice.
 
-**Status (0.040):** built, needs a play test with friends. Robot parts are AssetGenerator
+**Status (0.056):** built, needs a play test with friends. 0.056 raised the parts to full
+quality (detail 1, 768 texels/m on the sentry, 256 on the tank; maps capped at 1024, 2048 for
+hull and turret, because Engine copies a part's maps per placement), keeps the tank on main roads
+at least 11 m wide (`hw-sim/src/streets.rs`, A* along road centre lines; legs 30 degrees off the
+fore-and-aft line) and replaced the synthesized sounds with OpenRouter ones
+(`hw-client/assets/robots`). Robot parts are AssetGenerator
 `prop.assembly` specs (`assets/robots/specs`, made by `tools/robots/make_specs.py`, built into
 `.glb` by `tools/robots/build.py`), put together in Engine as pivots with procedural gaits
 (`hw-client/src/robotview.rs`); broken parts come off and shatter. Server in
@@ -469,9 +474,8 @@ down and it kneels with the core open; it rises enraged after 25 s; kneels for g
 four are down; drops robo-sentries; health scales with the number of heroes. The alpha leaps
 (windup, landing blow). `hw-sim/tests/colossus.rs` plays the fight with bot heroes: it goes down,
 up, down for good, in 2 to 11 minutes, the same every time. Try it: `HW_INCIDENT=colossus`
-(`HW_VIEW=colossus` for the camera, `HW_COLOSSUS_BREAK=2` to kneel it). Open: its feet sprawl
-about 20 m, wider than many streets, so its legs go through walls; its own music and sounds
-(the klaxon, thuds and servos are synthesized for now).
+(`HW_VIEW=colossus` for the camera, `HW_COLOSSUS_BREAK=2` to kneel it). Open: its own fight
+music.
 
 ### M12. Vertical slice: co-op night
 

@@ -1303,11 +1303,16 @@ fn main() -> EngineResult<()> {
                     }
                     // `HW_VIEW=colossus`: the walking tank from in front, a
                     // little above, as a hero would meet it.
-                    if view == "colossus" && radio.calls.len() == 1 && radio.calls.contains_key(id)
+                    // (`HW_VIEW=colossus_close`: lower, to see the sentries it drops.)
+                    let close = view == "colossus_close";
+                    if (view == "colossus" || close)
+                        && radio.calls.len() == 1
+                        && radio.calls.contains_key(id)
                     {
                         let c = Vec3::from_array(*at);
                         let a = hw_sim::props::byte_to_yaw(*yaw) as f32 + 0.5;
-                        let p = c + Vec3::new(a.sin(), 0.0, a.cos()) * 16.0 + Vec3::Y * 52.0;
+                        let (out, up) = if close { (18.0, 9.0) } else { (16.0, 52.0) };
+                        let p = c + Vec3::new(a.sin(), 0.0, a.cos()) * out + Vec3::Y * up;
                         let d = c + Vec3::Y * 4.0 - p;
                         let yaw = d.x.atan2(d.z).to_degrees();
                         let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
@@ -1758,6 +1763,20 @@ fn main() -> EngineResult<()> {
             let muzzles = fight.muzzles.clone();
             robots.on_fx(world, &mut fight, &events, &heroes, &muzzles, mine);
             robots.update(world, &heroes, frame.dt)?;
+            // `HW_VIEW=sentry`: a close-up of the first robo-sentry (with
+            // HW_INCIDENT=colossus HW_COLOSSUS_BREAK=2, the ones it drops).
+            if view == "sentry" {
+                if let Some((at, yaw)) = robots.sentry_at() {
+                    let ahead = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+                    let side = Vec3::new(ahead.z, 0.0, -ahead.x);
+                    let p = at + ahead * 4.2 + side * 1.8 + Vec3::Y * 2.0;
+                    let d = at + Vec3::Y * 1.2 - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
             let me_state = mine.and_then(|id| heroes.iter().find(|e| e.id == id));
             fight.update(world, frame.dt, &heroes, me_state);
             // Our sheet as the host has it: a level up shows, the file is kept.

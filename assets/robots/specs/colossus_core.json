@@ -1,7 +1,7 @@
 {
  "textures": {
-  "texels_per_metre": 256,
-  "max_size": 512
+  "texels_per_metre": 768,
+  "max_size": 1024
  },
  "spec_version": 1,
  "id": "colossus_core",
@@ -9,7 +9,7 @@
  "params": {
   "settle": false,
   "bevel": 0.01,
-  "detail": 0.25,
+  "detail": 1.0,
   "pieces": [
    {
     "sphere": {
@@ -147,7 +147,7 @@
   }
  },
  "qa": {
-  "max_triangles": 12000,
+  "max_triangles": 48000,
   "require_uvs": true,
   "require_manifold": true,
   "require_origin_at_base": false,

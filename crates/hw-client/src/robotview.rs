@@ -135,10 +135,13 @@ struct Shell {
 
 struct Sounds {
     thud: Sound,
+    cannon: Sound,
     klaxon: Sound,
     zap: Sound,
     hum: Sound,
     servo: Sound,
+    crash: Sound,
+    collapse: Sound,
 }
 
 /// The machines on screen.
@@ -207,7 +210,7 @@ impl RobotView {
             if self.kit.is_none() {
                 eprintln!("robot parts not found (assets/robots); robots are drawn as boxes");
             }
-            self.sounds = Some(make_sounds());
+            self.sounds = make_sounds();
         }
         let robots: Vec<&EntityState> = all
             .iter()
@@ -455,10 +458,35 @@ impl RobotView {
             .map(|m| m.w_axis.truncate())
             .unwrap_or(d.last);
         let _ = world.explosion(at, size);
-        for (k, e) in std::mem::take(&mut p.meshes).into_iter().enumerate() {
-            let _ = world.detach(e);
+        // The part goes; plain metal chunks fly. (Engine's shatter keeps a
+        // textured, normal-mapped part's maps on pieces that have no UVs or
+        // tangents for them, which renders as white glare and black specks.)
+        for e in std::mem::take(&mut p.meshes) {
+            world.despawn(e);
+        }
+        for (k, colour) in [rgb(38, 72, 52), rgb(150, 118, 52), rgb(60, 62, 66)]
+            .into_iter()
+            .enumerate()
+        {
+            let mut m = Mesh::new();
+            let s = size * (0.45 - 0.1 * k as f32);
+            let off =
+                Vec3::new(0.3 * k as f32 - 0.3, 0.2 * k as f32, 0.15 - 0.15 * k as f32) * size;
+            if m.add_box(off, Vec3::new(s, s * 0.6, s * 0.8), colour)
+                .is_err()
+            {
+                continue;
+            }
+            m.set_surface_material(SurfaceMaterial {
+                roughness: 0.45,
+                metallic: 0.8,
+                ..SurfaceMaterial::default()
+            });
+            let Ok(e) = world.place(m, Place::new(at.x, at.y, at.z)) else {
+                continue;
+            };
             let shatter = Shatter {
-                pieces: 10,
+                pieces: 6,
                 speed: 6.0 + size,
                 keep_seconds: Some(20.0),
                 seed: k as u32 + 1,
@@ -865,6 +893,10 @@ impl RobotView {
                     });
                     self.ring(world, at, geo::SHELL_AREA as f32, rgb(255, 50, 30), 2.0);
                     if let Some(s) = &self.sounds {
+                        world.play_sound(
+                            &s.cannon,
+                            PlaySound::at(from).volume(1.4).range(15.0, 500.0),
+                        );
                         world
                             .play_sound(&s.klaxon, PlaySound::at(at).volume(0.6).range(6.0, 140.0));
                     }
@@ -959,6 +991,10 @@ impl RobotView {
                     }
                 }
                 FxKind::PartBroken => {
+                    if let Some(s) = &self.sounds {
+                        world
+                            .play_sound(&s.crash, PlaySound::at(at).volume(1.3).range(10.0, 300.0));
+                    }
                     let name = part_name(all, e.from, e.to);
                     fight.say(&format!("{name} destroyed!"));
                 }
@@ -968,8 +1004,8 @@ impl RobotView {
                     fight.say("It's down! Hit the core!");
                     if let Some(s) = &self.sounds {
                         world.play_sound(
-                            &s.thud,
-                            PlaySound::at(at).volume(1.5).pitch(0.5).range(10.0, 400.0),
+                            &s.collapse,
+                            PlaySound::at(at).volume(1.5).range(10.0, 400.0),
                         );
                     }
                 }
@@ -988,11 +1024,22 @@ impl RobotView {
         }
     }
 
+    /// A robo-sentry on screen: where it stands and the way it faces
+    /// (radians), for the `HW_VIEW=sentry` close-up.
+    pub fn sentry_at(&self) -> Option<(Vec3, f32)> {
+        self.drawn
+            .values()
+            .find(|d| d.kind == EntityKind::Sentry)
+            .map(|d| (d.last, d.yaw))
+    }
+
     fn ring(&mut self, world: &mut World, at: Vec3, radius: f32, colour: Color, seconds: f32) {
-        let d = Decal::new(DecalKind::Power, at + Vec3::Y * 0.5, Vec3::Y, radius)
+        // On the ground only: a deep, bright decal would paint the robot and
+        // everyone standing in it white.
+        let d = Decal::new(DecalKind::Power, at + Vec3::Y * 0.2, Vec3::Y, radius)
             .tint(colour)
-            .emission(3.0)
-            .depth(6.0)
+            .emission(1.4)
+            .depth(0.9)
             .fade(0.15, 0.2);
         if let Ok(id) = world.spawn_decal(d) {
             self.rings.push((id, seconds));
@@ -1073,75 +1120,26 @@ fn dust(world: &mut World, at: Vec3, radius: f32) {
     );
 }
 
-fn make_sounds() -> Sounds {
-    const RATE: u32 = 44_100;
-    let mut seed = 0x9E37_79B9u32;
-    let mut noise = move || {
-        seed ^= seed << 13;
-        seed ^= seed >> 17;
-        seed ^= seed << 5;
-        (seed as f32 / u32::MAX as f32) * 2.0 - 1.0
+fn make_sounds() -> Option<Sounds> {
+    // Made with OpenRouter (prompts in assets/robots/README.md).
+    let load = |name: &str, b: &'static [u8]| match Sound::from_bytes(b.to_vec()) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            eprintln!("robot sound {name}: {e}");
+            None
+        }
     };
-    let make = |seconds: f32, f: &mut dyn FnMut(f32) -> f32| -> Sound {
-        let n = (seconds * RATE as f32) as usize;
-        let samples: Vec<f32> = (0..n)
-            .map(|i| f(i as f32 / RATE as f32).clamp(-1.0, 1.0))
-            .collect();
-        Sound::from_mono(samples, RATE).expect("a sound")
-    };
-    use std::f32::consts::TAU;
-    // A giant footfall: a deep falling boom with a crunch.
-    let mut ph = 0.0f32;
-    let thud = make(0.9, &mut |t| {
-        let f = 70.0 * (-t * 5.0).exp() + 28.0;
-        ph += TAU * f / RATE as f32;
-        let body = ph.sin() * (-t * 4.5).exp();
-        let crunch = noise() * (-t * 18.0).exp() * 0.5;
-        (body + crunch) * 0.95
-    });
-    // A two-tone klaxon: incoming!
-    let mut ph = 0.0f32;
-    let klaxon = make(0.9, &mut |t| {
-        let f = if ((t * 5.0) as u32).is_multiple_of(2) {
-            620.0
-        } else {
-            470.0
-        };
-        ph += TAU * f / RATE as f32;
-        let tone = (ph.sin() * 2.5).tanh();
-        tone * 0.35 * (t * 30.0).min(1.0) * (1.0 - (t / 0.9).powi(4))
-    });
-    // An Aether discharge: a crackling zap that falls away.
-    let mut ph = 0.0f32;
-    let zap = make(0.8, &mut |t| {
-        let f = 900.0 * (-t * 4.0).exp() + 90.0;
-        ph += TAU * f / RATE as f32;
-        let tone = (ph.sin() * 4.0).tanh() * 0.5;
-        let crackle = noise() * if noise() > 0.6 { 1.0 } else { 0.25 };
-        (tone + crackle * 0.6) * (-t * 4.0).exp()
-    });
-    // The core charging: a rising hum.
-    let mut ph = 0.0f32;
-    let hum = make(1.6, &mut |t| {
-        let f = 60.0 + 260.0 * (t / 1.6).powi(2);
-        ph += TAU * f / RATE as f32;
-        let tone = ph.sin() + 0.4 * (ph * 2.0).sin() + 0.2 * (ph * 3.0).sin();
-        tone * 0.35 * (t / 1.6).min(1.0)
-    });
-    // Hydraulics and servos: a whine with a hiss.
-    let mut ph = 0.0f32;
-    let servo = make(1.2, &mut |t| {
-        let f = 180.0 + 120.0 * (t * 3.0).sin();
-        ph += TAU * f / RATE as f32;
-        let whine = ((ph * 3.0).sin() * 2.0).tanh() * 0.25;
-        let hiss = noise() * 0.25 * (t * 6.0).min(1.0) * (-((t - 0.8).max(0.0)) * 6.0).exp();
-        (whine + hiss) * (1.0 - (t / 1.2).powi(3))
-    });
-    Sounds {
-        thud,
-        klaxon,
-        zap,
-        hum,
-        servo,
-    }
+    Some(Sounds {
+        thud: load("footfall", include_bytes!("../assets/robots/footfall.ogg"))?,
+        cannon: load("cannon", include_bytes!("../assets/robots/cannon.ogg"))?,
+        klaxon: load("klaxon", include_bytes!("../assets/robots/klaxon.ogg"))?,
+        zap: load("zap", include_bytes!("../assets/robots/zap.ogg"))?,
+        hum: load("hum", include_bytes!("../assets/robots/hum.ogg"))?,
+        servo: load("servo", include_bytes!("../assets/robots/servo.ogg"))?,
+        crash: load(
+            "partbreak",
+            include_bytes!("../assets/robots/partbreak.ogg"),
+        )?,
+        collapse: load("collapse", include_bytes!("../assets/robots/collapse.ogg"))?,
+    })
 }

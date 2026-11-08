@@ -1,7 +1,7 @@
 {
  "textures": {
-  "texels_per_metre": 96,
-  "max_size": 512
+  "texels_per_metre": 256,
+  "max_size": 2048
  },
  "spec_version": 1,
  "id": "colossus_turret",
@@ -9,7 +9,7 @@
  "params": {
   "settle": false,
   "bevel": 0.015,
-  "detail": 0.25,
+  "detail": 1.0,
   "pieces": [
    {
     "lathe": {
@@ -154,7 +154,7 @@
      "radius": 0.04
     },
     "slot": "brass",
-    "segments": 6,
+    "segments": 12,
     "repeat": {
      "around": 36
     }
@@ -304,7 +304,7 @@
   }
  },
  "qa": {
-  "max_triangles": 30000,
+  "max_triangles": 120000,
   "require_uvs": true,
   "require_manifold": true,
   "require_origin_at_base": false,

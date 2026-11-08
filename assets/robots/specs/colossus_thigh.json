@@ -1,7 +1,7 @@
 {
  "textures": {
-  "texels_per_metre": 96,
-  "max_size": 512
+  "texels_per_metre": 256,
+  "max_size": 1024
  },
  "spec_version": 1,
  "id": "colossus_thigh",
@@ -9,7 +9,7 @@
  "params": {
   "settle": false,
   "bevel": 0.015,
-  "detail": 0.25,
+  "detail": 1.0,
   "pieces": [
    {
     "group": [
@@ -273,7 +273,7 @@
   }
  },
  "qa": {
-  "max_triangles": 30000,
+  "max_triangles": 120000,
   "require_uvs": true,
   "require_manifold": true,
   "require_origin_at_base": false,

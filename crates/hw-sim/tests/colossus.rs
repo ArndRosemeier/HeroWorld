@@ -162,3 +162,34 @@ fn the_colossus_goes_down_gets_up_and_goes_down_for_good() {
 fn the_colossus_fight_is_repeatable() {
     assert_eq!(fight(3, 1), fight(3, 1));
 }
+
+/// In a real town it keeps to the main roads: wider than it is, so its feet
+/// and hull stay out of the buildings.
+#[test]
+fn the_colossus_walks_down_main_roads() {
+    use hw_sim::streets::{Streets, TANK_STREET};
+    let town = hw_sim::GeneratedTown::generate(Seed(1), hw_sim::DEFAULT_POPULATION);
+    let streets = Streets::new(&town.world, TANK_STREET);
+    let mut sim = Sim::for_town(Seed(1), &town);
+    // Start it on a main road a little way off its middle.
+    let start = streets.node(streets.len() as u32 / 2) + DVec2::new(1.5, 0.0);
+    let tank = sim.add_colossus(DVec3::new(start.x, GROUND_Y, start.y), DVec2::X);
+    let first = sim.position(tank).unwrap();
+    let mut off_street: f64 = 0.0;
+    for t in 0..TICK_HZ as u64 * 120 {
+        sim.step();
+        if t % 15 == 0 {
+            let p = sim.position(tank).unwrap();
+            let q = DVec2::new(p.x, p.z);
+            let n = streets.nearest(q).unwrap();
+            off_street = off_street.max(streets.node(n).distance(q));
+        }
+    }
+    let walked = sim.position(tank).unwrap().distance(first);
+    println!("walked {walked:.0} m, at most {off_street:.1} m off a street's middle");
+    assert!(walked > 60.0, "it walks: {walked:.0} m");
+    assert!(
+        off_street < 5.0,
+        "it keeps to the street: {off_street:.1} m"
+    );
+}

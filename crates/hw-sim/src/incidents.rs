@@ -610,7 +610,20 @@ impl Incidents {
             .landmarks
             .iter()
             .find(|l| l.kind == LandmarkKind::TeslaTower)
-            .map(|l| (l.pos + l.dir * (l.plaza + 14.0), l.dir));
+            .map(|l| {
+                // Out onto the nearest street wide enough for it.
+                let front = l.pos + l.dir * (l.plaza + 14.0);
+                let street = world
+                    .resource::<Fights>()
+                    .streets
+                    .as_ref()
+                    .and_then(|s| s.nearest(front).map(|n| s.node(n)))
+                    .filter(|p| p.distance(front) < 120.0);
+                match street {
+                    Some(p) => (p, (p - l.pos).normalize_or(l.dir)),
+                    None => (front, l.dir),
+                }
+            });
         let team = world.resource::<Fights>().team_level;
         let colossus_ok = tower.is_some()
             && !self.open.iter().any(|i| i.kind == IncidentKind::Colossus)

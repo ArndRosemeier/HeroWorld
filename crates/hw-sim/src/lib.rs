@@ -21,6 +21,7 @@ pub mod props;
 pub mod quarter;
 pub mod robots;
 pub mod save;
+pub mod streets;
 pub mod taxi;
 pub mod traffic;
 pub mod wrecks;
@@ -412,6 +413,10 @@ impl Sim {
         sim.taxis = taxi::Taxis::new(town.world.clone());
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.world.clone()));
         sim.incidents = incidents::Incidents::new(town.world.clone());
+        sim.world.resource_mut::<Fights>().streets = Some(Arc::new(streets::Streets::new(
+            &town.world,
+            streets::TANK_STREET,
+        )));
         let solids = sim.solids();
         let corners = quarter::corners(&town.world);
         for (k, c) in corners.iter().enumerate() {
