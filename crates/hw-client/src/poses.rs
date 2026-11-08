@@ -81,6 +81,39 @@ pub fn add_flight_clips(model: &mut AnimatedModel) -> Result<(), String> {
     Ok(())
 }
 
+/// Adds "heroic": the classic hero's stance for the title and the creator,
+/// fists on the hips, feet apart, chest out and chin up, breathing slowly.
+pub fn add_heroic_clip(model: &mut AnimatedModel) -> Result<(), String> {
+    let heroic = make_clip(model, "heroic", 4.0, |t| {
+        let w = (t * std::f32::consts::TAU).sin();
+        Pose {
+            aims: vec![
+                // Elbows out, fists on the hips.
+                aim("upperarm_l", "lowerarm_l", 0.8, -0.55, -0.22 + 0.02 * w),
+                aim("lowerarm_l", "hand_l", -0.5, -0.8, -0.12),
+                aim("upperarm_r", "lowerarm_r", -0.8, -0.55, -0.22 + 0.02 * w),
+                aim("lowerarm_r", "hand_r", 0.5, -0.8, -0.12),
+                // Feet planted apart.
+                aim("thigh_l", "calf_l", 0.2, -1.0, 0.0),
+                aim("calf_l", "foot_l", 0.17, -1.0, -0.03),
+                aim("thigh_r", "calf_r", -0.2, -1.0, 0.0),
+                aim("calf_r", "foot_r", -0.17, -1.0, -0.03),
+                aim("foot_l", "ball_l", 0.15, -0.3, 1.0),
+                aim("foot_r", "ball_r", -0.15, -0.3, 1.0),
+            ],
+            // Chest out, chin up.
+            turns: vec![
+                ("spine_03", Vec3::X, -0.08 - 0.015 * w),
+                ("head", Vec3::X, -0.14),
+            ],
+            lift: -0.02,
+        }
+    })?;
+    model.clips.retain(|c| c.name != "heroic");
+    model.clips.push(heroic);
+    Ok(())
+}
+
 /// Adds "cuffed": hands bound behind the back in energy cuffs, legs
 /// dangling, a slow sway, for a villain hanging from a police drone.
 pub fn add_cuffed_clip(model: &mut AnimatedModel) -> Result<(), String> {

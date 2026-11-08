@@ -12,7 +12,10 @@
 
 use crate::poses;
 use actors_engine::{BuildOptions, CharacterBuilder};
-use actors_generator::{AllowOptions, Flags, HeightRange, RandomOptions};
+use actors_generator::{
+    default_config, random_config, AllowOptions, CharacterCatalog, CharacterConfig, Flags,
+    HeightRange, RandomOptions, SeededRandom,
+};
 use engine::anim::AnimatedModel;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -63,8 +66,11 @@ pub const SPRINT_MPS: f32 = 6.4;
 /// What a finished model is for.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Who {
-    /// A hero, by the name its player chose.
+    /// A stand-in hero for a player whose looks have not arrived, by a
+    /// name ("player 2"): the same on every machine.
     Hero(String),
+    /// A hero made in the creator: its looks' key (see [`crate::looks`]).
+    Look(u64),
     /// One of the citizens' looks.
     Citizen(u32),
     /// One of the mad scientist's villains: its kind and one of
@@ -92,10 +98,21 @@ pub struct Built {
     pub walk: String,
 }
 
+/// One character to build.
+struct Job {
+    who: Who,
+    seed: u64,
+    /// The looks of a [`Who::Look`].
+    config: Option<CharacterConfig>,
+    /// A preview in the creator: only the newest one waiting is built.
+    preview: bool,
+}
+
 /// Builds characters on a worker thread.
 pub struct People {
-    jobs: Sender<(Who, u64)>,
+    jobs: Sender<Job>,
     done: Receiver<Result<Built, String>>,
+    catalog: Receiver<CharacterCatalog>,
 }
 
 /// Where the packs are: `HW_PACKS`, else `assets/packs` here or next to the
@@ -148,8 +165,9 @@ pub fn name_seed(name: &str) -> u32 {
 impl People {
     /// Starts the worker on the packs at `packs`.
     pub fn start(packs: PathBuf) -> Self {
-        let (jobs, rx) = channel::<(Who, u64)>();
+        let (jobs, rx) = channel::<Job>();
         let (tx, done) = channel();
+        let (cat_tx, catalog) = channel();
         std::thread::Builder::new()
             .name("people".into())
             .spawn(move || {
@@ -162,8 +180,12 @@ impl People {
                     }
                 };
                 eprintln!("Actors packs loaded in {:.1} s", t0.elapsed().as_secs_f64());
-                // Heroes before citizens, whatever order they were asked in.
-                let mut queue: Vec<(Who, u64)> = Vec::new();
+                // What heroes may wear, for the creator.
+                builder.allow(&allow(true));
+                let _ = cat_tx.send(hero_catalog(builder.catalog()));
+                // Heroes before villains before citizens, whatever order
+                // they were asked in.
+                let mut queue: Vec<Job> = Vec::new();
                 loop {
                     while let Ok(j) = rx.try_recv() {
                         queue.push(j);
@@ -175,18 +197,22 @@ impl People {
                         }
                         continue;
                     }
+                    // Of the creator's previews only the newest counts.
+                    if let Some(last) = queue.iter().rposition(|j| j.preview) {
+                        let mut i = 0;
+                        queue.retain(|j| {
+                            i += 1;
+                            !j.preview || i - 1 == last
+                        });
+                    }
                     let i = queue
                         .iter()
-                        .position(|(w, _)| matches!(w, Who::Hero(_)))
-                        .or_else(|| {
-                            queue
-                                .iter()
-                                .position(|(w, _)| matches!(w, Who::Villain(..)))
-                        })
+                        .position(|j| matches!(j.who, Who::Hero(_) | Who::Look(_)))
+                        .or_else(|| queue.iter().position(|j| matches!(j.who, Who::Villain(..))))
                         .unwrap_or(0);
-                    let (who, seed) = queue.remove(i);
+                    let job = queue.remove(i);
                     let t = std::time::Instant::now();
-                    let r = build(&mut builder, &who, seed);
+                    let r = build(&mut builder, &job.who, job.seed, job.config.as_ref());
                     if let Ok(b) = &r {
                         eprintln!(
                             "built {:?} in {:.2} s ({} meshes)",
@@ -201,12 +227,37 @@ impl People {
                 }
             })
             .expect("start the people thread");
-        Self { jobs, done }
+        Self {
+            jobs,
+            done,
+            catalog,
+        }
     }
 
     /// Asks for a character; `seed` varies citizens between towns.
     pub fn request(&self, who: Who, seed: u64) {
-        let _ = self.jobs.send((who, seed));
+        let _ = self.jobs.send(Job {
+            who,
+            seed,
+            config: None,
+            preview: false,
+        });
+    }
+
+    /// Asks for a hero with these looks (`key` from [`crate::looks::key`]);
+    /// a `preview` is dropped when a newer one comes before it is built.
+    pub fn request_look(&self, key: u64, config: CharacterConfig, preview: bool) {
+        let _ = self.jobs.send(Job {
+            who: Who::Look(key),
+            seed: 0,
+            config: Some(config),
+            preview,
+        });
+    }
+
+    /// What heroes can be made of, once the packs are loaded (given once).
+    pub fn take_catalog(&self) -> Option<CharacterCatalog> {
+        self.catalog.try_recv().ok()
     }
 
     /// Waits until `n` characters are finished (for screenshots and tests).
@@ -283,37 +334,229 @@ const ERA: &[&str] = &[
     "round-glasses",
 ];
 /// Heroes may also wear the retro-future suits (made for 3026, but they
-/// look like what 1939 thought the future would wear).
-const HERO_EXTRA: &[&str] = &["sneakers", "canvas-sneakers", "future-"];
+/// look like what 1939 thought the future would wear), and what a costume
+/// needs that Actors has: tights, gloves, boots, goggles, an aviator's cap.
+const HERO_EXTRA: &[&str] = &[
+    "sneakers",
+    "canvas-sneakers",
+    "future-",
+    "tights",
+    "tank-top",
+    "turtleneck-halter",
+    "open-coat",
+    "gloves-short",
+    "gloves-medium",
+    "gauntlet-gloves",
+    "leather-boots",
+    "biker-boots",
+    "cuffed-boots",
+    "cuffed-knee-boots",
+    "overknee-boots",
+    "tinted-glasses",
+    "dark-glasses",
+    "leather-helmet",
+];
+
+/// May a garment be worn in town? Period clothes (and anything Actors
+/// files as vintage, so new period garments walk the streets as soon as the
+/// packs have them); heroes also the retro-future suits.
+pub fn wearable(catalog: &CharacterCatalog, g: &str, hero: bool) -> bool {
+    let vintage = catalog.garments.iter().any(|c| {
+        c.id == g
+            && c.themes
+                .as_ref()
+                .is_some_and(|t| t.iter().any(|t| t == "vintage"))
+    });
+    ERA.contains(&g) || vintage || (hero && HERO_EXTRA.iter().any(|e| g == *e || g.starts_with(e)))
+}
+
+/// The catalog the hero creator offers: only what heroes may wear, and
+/// only the outfits made of that.
+pub fn hero_catalog(catalog: &CharacterCatalog) -> CharacterCatalog {
+    let mut c = catalog.clone();
+    c.garments.retain(|g| wearable(catalog, &g.id, true));
+    // (Not "Nude": heroes go out dressed.)
+    c.outfits.retain(|o| {
+        !o.garments.is_empty()
+            && o.garments
+                .iter()
+                .chain(o.female.iter().flatten())
+                .all(|g| wearable(catalog, g, true))
+    });
+    let mut all = costumes(&c);
+    all.append(&mut c.outfits);
+    c.outfits = all;
+    c
+}
+
+/// A costume: (id, label, description, garments, gender, colours).
+type Costume = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    Option<&'static str>,
+    &'static [(&'static str, &'static str)],
+);
+
+/// Hero costumes made of what Actors has today, in the colours of the
+/// pulps.
+const COSTUMES: &[Costume] = &[
+    (
+        "hw-strongman",
+        "Circus strongman",
+        "Tights, a vest and boots: the classic.",
+        &[
+            "briefs",
+            "tights",
+            "tank-top",
+            "gloves-short",
+            "biker-boots",
+        ],
+        None,
+        &[
+            ("briefs", "#d23a2c"),
+            ("tights", "#2a4fb8"),
+            ("tank-top", "#d23a2c"),
+            ("gloves-short", "#d23a2c"),
+            ("biker-boots", "#d23a2c"),
+        ],
+    ),
+    (
+        "hw-mystery-man",
+        "Mystery man",
+        "Who knows what evil lurks? A dark suit, hat and gloves.",
+        &[
+            "suit-double",
+            "fedora-tilted",
+            "gloves-short",
+            "dark-glasses",
+            "black-shoes",
+        ],
+        Some("male"),
+        &[
+            ("suit-double", "#1d1f2a"),
+            ("fedora-tilted", "#1d1f2a"),
+            ("gloves-short", "#7a1c1c"),
+        ],
+    ),
+    (
+        "hw-aviator",
+        "Sky ace",
+        "Goggles, gloves and riding boots, ready for the stratosphere.",
+        &[
+            "briefs",
+            "fisherman-sweater",
+            "wool-pants",
+            "riding-boots",
+            "gloves-medium",
+            "tinted-glasses",
+        ],
+        None,
+        &[
+            ("fisherman-sweater", "#e8dcc0"),
+            ("wool-pants", "#6a4a2c"),
+            ("riding-boots", "#3a2416"),
+            ("gloves-medium", "#6a4a2c"),
+        ],
+    ),
+    (
+        "hw-rocket",
+        "Rocket ranger",
+        "The suit 1939 thought the future would wear.",
+        &[
+            "briefs",
+            "future-vest",
+            "future-trousers",
+            "future-belt",
+            "gloves-medium",
+            "leather-boots",
+            "tinted-glasses",
+        ],
+        None,
+        &[
+            ("future-vest", "#c9cdd6"),
+            ("future-trousers", "#c9cdd6"),
+            ("future-belt", "#d4a017"),
+            ("gloves-medium", "#b8261c"),
+            ("leather-boots", "#b8261c"),
+        ],
+    ),
+    (
+        "hw-jungle",
+        "Jungle queen",
+        "A halter dress, long gloves and boots for the lost city.",
+        &["briefs", "halter-midi", "gloves-long", "overknee-boots"],
+        Some("female"),
+        &[
+            ("halter-midi", "#2e7d4f"),
+            ("gloves-long", "#e8c070"),
+            ("overknee-boots", "#5a3a1c"),
+        ],
+    ),
+    (
+        "hw-starlet",
+        "Silver-screen sleuth",
+        "Gloves, a pencil skirt and a hat with a secret.",
+        &[
+            "blouse-pencil-skirt",
+            "cloche-hat",
+            "gloves-long",
+            "t-bar-shoes",
+        ],
+        Some("female"),
+        &[
+            ("blouse-pencil-skirt", "#a8262f"),
+            ("cloche-hat", "#1d1f2a"),
+            ("gloves-long", "#1d1f2a"),
+        ],
+    ),
+];
+
+/// The costumes above that the catalog can make.
+fn costumes(catalog: &CharacterCatalog) -> Vec<actors_generator::OutfitPreset> {
+    COSTUMES
+        .iter()
+        .filter(|(_, _, _, garments, _, _)| garments.iter().all(|g| catalog.garment(g).is_some()))
+        .map(
+            |(id, label, about, garments, gender, colours)| actors_generator::OutfitPreset {
+                id: id.to_string(),
+                label: label.to_string(),
+                description: Some(about.to_string()),
+                garments: garments.iter().map(|g| g.to_string()).collect(),
+                female: None,
+                gender: gender.map(|g| g.to_string()),
+                colors: Some(
+                    colours
+                        .iter()
+                        .map(|(g, c)| (g.to_string(), c.to_string()))
+                        .collect(),
+                ),
+                themes: None,
+            },
+        )
+        .collect()
+}
+
+/// A random character of `catalog` (what `CharacterBuilder::random` makes).
+pub fn random_person(catalog: &CharacterCatalog, seed: u32) -> CharacterConfig {
+    random_config(
+        catalog,
+        &default_config(catalog),
+        &RandomOptions::default(),
+        &mut SeededRandom::new(seed as f64),
+    )
+}
 
 /// A random character dressed for the era: the first of a run of seeds
 /// whose outfit is all period clothes (and not just underwear), then a hat
 /// for most men and some women, and now and then a three-piece suit or a
 /// bow tie instead of the plain suit. Same seed, same person.
-pub fn golden_age(
-    builder: &CharacterBuilder,
-    seed: u32,
-    hero: bool,
-) -> actors_generator::CharacterConfig {
-    // Anything Actors files as vintage counts too, so new period garments
-    // walk the streets as soon as the packs have them.
-    let vintage = |g: &str| {
-        builder.catalog().garments.iter().any(|c| {
-            c.id == g
-                && c.themes
-                    .as_ref()
-                    .is_some_and(|t| t.iter().any(|t| t == "vintage"))
-        })
-    };
-    let ok = |g: &str| {
-        ERA.contains(&g)
-            || vintage(g)
-            || (hero && HERO_EXTRA.iter().any(|e| g == *e || g.starts_with(e)))
-    };
-    let options = RandomOptions::default();
-    let mut config = builder.random(seed, &options);
+pub fn golden_age(catalog: &CharacterCatalog, seed: u32, hero: bool) -> CharacterConfig {
+    let ok = |g: &str| wearable(catalog, g, hero);
+    let mut config = random_person(catalog, seed);
     for k in 0..64u32 {
-        let c = builder.random(seed.wrapping_add(k.wrapping_mul(0x9E37_79B9)), &options);
+        let c = random_person(catalog, seed.wrapping_add(k.wrapping_mul(0x9E37_79B9)));
         let dressed = c.outfit.iter().any(|g| g != "briefs" && g != "socks");
         if dressed && c.outfit.iter().all(|g| ok(g)) {
             config = c;
@@ -329,7 +572,6 @@ pub fn golden_age(
         b.weight = rng.range(0.38, 0.55);
         b.proportions = rng.range(0.7, 0.9);
     }
-    let catalog = builder.catalog();
     let has = |id: &str| catalog.garments.iter().any(|g| g.id == id);
     let male = config.body.gender >= 0.5;
     let swap = |outfit: &mut Vec<String>, from: &str, to: &str| {
@@ -380,7 +622,7 @@ pub fn villain(
     look: u32,
 ) -> actors_generator::CharacterConfig {
     let seed = name_seed(&format!("villain {kind:?} {look}"));
-    let mut c = golden_age(builder, seed, false);
+    let mut c = golden_age(builder.catalog(), seed, false);
     let mut rng = hw_core::Seed(seed as u64).child("villain").rng();
     let catalog = builder.catalog();
     let has = |id: &str| catalog.garments.iter().any(|g| g.id == id);
@@ -439,10 +681,16 @@ pub fn villain(
     c
 }
 
-/// Builds one character (on the worker).
-pub fn build(builder: &mut CharacterBuilder, who: &Who, seed: u64) -> Result<Built, String> {
+/// Builds one character (on the worker); `config` is a made hero's looks.
+pub fn build(
+    builder: &mut CharacterBuilder,
+    who: &Who,
+    seed: u64,
+    config: Option<&CharacterConfig>,
+) -> Result<Built, String> {
     let (hero, rseed) = match who {
         Who::Hero(name) => (true, name_seed(name)),
+        Who::Look(key) => (true, *key as u32),
         Who::Citizen(look) => (
             false,
             (hw_core::Seed(seed).child("look").child(*look as u64).0 >> 32) as u32,
@@ -450,12 +698,14 @@ pub fn build(builder: &mut CharacterBuilder, who: &Who, seed: u64) -> Result<Bui
         Who::Villain(..) => (false, 0),
     };
     builder.allow(&allow(hero));
-    let config = match who {
-        Who::Villain(kind, look) => villain(builder, *kind, *look),
-        _ => golden_age(builder, rseed, hero),
+    let config = match (who, config) {
+        (Who::Villain(kind, look), _) => villain(builder, *kind, *look),
+        // Made looks, from this PC or a friend's: kept to the hero rules.
+        (_, Some(c)) => crate::looks::hero_rules(&hero_catalog(builder.catalog()), c),
+        _ => golden_age(builder.catalog(), rseed, hero),
     };
     let clips: &[&str] = match who {
-        Who::Hero(_) => HERO_CLIPS,
+        Who::Hero(_) | Who::Look(_) => HERO_CLIPS,
         Who::Villain(..) => VILLAIN_CLIPS,
         Who::Citizen(_) => CITIZEN_CLIPS,
     };
@@ -475,6 +725,7 @@ pub fn build(builder: &mut CharacterBuilder, who: &Who, seed: u64) -> Result<Bui
     };
     if hero {
         poses::add_flight_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+        poses::add_heroic_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
     if matches!(who, Who::Villain(..)) {
         poses::add_cuffed_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;

@@ -21,7 +21,7 @@ checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 [[package]]
 name = "actors-core"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Actors?rev=86655e2db3d8234598b052a98a0d636676d882f7#86655e2db3d8234598b052a98a0d636676d882f7"
+source = "git+https://github.com/ArndRosemeier/Actors?rev=64c2ed6277cfb95146b04159e173706e03138904#64c2ed6277cfb95146b04159e173706e03138904"
 dependencies = [
  "indexmap",
  "regex",
@@ -33,7 +33,7 @@ dependencies = [
 [[package]]
 name = "actors-engine"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Actors?rev=86655e2db3d8234598b052a98a0d636676d882f7#86655e2db3d8234598b052a98a0d636676d882f7"
+source = "git+https://github.com/ArndRosemeier/Actors?rev=64c2ed6277cfb95146b04159e173706e03138904#64c2ed6277cfb95146b04159e173706e03138904"
 dependencies = [
  "actors-core",
  "actors-generator",
@@ -47,7 +47,7 @@ dependencies = [
 [[package]]
 name = "actors-generator"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Actors?rev=86655e2db3d8234598b052a98a0d636676d882f7#86655e2db3d8234598b052a98a0d636676d882f7"
+source = "git+https://github.com/ArndRosemeier/Actors?rev=64c2ed6277cfb95146b04159e173706e03138904#64c2ed6277cfb95146b04159e173706e03138904"
 dependencies = [
  "actors-core",
  "actors-human",
@@ -59,7 +59,7 @@ dependencies = [
 [[package]]
 name = "actors-human"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Actors?rev=86655e2db3d8234598b052a98a0d636676d882f7#86655e2db3d8234598b052a98a0d636676d882f7"
+source = "git+https://github.com/ArndRosemeier/Actors?rev=64c2ed6277cfb95146b04159e173706e03138904#64c2ed6277cfb95146b04159e173706e03138904"
 dependencies = [
  "actors-core",
  "indexmap",
@@ -1045,7 +1045,7 @@ dependencies = [
 [[package]]
 name = "engine"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Engine?branch=main#c51053106dd1bba830bea0aae82bc2d1c18e7269"
+source = "git+https://github.com/ArndRosemeier/Engine?branch=main#fb469d23f5c426830d8cc104fc951c7290d0214a"
 dependencies = [
  "bytemuck",
  "egui",
@@ -1595,6 +1595,7 @@ version = "0.1.0"
 dependencies = [
  "actors-engine",
  "actors-generator",
+ "actors-human",
  "engine",
  "glam 0.33.12",
  "hw-core",

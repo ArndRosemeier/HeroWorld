@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.038 (2026-11-08)
+
+- Make your own hero: New hero opens the hero creator. Pick a body, face, hair and costume in a
+  few clicks, or go into the details with every slider. Roll the dice for a surprise.
+- Six golden-age costumes to start from: circus strongman, mystery man, sky ace, rocket ranger,
+  jungle queen and silver-screen sleuth, in any colours you like.
+- Your hero strikes a pose on the title screen. Click them to change their looks.
+- Friends who join see your hero as you made them.
+
 ## 0.037 (2026-11-08)
 
 - The mad scientist's technicians keep watch from the rooftops of his quarter and shoot down

@@ -56,6 +56,14 @@ impl Writer {
         self.buf.extend_from_slice(&s.as_bytes()[..end]);
         self
     }
+
+    /// Bytes, at most 65535 (longer ones are cut).
+    pub fn bytes(&mut self, b: &[u8]) -> &mut Self {
+        let n = b.len().min(u16::MAX as usize);
+        self.u16(n as u16);
+        self.buf.extend_from_slice(&b[..n]);
+        self
+    }
 }
 
 /// Reads values back; every read fails cleanly on a short or bad packet.
@@ -120,6 +128,14 @@ impl<'a> Reader<'a> {
         let bytes = self.buf.get(self.pos..end).ok_or(WireError)?;
         self.pos = end;
         String::from_utf8(bytes.to_vec()).map_err(|_| WireError)
+    }
+
+    pub fn bytes(&mut self) -> Result<Vec<u8>, WireError> {
+        let n = self.u16()? as usize;
+        let end = self.pos.checked_add(n).ok_or(WireError)?;
+        let bytes = self.buf.get(self.pos..end).ok_or(WireError)?;
+        self.pos = end;
+        Ok(bytes.to_vec())
     }
 
     pub fn is_done(&self) -> bool {

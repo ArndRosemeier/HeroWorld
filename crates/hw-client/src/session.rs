@@ -33,7 +33,17 @@ pub enum Session {
         names: std::collections::BTreeMap<PlayerId, String>,
         /// Our hero file as the host last sent it.
         sheet: Option<Sheet>,
+        /// Everyone's looks.
+        looks: Box<Looks>,
     },
+}
+
+/// Everyone's looks (see `hw_net::look`), and pieces of them still on
+/// their way.
+#[derive(Default)]
+pub struct Looks {
+    whole: std::collections::BTreeMap<PlayerId, Vec<u8>>,
+    parts: std::collections::BTreeMap<PlayerId, hw_net::look::LookParts>,
 }
 
 /// News the world shows rather than prints.
@@ -151,6 +161,7 @@ impl Session {
                             fx: Vec::new(),
                             names: Default::default(),
                             sheet: None,
+                            looks: Default::default(),
                         },
                         seed,
                         people,
@@ -195,6 +206,7 @@ impl Session {
                 fx,
                 names,
                 sheet,
+                looks,
             } => {
                 let was_on = matches!(conn.state, ConnState::Connected { .. });
                 let seq = conn.update(input);
@@ -203,6 +215,21 @@ impl Session {
                         fx.push(e);
                     } else if let ToClient::Sheet(s) = m {
                         *sheet = Some(s);
+                    } else if let ToClient::Look {
+                        player,
+                        part,
+                        parts,
+                        bytes,
+                    } = m
+                    {
+                        let whole = looks
+                            .parts
+                            .entry(player)
+                            .or_default()
+                            .add(part, parts, bytes);
+                        if let Some(l) = whole {
+                            looks.whole.insert(player, l);
+                        }
                     } else if is_world_news(&m) {
                         news.push(m);
                     } else {
@@ -276,6 +303,27 @@ impl Session {
             Session::Local { host, me, .. } => host.sim.set_sheet(*me, sheet),
             Session::Remote { conn, .. } => conn.send(ToServer::Sheet(sheet)),
         }
+    }
+
+    /// Shows everyone our hero's looks (compact JSON, see `crate::looks`).
+    pub fn send_look(&mut self, look: Vec<u8>) {
+        match self {
+            Session::Local { host, me, .. } => host.set_look(*me, look),
+            Session::Remote { conn, .. } => {
+                for (part, parts, bytes) in hw_net::look::pieces(&look) {
+                    conn.send(ToServer::Look { part, parts, bytes });
+                }
+            }
+        }
+    }
+
+    /// A player's looks, once they have arrived.
+    pub fn player_look(&self, p: PlayerId) -> Option<&[u8]> {
+        let l = match self {
+            Session::Local { host, .. } => host.players().get(&p).map(|i| i.look.as_slice()),
+            Session::Remote { looks, .. } => looks.whole.get(&p).map(|l| l.as_slice()),
+        }?;
+        (!l.is_empty()).then_some(l)
     }
 
     /// Buys `power` in `theme` (the host checks the price).

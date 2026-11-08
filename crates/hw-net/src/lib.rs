@@ -8,6 +8,7 @@
 
 pub mod connection;
 pub mod gamehub;
+pub mod look;
 pub mod protocol;
 pub mod reliable;
 pub mod replication;
@@ -24,7 +25,7 @@ pub use replication::{Candidate, ClientView};
 pub use transport::{ClientSocket, Link, PeerAddr, ServerEvent, ServerLink, ServerSocket, Traffic};
 
 /// Protocol version. Server and client must match exactly to play together.
-pub const PROTOCOL_VERSION: u32 = 17;
+pub const PROTOCOL_VERSION: u32 = 18;
 
 /// Most players in one world.
 pub const MAX_PLAYERS: usize = 10;

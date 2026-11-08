@@ -15,9 +15,9 @@ fn main() -> EngineResult<()> {
     let seed: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(1);
     let packs = people::packs_dir().expect("no packs: run scripts/fetch-packs.sh");
     let mut builder = actors_engine::CharacterBuilder::load(&packs).expect("load packs");
-    let hero = people::build(&mut builder, &Who::Hero(name), seed).expect("hero");
+    let hero = people::build(&mut builder, &Who::Hero(name), seed, None).expect("hero");
     let citizens: Vec<_> = (0..6)
-        .map(|i| people::build(&mut builder, &Who::Citizen(i), seed).expect("citizen"))
+        .map(|i| people::build(&mut builder, &Who::Citizen(i), seed, None).expect("citizen"))
         .collect();
     let clips = ["idle", "sprint", "jump", "hover", "fly"];
     let view = std::env::var("PEOPLE_VIEW").unwrap_or_default();

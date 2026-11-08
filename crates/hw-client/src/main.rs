@@ -41,8 +41,10 @@
 //! The game opens on the title screen (the town at golden hour behind it,
 //! built while you look); `HW_VIEW`, `HW_HOST` or `HW_JOIN` skip it,
 //! `HW_TITLE=0` too, and `HW_VIEW=title` forces it (`HW_TITLE_TIME=<s>` sets
-//! its clock, for screenshots). Your name, world and sound levels are
-//! remembered between runs (see `profile.rs`).
+//! its clock, for screenshots; `HW_TITLE_PANEL=creator` opens the hero
+//! creator, `HW_CREATOR_SECTION=face|costume|colours` and
+//! `HW_CREATOR_DETAILED=1` pick its tab). Your name, looks, world and sound
+//! levels are remembered between runs (see `profile.rs`).
 //!
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
@@ -76,6 +78,7 @@ use hw_client::crowdview::CrowdView;
 use hw_client::damageview::DamageView;
 use hw_client::fightview::{self, FightView};
 use hw_client::heroview::{tipped_origin, HeroAnim};
+use hw_client::looks;
 use hw_client::people::{self, People, VillainKind, Who};
 use hw_client::powersview::{PowerAction, PowersView};
 use hw_client::profile::Profile;
@@ -163,6 +166,13 @@ impl HeroCamera {
     }
 }
 
+/// Keeps the hero's looks in the profile on this PC.
+fn save_look(look: &actors_generator::CharacterConfig) {
+    let mut p = Profile::load();
+    p.look = Some(look.clone());
+    p.save();
+}
+
 /// Keeps the hero file in the profile on this PC.
 fn save_hero(hero: Option<hw_net::Sheet>) {
     let mut p = Profile::load();
@@ -235,9 +245,11 @@ fn main() -> EngineResult<()> {
     let actors = match people::packs_dir() {
         Some(dir) => {
             let p = People::start(dir);
-            if std::env::var_os("HW_JOIN").is_none() {
-                // Our own hero first (the local player is player 1).
-                p.request(Who::Hero("player 1".into()), 0);
+            // Our own hero first: in the looks from the creator, or (a
+            // hero from before it) dressed by name until the catalog is in.
+            match &profile.look {
+                Some(l) => p.request_look(looks::key(l), l.clone(), false),
+                None => p.request(Who::Hero(name.clone()), 0),
             }
             for kind in [VillainKind::Brute, VillainKind::Technician] {
                 for look in 0..people::VILLAIN_LOOKS {
@@ -257,7 +269,20 @@ fn main() -> EngineResult<()> {
         }
     };
     let mut models: BTreeMap<Who, std::sync::Arc<AnimatedModel>> = BTreeMap::new();
-    let mut asked: BTreeSet<Who> = [Who::Hero("player 1".into())].into();
+    let mut asked: BTreeSet<Who> = [match &profile.look {
+        Some(l) => Who::Look(looks::key(l)),
+        None => Who::Hero(name.clone()),
+    }]
+    .into();
+    // Our hero's looks (None until made, or dressed by name once the hero
+    // catalog is in), the catalog, and whether the others have them yet.
+    let mut my_look: Option<actors_generator::CharacterConfig> = profile.look.clone();
+    let mut hero_catalog: Option<actors_generator::CharacterCatalog> = None;
+    let mut look_sent = false;
+    // Which model each hero was drawn with (a look can arrive later).
+    let mut hero_who: BTreeMap<hw_core::NetId, Who> = BTreeMap::new();
+    // Characters built while the title showed, for when the game starts.
+    let mut held: Vec<people::Built> = Vec::new();
     for kind in [VillainKind::Brute, VillainKind::Technician] {
         for look in 0..people::VILLAIN_LOOKS {
             asked.insert(Who::Villain(kind, look));
@@ -692,7 +717,47 @@ fn main() -> EngineResult<()> {
                 extras = spawn_extras(world, &generated)?;
             }
 
+            // What heroes can be made of, once the packs are loaded.
+            if hero_catalog.is_none() {
+                if let Some(c) = actors.as_ref().and_then(|p| p.take_catalog()) {
+                    if let Some(t) = title_screen.as_mut() {
+                        t.set_catalog(c.clone());
+                    }
+                    hero_catalog = Some(c);
+                }
+            }
             if let Some(t) = title_screen.as_mut() {
+                t.no_people = actors.is_none();
+                // The hero in the foreground: built on the worker, the
+                // creator's newest looks first.
+                if let Some(p) = &actors {
+                    if let Some((key, look)) = t.wanted_look() {
+                        p.request_look(key, look, true);
+                    }
+                    let want = t.wanted_key();
+                    for b in p.finished() {
+                        match b.who {
+                            Who::Look(k) => {
+                                t.hero_built(world, k, b.model.clone())?;
+                                if Some(k) == want {
+                                    asked.insert(b.who.clone());
+                                    models.insert(b.who.clone(), b.model);
+                                }
+                            }
+                            _ => held.push(b),
+                        }
+                    }
+                    // Looks left behind in the creator are not kept.
+                    let mine = my_look.as_ref().map(looks::key);
+                    models.retain(|w, _| match w {
+                        Who::Look(k) => Some(*k) == want || Some(*k) == mine,
+                        _ => true,
+                    });
+                    asked.retain(|w| match w {
+                        Who::Look(k) => models.contains_key(w) || Some(*k) == mine,
+                        _ => true,
+                    });
+                }
                 // Another world finished generating: swap it in.
                 if let Some((seed, people, g)) =
                     switching.as_ref().and_then(|rx| rx.try_recv().ok())
@@ -758,10 +823,15 @@ fn main() -> EngineResult<()> {
                                 .map_err(io)?,
                         );
                     }
-                    Some(Choice::NewHero { name: n, seed }) => {
+                    Some(Choice::NewHero {
+                        name: n,
+                        seed,
+                        look,
+                    }) => {
                         name = n;
                         t.profile.name = name.clone();
                         t.profile.seed = seed;
+                        t.profile.look = look.map(|l| *l);
                         // A new hero picks an origin first.
                         t.profile.hero = None;
                         hero_file = None;
@@ -801,6 +871,17 @@ fn main() -> EngineResult<()> {
                     music_fade_at = Some(frame.time + 20.0);
                     t.profile.played = true;
                     t.profile.seed = world_seed;
+                    // A hero from before the creator keeps the clothes
+                    // the game dressed them in.
+                    if t.profile.look.is_none() {
+                        if let Some(cat) = &hero_catalog {
+                            t.profile.look = Some(hw_client::creator::Creator::random_look(
+                                cat,
+                                people::name_seed(&name),
+                            ));
+                        }
+                    }
+                    my_look = t.profile.look.clone();
                     t.profile.save();
                     t.leave(world);
                     title_screen = None;
@@ -815,6 +896,23 @@ fn main() -> EngineResult<()> {
                 return Ok(());
             };
             version_corner(&frame.ui, &mut whats_new, session.room_code());
+            // Our looks go to the others once (a hero from before the
+            // creator is dressed by name as soon as the catalog is in).
+            if my_look.is_none() && title_screen.is_none() {
+                if let Some(cat) = &hero_catalog {
+                    let l = hw_client::creator::Creator::random_look(cat, people::name_seed(&name));
+                    if std::env::var_os("HW_NAME").is_none() {
+                        save_look(&l);
+                    }
+                    my_look = Some(l);
+                }
+            }
+            if !look_sent {
+                if let Some(l) = &my_look {
+                    look_sent = true;
+                    session.send_look(looks::encode(l));
+                }
+            }
             // Our hero file goes to the host once.
             if !sheet_sent {
                 sheet_sent = true;
@@ -1191,6 +1289,7 @@ fn main() -> EngineResult<()> {
             // for all of them at the start, for screenshots).
             if let Some(p) = &actors {
                 let mut done = p.finished();
+                done.append(&mut held);
                 if frame.first && std::env::var_os("HW_WAIT_PEOPLE").is_some() {
                     let all =
                         hw_sim::citizens::LOOKS as usize + 1 + 2 * people::VILLAIN_LOOKS as usize;
@@ -1215,6 +1314,7 @@ fn main() -> EngineResult<()> {
                 }
                 keep
             });
+            hero_who.retain(|id, _| hero_entities.contains_key(id));
             let mine = session.my_hero();
             // Where everyone the server sends is, for the fight's lookups.
             let at_of = |id: hw_core::NetId| {
@@ -1327,7 +1427,33 @@ fn main() -> EngineResult<()> {
                     hw_net::EntityKind::Technician => {
                         Who::Villain(VillainKind::Technician, h.id.0 % people::VILLAIN_LOOKS)
                     }
-                    _ => Who::Hero(format!("player {}", h.owner.map_or(0, |o| o.0))),
+                    // A hero in their looks, once they arrived (ours we
+                    // know); until then a stand-in, the same on every machine.
+                    _ => {
+                        let bytes = if mine == Some(h.id) {
+                            my_look.as_ref().map(looks::encode)
+                        } else {
+                            h.owner
+                                .and_then(|o| session.player_look(o))
+                                .map(|b| b.to_vec())
+                        };
+                        match bytes.and_then(|b| Some((looks::key_of(&b), looks::decode(&b)?))) {
+                            Some((key, look)) => {
+                                let who = Who::Look(key);
+                                if !asked.contains(&who) {
+                                    if let Some(p) = &actors {
+                                        p.request_look(key, look, false);
+                                        asked.insert(who.clone());
+                                    }
+                                }
+                                who
+                            }
+                            None if mine == Some(h.id) && my_look.is_none() => {
+                                Who::Hero(name.clone())
+                            }
+                            None => Who::Hero(format!("player {}", h.owner.map_or(0, |o| o.0))),
+                        }
+                    }
                 };
                 let model = models.get(&who).cloned();
                 if model.is_none() && !asked.contains(&who) {
@@ -1338,8 +1464,10 @@ fn main() -> EngineResult<()> {
                 }
                 let animated = model.is_some();
                 let place = Place::new(feet.x, feet.y, feet.z).with_yaw_deg(d.yaw);
+                // A new model (their looks arrived) means a new body.
+                let same = !animated || hero_who.get(&h.id) == Some(&who);
                 let (e, _) = match hero_entities.get(&h.id) {
-                    Some(&(e, a)) if a == animated => (e, a),
+                    Some(&(e, a)) if a == animated && same => (e, a),
                     old => {
                         if let Some(&(e, _)) = old {
                             fight.drop_gun(world, e);
@@ -1361,6 +1489,7 @@ fn main() -> EngineResult<()> {
                             None => world.place(citymesh::hero_mesh(mine == Some(h.id)), place)?,
                         };
                         hero_entities.insert(h.id, (e, animated));
+                        hero_who.insert(h.id, who.clone());
                         (e, false)
                     }
                 };

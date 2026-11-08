@@ -4,6 +4,7 @@
 
 pub mod buildingmesh;
 pub mod citymesh;
+pub mod creator;
 pub mod crowdview;
 pub mod damageview;
 pub mod dispatchview;
@@ -12,6 +13,7 @@ pub mod fightview;
 pub mod heroview;
 pub mod interior;
 pub mod landmarkview;
+pub mod looks;
 pub mod nightlights;
 pub mod people;
 pub mod poses;

@@ -148,6 +148,24 @@ The second half of the Actors integration: the creator's screens, ported to the 
 **Done when:** a new player makes a hero in under two minutes, quits, restarts, and finds the
 same hero; a friend who joins sees it.
 
+**Status (0.038):** built on Actors' Rust generator (`actors-generator`, pinned at 64c2ed6,
+which also brings Engine's animated faces). New hero opens the creator (`hw-client/src/creator.rs`):
+Body, Face & hair, Costume and Colours, each with a Simple tab (presets: gender, age, build,
+height, heritage, hair, beard, eyes, outfit, colour swatches) and a Detailed tab (every body and
+shape slider, skin, stubble, brows, eye colour, the raw face and body sliders, single garments,
+free colours); Roll the dice, an at-ease and a heroic pose, the hero turning on a gold pedestal
+beside the card, rebuilt on the people worker as you change them (only the newest look waits).
+Six golden-age hero costumes made of what Actors has (`people::COSTUMES`: circus strongman,
+mystery man, sky ace, rocket ranger, jungle queen, silver-screen sleuth), offered with the
+era's clothes (`people::hero_catalog`). The looks (`CharacterConfig` JSON) live in the profile
+next to the hero file; a hero from before the creator keeps the clothes the game gave them by
+name. Joining sends them in pieces over the reliable channel (`ToServer::Look`,
+`ToClient::Look`, `hw_net::look`, protocol 18); the host passes them on and late joiners hear
+everyone's; every client builds them through the hero rules (`looks::hero_rules`: hero catalog,
+adults, never undressed). The title shows your hero in the heroic pose; a click opens the creator
+for their looks. Still open: costume parts Actors lacks (capes, masks, chest emblems), which
+belong in the Actors repo.
+
 ### M4. Title screen
 
 **Status (2026-11-08, 0.016):** built. The town at golden hour from a camera circling the
@@ -156,8 +174,8 @@ shadow on an arch, swooping in, a glint every 7.5 s, sunburst and Aether sparks,
 "less motion"); Play/Continue, New hero, Play with friends (host, join by code), Settings,
 What's new, Quit; the Lyria title theme fading in and out after the game starts; the town
 built behind the title with a loading bar; a camera swoop down to the hero. Profile in
-`%APPDATA%\HeroWorld\profile.json`. Still open: the hero posing in the foreground (needs M2's
-Actors hero and M3's creator), searchlights, and the hero creator behind New hero.
+`%APPDATA%\HeroWorld\profile.json`. Still open: searchlights. (0.038: your hero poses in the
+foreground on a gold pedestal and a click opens the creator; New hero opens the creator.)
 
 The first thing anyone sees, so it gets hero quality: playful and inviting, at least as good as
 Scale's start screen (rising title letters, the sunset city behind, the title theme).

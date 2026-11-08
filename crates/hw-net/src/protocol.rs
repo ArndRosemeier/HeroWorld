@@ -687,6 +687,13 @@ pub enum ToClient {
     /// Your hero's progress changed (karma, level, powers): keep it in
     /// your hero file.
     Sheet(Sheet),
+    /// A piece of a player's looks (see [`Look`]): `part` of `parts`.
+    Look {
+        player: PlayerId,
+        part: u8,
+        parts: u8,
+        bytes: Vec<u8>,
+    },
 }
 
 /// Most broken elements in one [`ToClient::Damage`] (it must fit a packet
@@ -721,6 +728,12 @@ pub enum ToServer {
     GiveUp {
         power: Power,
     },
+    /// A piece of this player's looks (see [`Look`]), sent on joining.
+    Look {
+        part: u8,
+        parts: u8,
+        bytes: Vec<u8>,
+    },
 }
 
 impl ToClient {
@@ -742,6 +755,7 @@ impl ToClient {
             ToClient::Casualty { .. } => 4 + 12 + 1 + 1 + 4 + 12,
             ToClient::Fx(_) => FX_BYTES,
             ToClient::Sheet(s) => s.wire_size(),
+            ToClient::Look { bytes, .. } => 2 + 2 + 2 + bytes.len(),
         }
     }
 
@@ -877,6 +891,14 @@ impl ToClient {
             ToClient::Sheet(sheet) => {
                 w.u8(11);
                 sheet.write(w);
+            }
+            ToClient::Look {
+                player,
+                part,
+                parts,
+                bytes,
+            } => {
+                w.u8(17).u16(player.0).u8(*part).u8(*parts).bytes(bytes);
             }
         }
     }
@@ -1014,6 +1036,12 @@ impl ToClient {
                 carrier: r.u32()?,
                 at: [r.f32()?, r.f32()?, r.f32()?],
             },
+            17 => ToClient::Look {
+                player: PlayerId(r.u16()?),
+                part: r.u8()?,
+                parts: r.u8()?,
+                bytes: r.bytes()?,
+            },
             15 => ToClient::Incident {
                 id: r.u32()?,
                 kind: r.u8()?,
@@ -1036,6 +1064,7 @@ impl ToServer {
             ToServer::Sheet(s) => 1 + s.wire_size(),
             ToServer::Buy { .. } => 3,
             ToServer::GiveUp { .. } => 2,
+            ToServer::Look { bytes, .. } => 1 + 2 + 2 + bytes.len(),
         }
     }
 
@@ -1057,6 +1086,9 @@ impl ToServer {
             ToServer::GiveUp { power } => {
                 w.u8(5).u8(power.code());
             }
+            ToServer::Look { part, parts, bytes } => {
+                w.u8(6).u8(*part).u8(*parts).bytes(bytes);
+            }
         }
     }
 
@@ -1068,6 +1100,11 @@ impl ToServer {
             4 => ToServer::Buy {
                 power: Power::from_code(r.u8()?).ok_or(WireError)?,
                 theme: r.u8()?,
+            },
+            6 => ToServer::Look {
+                part: r.u8()?,
+                parts: r.u8()?,
+                bytes: r.bytes()?,
             },
             5 => ToServer::GiveUp {
                 power: Power::from_code(r.u8()?).ok_or(WireError)?,
@@ -1493,6 +1530,14 @@ mod tests {
                         },
                     ),
                     (6, ToServer::GiveUp { power: Power::Hold }),
+                    (
+                        7,
+                        ToServer::Look {
+                            part: 1,
+                            parts: 3,
+                            bytes: b"{\"hair\":null}".to_vec(),
+                        },
+                    ),
                 ],
             },
             ClientMsg::Bye,
@@ -1719,6 +1764,22 @@ mod tests {
             ack: 0,
             rel_ack: 0,
             reliable: vec![(7, m.clone())],
+            entities: Vec::new(),
+            removed: Vec::new(),
+        };
+        assert_eq!(one.encode().len(), UPDATE_HEADER_BYTES + 4 + m.wire_size());
+        assert_eq!(ServerMsg::decode(&one.encode()).unwrap(), one);
+        let m = ToClient::Look {
+            player: PlayerId(3),
+            part: 0,
+            parts: 2,
+            bytes: vec![b'x'; crate::look::LOOK_PIECE],
+        };
+        let one = ServerMsg::Update {
+            tick: 0,
+            ack: 0,
+            rel_ack: 0,
+            reliable: vec![(8, m.clone())],
             entities: Vec::new(),
             removed: Vec::new(),
         };

@@ -1,9 +1,10 @@
-//! What the game remembers on this PC between runs: your hero's name and
-//! hero file (origin, karma, powers), the world you last played and your
-//! sound settings. A small JSON file in the
+//! What the game remembers on this PC between runs: your hero's name, looks
+//! (the Actors character made in the creator) and hero file (origin, karma,
+//! powers), the world you last played and your sound settings. A small JSON file in the
 //! user's settings folder (`%APPDATA%\HeroWorld` on Windows,
 //! `~/.config/heroworld` elsewhere). A missing or broken file is a fresh start.
 
+use actors_generator::CharacterConfig;
 use hw_net::{OwnedPower, Power, Sheet};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -23,6 +24,9 @@ pub struct Profile {
     /// The hero file: karma, affinities, origin and powers. None until an
     /// origin is chosen.
     pub hero: Option<Sheet>,
+    /// The hero's looks, as made in the creator. None for a profile from
+    /// before the creator (the game then dresses the hero itself, once).
+    pub look: Option<CharacterConfig>,
 }
 
 impl Default for Profile {
@@ -35,6 +39,7 @@ impl Default for Profile {
             sounds: 0.9,
             reduced_motion: false,
             hero: None,
+            look: None,
         }
     }
 }
@@ -79,6 +84,7 @@ impl Profile {
             sounds: f("sounds", d.sounds),
             reduced_motion: v["reduced_motion"].as_bool().unwrap_or(d.reduced_motion),
             hero: sheet_from_json(&v["hero"]),
+            look: serde_json::from_value::<CharacterConfig>(v["look"].clone()).ok(),
         }
     }
 
@@ -91,6 +97,7 @@ impl Profile {
             "sounds": self.sounds,
             "reduced_motion": self.reduced_motion,
             "hero": self.hero.as_ref().map(sheet_to_json),
+            "look": self.look.as_ref().and_then(|l| serde_json::to_value(l).ok()),
         })
     }
 
@@ -187,6 +194,11 @@ mod tests {
             sounds: 0.5,
             reduced_motion: true,
             hero: Some(hw_sim::progress::starter()),
+            look: Some(CharacterConfig {
+                hair: Some("ponytail01".into()),
+                outfit: vec!["future-suit".into()],
+                ..CharacterConfig::default()
+            }),
         };
         assert_eq!(Profile::from_json(&p.to_json()), p);
         let junk = json!({"name": 7, "music": 9.0, "seed": "x"});
@@ -195,6 +207,7 @@ mod tests {
         assert_eq!(q.music, 1.0);
         assert_eq!(q.seed, 1);
         assert_eq!(q.hero, None);
+        assert_eq!(q.look, None);
         // A hero file with a power from a later version keeps the rest.
         let later = json!({"hero": {"lifetime_karma": 99, "karma": 5, "origin": 2,
             "powers": [{"power": 2, "theme": 1, "paid": 7}, {"power": 200}]}});

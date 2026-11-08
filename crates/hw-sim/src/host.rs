@@ -15,6 +15,7 @@ use crate::save::WorldSave;
 use crate::{Sim, TICK_HZ};
 use glam::DVec3;
 use hw_core::Seed;
+use hw_net::look::LookParts;
 use hw_net::protocol::UPDATE_HEADER_BYTES;
 use hw_net::reliable::{ReliableReceiver, ReliableSender};
 use hw_net::{
@@ -48,6 +49,8 @@ const RESEND_TICKS: u64 = 6;
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlayerInfo {
     pub name: String,
+    /// The hero's looks (see `hw_net::look`), empty until sent.
+    pub look: Vec<u8>,
     /// Last input sequence applied (remote players).
     pub ack: u32,
     pub remote: bool,
@@ -80,6 +83,8 @@ struct Remote {
     newest: u32,
     rel_out: ReliableSender<ToClient>,
     rel_in: ReliableReceiver<ToServer>,
+    /// Pieces of this player's looks on their way in.
+    look: LookParts,
 }
 
 pub struct Host {
@@ -169,6 +174,9 @@ impl Host {
                     player: *p,
                     name: info.name.clone(),
                 });
+                for m in look_news(*p, &info.look) {
+                    r.rel_out.push(m);
+                }
             }
             r.rel_out.push(ToClient::Joined {
                 player: id,
@@ -196,6 +204,7 @@ impl Host {
             id,
             PlayerInfo {
                 name: name.to_string(),
+                look: Vec::new(),
                 ack: 0,
                 remote,
             },
@@ -221,6 +230,29 @@ impl Host {
             player: id,
             name: info.name,
         })
+    }
+
+    /// Sets a player's looks (the local player's, or a remote one's once
+    /// all its pieces are in) and tells everyone else.
+    pub fn set_look(&mut self, player: PlayerId, look: Vec<u8>) {
+        if look.len() > hw_net::look::MAX_LOOK {
+            return;
+        }
+        let Some(info) = self.players.get_mut(&player) else {
+            return;
+        };
+        if info.look == look {
+            return;
+        }
+        info.look = look;
+        let news = look_news(player, &info.look);
+        for (p, r) in self.remotes.iter_mut() {
+            if *p != player {
+                for m in &news {
+                    r.rel_out.push(m.clone());
+                }
+            }
+        }
     }
 
     /// The local player says something to everyone.
@@ -301,6 +333,15 @@ impl Host {
                 }
                 ToServer::GiveUp { power } => {
                     self.sim.give_up(player, power);
+                }
+                ToServer::Look { part, parts, bytes } => {
+                    let whole = self
+                        .remotes
+                        .get_mut(&player)
+                        .and_then(|r| r.look.add(part, parts, bytes));
+                    if let Some(look) = whole {
+                        self.set_look(player, look);
+                    }
                 }
             }
         }
@@ -506,4 +547,17 @@ impl Host {
         let save = WorldSave::read(path)?;
         self.sim.restore(&save).map_err(std::io::Error::other)
     }
+}
+
+/// A player's looks as news for the others, in pieces.
+fn look_news(player: PlayerId, look: &[u8]) -> Vec<ToClient> {
+    hw_net::look::pieces(look)
+        .into_iter()
+        .map(|(part, parts, bytes)| ToClient::Look {
+            player,
+            part,
+            parts,
+            bytes,
+        })
+        .collect()
 }

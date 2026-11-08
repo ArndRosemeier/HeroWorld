@@ -11,7 +11,10 @@
 //! Everything is drawn with egui shapes: the letters are the logo font's
 //! glyphs cut into strips, so each strip can take its own colour.
 
+use crate::creator::Creator;
 use crate::profile::{clean_name, Profile};
+use actors_generator::{CharacterCatalog, CharacterConfig};
+use engine::anim::AnimatedModel;
 use engine::prelude::*;
 use engine::ui::egui::{
     self, epaint::Vertex, pos2, vec2, Align2, Color32, CornerRadius, FontFamily, FontId, Mesh,
@@ -46,10 +49,12 @@ const AETHER: Color32 = Color32::from_rgb(120, 236, 255);
 pub enum Choice {
     /// Play the remembered hero in the remembered world.
     Continue,
-    /// A new hero: this name, in the world with this seed.
+    /// A new hero: this name and these looks (none without the Actors
+    /// packs), in the world with this seed.
     NewHero {
         name: String,
         seed: u64,
+        look: Option<Box<CharacterConfig>>,
     },
     /// Open our world to friends (and play in it).
     Host,
@@ -135,6 +140,30 @@ pub struct Title {
     queued: Option<Choice>,
     taxis: Vec<Taxi>,
     lean: Vec2,
+    /// The camera's turn round the spire (stops while the creator is open).
+    orbit: f32,
+    /// What heroes can be made of (from the Actors packs, once loaded).
+    catalog: Option<Arc<CharacterCatalog>>,
+    /// No Actors packs: heroes start without the creator.
+    pub no_people: bool,
+    /// The creator, while it is open; true when it changes the looks of
+    /// the hero we have (else it makes a new one).
+    creator: Option<(Creator, bool)>,
+    /// Your hero in the foreground: the model shown and the one wanted.
+    hero: Option<ShownHero>,
+    /// Looks wanted for the hero in the foreground, not yet asked for.
+    asked: Option<u64>,
+    /// Where the hero stands on the screen (to click or turn them).
+    hero_rect: Option<Rect>,
+    spin: f32,
+}
+
+/// The hero in the title's foreground, on a gold pedestal.
+struct ShownHero {
+    key: u64,
+    entity: EntityId,
+    pedestal: EntityId,
+    clip: &'static str,
 }
 
 impl Title {
@@ -174,7 +203,167 @@ impl Title {
             queued: None,
             taxis: Vec::new(),
             lean: Vec2::ZERO,
+            orbit: start,
+            catalog: None,
+            no_people: false,
+            creator: None,
+            hero: None,
+            asked: None,
+            hero_rect: None,
+            spin: 0.0,
         }
+    }
+
+    /// The hero catalog arrived (the packs are loaded): the creator opens.
+    pub fn set_catalog(&mut self, catalog: CharacterCatalog) {
+        let catalog = Arc::new(catalog);
+        if std::env::var("HW_TITLE_PANEL").as_deref() == Ok("creator") {
+            let look = self.current_look(&catalog);
+            self.creator = Some((Creator::new(catalog.clone(), &look), false));
+            if let Ok(s) = std::env::var("HW_CREATOR_SECTION") {
+                if let Some(c) = self.creator.as_mut() {
+                    c.0.section = match s.as_str() {
+                        "face" => crate::creator::Section::Face,
+                        "costume" => crate::creator::Section::Costume,
+                        "colours" => crate::creator::Section::Colours,
+                        _ => crate::creator::Section::Body,
+                    };
+                    c.0.set_detailed(std::env::var_os("HW_CREATOR_DETAILED").is_some());
+                }
+            }
+        }
+        // A hero from before the creator: the clothes the game dressed
+        // them in by name, worked out once.
+        if self.profile.look.is_none() {
+            self.profile.look = Some(self.current_look(&catalog));
+        }
+        self.catalog = Some(catalog);
+    }
+
+    /// The looks of the hero we have, or (before the creator existed) the
+    /// ones the game dressed them in by their name.
+    fn current_look(&self, catalog: &CharacterCatalog) -> CharacterConfig {
+        self.profile.look.clone().unwrap_or_else(|| {
+            Creator::random_look(catalog, crate::people::name_seed(&self.profile.name))
+        })
+    }
+
+    /// The looks the foreground hero should wear now: the creator's, or
+    /// the hero we have.
+    fn shown_look(&self) -> Option<CharacterConfig> {
+        match (&self.creator, &self.catalog) {
+            (Some((c, _)), _) => Some(c.look()),
+            (None, Some(cat)) => Some(self.current_look(cat)),
+            _ => None,
+        }
+    }
+
+    /// Looks to build for the foreground hero, once each: (key, looks).
+    pub fn wanted_look(&mut self) -> Option<(u64, CharacterConfig)> {
+        let look = self.shown_look()?;
+        let key = crate::looks::key(&look);
+        if self.asked == Some(key) || self.hero.as_ref().is_some_and(|h| h.key == key) {
+            return None;
+        }
+        self.asked = Some(key);
+        Some((key, look))
+    }
+
+    /// The key of the looks the foreground hero should wear.
+    pub fn wanted_key(&self) -> Option<u64> {
+        self.shown_look().map(|l| crate::looks::key(&l))
+    }
+
+    /// A built hero arrived: shown if it is the one wanted.
+    pub fn hero_built(
+        &mut self,
+        world: &mut World,
+        key: u64,
+        model: Arc<AnimatedModel>,
+    ) -> EngineResult<()> {
+        if self.wanted_key() != Some(key) {
+            return Ok(());
+        }
+        self.drop_hero(world);
+        let entity = world.spawn_animated_shared(model, Place::new(0.0, -900.0, 0.0))?;
+        world.set_animation_blend(entity, 0.3)?;
+        let pedestal = world.place(pedestal_mesh()?, Place::new(0.0, -900.0, 0.0))?;
+        self.hero = Some(ShownHero {
+            key,
+            entity,
+            pedestal,
+            clip: "",
+        });
+        Ok(())
+    }
+
+    fn drop_hero(&mut self, world: &mut World) {
+        if let Some(h) = self.hero.take() {
+            world.despawn(h.entity);
+            world.despawn(h.pedestal);
+        }
+    }
+
+    /// Puts the foreground hero where the camera sees them: big beside the
+    /// creator, smaller right of the buttons on the title.
+    fn place_hero(&mut self, world: &mut World, aspect: f32, screen: Rect) -> EngineResult<()> {
+        let creating = self.creator.is_some();
+        let (heroic, spin) = match &self.creator {
+            Some((c, _)) => (c.heroic, c.spin),
+            None => (true, self.spin),
+        };
+        let Some(h) = self.hero.as_mut() else {
+            self.hero_rect = None;
+            return Ok(());
+        };
+        let cam = world.camera().clone();
+        let eye = cam.eye();
+        let fwd = (cam.target() - eye).normalize_or(Vec3::Z);
+        let right = fwd.cross(Vec3::Y).normalize_or(Vec3::X);
+        let up = right.cross(fwd);
+        let th = (cam.fov_y_degrees().to_radians() * 0.5).tan();
+        // How much of the screen's height the hero takes, and where.
+        let (fill, x_ndc, y_ndc) = if creating {
+            (0.66, 0.36, 0.0)
+        } else {
+            (0.46, 0.5, -0.1)
+        };
+        let d = 1.9 / (fill * 2.0 * th);
+        let middle = eye + fwd * d + right * (x_ndc * th * aspect * d) + up * (y_ndc * th * d);
+        let feet = middle - Vec3::Y * 0.9;
+        let to_eye = eye - feet;
+        let yaw = to_eye.x.atan2(to_eye.z).to_degrees() + spin;
+        world.set_place(
+            h.entity,
+            Place::new(feet.x, feet.y, feet.z).with_yaw_deg(yaw),
+        )?;
+        world.set_place(
+            h.pedestal,
+            Place::new(feet.x, feet.y, feet.z).with_yaw_deg(yaw),
+        )?;
+        let clip = if heroic { "heroic" } else { "idle" };
+        if h.clip != clip {
+            h.clip = clip;
+            world.play_animation(h.entity, clip)?;
+        }
+        // Its place on the screen: the box from the pedestal to the head.
+        let vp = cam.view_projection(aspect);
+        let to_screen = |p: Vec3| {
+            let c = vp * p.extend(1.0);
+            let n = c.truncate() / c.w.max(1e-4);
+            pos2(
+                screen.left() + (n.x * 0.5 + 0.5) * screen.width(),
+                screen.top() + (0.5 - n.y * 0.5) * screen.height(),
+            )
+        };
+        let a = to_screen(feet - Vec3::Y * 0.3);
+        let b = to_screen(feet + Vec3::Y * 1.95);
+        let half = (a.y - b.y).abs() * 0.22;
+        self.hero_rect = Some(Rect::from_min_max(
+            pos2(a.x.min(b.x) - half, b.y.min(a.y)),
+            pos2(a.x.max(b.x) + half, a.y.max(b.y)),
+        ));
+        Ok(())
     }
 
     /// Sets the scene once: golden hour, the moons, sound levels.
@@ -198,7 +387,7 @@ impl Title {
         let turn = if self.still {
             0.0
         } else {
-            self.clock * TAU / ORBIT_TIME
+            self.orbit * TAU / ORBIT_TIME
         };
         let a = (0.8 + turn) as f64;
         let p = c + DVec2::new(a.cos(), a.sin()) * r;
@@ -260,6 +449,7 @@ impl Title {
         for t in self.taxis.drain(..) {
             world.despawn(t.entity);
         }
+        self.drop_hero(world);
     }
 
     fn play(&self, world: &mut World, s: Sfx) {
@@ -290,6 +480,10 @@ impl Title {
         let dt = self.last_time.map_or(0.0, |t| (now - t).clamp(0.0, 0.1));
         self.last_time = Some(now);
         self.clock += dt;
+        // The camera holds still while you make your hero.
+        if self.creator.is_none() {
+            self.orbit += dt;
+        }
         self.frames += 1;
         if self.frames == 1 {
             install_fonts(frame.ui.ctx());
@@ -309,6 +503,9 @@ impl Title {
         }
         let (eye, yaw, pitch) = self.camera(town, solids);
         world.look_first_person(eye, yaw, pitch);
+        let screen = frame.ui.ctx().screen_rect();
+        let aspect = screen.width() / screen.height().max(1.0);
+        self.place_hero(world, aspect, screen)?;
 
         let mut sfx = Vec::new();
         let mut choice = None;
@@ -378,6 +575,9 @@ impl Title {
         let t = if self.still { 30.0 } else { self.clock };
         // Phone-narrow to wide: the column takes the left of the screen.
         let left = (w * 0.06).clamp(16.0, 120.0);
+        if self.creator.is_some() {
+            return self.creator_screen(ctx, left, sfx);
+        }
         let em = (w * 0.085).min(h * 0.15).max(40.0);
         let logo_top = (h * 0.07).max(16.0);
         egui::CentralPanel::default()
@@ -507,9 +707,202 @@ impl Title {
                     }
                 }
             });
+        // Your hero: drag to turn them, click to change their looks.
+        if let (Some(rect), Some(cat)) = (self.hero_rect, self.catalog.clone()) {
+            if self.hero.is_some() && self.panel == Panel::None {
+                egui::Area::new(egui::Id::new("title hero"))
+                    .fixed_pos(rect.min)
+                    .order(egui::Order::Background)
+                    .show(ctx, |ui| {
+                        let r = ui.interact(
+                            rect,
+                            egui::Id::new("title hero hit"),
+                            Sense::click_and_drag(),
+                        );
+                        self.spin += r.drag_delta().x * 0.5;
+                        if r.clicked() {
+                            sfx.push(Sfx::Click);
+                            let look = self.current_look(&cat);
+                            self.creator = Some((Creator::new(cat.clone(), &look), true));
+                        }
+                        let tip = if r.hovered() {
+                            CREAM
+                        } else {
+                            with_alpha(CREAM, 0.75)
+                        };
+                        shadow_text(
+                            ui.painter(),
+                            pos2(rect.center().x, rect.bottom() + 6.0),
+                            Align2::CENTER_TOP,
+                            "Click your hero to change their looks",
+                            FontId::proportional(15.0),
+                            tip,
+                        );
+                        r.on_hover_cursor(egui::CursorIcon::PointingHand);
+                    });
+            }
+        }
         whats_new_modal(ctx, &mut self.whats_new);
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.panel = Panel::None;
+        }
+        choice
+    }
+
+    /// The creator: a tall card on the left, your hero big on the right.
+    fn creator_screen(
+        &mut self,
+        ctx: &egui::Context,
+        left: f32,
+        sfx: &mut Vec<Sfx>,
+    ) -> Option<Choice> {
+        let mut choice = None;
+        let screen = ctx.screen_rect();
+        let (w, h) = (screen.width(), screen.height());
+        let top = (h * 0.03).max(10.0);
+        let card_w = (w * 0.4).clamp(300.0, 470.0);
+        let card_h = h - 2.0 * top;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ctx, |ui| wash(ui.painter(), screen));
+        let (creator, existing) = self.creator.as_mut()?;
+        let existing = *existing;
+        let mut close = false;
+        egui::Area::new(egui::Id::new("creator card"))
+            .fixed_pos(pos2(left.min(40.0), top))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                comic_card_style(ui);
+                egui::Frame::new()
+                    .fill(CREAM)
+                    .stroke(Stroke::new(3.0_f32, NAVY))
+                    .corner_radius(14.0)
+                    .inner_margin(egui::Margin::same(18))
+                    .show(ui, |ui| {
+                        ui.set_width(card_w - 36.0);
+                        ui.set_height(card_h - 36.0);
+                        ui.label(
+                            egui::RichText::new(if existing {
+                                "Your hero's looks"
+                            } else {
+                                "Make your hero"
+                            })
+                            .font(FontId::new(28.0, ui_family()))
+                            .color(HERO_RED),
+                        );
+                        if !existing {
+                            ui.horizontal(|ui| {
+                                ui.label("Name");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.new_name)
+                                        .font(FontId::proportional(18.0))
+                                        .desired_width(f32::INFINITY),
+                                );
+                            });
+                        }
+                        creator.tabs(ui);
+                        ui.separator();
+                        let footer = 112.0;
+                        egui::ScrollArea::vertical()
+                            .max_height((ui.available_height() - footer).max(80.0))
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                creator.ui(ui);
+                            });
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            if ui
+                                .button("Roll the dice")
+                                .on_hover_text("A whole new hero")
+                                .clicked()
+                            {
+                                sfx.push(Sfx::Click);
+                                creator.roll(surprise_seed() as u32);
+                            }
+                            ui.add_space(8.0);
+                            ui.selectable_value(&mut creator.heroic, false, "At ease");
+                            ui.selectable_value(&mut creator.heroic, true, "Heroic");
+                        });
+                        ui.horizontal(|ui| {
+                            if ui.button("Back").clicked() {
+                                sfx.push(Sfx::Click);
+                                close = true;
+                            }
+                            let name = clean_name(&self.new_name);
+                            let seed = self.new_seed.trim().parse::<u64>().ok();
+                            if existing {
+                                if ui.button("Keep these looks").clicked() {
+                                    sfx.push(Sfx::Click);
+                                    self.profile.look = Some(creator.look());
+                                    self.profile.save();
+                                    close = true;
+                                }
+                            } else {
+                                let ok = !name.is_empty() && seed.is_some();
+                                let go = ui.add_enabled(
+                                    ok,
+                                    egui::Button::new(
+                                        egui::RichText::new("Start the adventure!").color(CREAM),
+                                    )
+                                    .fill(HERO_RED),
+                                );
+                                if go.clicked() {
+                                    if let Some(seed) = seed {
+                                        choice = Some(Choice::NewHero {
+                                            name,
+                                            seed,
+                                            look: Some(Box::new(creator.look())),
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                    });
+            });
+        // Drag the hero round; a note while their new clothes are made.
+        if let Some(rect) = self.hero_rect {
+            egui::Area::new(egui::Id::new("creator hero"))
+                .fixed_pos(rect.min)
+                .order(egui::Order::Background)
+                .show(ctx, |ui| {
+                    let r = ui.interact(rect, egui::Id::new("creator hero hit"), Sense::drag());
+                    creator.spin += r.drag_delta().x * 0.5;
+                    shadow_text(
+                        ui.painter(),
+                        pos2(rect.center().x, rect.bottom() + 6.0),
+                        Align2::CENTER_TOP,
+                        "Drag to turn",
+                        FontId::proportional(15.0),
+                        with_alpha(CREAM, 0.8),
+                    );
+                    r.on_hover_cursor(egui::CursorIcon::Grab);
+                });
+        }
+        let ready = self
+            .hero
+            .as_ref()
+            .is_some_and(|h| Some(h.key) == Some(crate::looks::key(&creator.look())));
+        if !ready {
+            let at = self.hero_rect.map_or(pos2(w * 0.68, h * 0.5), |r| {
+                pos2(r.center().x, r.top() - 10.0)
+            });
+            egui::Area::new(egui::Id::new("creator tailoring"))
+                .fixed_pos(pos2(0.0, 0.0))
+                .order(egui::Order::Foreground)
+                .interactable(false)
+                .show(ctx, |ui| {
+                    shadow_text(
+                        ui.painter(),
+                        at,
+                        Align2::CENTER_BOTTOM,
+                        "The tailor is at work...",
+                        FontId::new(20.0, ui_family()),
+                        GOLD,
+                    );
+                });
+        }
+        if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.creator = None;
         }
         choice
     }
@@ -521,31 +914,7 @@ impl Title {
             .fixed_pos(pos)
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
-                ui.style_mut().visuals = egui::Visuals::light();
-                ui.visuals_mut().override_text_color = Some(NAVY);
-                ui.style_mut().text_styles.insert(
-                    egui::TextStyle::Body,
-                    FontId::proportional(17.0),
-                );
-                ui.style_mut().text_styles.insert(
-                    egui::TextStyle::Button,
-                    FontId::new(18.0, ui_family()),
-                );
-                ui.style_mut().spacing.button_padding = vec2(14.0, 6.0);
-                // Gold buttons with a navy rim, like the big ones.
-                let w = &mut ui.visuals_mut().widgets;
-                for (state, fill) in [
-                    (&mut w.inactive, GOLD),
-                    (&mut w.hovered, Color32::from_rgb(255, 220, 110)),
-                    (&mut w.active, Color32::from_rgb(240, 170, 40)),
-                ] {
-                    state.weak_bg_fill = fill;
-                    state.bg_fill = fill;
-                    state.bg_stroke = Stroke::new(2.0_f32, NAVY);
-                    state.corner_radius = CornerRadius::same(10);
-                    state.fg_stroke = Stroke::new(2.0_f32, NAVY);
-                }
-                ui.style_mut().spacing.item_spacing = vec2(10.0, 10.0);
+                comic_card_style(ui);
                 egui::Frame::new()
                     .fill(CREAM)
                     .stroke(Stroke::new(3.0_f32, NAVY))
@@ -588,13 +957,31 @@ impl Title {
                                 ui.add_space(4.0);
                                 let name = clean_name(&self.new_name);
                                 let ok = seed.is_some() && !name.is_empty();
-                                if ui
-                                    .add_enabled(ok, egui::Button::new("Start the adventure"))
-                                    .clicked()
-                                {
-                                    if let Some(seed) = seed {
-                                        choice = Some(Choice::NewHero { name, seed });
+                                if self.no_people {
+                                    // No Actors packs: no creator either.
+                                    if ui
+                                        .add_enabled(ok, egui::Button::new("Start the adventure"))
+                                        .clicked()
+                                    {
+                                        if let Some(seed) = seed {
+                                            choice = Some(Choice::NewHero { name, seed, look: None });
+                                        }
                                     }
+                                } else if let Some(cat) = self.catalog.clone() {
+                                    if ui
+                                        .add_enabled(ok, egui::Button::new("Make your hero"))
+                                        .clicked()
+                                    {
+                                        sfx.push(Sfx::Click);
+                                        let look = Creator::random_look(
+                                            &cat,
+                                            crate::people::name_seed(&name) ^ surprise_seed() as u32,
+                                        );
+                                        self.creator = Some((Creator::new(cat, &look), false));
+                                    }
+                                } else {
+                                    ui.add_enabled(false, egui::Button::new("Make your hero"));
+                                    ui.label("The wardrobe is being unpacked...");
                                 }
                             }
                             Panel::Friends => {
@@ -657,6 +1044,55 @@ impl Title {
             });
         choice
     }
+}
+
+/// The cream comic card's look: navy text, gold buttons with a navy rim.
+fn comic_card_style(ui: &mut egui::Ui) {
+    ui.style_mut().visuals = egui::Visuals::light();
+    ui.visuals_mut().override_text_color = Some(NAVY);
+    ui.style_mut()
+        .text_styles
+        .insert(egui::TextStyle::Body, FontId::proportional(17.0));
+    ui.style_mut()
+        .text_styles
+        .insert(egui::TextStyle::Button, FontId::new(18.0, ui_family()));
+    ui.style_mut().spacing.button_padding = vec2(14.0, 6.0);
+    // Gold buttons with a navy rim, like the big ones.
+    let w = &mut ui.visuals_mut().widgets;
+    for (state, fill) in [
+        (&mut w.inactive, GOLD),
+        (&mut w.hovered, Color32::from_rgb(255, 220, 110)),
+        (&mut w.active, Color32::from_rgb(240, 170, 40)),
+    ] {
+        state.weak_bg_fill = fill;
+        state.bg_fill = fill;
+        state.bg_stroke = Stroke::new(2.0_f32, NAVY);
+        state.corner_radius = CornerRadius::same(10);
+        state.fg_stroke = Stroke::new(2.0_f32, NAVY);
+    }
+    ui.style_mut().spacing.item_spacing = vec2(10.0, 10.0);
+}
+
+/// The gold pedestal the hero stands on in the title's foreground.
+fn pedestal_mesh() -> EngineResult<engine::mesh::Mesh> {
+    let mut m = engine::mesh::Mesh::cylinder(
+        Vec3::new(0.0, -0.06, 0.0),
+        Vec3::Y,
+        0.48,
+        0.12,
+        48,
+        Color::rgb(222, 170, 60),
+    )?;
+    let rim = engine::mesh::Mesh::cylinder(
+        Vec3::new(0.0, -0.2, 0.0),
+        Vec3::Y,
+        0.4,
+        0.16,
+        48,
+        Color::rgb(36, 40, 84),
+    )?;
+    m.append_translated(&rim, Vec3::ZERO)?;
+    Ok(m)
 }
 
 /// Room codes are typed in any case; addresses stay as typed.
