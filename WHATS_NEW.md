@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.032 (2026-11-08)
+
+- Your wrist radio crackles: muggings, robberies, mutant rampages and lab breakouts break out
+  around town. The radio says how far and which way ("at 3 o'clock"), and a beam of light
+  stands over each one.
+- Stop them for a karma bonus. Leave them too long and the crooks get away.
+
 ## 0.031 (2026-11-08)
 
 - The mad scientist has moved in: every town has one quarter the villains hold, with his

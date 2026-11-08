@@ -48,6 +48,7 @@ fn is_world_news(m: &ToClient) -> bool {
             | ToClient::CarsWrecked { .. }
             | ToClient::CarsCleared { .. }
             | ToClient::Traffic { .. }
+            | ToClient::Incident { .. }
     )
 }
 
@@ -62,6 +63,10 @@ impl Session {
         let mut host = Host::with_sim(Sim::for_town(seed, town));
         host.sim.place_starter_crates();
         host.sim.place_first_fight();
+        // Screenshots: `HW_INCIDENT=1` starts the first incident at once.
+        if std::env::var("HW_INCIDENT").is_ok() {
+            host.sim.incidents.first_after = 0.0;
+        }
         if open {
             let addr = host.listen(("0.0.0.0", hw_net::DEFAULT_PORT))?;
             println!("Hosting on {addr}");

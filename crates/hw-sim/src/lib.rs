@@ -12,6 +12,7 @@ pub mod collision;
 pub mod combat;
 pub mod destruction;
 pub mod host;
+pub mod incidents;
 pub mod nav;
 pub mod physics;
 pub mod predict;
@@ -384,6 +385,8 @@ pub struct Sim {
     pub taxis: taxi::Taxis,
     /// The moving traffic and the cars wrecked in it (see [`wrecks`]).
     pub wrecks: wrecks::Wrecks,
+    /// Trouble that comes to the heroes (see [`incidents`]).
+    pub incidents: incidents::Incidents,
 }
 
 impl Sim {
@@ -407,6 +410,7 @@ impl Sim {
         sim.street = props::PropDamage::new(town.world.clone());
         sim.taxis = taxi::Taxis::new(town.world.clone());
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.world.clone()));
+        sim.incidents = incidents::Incidents::new(town.world.clone());
         let solids = sim.solids();
         for c in quarter::corners(&town.world) {
             let y = solids.ground_at(c.at).max(GROUND_Y);
@@ -449,6 +453,7 @@ impl Sim {
             street: props::PropDamage::default(),
             taxis: taxi::Taxis::default(),
             wrecks: wrecks::Wrecks::default(),
+            incidents: incidents::Incidents::default(),
         }
     }
 
@@ -476,6 +481,7 @@ impl Sim {
     pub fn step(&mut self) {
         self.schedule.run(&mut self.world);
         combat::step(&mut self.world, self.tick);
+        self.incidents.step(&mut self.world, self.tick);
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
         if let Some(t) = self.wrecks.traffic.as_mut() {
@@ -595,6 +601,7 @@ impl Sim {
     pub fn take_news(&mut self) -> Vec<ToClient> {
         let mut news = self.street.take_news();
         news.extend(self.wrecks.take_news());
+        news.extend(self.incidents.take_news());
         news.extend(self.damage.take_news());
         news
     }
@@ -783,15 +790,7 @@ impl Sim {
     pub fn add_fight_spot(&mut self, at: DVec3, facing: DVec2) -> usize {
         let i = {
             let mut f = self.world.resource_mut::<Fights>();
-            f.spots.push(Spot {
-                center: at,
-                facing: facing.normalize_or(DVec2::X),
-                groups: 0,
-                members: 0,
-                respawn_at: None,
-                extra: 0,
-                wake: None,
-            });
+            f.spots.push(Spot::corner(at, facing));
             f.spots.len() - 1
         };
         let heroes = self.world.query::<&Hero>().iter(&self.world).count();
@@ -805,13 +804,10 @@ impl Sim {
     pub fn add_villain_corner(&mut self, at: DVec3, facing: DVec2, extra: u8, wake: f64) -> usize {
         let mut f = self.world.resource_mut::<Fights>();
         f.spots.push(Spot {
-            center: at,
-            facing: facing.normalize_or(DVec2::X),
-            groups: 0,
-            members: 0,
             respawn_at: Some(0),
             extra,
             wake: Some(wake),
+            ..Spot::corner(at, facing)
         });
         f.spots.len() - 1
     }

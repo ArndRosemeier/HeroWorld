@@ -491,6 +491,29 @@ pub struct Spot {
     /// within this many metres, and leaves (to come back fresh) once
     /// nobody is within [`SLEEP`].
     pub wake: Option<f64>,
+    /// An incident's group: this many (else by the number of heroes), of
+    /// this kind only (else brutes and technicians), and never refilled.
+    pub size: Option<u32>,
+    pub only: Option<EnemyKind>,
+    pub once: bool,
+}
+
+impl Spot {
+    /// A street corner whose group stands there at once and comes back.
+    pub fn corner(center: DVec3, facing: DVec2) -> Self {
+        Self {
+            center,
+            facing: facing.normalize_or(DVec2::X),
+            groups: 0,
+            members: 0,
+            respawn_at: None,
+            extra: 0,
+            wake: None,
+            size: None,
+            only: None,
+            once: false,
+        }
+    }
 }
 
 /// Karma (and leaning) a hero earned this tick.
@@ -621,7 +644,9 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
         (f.seed, f.spots[spot_index].clone())
     };
     let solids = world.resource::<Solids>().0.clone();
-    let size = group_size(heroes) + spot.extra.min(1) as u32;
+    let size = spot
+        .size
+        .unwrap_or(group_size(heroes) + spot.extra.min(1) as u32);
     let level = world
         .resource::<Fights>()
         .team_level
@@ -634,6 +659,7 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
     let side = spot.facing.perp();
     let mut n = 0;
     for (k, (kind, level)) in roster(gseed, size, level).into_iter().enumerate() {
+        let kind = spot.only.unwrap_or(kind);
         // Brutes in a loose front row, technicians a few metres behind.
         let row = if kind == EnemyKind::Brute { 1.5 } else { -3.5 };
         let across = (k as f64 - (size as f64 - 1.0) * 0.5) * 1.6;
@@ -963,7 +989,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
                 let mut f = world.resource_mut::<Fights>();
                 let s = &mut f.spots[en.spot];
                 s.members = s.members.saturating_sub(1);
-                if s.members == 0 {
+                if s.members == 0 && !s.once {
                     s.respawn_at = Some(tick + ticks(RESPAWN_SECONDS));
                 }
             }

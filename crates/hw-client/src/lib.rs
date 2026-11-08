@@ -17,6 +17,7 @@ pub mod poses;
 pub mod powersview;
 pub mod profile;
 pub mod propview;
+pub mod radioview;
 pub mod title;
 pub mod townmesh;
 pub mod trafficview;

@@ -265,6 +265,7 @@ fn main() -> EngineResult<()> {
     }
     // The fight: targets, effects, the screen.
     let mut fight = FightView::new();
+    let mut radio = hw_client::radioview::Radio::default();
     // What was drawn last frame (for targeting), and a power key pressed
     // but not yet sent with a tick.
     let mut drawn: Vec<hw_net::EntityState> = Vec::new();
@@ -676,6 +677,7 @@ fn main() -> EngineResult<()> {
                     traffic = hw_sim::traffic::Traffic::new(generated.world.clone());
                     stands = hw_sim::taxi::stands(&generated.world);
                     traffic_view.clear(world);
+                    radio.clear(world);
                     crowd.clear(world);
                     set_town_stream(world, &generated)?;
                     extras = spawn_extras(world, &generated)?;
@@ -1050,6 +1052,22 @@ fn main() -> EngineResult<()> {
             let mut news = session.take_news();
             // Broken and mended street props: their places, and lamps on them.
             news.retain(|m| match m {
+                hw_net::ToClient::Incident { id, at, .. } => {
+                    radio.hear(world, m);
+                    // `HW_VIEW=incident`: the camera goes to the first call.
+                    if view == "incident" && radio.calls.len() == 1 && radio.calls.contains_key(id)
+                    {
+                        let c = Vec3::from_array(*at);
+                        let p = c + Vec3::new(90.0, 70.0, 90.0);
+                        let d = c - p;
+                        let yaw = d.x.atan2(d.z).to_degrees();
+                        let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                            .atan()
+                            .to_degrees();
+                        fly = FlyCamera::new((p.x, p.y, p.z), yaw, pitch + 20.0);
+                    }
+                    false
+                }
                 hw_net::ToClient::PropsBroken { props, .. } => {
                     for &(i, fell) in props {
                         if let Some(v) = extras.props.as_mut() {
@@ -1504,6 +1522,14 @@ fn main() -> EngineResult<()> {
                     Some(&my_sheet),
                 );
                 let fighting = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
+                radio.update(frame.dt);
+                let cam = world.camera();
+                radio.panel(
+                    frame.ui.ctx(),
+                    cam.eye(),
+                    cam.target() - cam.eye(),
+                    fighting,
+                );
                 for a in powers.ui(frame.ui.ctx(), &my_sheet, fighting, creating) {
                     match a {
                         PowerAction::Buy(p, theme) => session.buy(p, theme),

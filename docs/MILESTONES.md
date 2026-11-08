@@ -318,8 +318,20 @@ strength follows `Dystopia::depth`, fading above 130 m), two street lamps in thr
 and the rest flicker green, and shop neon is broken. Ambient corners (`hw-sim/src/quarter.rs`):
 groups two levels above the team on its street corners, three at the tower's gate, standing
 there only while a hero is within 220 m and going home (to come back fresh) once nobody is
-within 420 m. Next: incidents and dispatch, then rescues. Not yet: rooftop groups, a
-transition band with graffiti and barricades.
+within 420 m. Not yet: rooftop groups, a transition band with graffiti and barricades.
+
+**Status (0.032):** incidents and the wrist radio. `hw-sim/src/incidents.rs` starts muggings
+(two brutes), robberies at shop fronts (four, +1 level), mutant rampages (three brutes, +2) and
+lab breakouts at the mad scientist's labs (five technicians, +2) 150 to 800 m from a hero:
+two to four open at once (one more per extra hero), a minute apart, the first 20 s in, each
+chosen from the world seed and a running count. Beating the group resolves it (karma for every
+hero within 120 m: the group's worth again, up to 2.5 times for a breakout); one nobody comes
+within 60 m of in four minutes ends and its villains leave, as does one the heroes walk away
+from. Clients hear of each through `ToClient::Incident` (protocol 15; joiners get the open ones).
+The client's wrist radio (`radioview.rs`, top left) lists the calls with distance, a clock
+direction and con colour, and a beam of light stands over each. `HW_INCIDENT=1` starts the first
+at once; `HW_VIEW=incident` flies the camera to it. Next: rescues (car crashes with people
+trapped, fires), the Hero Signal, map markers.
 
 ### M10. Traffic, taxis and the underground (in progress)
 

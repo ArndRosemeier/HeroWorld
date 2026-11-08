@@ -656,6 +656,16 @@ pub enum ToClient {
     CarsCleared {
         cars: Vec<u64>,
     },
+    /// An incident somewhere in town (for the wrist radio): its number,
+    /// kind (see `hw_sim::incidents::IncidentKind`), where, the villains'
+    /// level, and its state: 0 open, 1 resolved, 2 timed out (gone).
+    Incident {
+        id: u32,
+        kind: u8,
+        at: [f32; 3],
+        level: u8,
+        state: u8,
+    },
     /// Something happened in a fight nearby.
     Fx(Fx),
     /// Your hero's progress changed (karma, level, powers): keep it in
@@ -712,6 +722,7 @@ impl ToClient {
             ToClient::CarsWrecked { cars, .. } => 1 + 1 + 21 * cars.len().min(255),
             ToClient::Traffic { cars, .. } => 8 + 4 + 2 + 1 + 20 * cars.len().min(255),
             ToClient::CarsCleared { cars } => 1 + 8 * cars.len().min(255),
+            ToClient::Incident { .. } => 4 + 1 + 12 + 1 + 1,
             ToClient::Fx(_) => FX_BYTES,
             ToClient::Sheet(s) => s.wire_size(),
         }
@@ -800,6 +811,19 @@ impl ToClient {
                 for id in &cars[..n] {
                     w.u64(*id);
                 }
+            }
+            ToClient::Incident {
+                id,
+                kind,
+                at,
+                level,
+                state,
+            } => {
+                w.u8(15).u32(*id).u8(*kind);
+                for v in at {
+                    w.f32(*v);
+                }
+                w.u8(*level).u8(*state);
             }
             ToClient::Fx(fx) => {
                 w.u8(10)
@@ -946,6 +970,13 @@ impl ToClient {
                 })
             }
             11 => ToClient::Sheet(Sheet::read(r)?),
+            15 => ToClient::Incident {
+                id: r.u32()?,
+                kind: r.u8()?,
+                at: [r.f32()?, r.f32()?, r.f32()?],
+                level: r.u8()?,
+                state: r.u8()?,
+            },
             _ => return Err(WireError),
         })
     }
@@ -1478,6 +1509,16 @@ mod tests {
                     },
                 ),
                 (8, ToClient::CarsCleared { cars: vec![65538] }),
+                (
+                    9,
+                    ToClient::Incident {
+                        id: 7,
+                        kind: 2,
+                        at: [1.0, 2.0, -3.5],
+                        level: 4,
+                        state: 1,
+                    },
+                ),
                 (
                     4,
                     ToClient::Impact {
