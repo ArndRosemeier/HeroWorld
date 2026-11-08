@@ -1,5 +1,6 @@
 //! The town's landmarks: the Aether Spire on its civic plaza near the old
-//! core, and a lighthouse on the shore of a seaside town.
+//! core, a lighthouse on the shore of a seaside town, and the mad
+//! scientist's Tesla tower in his quarter.
 //!
 //! Each stands on a round paved plinth cleared of buildings, in a spot no
 //! road crosses. The plinth's top is level; where the ground falls away its
@@ -19,6 +20,9 @@ pub enum LandmarkKind {
     AetherSpire,
     /// A striped lighthouse on the shore.
     Lighthouse,
+    /// The mad scientist's tower: an iron lattice under a crackling dome,
+    /// in the middle of his quarter.
+    TeslaTower,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -77,6 +81,29 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
                 ..landmark_at(w, l.0, plaza)
             });
             break;
+        }
+    }
+    if let Some(d) = &w.town.dystopia {
+        // As near the quarter's middle as a clear spot allows, inside it.
+        let reach = (d.radius * 0.7).min(500.0);
+        let tall = (18.0 * (hw_core::det::log10(pop) - 1.0)).clamp(40.0, 75.0);
+        for plaza in [15.0, 12.0, 9.0] {
+            let spot = best_spot(w, &roads, d.centre, reach, 6.0, plaza, 4.0, |p| {
+                if d.contains(p) {
+                    -p.distance(d.centre)
+                } else {
+                    f64::NEG_INFINITY
+                }
+            });
+            if let Some((p, _)) = spot {
+                out.push(Landmark {
+                    kind: LandmarkKind::TeslaTower,
+                    height: tall,
+                    dir: (core - p).normalize_or(DVec2::Y),
+                    ..landmark_at(w, p, plaza)
+                });
+                break;
+            }
         }
     }
     if w.coastal() {
@@ -256,6 +283,16 @@ mod tests {
                 .iter()
                 .any(|l| l.kind == LandmarkKind::Lighthouse);
             assert_eq!(lh, w.coastal(), "seed {s}: lighthouse {lh}");
+            let d = w.town.dystopia.as_ref().expect("a villain quarter");
+            let tesla = w
+                .landmarks
+                .iter()
+                .find(|l| l.kind == LandmarkKind::TeslaTower)
+                .expect("a Tesla tower");
+            assert!(
+                d.contains(tesla.pos),
+                "seed {s}: the tower outside the quarter"
+            );
         }
     }
 }

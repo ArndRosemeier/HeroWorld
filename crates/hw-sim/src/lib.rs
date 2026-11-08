@@ -17,6 +17,7 @@ pub mod physics;
 pub mod predict;
 pub mod progress;
 pub mod props;
+pub mod quarter;
 pub mod save;
 pub mod taxi;
 pub mod traffic;
@@ -406,6 +407,16 @@ impl Sim {
         sim.street = props::PropDamage::new(town.world.clone());
         sim.taxis = taxi::Taxis::new(town.world.clone());
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.world.clone()));
+        let solids = sim.solids();
+        for c in quarter::corners(&town.world) {
+            let y = solids.ground_at(c.at).max(GROUND_Y);
+            sim.add_villain_corner(
+                DVec3::new(c.at.x, y, c.at.y),
+                c.facing,
+                c.extra,
+                quarter::WAKE,
+            );
+        }
         sim
     }
 
@@ -778,12 +789,31 @@ impl Sim {
                 groups: 0,
                 members: 0,
                 respawn_at: None,
+                extra: 0,
+                wake: None,
             });
             f.spots.len() - 1
         };
         let heroes = self.world.query::<&Hero>().iter(&self.world).count();
         combat::spawn_group(&mut self.world, self.tick, i, heroes.max(1));
         i
+    }
+
+    /// An ambient corner (in the mad scientist's quarter): a group `extra`
+    /// levels above the team stands there while a hero is within `wake` m.
+    /// Returns the spot's index.
+    pub fn add_villain_corner(&mut self, at: DVec3, facing: DVec2, extra: u8, wake: f64) -> usize {
+        let mut f = self.world.resource_mut::<Fights>();
+        f.spots.push(Spot {
+            center: at,
+            facing: facing.normalize_or(DVec2::X),
+            groups: 0,
+            members: 0,
+            respawn_at: Some(0),
+            extra,
+            wake: Some(wake),
+        });
+        f.spots.len() - 1
     }
 
     /// The first fight: a group of minions on the street, the other way

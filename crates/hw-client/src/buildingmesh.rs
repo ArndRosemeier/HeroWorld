@@ -2041,15 +2041,48 @@ fn sign(c: &mut Ctx) {
         side: Side::Front,
         o,
     };
-    c.surf(Surf::Glow);
-    wall_box(
-        c,
-        &w,
-        (l - 0.15, l + 0.15),
-        (y0, y1),
-        (0.36, 1.66),
-        col(look.accent),
+    // In the villains' quarter the neon is broken: a dead, grimy tube with
+    // only a stub of it still alight.
+    let broken = matches!(
+        plan.site.usage,
+        hw_gen::building::BuildingUse::Tenement | hw_gen::building::BuildingUse::Lab
     );
+    if broken {
+        let lit = y0 + (y1 - y0) * 0.22;
+        let dead = [
+            look.accent[0] / 4 + 30,
+            look.accent[1] / 4 + 30,
+            look.accent[2] / 4 + 30,
+        ];
+        c.surf(Surf::Plain);
+        wall_box(
+            c,
+            &w,
+            (l - 0.15, l + 0.15),
+            (lit, y1),
+            (0.36, 1.66),
+            col(dead),
+        );
+        c.surf(Surf::Glow);
+        wall_box(
+            c,
+            &w,
+            (l - 0.15, l + 0.15),
+            (y0, lit),
+            (0.36, 1.66),
+            col(look.accent),
+        );
+    } else {
+        c.surf(Surf::Glow);
+        wall_box(
+            c,
+            &w,
+            (l - 0.15, l + 0.15),
+            (y0, y1),
+            (0.36, 1.66),
+            col(look.accent),
+        );
+    }
     c.surf(Surf::Metal);
     wall_box(
         c,

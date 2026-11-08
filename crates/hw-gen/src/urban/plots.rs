@@ -16,7 +16,7 @@ use super::graph::Face;
 use super::growth::{simplify, CentreKind, Era};
 use super::roads::RoadClass;
 use super::streets::{piece_seed, PieceStreets, StreetStyle};
-use super::{Piece, Town, OUTLINE};
+use super::{inner_point, Piece, Town, OUTLINE};
 use crate::building::{BuildingSite, BuildingUse, CORE_SIZE, CORRIDOR_WIDTH};
 use crate::city::{DistrictKind, BUILDING_GAP};
 use crate::style::{Quarter, Region, Vernacular};
@@ -68,6 +68,7 @@ pub fn road_reach(class: RoadClass) -> f64 {
 pub fn plan_buildings(
     seed: Seed,
     town: &Town,
+    index: usize,
     piece: &Piece,
     streets: &PieceStreets,
 ) -> Vec<BuildingSite> {
@@ -78,8 +79,11 @@ pub fn plan_buildings(
     let seed = piece_seed(seed, piece).child("buildings");
     let mut rng = seed.rng();
     let p = &town.params;
-    let centre = super::inner_point(&piece.face.pts).unwrap_or(piece.face.pts[0]);
-    let dystopia = rng.chance(p.dystopia);
+    let centre = inner_point(&piece.face.pts).unwrap_or(piece.face.pts[0]);
+    // The draw that once scattered dystopia anywhere keeps the rest of the
+    // sequence; the villains now hold one quarter, block by block.
+    let _ = rng.chance(p.dystopia);
+    let quarter = town.dystopia.as_ref().filter(|d| d.pieces.contains(&index));
     let business = town
         .growth
         .centres
@@ -97,7 +101,7 @@ pub fn plan_buildings(
     let prog = programme(
         streets.style,
         piece.era,
-        dystopia,
+        false,
         business < s * 0.12 + 150.0,
         core < s * 0.15 + 120.0,
         p.population,
@@ -109,6 +113,18 @@ pub fn plan_buildings(
         .then(|| quarter_of(streets.style, &prog))
         .flatten()
         .map(|quarter| Vernacular { region, quarter });
+    // The villains' blocks (this programme draws nothing from `rng`).
+    let villains = quarter.map(|_| {
+        programme(
+            streets.style,
+            piece.era,
+            true,
+            false,
+            false,
+            p.population,
+            &mut rng,
+        )
+    });
     let mut main = main_roads(town, &piece.face);
     if piece.era == Era::Old {
         // Even the high street of an old town is narrow.
@@ -120,7 +136,13 @@ pub fn plan_buildings(
     let mut out = Vec::new();
     for (k, block) in streets.blocks.iter().enumerate() {
         let bseed = seed.child(k as u32);
-        fill_block(block, &main, side, &prog, vernacular, bseed, &mut out);
+        let held = quarter
+            .zip(villains.as_ref())
+            .filter(|(d, _)| inner_point(block).is_some_and(|c| d.contains(c)));
+        match held {
+            Some((_, v)) => fill_block(block, &main, side, v, None, bseed, &mut out),
+            None => fill_block(block, &main, side, &prog, vernacular, bseed, &mut out),
+        }
     }
     out
 }
@@ -553,9 +575,9 @@ mod tests {
             let p = TownParams::sample(Seed(s), 40_000.0 + s as f64 * 20_000.0);
             let town = Town::generate(Seed(s), p);
             let mut total = 0;
-            for pc in &town.pieces {
+            for (i, pc) in town.pieces.iter().enumerate() {
                 let streets = plan_piece(Seed(s), &town, pc);
-                let b = plan_buildings(Seed(s), &town, pc, &streets);
+                let b = plan_buildings(Seed(s), &town, i, pc, &streets);
                 for site in &b {
                     assert!(site.size.x >= MIN_WIDTH - 1e-9 && site.size.y >= MIN_DEPTH - 1e-9);
                     // Every building stands on dry land inside the piece.
@@ -576,7 +598,7 @@ mod tests {
                 uses.extend(b.iter().map(|x| format!("{:?}", x.usage)));
                 total += b.len();
                 // Same seed, same buildings.
-                assert_eq!(b, plan_buildings(Seed(s), &town, pc, &streets));
+                assert_eq!(b, plan_buildings(Seed(s), &town, i, pc, &streets));
             }
             assert!(total > 100, "seed {s}: only {total} buildings");
         }

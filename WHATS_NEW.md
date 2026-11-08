@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.031 (2026-11-08)
+
+- The mad scientist has moved in: every town has one quarter the villains hold, with his
+  crackling Tesla tower in the middle. The air there is thick and green, the street lamps are
+  dead or flickering and the neon is broken.
+- His minions hang about on its street corners and at his gate, and they are tougher than
+  anything elsewhere in town.
+
 ## 0.030 (2026-11-08)
 
 - Junctions have traffic lights now: cars wait at red, take turns, give way to whoever got

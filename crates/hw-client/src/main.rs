@@ -386,13 +386,13 @@ fn main() -> EngineResult<()> {
             let p = c + DVec2::new(-30.0, 30.0);
             FlyCamera::new((p.x as f32, h as f32 + 32.0, p.y as f32), 135.0, -42.0)
         }
-        "spire" | "lighthouse" => {
+        "spire" | "lighthouse" | "tesla" => {
             // Looking up at a landmark from across its plaza.
             use hw_gen::urban::landmarks::LandmarkKind;
-            let kind = if view == "spire" {
-                LandmarkKind::AetherSpire
-            } else {
-                LandmarkKind::Lighthouse
+            let kind = match view.as_str() {
+                "spire" => LandmarkKind::AetherSpire,
+                "tesla" => LandmarkKind::TeslaTower,
+                _ => LandmarkKind::Lighthouse,
             };
             let l = hw_client::landmarkview::nearest(&generated.world, kind, spawn);
             let (c, base, h, face) = l.map_or((spawn, ground(spawn), 30.0, spawn_dir), |l| {
@@ -401,7 +401,8 @@ fn main() -> EngineResult<()> {
                 (l.pos, l.base, l.height, face)
             });
             // From above the rooftops, the landmark's whole height in view.
-            let p = c + face * (h * 0.9 + 12.0) + face.perp() * h * 0.35;
+            let back = if view == "tesla" { 1.5 } else { 0.9 };
+            let p = c + face * (h * back + 12.0) + face.perp() * h * 0.35;
             let d = c - p;
             let yaw = d.x.atan2(d.y).to_degrees() as f32;
             let eye = ground(p).max(base) + h * 0.5 + 6.0;
@@ -456,6 +457,29 @@ fn main() -> EngineResult<()> {
             let yaw = dir.x.atan2(dir.y).to_degrees() as f32;
             let (up, pitch) = if sky { (30.0, 4.0) } else { (6.0, -10.0) };
             FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, pitch)
+        }
+        "quarter" => {
+            // On a street in the mad scientist's quarter, looking at his tower.
+            use hw_gen::urban::landmarks::LandmarkKind;
+            let w = &generated.world;
+            let tower = hw_client::landmarkview::nearest(w, LandmarkKind::TeslaTower, spawn);
+            let (c, h) = tower.map_or((spawn, 40.0), |l| (l.pos, l.height));
+            let deep = |p: DVec2| w.town.dystopia.as_ref().is_some_and(|d| d.depth(p) > 0.9);
+            let p = w
+                .roads
+                .iter()
+                .flat_map(|r| r.pts.iter().copied())
+                .filter(|p| deep(*p))
+                .min_by(|a, b| {
+                    (a.distance(c) - 110.0)
+                        .abs()
+                        .total_cmp(&(b.distance(c) - 110.0).abs())
+                })
+                .unwrap_or(spawn);
+            let d = c - p;
+            let yaw = d.x.atan2(d.y).to_degrees() as f32;
+            let pitch = ((h * 0.5 - 3.0) / d.length()).atan().to_degrees() as f32;
+            FlyCamera::new((p.x as f32, ground(p) as f32 + 3.0, p.y as f32), yaw, pitch)
         }
         "lift" | "tunnel" | "molehaven" => {
             // The underground: a lift pavilion on the street, a utility
@@ -770,6 +794,9 @@ fn main() -> EngineResult<()> {
             }
             if let Some(under) = extras.under.as_mut() {
                 under.update(world, world.camera().eye(), &generated.world)?;
+            }
+            if let Some(d) = extras.dystopia.as_mut() {
+                d.update(world, &generated.world, frame.dt)?;
             }
             {
                 let eye = world.camera().eye();
@@ -1548,6 +1575,7 @@ struct TownExtras {
     lights: Option<hw_client::nightlights::NightLights>,
     props: Option<hw_client::propview::PropView>,
     under: Option<hw_client::undergroundview::UndergroundView>,
+    dystopia: Option<hw_client::dystopiaview::DystopiaView>,
 }
 
 impl TownExtras {
@@ -1564,6 +1592,9 @@ impl TownExtras {
         self.props = None;
         if let Some(mut u) = self.under.take() {
             u.clear(world);
+        }
+        if let Some(mut d) = self.dystopia.take() {
+            d.clear(world);
         }
     }
 }
@@ -1586,6 +1617,7 @@ fn spawn_extras(world: &mut World, generated: &GeneratedTown) -> EngineResult<To
         lights: Some(hw_client::nightlights::NightLights::new(&generated.world)),
         props: Some(props),
         under: Some(under),
+        dystopia: Some(hw_client::dystopiaview::DystopiaView::new(&generated.world)),
     })
 }
 

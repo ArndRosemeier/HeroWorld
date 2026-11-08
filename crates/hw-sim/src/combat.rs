@@ -63,6 +63,8 @@ pub const DRONE_LIFT_HEIGHT: f64 = 30.0;
 pub const RESPAWN_SECONDS: f64 = 15.0;
 /// A group does not come back while a hero stands this close.
 pub const RESPAWN_CLEAR: f64 = 25.0;
+/// An ambient corner's group goes home once no hero is this near (m).
+pub const SLEEP: f64 = 420.0;
 /// Heroes this close to a defeat share its karma.
 pub const REWARD_RADIUS: f64 = 60.0;
 /// A force shield takes this share of every blow.
@@ -482,6 +484,13 @@ pub struct Spot {
     pub members: u32,
     /// The next group comes at this tick.
     pub respawn_at: Option<u64>,
+    /// Levels its villains stand above the team's (the mad scientist's
+    /// quarter is tougher).
+    pub extra: u8,
+    /// An ambient corner: its group only stands there while a hero is
+    /// within this many metres, and leaves (to come back fresh) once
+    /// nobody is within [`SLEEP`].
+    pub wake: Option<f64>,
 }
 
 /// Karma (and leaning) a hero earned this tick.
@@ -612,8 +621,12 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
         (f.seed, f.spots[spot_index].clone())
     };
     let solids = world.resource::<Solids>().0.clone();
-    let size = group_size(heroes);
-    let level = world.resource::<Fights>().team_level;
+    let size = group_size(heroes) + spot.extra.min(1) as u32;
+    let level = world
+        .resource::<Fights>()
+        .team_level
+        .saturating_add(spot.extra)
+        .min(crate::progress::MAX_LEVEL);
     let gseed = Seed(seed)
         .child("fights")
         .child(spot_index as u64)
@@ -996,12 +1009,47 @@ pub(crate) fn step(world: &mut World, tick: u64) {
             .filter(|(_, s)| {
                 s.respawn_at.is_some_and(|t| tick >= t)
                     && heroes.iter().all(|h| h.distance(s.center) > RESPAWN_CLEAR)
+                    && s.wake
+                        .is_none_or(|r| heroes.iter().any(|h| h.distance(s.center) < r))
             })
             .map(|(i, _)| i)
             .collect()
     };
     for i in due {
         spawn_group(world, tick, i, heroes.len().max(1));
+    }
+    // Ambient corners nobody is near any more: their villains go home, and
+    // a fresh group stands there when a hero comes back.
+    let idle: Vec<usize> = {
+        let f = world.resource::<Fights>();
+        f.spots
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                s.wake.is_some()
+                    && s.members > 0
+                    && heroes.iter().all(|h| h.distance(s.center) > SLEEP)
+            })
+            .map(|(i, _)| i)
+            .collect()
+    };
+    if !idle.is_empty() {
+        let mut home: Vec<(NetId, Entity)> = world
+            .query::<(Entity, &Net, &Enemy)>()
+            .iter(world)
+            .filter(|(_, _, en)| idle.contains(&en.spot))
+            .map(|(e, n, _)| (n.0, e))
+            .collect();
+        home.sort_by_key(|h| h.0);
+        for (id, e) in home {
+            world.resource_mut::<Fights>().paths.remove(&id);
+            world.despawn(e);
+        }
+        let mut f = world.resource_mut::<Fights>();
+        for i in idle {
+            f.spots[i].members = 0;
+            f.spots[i].respawn_at = Some(tick);
+        }
     }
     let mut f = world.resource_mut::<Fights>();
     f.events = fx;

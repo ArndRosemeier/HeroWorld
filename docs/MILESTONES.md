@@ -292,7 +292,7 @@ PC.
 **Done when:** a hero can break a facade, bring down a small building and see it whole again
 later; a late joiner sees the same damage; the frame rate holds during a collapse.
 
-### M9. The dystopia and incidents
+### M9. The dystopia and incidents (in progress)
 
 Turns the town into a place where problems come to you.
 
@@ -306,6 +306,20 @@ Turns the town into a place where problems come to you.
 
 **Done when:** an hour in the city never runs out of things to do, and each incident type
 resolves in single player and co-op.
+
+**Status (0.031):** the district is built. Every town of 3000 people or more has one villain
+quarter (`hw-gen/src/urban/dystopia.rs`): grown from a piece of town out from the core along
+shared main roads, as large as the town's dystopia share, its edge running along side streets
+where no main road bounds it; its blocks are tenements and labs. The Tesla tower stands in
+its middle (an iron lattice, a dark dome with green coils and frozen arcs, a blockhouse lab,
+a wire fence and dead conduits), sparking green. In the client (`dystopiaview.rs`) the air
+turns green-grey and thick and the colour drains as the camera goes in (one fog volume whose
+strength follows `Dystopia::depth`, fading above 130 m), two street lamps in three are dead
+and the rest flicker green, and shop neon is broken. Ambient corners (`hw-sim/src/quarter.rs`):
+groups two levels above the team on its street corners, three at the tower's gate, standing
+there only while a hero is within 220 m and going home (to come back fresh) once nobody is
+within 420 m. Next: incidents and dispatch, then rescues. Not yet: rooftop groups, a
+transition band with graffiti and barricades.
 
 ### M10. Traffic, taxis and the underground (in progress)
 

@@ -118,7 +118,7 @@ fn main() {
     let mut count = 0;
     let mut floors_sum = 0u64;
     if view <= 2500.0 {
-        for (pc, pl) in town.pieces.iter().zip(&plans) {
+        for (i, (pc, pl)) in town.pieces.iter().zip(&plans).enumerate() {
             let (lo, hi) = pc.face.pts.iter().fold(
                 (glam::DVec2::splat(f64::MAX), glam::DVec2::splat(f64::MIN)),
                 |(lo, hi), q| (lo.min(*q), hi.max(*q)),
@@ -126,7 +126,7 @@ fn main() {
             if hi.x < cx - view || lo.x > cx + view || hi.y < cy - view || lo.y > cy + view {
                 continue;
             }
-            for b in plan_buildings(Seed(seed), &town, pc, pl) {
+            for b in plan_buildings(Seed(seed), &town, i, pc, pl) {
                 count += 1;
                 floors_sum += b.floors as u64;
                 // Darker is taller.
@@ -203,6 +203,31 @@ fn main() {
             pts.join(" "),
             lw * w
         );
+    }
+    // The villains' quarter: its pieces outlined in sickly green.
+    if let Some(d) = &town.dystopia {
+        println!(
+            "dystopia: {} pieces, radius {:.0} m, centre ({:.0}, {:.0})",
+            d.pieces.len(),
+            d.radius,
+            d.centre.x,
+            d.centre.y
+        );
+        for &i in &d.pieces {
+            let pts: Vec<String> = town.pieces[i]
+                .face
+                .pts
+                .iter()
+                .map(|q| format!("{:.1},{:.1}", q.x, q.y))
+                .collect();
+            let _ = writeln!(
+                svg,
+                r##"<polygon points="{}" fill="#5a8a3a" fill-opacity="0.25" stroke="#3a7a1a" stroke-width="{:.1}" stroke-dasharray="{:.1}"/>"##,
+                pts.join(" "),
+                lw * 2.5,
+                lw * 6.0
+            );
+        }
     }
     for c in &growth.centres {
         let (fill, r) = match c.kind {

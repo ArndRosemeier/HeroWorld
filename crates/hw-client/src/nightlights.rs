@@ -43,6 +43,16 @@ impl NightLights {
     pub fn new(town: &TownWorld) -> Self {
         let mut sources = Vec::new();
         for (i, p) in town.props.iter().enumerate() {
+            // In the villains' quarter two lamps in three are dead, and the
+            // rest flicker a sick green.
+            let held = town
+                .town
+                .dystopia
+                .as_ref()
+                .is_some_and(|d| d.contains(p.pos));
+            if held && i % 3 != 0 {
+                continue;
+            }
             let at = |fwd: f64, up: f64| {
                 let q = p.pos + p.dir * fwd;
                 Vec3::new(q.x as f32, (p.y + up * p.scale) as f32, q.y as f32)
@@ -60,6 +70,15 @@ impl NightLights {
                 PropKind::Kiosk => Lamp::point(at(0.0, 2.4), rgb(255, 210, 120), 4.0, 7.0),
                 PropKind::Fountain => Lamp::point(at(0.0, 2.6), rgb(140, 230, 255), 5.0, 9.0),
                 _ => continue,
+            };
+            let lamp = if held {
+                Lamp {
+                    color: rgb(170, 230, 140),
+                    flicker: 0.7,
+                    ..lamp
+                }
+            } else {
+                lamp
             };
             sources.push(Source {
                 lamp,
@@ -89,6 +108,20 @@ impl NightLights {
                     big: true,
                     prop: None,
                 }),
+                LandmarkKind::TeslaTower => {
+                    let arc = rgb(150, 255, 110);
+                    // The dome's rim, and the coil lighting the yard.
+                    sources.push(Source {
+                        lamp: Lamp::point(at(l.height * 0.9), arc, 60.0, 60.0),
+                        big: true,
+                        prop: None,
+                    });
+                    sources.push(Source {
+                        lamp: Lamp::point(at(8.0), arc, 25.0, 30.0),
+                        big: true,
+                        prop: None,
+                    });
+                }
             }
         }
         Self {

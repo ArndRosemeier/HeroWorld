@@ -18,6 +18,7 @@
 //! The older [`crate::city`] generator stays in use until this one can
 //! replace it.
 
+pub mod dystopia;
 pub mod graph;
 pub mod growth;
 pub mod land;
@@ -66,6 +67,8 @@ pub struct Town {
     /// [`RoadClass`] as `u32`, or [`OUTLINE`].
     pub graph: graph::Graph,
     pub pieces: Vec<Piece>,
+    /// The mad scientist's quarter (none in a small town).
+    pub dystopia: Option<dystopia::Dystopia>,
 }
 
 impl Town {
@@ -108,8 +111,11 @@ impl Town {
                     face,
                 })
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let dystopia =
+            dystopia::Dystopia::plan(seed, &pieces, &growth, params.dystopia, params.population);
         Town {
+            dystopia,
             params,
             land,
             growth,

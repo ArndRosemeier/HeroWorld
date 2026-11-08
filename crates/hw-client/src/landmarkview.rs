@@ -1,5 +1,6 @@
 //! The town's landmarks in the game: the Aether Spire on its plaza and the
-//! lighthouse on the shore, both in the 1939 World's Fair's taste.
+//! lighthouse on the shore, both in the 1939 World's Fair's taste, and the
+//! mad scientist's Tesla tower, which is not.
 
 use crate::citymesh::{MeshBuilder, Surf};
 use engine::prelude::*;
@@ -11,6 +12,8 @@ use std::f64::consts::TAU;
 
 /// Aether light, the same cyan as the taxi pads' rims.
 const AETHER: (u8, u8, u8) = (120, 230, 255);
+/// The mad scientist's arcs: a sick green.
+pub const ARC: (u8, u8, u8) = (150, 255, 110);
 
 pub struct LandmarkView {
     pub sets: Vec<LodId>,
@@ -53,6 +56,7 @@ pub fn model(l: &Landmark, near: bool) -> Vec<Mesh> {
             }
         }
         LandmarkKind::Lighthouse => lighthouse(&mut b, l.height, near),
+        LandmarkKind::TeslaTower => tesla(&mut b, l, near),
     }
     b.finish_parts()
 }
@@ -351,6 +355,204 @@ fn lighthouse(b: &mut MeshBuilder, h: f64, near: bool) {
     });
 }
 
+/// A square beam from `a` to `c`, `w` thick.
+fn strut(b: &mut MeshBuilder, a: DVec3, c: DVec3, w: f64, color: Color) {
+    let d = (c - a).normalize_or(DVec3::Y);
+    let u = if d.y.abs() > 0.9 { DVec3::X } else { DVec3::Y };
+    let s = d.cross(u).normalize() * w * 0.5;
+    let t = d.cross(s).normalize() * w * 0.5;
+    let quad = |p: DVec3| [p - s - t, p + s - t, p + s + t, p - s + t];
+    b.hexa(quad(a), quad(c), color);
+}
+
+/// The Tesla tower: a blockhouse lab at the foot, a tapering iron lattice,
+/// a great dark dome on top ringed with green coils, a fence of wire round
+/// the yard, and dead conduits running off into the quarter.
+fn tesla(b: &mut MeshBuilder, l: &Landmark, near: bool) {
+    let h = l.height;
+    let seg = if near { 24 } else { 10 };
+    let iron = rgb(58, 62, 58);
+    let rust = rgb(96, 66, 48);
+    let concrete = rgb(118, 122, 112);
+    let copper = rgb(70, 110, 92);
+    // The lab: a squat concrete blockhouse round the tower's feet, with slit
+    // windows lit green from inside.
+    b.oriented_box(
+        DVec3::Y * 2.6,
+        DVec3::X,
+        DVec3::new(6.5, 2.6, 6.5),
+        concrete,
+    );
+    b.oriented_box(DVec3::Y * 5.4, DVec3::X, DVec3::new(6.9, 0.25, 6.9), iron);
+    if near {
+        with(b, Surf::Glow, |b| {
+            for k in 0..4 {
+                let a = TAU * k as f64 / 4.0;
+                let d = DVec3::new(a.sin(), 0.0, a.cos());
+                let side = DVec3::new(d.z, 0.0, -d.x);
+                for j in [-1.0, 1.0] {
+                    b.oriented_box(
+                        d * 6.52 + side * j * 3.0 + DVec3::Y * 3.6,
+                        side,
+                        DVec3::new(1.3, 0.22, 0.05),
+                        c3(ARC),
+                    );
+                }
+            }
+        });
+        // A riveted iron door facing the way in.
+        b.oriented_box(
+            DVec3::new(0.0, 1.5, 6.55),
+            DVec3::X,
+            DVec3::new(1.2, 1.5, 0.1),
+            rust,
+        );
+    }
+    // The lattice: four legs leaning in, cross-braced in bays.
+    let top = h * 0.78;
+    let r_of = |y: f64| 5.0 + (1.6 - 5.0) * (y / top);
+    let leg = |k: usize, y: f64| {
+        let a = TAU * (k as f64 + 0.5) / 4.0;
+        DVec3::new(a.sin() * r_of(y), y, a.cos() * r_of(y))
+    };
+    let w = if near { 0.45 } else { 0.8 };
+    for k in 0..4 {
+        strut(b, leg(k, 0.0), leg(k, top), w, iron);
+    }
+    let bays = if near { 8 } else { 4 };
+    for i in 0..bays {
+        let (y0, y1) = (
+            top * i as f64 / bays as f64,
+            top * (i + 1) as f64 / bays as f64,
+        );
+        for k in 0..4 {
+            let j = (k + 1) % 4;
+            strut(b, leg(k, y1), leg(j, y1), w * 0.7, iron);
+            if near {
+                strut(b, leg(k, y0), leg(j, y1), w * 0.5, rust);
+                strut(b, leg(j, y0), leg(k, y1), w * 0.5, rust);
+            }
+        }
+    }
+    // A green-glowing coil in the lattice's heart.
+    with(b, Surf::Glow, |b| {
+        b.cylinder(
+            DVec3::Y * 6.0,
+            (0.6, 0.6),
+            top - 6.0,
+            seg / 2,
+            false,
+            c3(ARC),
+        )
+    });
+    // Rings of coil round the top of the lattice.
+    with(b, Surf::Metal, |b| {
+        for t in [0.55, 0.75, 0.95] {
+            let y = top * t;
+            let r = r_of(y) + 0.5;
+            b.cylinder(DVec3::Y * y, (r, r), 0.4, seg, false, copper);
+        }
+    });
+    // The dome: a great dark mushroom cap with a glowing rim.
+    let dr = (h * 0.16).clamp(6.0, 11.0);
+    with(b, Surf::Metal, |b| {
+        b.cylinder(DVec3::Y * top, (1.8, dr), dr * 0.35, seg, false, iron);
+        b.dome(DVec3::Y * (top + dr * 0.35), dr, seg, 6, copper);
+    });
+    with(b, Surf::Glow, |b| {
+        b.cylinder(
+            DVec3::Y * (top + dr * 0.35 - 0.2),
+            (dr + 0.15, dr + 0.15),
+            0.4,
+            seg,
+            false,
+            c3(ARC),
+        );
+        // The ball on the needle at the very top.
+        b.dome(DVec3::Y * (top + dr * 1.35 + 1.5), 1.0, seg / 2, 3, c3(ARC));
+        b.dome(
+            DVec3::Y * (top + dr * 1.35 + 1.5),
+            -1.0,
+            seg / 2,
+            3,
+            c3(ARC),
+        );
+    });
+    with(b, Surf::Metal, |b| {
+        b.cylinder(
+            DVec3::Y * (top + dr * 1.3),
+            (0.2, 0.05),
+            1.6,
+            6,
+            false,
+            iron,
+        )
+    });
+    if !near {
+        return;
+    }
+    // Frozen arcs: jagged green bolts from the dome's rim down to the yard.
+    with(b, Surf::Glow, |b| {
+        for k in 0..5 {
+            let a = TAU * (k as f64 * 0.37 + 0.1);
+            let d = DVec3::new(a.sin(), 0.0, a.cos());
+            let side = DVec3::new(d.z, 0.0, -d.x);
+            let start = d * dr + DVec3::Y * (top + dr * 0.3);
+            let mut p = start;
+            let end = d * (l.plaza - 1.0) + DVec3::Y * 0.2;
+            let n = 9;
+            for i in 1..=n {
+                let t = i as f64 / n as f64;
+                // A zigzag, each kink a different size.
+                let (jag, out) = if i == n {
+                    (0.0, 0.0)
+                } else {
+                    let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
+                    (
+                        sign * (1.0 + ((k * 7 + i * 3) % 4) as f64 * 0.6),
+                        (((k * 5 + i * 2) % 3) as f64 - 1.0) * 1.2,
+                    )
+                };
+                let q = start.lerp(end, t) + side * jag + d * out;
+                strut(b, p, q, 0.12, c3(ARC));
+                p = q;
+            }
+        }
+    });
+    // A wire fence round the yard: posts, and a mesh of rusty strands.
+    let fence = l.plaza - 0.6;
+    let posts = 28;
+    for k in 0..posts {
+        let a = TAU * k as f64 / posts as f64;
+        let p = DVec3::new(a.sin() * fence, 0.0, a.cos() * fence);
+        // A gap for the gate, towards the way in (+z).
+        if a.cos() > 0.97 {
+            continue;
+        }
+        b.cylinder(p, (0.06, 0.06), 2.6, 4, false, iron);
+        let a1 = TAU * (k + 1) as f64 / posts as f64;
+        if a1.cos() > 0.97 {
+            continue;
+        }
+        let q = DVec3::new(a1.sin() * fence, 0.0, a1.cos() * fence);
+        for y in [0.6, 1.3, 2.0, 2.5] {
+            strut(b, p + DVec3::Y * y, q + DVec3::Y * y, 0.03, rust);
+        }
+    }
+    // Dead conduits: dark pipes from the lab out across the yard.
+    for k in 0..3 {
+        let a = TAU * (k as f64 + 0.25) / 3.0;
+        let d = DVec3::new(a.sin(), 0.0, a.cos());
+        strut(
+            b,
+            d * 6.6 + DVec3::Y * 0.35,
+            d * (l.plaza - 0.3) + DVec3::Y * 0.35,
+            0.5,
+            rust,
+        );
+    }
+}
+
 /// The landmark of a kind nearest a point (for the screenshot views).
 pub fn nearest(town: &TownWorld, kind: LandmarkKind, from: DVec2) -> Option<&Landmark> {
     town.landmarks
@@ -365,7 +567,11 @@ mod tests {
 
     #[test]
     fn landmark_models_have_faces() {
-        for kind in [LandmarkKind::AetherSpire, LandmarkKind::Lighthouse] {
+        for kind in [
+            LandmarkKind::AetherSpire,
+            LandmarkKind::Lighthouse,
+            LandmarkKind::TeslaTower,
+        ] {
             let l = Landmark {
                 kind,
                 pos: DVec2::ZERO,

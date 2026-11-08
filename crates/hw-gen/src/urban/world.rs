@@ -124,8 +124,8 @@ impl TownWorld {
         out.landmarks = plan_landmarks(&out);
         (out.quays, out.water_steps) = plan_waterfront(&out);
         let mut buildings = Vec::new();
-        for (pc, streets) in out.town.pieces.iter().zip(&out.pieces) {
-            for site in plan_buildings(seed, &out.town, pc, streets) {
+        for (i, (pc, streets)) in out.town.pieces.iter().zip(&out.pieces).enumerate() {
+            for site in plan_buildings(seed, &out.town, i, pc, streets) {
                 let corners = site.corners();
                 let hs: Vec<f64> = corners.iter().map(|c| out.ground(*c)).collect();
                 let hi = hs.iter().copied().fold(f64::MIN, f64::max);
