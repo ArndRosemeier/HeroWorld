@@ -74,7 +74,7 @@ impl Kit {
             body: rgb(b.0, b.1, b.2),
             top: rgb(t.0, t.1, t.2),
             chrome: rgb(226, 230, 236),
-            glass: rgb(52, 78, 96),
+            glass: rgb(70, 104, 124),
             tyre: rgb(22, 22, 24),
             white: rgb(240, 238, 230),
             under: rgb(30, 30, 33),
@@ -93,8 +93,10 @@ impl Kit {
     fn metal(&self) -> Paint {
         Some((Surf::Metal, self.chrome))
     }
+    /// Tinted, see-through glass (Engine draws alpha below 1 in its
+    /// transparent pass).
     fn glazed(&self) -> Paint {
-        Some((Surf::Glass, self.glass))
+        Some((Surf::Glass, self.glass.with_alpha(0.3)))
     }
     fn glow(c: Color) -> Paint {
         Some((Surf::Glow, c))

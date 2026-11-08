@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.052 (2026-11-08)
+
+- Car windows and bubble canopies are see-through tinted glass now, so you can see the seats,
+  dashboards and steering wheels inside.
+
 ## 0.051 (2026-11-08)
 
 - Hail a taxi and its bubble canopy swings up when it lands; hop in, it shuts, and it opens again
