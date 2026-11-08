@@ -183,7 +183,12 @@ impl Connection {
 
     /// Says something to everyone.
     pub fn chat(&mut self, text: &str) {
-        self.rel_out.push(ToServer::Chat { text: text.into() });
+        self.send(ToServer::Chat { text: text.into() });
+    }
+
+    /// Sends a reliable message (a hero file, a power bought).
+    pub fn send(&mut self, msg: ToServer) {
+        self.rel_out.push(msg);
     }
 
     /// Hails a taxi to stand `dest`, or (255) gets out of it.

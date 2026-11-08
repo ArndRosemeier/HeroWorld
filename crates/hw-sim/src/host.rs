@@ -92,6 +92,8 @@ pub struct Host {
     local_news: Vec<ToClient>,
     /// Fight events since the local player last took them.
     fx: Vec<hw_net::Fx>,
+    /// The local player's hero file, when it changed.
+    local_sheet: Option<hw_net::Sheet>,
 }
 
 impl Host {
@@ -110,6 +112,7 @@ impl Host {
             next_player: 1,
             local_news: Vec::new(),
             fx: Vec::new(),
+            local_sheet: None,
         }
     }
 
@@ -282,6 +285,14 @@ impl Host {
                     out.push(HostEvent::Chat { player, name, text });
                 }
                 ToServer::Taxi { dest } => self.sim.hail_taxi(player, dest),
+                ToServer::Sheet(sheet) => self.sim.set_sheet(player, sheet),
+                ToServer::Buy { power, theme } => {
+                    // A refused buy changes nothing; the client checks first.
+                    let _ = self.sim.buy(player, power, theme);
+                }
+                ToServer::GiveUp { power } => {
+                    self.sim.give_up(player, power);
+                }
             }
         }
     }
@@ -334,6 +345,14 @@ impl Host {
             self.tell_all(m);
         }
         self.share_fx();
+        for (p, sheet) in self.sim.take_sheets() {
+            match self.remotes.get_mut(&p) {
+                Some(r) => {
+                    r.rel_out.push(ToClient::Sheet(sheet));
+                }
+                None => self.local_sheet = Some(sheet),
+            }
+        }
         self.send_updates();
         out
     }
@@ -342,6 +361,12 @@ impl Host {
     /// since the last call.
     pub fn take_local_news(&mut self) -> Vec<ToClient> {
         std::mem::take(&mut self.local_news)
+    }
+
+    /// The local player's hero file if it changed since the last call (to
+    /// save it).
+    pub fn take_local_sheet(&mut self) -> Option<hw_net::Sheet> {
+        self.local_sheet.take()
     }
 
     /// Fight events since the last call (for the player at this machine).

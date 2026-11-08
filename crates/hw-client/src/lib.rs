@@ -13,6 +13,7 @@ pub mod landmarkview;
 pub mod nightlights;
 pub mod people;
 pub mod poses;
+pub mod powersview;
 pub mod profile;
 pub mod propview;
 pub mod title;

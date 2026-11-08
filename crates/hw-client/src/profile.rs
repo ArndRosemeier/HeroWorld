@@ -1,8 +1,10 @@
-//! What the game remembers on this PC between runs: your hero's name, the
-//! world you last played and your sound settings. A small JSON file in the
+//! What the game remembers on this PC between runs: your hero's name and
+//! hero file (origin, karma, powers), the world you last played and your
+//! sound settings. A small JSON file in the
 //! user's settings folder (`%APPDATA%\HeroWorld` on Windows,
 //! `~/.config/heroworld` elsewhere). A missing or broken file is a fresh start.
 
+use hw_net::{OwnedPower, Power, Sheet};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
@@ -18,6 +20,9 @@ pub struct Profile {
     pub sounds: f32,
     /// Keep the title still (no swooping letters, no drifting camera).
     pub reduced_motion: bool,
+    /// The hero file: karma, affinities, origin and powers. None until an
+    /// origin is chosen.
+    pub hero: Option<Sheet>,
 }
 
 impl Default for Profile {
@@ -29,6 +34,7 @@ impl Default for Profile {
             music: 0.8,
             sounds: 0.9,
             reduced_motion: false,
+            hero: None,
         }
     }
 }
@@ -72,6 +78,7 @@ impl Profile {
             music: f("music", d.music),
             sounds: f("sounds", d.sounds),
             reduced_motion: v["reduced_motion"].as_bool().unwrap_or(d.reduced_motion),
+            hero: sheet_from_json(&v["hero"]),
         }
     }
 
@@ -83,6 +90,7 @@ impl Profile {
             "music": self.music,
             "sounds": self.sounds,
             "reduced_motion": self.reduced_motion,
+            "hero": self.hero.as_ref().map(sheet_to_json),
         })
     }
 
@@ -98,6 +106,62 @@ impl Profile {
             }
         }
     }
+}
+
+/// Hero file format, so later fields don't break old heroes.
+const HERO_VERSION: u64 = 1;
+
+fn sheet_to_json(s: &Sheet) -> Value {
+    json!({
+        "version": HERO_VERSION,
+        "lifetime_karma": s.lifetime,
+        "karma": s.karma,
+        "affinity": s.affinity,
+        "origin": s.origin,
+        "powers": s.powers.iter().map(|p| json!({
+            "power": p.power.code(),
+            "theme": p.theme,
+            "paid": p.paid,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn sheet_from_json(v: &Value) -> Option<Sheet> {
+    let o = v.as_object()?;
+    let num = |k: &str| {
+        o.get(k)
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0)
+            .min(u32::MAX as u64) as u32
+    };
+    let mut affinity = [0u32; 5];
+    if let Some(a) = o.get("affinity").and_then(|a| a.as_array()) {
+        for (slot, x) in affinity.iter_mut().zip(a) {
+            *slot = x.as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
+        }
+    }
+    let powers = o
+        .get("powers")
+        .and_then(|p| p.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|p| {
+                    Some(OwnedPower {
+                        power: Power::from_code(p["power"].as_u64()?.min(255) as u8)?,
+                        theme: p["theme"].as_u64().unwrap_or(0).min(1) as u8,
+                        paid: p["paid"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(hw_sim::progress::sanitize(Sheet {
+        lifetime: num("lifetime_karma"),
+        karma: num("karma"),
+        affinity,
+        origin: num("origin").min(255) as u8,
+        powers,
+    }))
 }
 
 /// A hero name as typed: trimmed, at most 24 characters, no control characters.
@@ -122,6 +186,7 @@ mod tests {
             music: 0.25,
             sounds: 0.5,
             reduced_motion: true,
+            hero: Some(hw_sim::progress::starter()),
         };
         assert_eq!(Profile::from_json(&p.to_json()), p);
         let junk = json!({"name": 7, "music": 9.0, "seed": "x"});
@@ -129,6 +194,14 @@ mod tests {
         assert_eq!(q.name, "Hero");
         assert_eq!(q.music, 1.0);
         assert_eq!(q.seed, 1);
+        assert_eq!(q.hero, None);
+        // A hero file with a power from a later version keeps the rest.
+        let later = json!({"hero": {"lifetime_karma": 99, "karma": 5, "origin": 2,
+            "powers": [{"power": 2, "theme": 1, "paid": 7}, {"power": 200}]}});
+        let h = Profile::from_json(&later).hero.unwrap();
+        assert_eq!((h.lifetime, h.karma, h.origin), (99, 5, 2));
+        assert_eq!(h.powers.len(), 1);
+        assert_eq!(h.theme(Power::Bolt), 1);
     }
 
     #[test]

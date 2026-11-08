@@ -8,14 +8,14 @@
 //! Controls: you play your hero in third person. Hold the right mouse button
 //! (or press P to lock the pointer) and move the mouse to look, WASD to run,
 //! Space to jump, R/T to zoom in and out (all the way in is first person).
-//! V to fly: steer with WASD and the camera, Space climbs, Ctrl sinks,
-//! Shift goes faster; V again drops you. K knocks the people around you
+//! V to fly once you have Flight: steer with WASD and the camera, Space
+//! climbs, Ctrl sinks, Shift goes faster; V again drops you. K knocks the people around you
 //! over (a test of ragdolls; they get up again).
 //! Buildings are open: walk in through a door, and in the lift (the core in
 //! the middle) hold Space to rise and Ctrl to sink; step out at any floor.
 //! Left mouse (or 1) punches, Q (or 2) fires an energy bolt: at the villain
 //! you have picked with Tab, else where you look, breaking glass, plaster
-//! and brick at level 1 (`HW_LEVEL` sets the hero level for now).
+//! and brick at level 1 (higher levels break more).
 //! G hails a flying taxi: pick a stand under "Where to?", walk up to the
 //! taxi when it lands beside you, and it flies you there above the roofs
 //! (G again hops out). Cars drive the streets; hover cars and taxis fly
@@ -24,8 +24,11 @@
 //! around where you look (F moves the cut there), Z/X pick the floor.
 //!
 //! Fighting (see `fightview.rs`): Tab picks the villain nearest the
-//! crosshair (again for the next one), 1 strikes, 2 fires an energy bolt.
-//! Hold E next to a downed teammate to revive them; H calls the medical
+//! crosshair (again for the next one), 1 strikes, 2 fires an energy bolt,
+//! 3 to 6 binding hold, force shield, lift and throw, and shockwave once
+//! bought. B opens the powers window (`powersview.rs`): karma from beaten
+//! villains raises your level and buys powers; your hero file is kept in
+//! the profile. Hold E next to a downed teammate to revive them; H calls the medical
 //! drone when you are down. The mad scientist's minions wait a short run
 //! down the street from where you start.
 //!
@@ -48,6 +51,10 @@
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
+//! `HW_LEVEL=n` plays a level-n hero with karma to spend, `HW_POWERS=1`
+//! with every power open bought (`HW_THEME=1` the second themes);
+//! `HW_VIEW=powers` opens the powers window, `HW_VIEW=origin` shows a new
+//! hero's origin card.
 //! `HW_VIEW=fight` starts in front of the minions, `HW_AUTOFIGHT=1`
 //! fights them on its own (both for screenshots);
 //! `HW_TAXI=<stand>` hails a taxi at the start and `HW_TAXI_SECS=<s>` runs
@@ -69,6 +76,7 @@ use hw_client::damageview::DamageView;
 use hw_client::fightview::{self, FightView};
 use hw_client::heroview::{tipped_origin, HeroAnim};
 use hw_client::people::{self, People, VillainKind, Who};
+use hw_client::powersview::{PowerAction, PowersView};
 use hw_client::profile::Profile;
 use hw_client::title::{self, Choice, Title};
 use hw_client::townmesh::{TownGround, TownView};
@@ -152,6 +160,13 @@ impl HeroCamera {
         let eye = if d < 0.4 { head } else { head - dir * d };
         world.look_first_person(eye, self.yaw, self.pitch);
     }
+}
+
+/// Keeps the hero file in the profile on this PC.
+fn save_hero(hero: Option<hw_net::Sheet>) {
+    let mut p = Profile::load();
+    p.hero = hero;
+    p.save();
 }
 
 fn main() -> EngineResult<()> {
@@ -250,6 +265,46 @@ fn main() -> EngineResult<()> {
     // but not yet sent with a tick.
     let mut drawn: Vec<hw_net::EntityState> = Vec::new();
     let mut pending_power = 0u8;
+    // Karma, levels and powers: the hero file from this PC (None until a new
+    // hero picks an origin), the sheet as the host last confirmed it, and
+    // the powers window.
+    let mut powers = PowersView::new();
+    let mut hero_file: Option<hw_net::Sheet> = profile.hero.clone();
+    // HW_LEVEL=n starts a hero at level n with karma to spend (for trying
+    // powers out); it is not saved.
+    let cheat_level = std::env::var("HW_LEVEL")
+        .ok()
+        .and_then(|v| v.parse::<u8>().ok());
+    if let Some(level) = cheat_level {
+        let mut s = hero_file.clone().unwrap_or_else(hw_sim::progress::starter);
+        s.lifetime = s
+            .lifetime
+            .max(hw_sim::progress::karma_for_level(level.clamp(1, 20)));
+        s.karma = s.karma.max(20_000);
+        // HW_POWERS=1 buys every power that is open (HW_THEME=1: the
+        // second themes).
+        if std::env::var_os("HW_POWERS").is_some() {
+            let theme = env_num("HW_THEME").unwrap_or(0).min(1) as u8;
+            for p in hw_client::powersview::SHOP {
+                let _ = hw_sim::progress::buy(&mut s, p, theme);
+            }
+        }
+        hero_file = Some(s);
+    }
+    if hero_file.is_none() && !title_mode && view != "origin" {
+        // Runs straight into the game (tools, screenshots): the starter hero.
+        hero_file = Some(hw_sim::progress::starter());
+    }
+    let mut my_sheet = hero_file.clone().unwrap_or_else(hw_sim::progress::starter);
+    // Our file went to the host; the host confirmed it (from then on its
+    // sheets are saved).
+    let mut sheet_sent = false;
+    let mut sheet_synced = false;
+    let mut sheet_saved_at = 0.0f32;
+    let mut sheet_dirty = false;
+    if view == "powers" {
+        powers.open = true;
+    }
     // Characters a ragdoll moved, and how far from where the server has
     // them when they got up (faded out).
     let mut settle: BTreeMap<hw_core::NetId, (Vec3, bool)> = BTreeMap::new();
@@ -644,6 +699,9 @@ fn main() -> EngineResult<()> {
                         name = n;
                         t.profile.name = name.clone();
                         t.profile.seed = seed;
+                        // A new hero picks an origin first.
+                        t.profile.hero = None;
+                        hero_file = None;
                         if want_world(seed, people, Waiting::Single).is_some() {
                             session = Some(
                                 Session::single(Seed(world_seed), &generated, &name, false)
@@ -694,6 +752,14 @@ fn main() -> EngineResult<()> {
                 return Ok(());
             };
             version_corner(&frame.ui, &mut whats_new, session.room_code());
+            // Our hero file goes to the host once.
+            if !sheet_sent {
+                sheet_sent = true;
+                if let Some(s) = hero_file.clone() {
+                    session.send_sheet(s);
+                }
+            }
+            let creating = hero_file.is_none();
             if let Some(lights) = extras.lights.as_mut() {
                 let dark = swoop.is_none() && hw_client::nightlights::dark_at(game_hour());
                 lights.update(world, world.camera().eye(), dark)?;
@@ -815,9 +881,27 @@ fn main() -> EngineResult<()> {
 
             // Hero input, relative to where the camera faces.
             let mut hero_input = hw_net::InputState::default();
+            let can_fly = my_sheet.has(hw_net::Power::Flight);
+            if !can_fly {
+                hero_flies = false;
+            }
+            if input.pressed(Key::B) && !creating {
+                powers.open = !powers.open;
+            }
+            // Clicks on a window are not punches.
+            let on_ui = frame.ui.ctx().is_pointer_over_area();
             if !flying {
                 if input.pressed(Key::V) {
-                    hero_flies = !hero_flies;
+                    if can_fly {
+                        hero_flies = !hero_flies;
+                    } else {
+                        fight.say(&format!(
+                            "Flight opens at level {} (B: powers)",
+                            hw_sim::progress::tier_level(hw_sim::progress::tier(
+                                hw_net::Power::Flight
+                            ))
+                        ));
+                    }
                 }
                 let mut dir = input.move_dir_xz(hero_cam.yaw);
                 if auto_walk {
@@ -841,7 +925,7 @@ fn main() -> EngineResult<()> {
                 hero_input.boost = input.down(Key::Shift);
                 // Left mouse punches, Q fires an energy blast, both where the
                 // camera looks (levelled a little, as it looks down at the hero).
-                hero_input.smash = input.mouse_down(MouseButton::Left);
+                hero_input.smash = input.mouse_down(MouseButton::Left) && !on_ui;
                 hero_input.blast = input.down(Key::Q);
                 hero_input.aim = Camera::direction(hero_cam.yaw, hero_cam.pitch + 10.0).to_array();
                 // Fighting: keys, target, revive.
@@ -850,8 +934,8 @@ fn main() -> EngineResult<()> {
                     .and_then(|id| drawn.iter().find(|e| e.id == id));
                 let cam = world.camera();
                 let look = (cam.target() - cam.eye()).normalize_or_zero();
-                let f = fight.input(input, me_state, &drawn, cam.eye(), look);
-                if f.power != 0 {
+                let f = fight.input(input, me_state, &drawn, cam.eye(), look, Some(&my_sheet));
+                if f.power != 0 && !(on_ui && f.power == hw_net::Power::Strike.code()) {
                     pending_power = f.power;
                 }
                 // HW_AUTOFIGHT=1 fights on its own (for screenshots): bolts
@@ -868,7 +952,15 @@ fn main() -> EngineResult<()> {
                             glam::DVec3::from_array(m.pos).distance(glam::DVec3::from_array(t.pos))
                                 < 2.6
                         });
-                    pending_power = if close { 1 } else { 2 };
+                    // Every power the hero has, in turn; punches up close.
+                    let turn = [3u8, 2, 6, 2, 5, 2, 4, 2, 5];
+                    let k = (frame.time / 0.75) as usize % turn.len();
+                    let want = hw_net::Power::from_code(turn[k]).filter(|p| my_sheet.has(*p));
+                    pending_power = match want {
+                        Some(p) if !(close && p == hw_net::Power::Bolt) => p.code(),
+                        _ if close => 1,
+                        _ => 2,
+                    };
                 }
                 let f = fightview::FightInput {
                     target: fight.target,
@@ -903,9 +995,10 @@ fn main() -> EngineResult<()> {
                 // (a click shorter than a tick still punches).
                 let mut i = hero_input;
                 match std::mem::take(&mut pending_power) {
+                    0 => {}
                     1 => i.smash = true,
                     2 => i.blast = true,
-                    _ => {}
+                    other => i.power = other,
                 }
                 session.tick(i);
             }
@@ -1210,6 +1303,28 @@ fn main() -> EngineResult<()> {
             fight.on_fx(world, &events, now, mine, &hero_entities, &heroes);
             let me_state = mine.and_then(|id| heroes.iter().find(|e| e.id == id));
             fight.update(world, frame.dt, &heroes, me_state);
+            // Our sheet as the host has it: a level up shows, the file is kept.
+            if let Some(s) = session.take_sheet() {
+                let before = hw_sim::progress::level_of(my_sheet.lifetime);
+                let after = hw_sim::progress::level_of(s.lifetime);
+                if sheet_synced && after > before {
+                    powers.level_up(after);
+                }
+                if hero_file.as_ref() == Some(&s) {
+                    sheet_synced = true;
+                }
+                if sheet_synced && cheat_level.is_none() {
+                    hero_file = Some(s.clone());
+                    sheet_dirty = true;
+                }
+                my_sheet = s;
+            }
+            if sheet_dirty && frame.time - sheet_saved_at > 3.0 {
+                save_hero(hero_file.clone());
+                sheet_dirty = false;
+                sheet_saved_at = frame.time;
+            }
+            powers.update(frame.dt);
 
             // Citizens around the camera, at the game's time.
             let eye = world.camera().eye();
@@ -1313,7 +1428,27 @@ fn main() -> EngineResult<()> {
                         .and_then(|o| session.player_name(o))
                         .unwrap_or_else(|| "Your teammate".into())
                 };
-                fight.hud(frame.ui.ctx(), view_proj, me_state, &heroes, &names);
+                fight.hud(
+                    frame.ui.ctx(),
+                    view_proj,
+                    me_state,
+                    &heroes,
+                    &names,
+                    Some(&my_sheet),
+                );
+                let fighting = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
+                for a in powers.ui(frame.ui.ctx(), &my_sheet, fighting, creating) {
+                    match a {
+                        PowerAction::Buy(p, theme) => session.buy(p, theme),
+                        PowerAction::GiveUp(p) => session.give_up(p),
+                        PowerAction::Create(s) => {
+                            hero_file = Some(s.clone());
+                            my_sheet = s.clone();
+                            session.send_sheet(s);
+                            save_hero(hero_file.clone());
+                        }
+                    }
+                }
             }
             drawn = heroes;
 

@@ -9,7 +9,7 @@
 //!   two snapshots, so they glide instead of jumping 30 times a second.
 
 use crate::collision::{Body, Obstacles};
-use crate::{step_hero, DT};
+use crate::{step_moving, Moves, DT};
 use glam::DVec3;
 use hw_core::NetId;
 use hw_net::{EntityState, InputState};
@@ -31,6 +31,8 @@ pub struct Predictor {
     started: bool,
     /// Our hero sits in a taxi: the server moves it, nothing is predicted.
     pub riding: bool,
+    /// What our hero's movement powers allow (from the server's state).
+    pub moves: Moves,
 }
 
 impl Predictor {
@@ -42,6 +44,7 @@ impl Predictor {
             error: DVec3::ZERO,
             started: false,
             riding: false,
+            moves: Moves::ON_FOOT,
         }
     }
 
@@ -56,7 +59,7 @@ impl Predictor {
             self.pending.pop_front();
         }
         if !self.riding {
-            step_hero(&mut self.body, input, &self.solids);
+            step_moving(&mut self.body, input, &self.solids, self.moves);
         }
     }
 
@@ -72,6 +75,9 @@ impl Predictor {
             ),
             grounded: server.grounded,
         };
+        if let Some(c) = server.combat {
+            self.moves = Moves::from_effects(c.effects);
+        }
         if !self.started {
             self.body = server_body;
             self.started = true;
@@ -93,7 +99,7 @@ impl Predictor {
         let shown = self.body.pos + self.error;
         self.body = server_body;
         for (_, input) in &self.pending {
-            step_hero(&mut self.body, *input, &self.solids);
+            step_moving(&mut self.body, *input, &self.solids, self.moves);
         }
         self.error = shown - self.body.pos;
         if self.error.length() > SNAP_DISTANCE {

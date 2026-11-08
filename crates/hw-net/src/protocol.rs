@@ -47,6 +47,10 @@ pub struct InputState {
     /// Where the hero aims (unit vector in the local frame): the camera's
     /// direction. Punches and blasts go this way.
     pub aim: [f32; 3],
+    /// Another power used this tick ([`Power::code`], 0 for none): hold,
+    /// shield, lift and throw, shockwave. Strike and bolt come as `smash`
+    /// and `blast`.
+    pub power: u8,
     /// The enemy the player has picked (Tab), if any.
     pub target: Option<NetId>,
     /// Holding the revive key next to a downed teammate.
@@ -55,31 +59,54 @@ pub struct InputState {
     pub hospital: bool,
 }
 
-/// The powers a hero has in the first fight.
+/// Every power a hero can have (see `hw_sim::progress` for what each does).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Power {
-    /// A punch: free, weak, close.
+    /// A punch: free, weak, close. Every hero has it.
     Strike,
     /// An energy bolt: costs energy, reaches far, knocks back.
     Bolt,
+    /// Jumps several storeys, with control in the air.
+    SuperJump,
+    /// Binds a villain where it stands for a few seconds.
+    Hold,
+    /// A shield that halves the damage to the hero and friends near.
+    Shield,
+    /// Picks up a crate (later cars and the like) and throws it.
+    Lift,
+    /// Flight.
+    Flight,
+    /// A blast all round that throws villains off their feet.
+    Shockwave,
 }
 
 impl Power {
-    pub const ALL: [Power; 2] = [Power::Strike, Power::Bolt];
+    pub const ALL: [Power; 8] = [
+        Power::Strike,
+        Power::Bolt,
+        Power::SuperJump,
+        Power::Hold,
+        Power::Shield,
+        Power::Lift,
+        Power::Flight,
+        Power::Shockwave,
+    ];
 
     pub fn code(self) -> u8 {
         match self {
             Power::Strike => 1,
             Power::Bolt => 2,
+            Power::SuperJump => 3,
+            Power::Hold => 4,
+            Power::Shield => 5,
+            Power::Lift => 6,
+            Power::Flight => 7,
+            Power::Shockwave => 8,
         }
     }
 
     pub fn from_code(c: u8) -> Option<Self> {
-        match c {
-            1 => Some(Power::Strike),
-            2 => Some(Power::Bolt),
-            _ => None,
-        }
+        Power::ALL.into_iter().find(|p| p.code() == c)
     }
 }
 
@@ -170,6 +197,96 @@ impl Status {
     }
 }
 
+/// A power a hero owns: which, in which theme (its look: 0 or 1), and
+/// the karma paid for it (90% comes back if it is given up).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OwnedPower {
+    pub power: Power,
+    pub theme: u8,
+    pub paid: u32,
+}
+
+/// A hero's progress: what the hero file on the player's PC holds and the
+/// server plays by (see `hw_sim::progress` for the rules).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Sheet {
+    /// All karma ever earned: sets the level.
+    pub lifetime: u32,
+    /// Karma not spent yet: buys powers.
+    pub karma: u32,
+    /// Leaning per affinity (Guardian, Justice, Science, Mystic, Might).
+    pub affinity: [u32; 5],
+    /// The origin picked at creation (an index into `hw_sim::progress::ORIGINS`).
+    pub origin: u8,
+    /// Powers bought, in order (Strike is everyone's and not listed).
+    pub powers: Vec<OwnedPower>,
+}
+
+/// Most powers a sheet carries over the wire.
+pub const MAX_POWERS: usize = 32;
+
+impl Sheet {
+    pub fn wire_size(&self) -> usize {
+        4 + 4 + 20 + 1 + 1 + 6 * self.powers.len().min(MAX_POWERS)
+    }
+
+    pub fn write(&self, w: &mut Writer) {
+        w.u32(self.lifetime).u32(self.karma);
+        for a in self.affinity {
+            w.u32(a);
+        }
+        w.u8(self.origin);
+        let n = self.powers.len().min(MAX_POWERS);
+        w.u8(n as u8);
+        for p in &self.powers[..n] {
+            w.u8(p.power.code()).u8(p.theme).u32(p.paid);
+        }
+    }
+
+    pub fn read(r: &mut Reader) -> Result<Self, WireError> {
+        let lifetime = r.u32()?;
+        let karma = r.u32()?;
+        let mut affinity = [0u32; 5];
+        for a in affinity.iter_mut() {
+            *a = r.u32()?;
+        }
+        let origin = r.u8()?;
+        let n = r.u8()? as usize;
+        if n > MAX_POWERS {
+            return Err(WireError);
+        }
+        let mut powers = Vec::with_capacity(n);
+        for _ in 0..n {
+            let power = Power::from_code(r.u8()?).ok_or(WireError)?;
+            powers.push(OwnedPower {
+                power,
+                theme: r.u8()?,
+                paid: r.u32()?,
+            });
+        }
+        Ok(Self {
+            lifetime,
+            karma,
+            affinity,
+            origin,
+            powers,
+        })
+    }
+
+    /// Whether the hero owns this power (Strike: always).
+    pub fn has(&self, power: Power) -> bool {
+        power == Power::Strike || self.powers.iter().any(|p| p.power == power)
+    }
+
+    /// The theme the hero picked for a power (0 if not owned).
+    pub fn theme(&self, power: Power) -> u8 {
+        self.powers
+            .iter()
+            .find(|p| p.power == power)
+            .map_or(0, |p| p.theme)
+    }
+}
+
 /// A fighter's state as clients see it: bars in 0..=255, so small changes
 /// (regeneration) cost nothing until they show.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -180,10 +297,23 @@ pub struct CombatState {
     pub level: u8,
     /// Who it fights (an enemy's foe, a hero's picked target).
     pub target: Option<NetId>,
+    /// What powers do to it now ([`EFFECT_HELD`], [`EFFECT_SHIELD`], ...).
+    pub effects: u8,
 }
 
+/// Bound by a binding hold.
+pub const EFFECT_HELD: u8 = 1;
+/// Behind a force shield.
+pub const EFFECT_SHIELD: u8 = 2;
+/// Carrying something over its head.
+pub const EFFECT_CARRYING: u8 = 4;
+/// Flying is unlocked (heroes with the Flight power).
+pub const EFFECT_CAN_FLY: u8 = 8;
+/// Super jump is owned (higher jumps).
+pub const EFFECT_SUPER_JUMP: u8 = 16;
+
 /// Bytes a [`CombatState`] takes.
-const COMBAT_BYTES: usize = 8;
+const COMBAT_BYTES: usize = 9;
 
 /// No rotation.
 pub const NO_ROTATION: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -284,7 +414,8 @@ impl EntityState {
                 .u8(c.energy)
                 .u8(c.status.code())
                 .u8(c.level)
-                .u32(c.target.map_or(0, |t| t.0));
+                .u32(c.target.map_or(0, |t| t.0))
+                .u8(c.effects);
         }
     }
 
@@ -324,6 +455,7 @@ impl EntityState {
                     0 => None,
                     t => Some(NetId(t)),
                 },
+                effects: r.u8()?,
             })
         } else {
             None
@@ -364,6 +496,22 @@ pub enum FxKind {
     Lifted,
     /// A hero came back from hospital.
     Healed,
+    /// A binding hold took (`to` is held).
+    Hold,
+    /// A force shield went up round `to`.
+    Shield,
+    /// A shockwave went off round `from` (`amount`: villains caught).
+    Shockwave,
+    /// `from` lifted something over its head (`to`: what).
+    Lift,
+    /// `from` threw what it carried at `to`.
+    Throw,
+    /// A thrown thing hit `to`.
+    ThrowHit,
+    /// `to` reached a new level (`amount`).
+    LevelUp,
+    /// `to` earned karma (`amount`).
+    Karma,
 }
 
 impl FxKind {
@@ -378,6 +526,14 @@ impl FxKind {
             FxKind::Revived => 7,
             FxKind::Lifted => 8,
             FxKind::Healed => 9,
+            FxKind::Hold => 10,
+            FxKind::Shield => 11,
+            FxKind::Shockwave => 12,
+            FxKind::Lift => 13,
+            FxKind::Throw => 14,
+            FxKind::LevelUp => 15,
+            FxKind::Karma => 16,
+            FxKind::ThrowHit => 17,
         }
     }
 
@@ -392,6 +548,14 @@ impl FxKind {
             7 => FxKind::Revived,
             8 => FxKind::Lifted,
             9 => FxKind::Healed,
+            10 => FxKind::Hold,
+            11 => FxKind::Shield,
+            12 => FxKind::Shockwave,
+            13 => FxKind::Lift,
+            14 => FxKind::Throw,
+            15 => FxKind::LevelUp,
+            16 => FxKind::Karma,
+            17 => FxKind::ThrowHit,
             _ => return Err(WireError),
         })
     }
@@ -414,10 +578,12 @@ pub struct Fx {
     pub knock: bool,
     /// The blow defeated the target.
     pub defeat: bool,
+    /// The theme of the power that did it (0 or 1), for its look.
+    pub theme: u8,
 }
 
 /// Bytes an [`Fx`] takes after its message type.
-const FX_BYTES: usize = 8 + 1 + 4 + 4 + 12 + 2 + 1;
+const FX_BYTES: usize = 8 + 1 + 4 + 4 + 12 + 2 + 1 + 1;
 
 /// Reliable news from the server: repeated until the client confirms it,
 /// delivered in order, exactly once.
@@ -471,6 +637,9 @@ pub enum ToClient {
     },
     /// Something happened in a fight nearby.
     Fx(Fx),
+    /// Your hero's progress changed (karma, level, powers): keep it in
+    /// your hero file.
+    Sheet(Sheet),
 }
 
 /// Most broken elements in one [`ToClient::Damage`] (it must fit a packet
@@ -494,6 +663,17 @@ pub enum ToServer {
     Taxi {
         dest: u8,
     },
+    /// The hero file this player plays with (sent once on joining).
+    Sheet(Sheet),
+    /// Buy a power, in a theme.
+    Buy {
+        power: Power,
+        theme: u8,
+    },
+    /// Give a power up (90% of its price comes back).
+    GiveUp {
+        power: Power,
+    },
 }
 
 impl ToClient {
@@ -509,6 +689,7 @@ impl ToClient {
             ToClient::PropsBroken { props, .. } => 1 + 1 + 5 * props.len().min(255),
             ToClient::PropsRepaired { props } => 1 + 4 * props.len().min(255),
             ToClient::Fx(_) => FX_BYTES,
+            ToClient::Sheet(s) => s.wire_size(),
         }
     }
 
@@ -579,7 +760,13 @@ impl ToClient {
                 for v in fx.at {
                     w.f32(v);
                 }
-                w.u16(fx.amount).u8(fx.knock as u8 | (fx.defeat as u8) << 1);
+                w.u16(fx.amount)
+                    .u8(fx.knock as u8 | (fx.defeat as u8) << 1)
+                    .u8(fx.theme);
+            }
+            ToClient::Sheet(sheet) => {
+                w.u8(11);
+                sheet.write(w);
             }
         }
     }
@@ -672,8 +859,10 @@ impl ToClient {
                     amount,
                     knock: bits & 1 != 0,
                     defeat: bits & 2 != 0,
+                    theme: r.u8()?,
                 })
             }
+            11 => ToClient::Sheet(Sheet::read(r)?),
             _ => return Err(WireError),
         })
     }
@@ -684,6 +873,9 @@ impl ToServer {
         match self {
             ToServer::Chat { text } => 2 + text.len().min(255),
             ToServer::Taxi { .. } => 2,
+            ToServer::Sheet(s) => 1 + s.wire_size(),
+            ToServer::Buy { .. } => 3,
+            ToServer::GiveUp { .. } => 2,
         }
     }
 
@@ -695,6 +887,16 @@ impl ToServer {
             ToServer::Taxi { dest } => {
                 w.u8(2).u8(*dest);
             }
+            ToServer::Sheet(sheet) => {
+                w.u8(3);
+                sheet.write(w);
+            }
+            ToServer::Buy { power, theme } => {
+                w.u8(4).u8(power.code()).u8(*theme);
+            }
+            ToServer::GiveUp { power } => {
+                w.u8(5).u8(power.code());
+            }
         }
     }
 
@@ -702,6 +904,14 @@ impl ToServer {
         Ok(match r.u8()? {
             1 => ToServer::Chat { text: r.str()? },
             2 => ToServer::Taxi { dest: r.u8()? },
+            3 => ToServer::Sheet(Sheet::read(r)?),
+            4 => ToServer::Buy {
+                power: Power::from_code(r.u8()?).ok_or(WireError)?,
+                theme: r.u8()?,
+            },
+            5 => ToServer::GiveUp {
+                power: Power::from_code(r.u8()?).ok_or(WireError)?,
+            },
             _ => return Err(WireError),
         })
     }
@@ -791,7 +1001,7 @@ fn write_input(w: &mut Writer, input: &InputState) {
     for a in input.aim {
         w.u16(((a.clamp(-1.0, 1.0) * 32767.0).round() as i16) as u16);
     }
-    w.u32(input.target.map_or(0, |t| t.0));
+    w.u32(input.target.map_or(0, |t| t.0)).u8(input.power);
 }
 
 fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
@@ -807,6 +1017,10 @@ fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
         0 => None,
         t => Some(NetId(t)),
     };
+    let power = r.u8()?;
+    if power != 0 && Power::from_code(power).is_none() {
+        return Err(WireError);
+    }
     Ok(InputState {
         move_x: x * k,
         move_y: y * k,
@@ -821,6 +1035,7 @@ fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
         revive: bits & 64 != 0,
         hospital: bits & 128 != 0,
         target,
+        power,
     })
 }
 
@@ -1051,6 +1266,27 @@ mod tests {
         }
     }
 
+    fn sheet() -> Sheet {
+        Sheet {
+            lifetime: 1234,
+            karma: 56,
+            affinity: [1, 2, 3, 4, 500],
+            origin: 3,
+            powers: vec![
+                OwnedPower {
+                    power: Power::Bolt,
+                    theme: 1,
+                    paid: 40,
+                },
+                OwnedPower {
+                    power: Power::Flight,
+                    theme: 0,
+                    paid: 300,
+                },
+            ],
+        }
+    }
+
     #[test]
     fn client_messages_round_trip() {
         for m in [
@@ -1075,17 +1311,29 @@ mod tests {
                         target: Some(NetId(17)),
                         revive: true,
                         hospital: false,
+                        power: 4,
                     },
                 ],
                 ack_tick: 1234,
                 ack_bits: 0xF0F0_0001,
                 rel_ack: 3,
-                reliable: vec![(
-                    3,
-                    ToServer::Chat {
-                        text: "hello".into(),
-                    },
-                )],
+                reliable: vec![
+                    (
+                        3,
+                        ToServer::Chat {
+                            text: "hello".into(),
+                        },
+                    ),
+                    (4, ToServer::Sheet(sheet())),
+                    (
+                        5,
+                        ToServer::Buy {
+                            power: Power::Shield,
+                            theme: 1,
+                        },
+                    ),
+                    (6, ToServer::GiveUp { power: Power::Hold }),
+                ],
             },
             ClientMsg::Bye,
         ] {
@@ -1150,6 +1398,7 @@ mod tests {
                         amount: 36,
                         knock: true,
                         defeat: false,
+                        theme: 1,
                     }),
                 ),
             ],
@@ -1171,6 +1420,7 @@ mod tests {
                         status: Status::Knocked,
                         level: 1,
                         target: Some(NetId(3)),
+                        effects: EFFECT_HELD | EFFECT_SHIELD,
                     }),
                     ..Default::default()
                 },
@@ -1263,6 +1513,17 @@ mod tests {
             removed: Vec::new(),
         };
         assert_eq!(one.encode().len(), UPDATE_HEADER_BYTES + 4 + m.wire_size());
+        let m = ToClient::Sheet(sheet());
+        let one = ServerMsg::Update {
+            tick: 0,
+            ack: 0,
+            rel_ack: 0,
+            reliable: vec![(7, m.clone())],
+            entities: Vec::new(),
+            removed: Vec::new(),
+        };
+        assert_eq!(one.encode().len(), UPDATE_HEADER_BYTES + 4 + m.wire_size());
+        assert_eq!(ServerMsg::decode(&one.encode()).unwrap(), one);
     }
 
     #[test]

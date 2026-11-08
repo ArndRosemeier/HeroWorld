@@ -3,6 +3,23 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.027 (2026-11-08)
+
+- Karma and levels! Beating villains earns karma (more for tougher ones). Your lifetime karma
+  sets your level, from 1 up to 20, and every level-up fills your health and energy with a
+  burst of light and a fanfare.
+- Powers: press B to open your powers. Spend karma on super jump, flight, energy bolt,
+  shockwave, binding hold, force shield, and lift and throw, each in two looks (Atomic Ray or
+  Arcane Bolt, Force Field or Guardian Aegis, Jet Pack or Soaring Cape, and more). Higher
+  tiers open as you level; each power you own makes the next one dearer. Give one up and you
+  get 90% back. Keys 1 to 6 use them.
+- Flying is now something you earn: start on foot, buy Spring Heels to clear a house, and
+  later take to the sky.
+- New heroes pick an origin: lab accident, ancient relic, born mighty, sworn guardian or masked
+  avenger. What you do (blasting, protecting, reviving friends) makes matching powers cheaper.
+- Playing together, everyone fights at the host's level, so friends of any level can team up.
+- Villains now walk round walls and houses to reach you instead of bumping into them.
+
 ## 0.026 (2026-11-08)
 
 - There is a town below the town. Look for the glowing atom signs on the pavements beside the

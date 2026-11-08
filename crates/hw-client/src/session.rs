@@ -5,7 +5,9 @@
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
 use hw_net::gamehub::{Hub, HubClientLink, HubServerLink};
-use hw_net::{ConnState, Connection, EntityState, InputState, PlayerId, ToClient};
+use hw_net::{
+    ConnState, Connection, EntityState, InputState, PlayerId, Power, Sheet, ToClient, ToServer,
+};
 use hw_sim::host::Host;
 use hw_sim::predict::{Interpolator, Predictor};
 use hw_sim::{GeneratedTown, Sim};
@@ -29,6 +31,8 @@ pub enum Session {
         fx: Vec<hw_net::Fx>,
         /// Everyone's names, from the join news.
         names: std::collections::BTreeMap<PlayerId, String>,
+        /// Our hero file as the host last sent it.
+        sheet: Option<Sheet>,
     },
 }
 
@@ -50,13 +54,6 @@ impl Session {
     ) -> std::io::Result<Self> {
         let mut host = Host::with_sim(Sim::for_town(seed, town));
         host.sim.place_starter_crates();
-        // Hero level until heroes have their own (it sets what they can break).
-        if let Some(level) = std::env::var("HW_LEVEL")
-            .ok()
-            .and_then(|v| v.parse::<u8>().ok())
-        {
-            host.sim.hero_level = level.clamp(1, 20);
-        }
         host.sim.place_first_fight();
         if open {
             let addr = host.listen(("0.0.0.0", hw_net::DEFAULT_PORT))?;
@@ -127,6 +124,7 @@ impl Session {
                             news: Vec::new(),
                             fx: Vec::new(),
                             names: Default::default(),
+                            sheet: None,
                         },
                         seed,
                         people,
@@ -170,12 +168,15 @@ impl Session {
                 news,
                 fx,
                 names,
+                sheet,
             } => {
                 let was_on = matches!(conn.state, ConnState::Connected { .. });
                 let seq = conn.update(input);
                 for m in conn.take_news() {
                     if let ToClient::Fx(e) = m {
                         fx.push(e);
+                    } else if let ToClient::Sheet(s) = m {
+                        *sheet = Some(s);
                     } else if is_world_news(&m) {
                         news.push(m);
                     } else {
@@ -240,6 +241,42 @@ impl Session {
         match self {
             Session::Local { host, .. } => (host.take_fx(), host.sim.tick as f64),
             Session::Remote { fx, interp, .. } => (std::mem::take(fx), interp.render_tick()),
+        }
+    }
+
+    /// Plays our hero by `sheet` (the hero file; sent once on joining).
+    pub fn send_sheet(&mut self, sheet: Sheet) {
+        match self {
+            Session::Local { host, me, .. } => host.sim.set_sheet(*me, sheet),
+            Session::Remote { conn, .. } => conn.send(ToServer::Sheet(sheet)),
+        }
+    }
+
+    /// Buys `power` in `theme` (the host checks the price).
+    pub fn buy(&mut self, power: Power, theme: u8) {
+        match self {
+            Session::Local { host, me, .. } => {
+                let _ = host.sim.buy(*me, power, theme);
+            }
+            Session::Remote { conn, .. } => conn.send(ToServer::Buy { power, theme }),
+        }
+    }
+
+    /// Gives `power` up for 90% of its price.
+    pub fn give_up(&mut self, power: Power) {
+        match self {
+            Session::Local { host, me, .. } => {
+                host.sim.give_up(*me, power);
+            }
+            Session::Remote { conn, .. } => conn.send(ToServer::GiveUp { power }),
+        }
+    }
+
+    /// Our hero file, if it changed since the last call.
+    pub fn take_sheet(&mut self) -> Option<Sheet> {
+        match self {
+            Session::Local { host, .. } => host.take_local_sheet(),
+            Session::Remote { sheet, .. } => sheet.take(),
         }
     }
 

@@ -5,14 +5,17 @@
 //! The state lives in a `bevy_ecs` world and advances in fixed ticks
 //! ([`TICK_HZ`]). [`host::Host`] puts a network socket around it.
 
+pub mod balance;
 pub mod bubbles;
 pub mod citizens;
 pub mod collision;
 pub mod combat;
 pub mod destruction;
 pub mod host;
+pub mod nav;
 pub mod physics;
 pub mod predict;
+pub mod progress;
 pub mod props;
 pub mod save;
 pub mod taxi;
@@ -21,7 +24,7 @@ pub mod traffic;
 use bevy_ecs::prelude::*;
 use bubbles::Bubbles;
 use collision::{Body, Obstacles, BODY_HEIGHT};
-use combat::{CombatView, Drone, Enemy, Fighter, Fights, Spot};
+use combat::{Carried, CombatView, Drone, Enemy, Fighter, Fights, Kit, Rubble, Spot};
 use destruction::Damage;
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, NetIdAllocator, Seed};
@@ -29,7 +32,10 @@ use hw_gen::building::BuildingPlan;
 use hw_gen::city::{CityParams, CityPlan};
 use hw_gen::urban::world::TownWorld;
 use hw_gen::urban::TownParams;
-use hw_net::{EntityKind, EntityState, Fx, ImpactKind, InputState, PlayerId, Status, ToClient};
+use hw_net::{
+    EntityKind, EntityState, Fx, FxKind, ImpactKind, InputState, PlayerId, Power, Sheet, Status,
+    ToClient,
+};
 use physics::{Physics, PropState, CRATE_HALF};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -82,6 +88,15 @@ pub struct Hero {
 /// The newest input from the hero's player.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Default)]
 pub struct Control(pub InputState);
+
+/// A hero's progress (karma, level, powers): the player's hero file, which
+/// the server plays by and sends back when it changes.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub struct Progress {
+    pub sheet: Sheet,
+    /// Changed since the player was last told.
+    pub changed: bool,
+}
 
 /// When a hero may punch or blast again (a tick).
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -210,9 +225,52 @@ impl GeneratedTown {
     }
 }
 
-/// One tick of a hero's movement. The server and client prediction both run
-/// exactly this, so they agree.
+/// Take-off speed with Super Jump (about seven metres up), and how well a
+/// super jumper steers in the air.
+pub const SUPER_JUMP_SPEED: f64 = 16.5;
+pub const SUPER_AIR_ACCEL: f64 = 30.0;
+/// A super jumper's leaps carry them along faster than running.
+pub const SUPER_LEAP_SPEED: f64 = 13.0;
+
+/// What a hero's movement powers allow.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Moves {
+    /// Flight is unlocked.
+    pub fly: bool,
+    /// Super Jump is owned.
+    pub super_jump: bool,
+}
+
+impl Moves {
+    /// A hero without movement powers (and villains).
+    pub const ON_FOOT: Moves = Moves {
+        fly: false,
+        super_jump: false,
+    };
+    /// Flight allowed (tests and tools that fly).
+    pub const FLYER: Moves = Moves {
+        fly: true,
+        super_jump: false,
+    };
+
+    /// From the effect bits a hero's [`hw_net::CombatState`] carries.
+    pub fn from_effects(effects: u8) -> Self {
+        Self {
+            fly: effects & hw_net::EFFECT_CAN_FLY != 0,
+            super_jump: effects & hw_net::EFFECT_SUPER_JUMP != 0,
+        }
+    }
+}
+
+/// One tick of a hero's movement with flight allowed (tests and tools).
 pub fn step_hero(body: &mut Body, input: InputState, solids: &Obstacles) {
+    step_moving(body, input, solids, Moves::FLYER);
+}
+
+/// One tick of a hero's movement with what their powers allow. The server
+/// and client prediction both run exactly this, so they agree.
+pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, moves: Moves) {
+    input.fly &= moves.fly;
     if input.fly {
         fly_step(body, input);
         solids.move_body(body, DT);
@@ -222,10 +280,21 @@ pub fn step_hero(body: &mut Body, input: InputState, solids: &Obstacles) {
         }
         return;
     }
-    let want = DVec3::new(input.move_x as f64, 0.0, input.move_z as f64) * RUN_SPEED;
+    let top = if moves.super_jump && !body.grounded {
+        SUPER_LEAP_SPEED
+    } else {
+        RUN_SPEED
+    };
+    let want = DVec3::new(input.move_x as f64, 0.0, input.move_z as f64) * top;
     let horizontal = DVec3::new(body.vel.x, 0.0, body.vel.z);
     let delta = want - horizontal;
-    let accel = if body.grounded { RUN_ACCEL } else { AIR_ACCEL };
+    let accel = if body.grounded {
+        RUN_ACCEL
+    } else if moves.super_jump {
+        SUPER_AIR_ACCEL
+    } else {
+        AIR_ACCEL
+    };
     let max = accel * DT;
     body.vel += if delta.length() > max {
         delta.normalize() * max
@@ -244,7 +313,11 @@ pub fn step_hero(body: &mut Body, input: InputState, solids: &Obstacles) {
         };
     } else {
         if input.jump && body.grounded {
-            body.vel.y = JUMP_SPEED;
+            body.vel.y = if moves.super_jump {
+                SUPER_JUMP_SPEED
+            } else {
+                JUMP_SPEED
+            };
         }
         body.vel.y -= GRAVITY * DT;
     }
@@ -307,9 +380,6 @@ pub struct Sim {
     pub street: props::PropDamage,
     /// Taxi stands and the taxis flying fares (see [`taxi`]).
     pub taxis: taxi::Taxis,
-    /// Every hero's level until heroes have their own (milestone 7): it sets
-    /// how hard they hit, so what they can break.
-    pub hero_level: u8,
 }
 
 impl Sim {
@@ -363,7 +433,6 @@ impl Sim {
             damage: Damage::default(),
             street: props::PropDamage::default(),
             taxis: taxi::Taxis::default(),
-            hero_level: 1,
         }
     }
 
@@ -393,6 +462,9 @@ impl Sim {
         combat::step(&mut self.world, self.tick);
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
+        self.pay_karma();
+        self.sync_levels();
+        self.clear_rubble();
         let heroes: Vec<(PlayerId, NetId, DVec3)> = self
             .world
             .query::<(&Hero, &Net, &Motion)>()
@@ -424,7 +496,9 @@ impl Sim {
             .iter_mut(&mut self.world)
         {
             let input = control.0;
-            if tick < strike.ready_at || !(input.smash || input.blast) {
+            // Blasting needs Energy Bolt.
+            let blast = input.blast && fighter.is_none_or(|f| f.kit.has(Power::Bolt));
+            if tick < strike.ready_at || !(input.smash || blast) {
                 continue;
             }
             // A blow at a villain is the fight's (see `combat`); the downed
@@ -439,20 +513,22 @@ impl Sim {
             )
             .normalize_or(DVec3::Z);
             let chest = motion.0.pos + DVec3::Y * (BODY_HEIGHT * 0.7);
-            if input.blast {
+            // Level sets how hard heroes hit, so what they can break.
+            let level = fighter.map_or(1, |f| f.level);
+            if blast {
                 strike.ready_at = tick + BLAST_TICKS;
-                blows.push((hero.owner, ImpactKind::Blast, chest, aim));
+                blows.push((hero.owner, ImpactKind::Blast, chest, aim, level));
             } else {
                 strike.ready_at = tick + PUNCH_TICKS;
-                blows.push((hero.owner, ImpactKind::Punch, chest, aim));
+                blows.push((hero.owner, ImpactKind::Punch, chest, aim, level));
             }
         }
         if blows.is_empty() {
             return;
         }
         let solids = self.solids();
-        let power = destruction::hero_power(self.hero_level);
-        for (owner, kind, chest, aim) in blows {
+        for (owner, kind, chest, aim, level) in blows {
+            let power = destruction::hero_power(level);
             let (at, radius, strength) = match kind {
                 ImpactKind::Punch => (chest + aim * 0.9, power.punch_radius, power.punch),
                 ImpactKind::Blast => {
@@ -513,9 +589,21 @@ impl Sim {
         }
         // Props inside a bubble are simulated, nearest the bubble's centre
         // first, up to its budget; the rest hold still where they are.
+        // Lifted things ride with their heroes, outside physics.
+        let carried: Vec<NetId> = self
+            .world
+            .query_filtered::<&Net, (With<Prop>, With<Carried>)>()
+            .iter(&self.world)
+            .map(|n| n.0)
+            .collect();
+        for id in carried {
+            if self.physics.is_awake(id) {
+                self.physics.remove_prop(id);
+            }
+        }
         let mut props: Vec<(Entity, NetId, Body, [f32; 4])> = self
             .world
-            .query_filtered::<(Entity, &Net, &Motion, &Orientation), With<Prop>>()
+            .query_filtered::<(Entity, &Net, &Motion, &Orientation), (With<Prop>, Without<Carried>)>()
             .iter(&self.world)
             .map(|(e, n, m, o)| (e, n.0, m.0, o.0))
             .collect();
@@ -628,11 +716,24 @@ impl Sim {
         }
     }
 
-    /// Spawns a hero for `owner` at `at` and returns its ID.
+    /// Spawns a hero for `owner` at `at` and returns its ID: a starter hero
+    /// (Strike and Energy Bolt) until the player's hero file arrives
+    /// ([`Sim::set_sheet`]).
     pub fn spawn_hero(&mut self, owner: PlayerId, at: DVec3) -> NetId {
+        self.spawn_hero_with(owner, at, progress::starter())
+    }
+
+    /// Spawns a hero for `owner` with the progress `sheet`.
+    pub fn spawn_hero_with(&mut self, owner: PlayerId, at: DVec3, sheet: Sheet) -> NetId {
         let id = self.world.resource_mut::<Ids>().0.allocate();
-        let fighter = Fighter::hero();
+        let sheet = progress::sanitize(sheet);
+        let level = self.world.resource::<Fights>().team_level;
+        let fighter = Fighter::hero_at(level, Kit::of(&sheet));
         self.world.spawn((
+            Progress {
+                sheet,
+                changed: true,
+            },
             Net(id),
             Motion(Body {
                 pos: at,
@@ -643,7 +744,7 @@ impl Sim {
             Control::default(),
             Strike::default(),
             fighter,
-            CombatView(fighter.view()),
+            CombatView(fighter.view(self.tick)),
             LastChange(self.tick),
         ));
         id
@@ -720,6 +821,170 @@ impl Sim {
             .collect();
         v.sort_by_key(|x| x.0);
         v
+    }
+
+    /// The progress of `owner`'s hero.
+    pub fn sheet(&mut self, owner: PlayerId) -> Option<Sheet> {
+        self.world
+            .query::<(&Hero, &Progress)>()
+            .iter(&self.world)
+            .find(|(h, _)| h.owner == owner)
+            .map(|(_, p)| p.sheet.clone())
+    }
+
+    /// Plays `owner`'s hero by the hero file `sheet` (sent when joining).
+    pub fn set_sheet(&mut self, owner: PlayerId, sheet: Sheet) {
+        let sheet = progress::sanitize(sheet);
+        self.change_sheet(owner, |s| *s = sheet);
+    }
+
+    /// `owner` buys `power` in `theme`. Returns the price paid.
+    pub fn buy(
+        &mut self,
+        owner: PlayerId,
+        power: Power,
+        theme: u8,
+    ) -> Result<u32, progress::BuyError> {
+        let mut result = Err(progress::BuyError::NotForSale);
+        self.change_sheet(owner, |s| result = progress::buy(s, power, theme));
+        result
+    }
+
+    /// `owner` gives `power` up. Returns the karma refunded.
+    pub fn give_up(&mut self, owner: PlayerId, power: Power) -> Option<u32> {
+        let mut back = None;
+        self.change_sheet(owner, |s| back = progress::give_up(s, power));
+        back
+    }
+
+    fn change_sheet(&mut self, owner: PlayerId, f: impl FnOnce(&mut Sheet)) {
+        let mut f = Some(f);
+        for (hero, mut p, mut fighter) in self
+            .world
+            .query::<(&Hero, &mut Progress, &mut Fighter)>()
+            .iter_mut(&mut self.world)
+        {
+            if hero.owner != owner {
+                continue;
+            }
+            let before = p.sheet.clone();
+            if let Some(f) = f.take() {
+                f(&mut p.sheet);
+            }
+            if p.sheet != before {
+                p.changed = true;
+                fighter.kit = Kit::of(&p.sheet);
+                // A power given up lets go of what it held.
+                if !fighter.kit.has(Power::Lift) {
+                    fighter.carrying = None;
+                }
+            }
+        }
+        self.sync_levels();
+    }
+
+    /// Hero files that changed since the last call, for their players.
+    pub fn take_sheets(&mut self) -> Vec<(PlayerId, Sheet)> {
+        let mut out: Vec<(PlayerId, Sheet)> = self
+            .world
+            .query::<(&Hero, &mut Progress)>()
+            .iter_mut(&mut self.world)
+            .filter(|(_, p)| p.changed)
+            .map(|(h, mut p)| {
+                p.changed = false;
+                (h.owner, p.sheet.clone())
+            })
+            .collect();
+        out.sort_by_key(|(p, _)| *p);
+        out
+    }
+
+    /// The level everyone fights at: the host's hero's (the lowest player
+    /// number present), so friends of different levels fight together.
+    pub fn team_level(&self) -> u8 {
+        self.world.resource::<Fights>().team_level
+    }
+
+    /// Pays out the karma fights earned this tick; a hero going up a level
+    /// is healed and told.
+    fn pay_karma(&mut self) {
+        let rewards = self.world.resource::<Fights>().rewards.clone();
+        if rewards.is_empty() {
+            return;
+        }
+        let tick = self.tick;
+        let mut fx = Vec::new();
+        for r in rewards {
+            for (n, mut p, mut fighter, m) in self
+                .world
+                .query::<(&Net, &mut Progress, &mut Fighter, &Motion)>()
+                .iter_mut(&mut self.world)
+            {
+                if n.0 != r.hero {
+                    continue;
+                }
+                let up = progress::earn(&mut p.sheet, r.karma, r.deed);
+                if let Some(a) = r.deed {
+                    let x = &mut p.sheet.affinity[a.index()];
+                    *x = x.saturating_add(r.lean);
+                }
+                p.changed = true;
+                let at = m.0.pos + DVec3::Y * 1.2;
+                if r.karma > 0 {
+                    let mut e = combat_event(tick, FxKind::Karma, n.0, at);
+                    e.amount = r.karma.min(u16::MAX as u32) as u16;
+                    fx.push(e);
+                }
+                if let Some(level) = up {
+                    fighter.health = fighter.max_health;
+                    fighter.energy = fighter.max_energy;
+                    let mut e = combat_event(tick, FxKind::LevelUp, n.0, at);
+                    e.amount = level as u16;
+                    fx.push(e);
+                }
+            }
+        }
+        self.world.resource_mut::<Fights>().events.extend(fx);
+    }
+
+    /// Everyone fights at the host's hero's level: health, damage and new
+    /// villain groups follow it.
+    fn sync_levels(&mut self) {
+        let lead = self
+            .world
+            .query::<(&Hero, &Progress)>()
+            .iter(&self.world)
+            .min_by_key(|(h, _)| h.owner)
+            .map(|(_, p)| progress::level_of(p.sheet.lifetime));
+        let Some(level) = lead else {
+            return;
+        };
+        self.world.resource_mut::<Fights>().team_level = level;
+        for mut f in self
+            .world
+            .query_filtered::<&mut Fighter, With<Hero>>()
+            .iter_mut(&mut self.world)
+        {
+            if f.level != level {
+                f.set_level(level);
+            }
+        }
+    }
+
+    /// Rubble that was thrown a while ago is swept away.
+    fn clear_rubble(&mut self) {
+        let tick = self.tick;
+        let gone: Vec<(Entity, NetId)> = self
+            .world
+            .query::<(Entity, &Net, &Rubble)>()
+            .iter(&self.world)
+            .filter(|(_, _, r)| r.gone_at.is_some_and(|t| tick >= t))
+            .map(|(e, n, _)| (e, n.0))
+            .collect();
+        for (e, id) in gone {
+            self.physics.remove_prop(id);
+            self.world.despawn(e);
+        }
     }
 
     pub fn remove_hero(&mut self, owner: PlayerId) {
@@ -863,6 +1128,10 @@ fn move_heroes(
     mut q: Query<(&Control, &mut Motion, Option<&Fighter>), WalkingHero>,
 ) {
     for (control, mut motion, fighter) in &mut q {
+        let moves = fighter.map_or(Moves::ON_FOOT, |f| Moves {
+            fly: f.kit.has(Power::Flight),
+            super_jump: f.kit.has(Power::SuperJump),
+        });
         let status = fighter.map_or(Status::Standing, |f| f.status);
         let input = match status {
             // A drone holds the carried; the downed only fall.
@@ -871,9 +1140,23 @@ fn move_heroes(
             _ => control.0,
         };
         let mut body = motion.0;
-        step_hero(&mut body, input, &solids.0);
+        step_moving(&mut body, input, &solids.0, moves);
         // Only a real change counts, so heroes standing still cost no traffic.
         motion.set_if_neq(Motion(body));
+    }
+}
+
+fn combat_event(tick: u64, kind: FxKind, who: NetId, at: DVec3) -> Fx {
+    Fx {
+        tick,
+        kind,
+        from: who,
+        to: who,
+        at: at.as_vec3().to_array(),
+        amount: 0,
+        knock: false,
+        defeat: false,
+        theme: 0,
     }
 }
 

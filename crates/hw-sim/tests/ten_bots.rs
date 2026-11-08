@@ -7,7 +7,7 @@
 
 use glam::DVec3;
 use hw_core::{NetId, Seed};
-use hw_net::{ConnState, Connection, InputState, PlayerId};
+use hw_net::{ConnState, Connection, InputState, PlayerId, Power, ToServer};
 use hw_sim::host::{Host, INTEREST_RADIUS, MAX_PLAYERS};
 use hw_sim::{GeneratedTown, Sim, TICK_HZ};
 use std::time::{Duration, Instant};
@@ -89,6 +89,15 @@ fn ten_bots_play_for_ten_minutes() {
         host.tick();
     }
     assert_eq!(host.players().len(), MAX_PLAYERS);
+    // Every bot plays a level-5 hero who can fly and jump.
+    let mut flier = hw_sim::progress::new_hero(0);
+    flier.lifetime = hw_sim::progress::karma_for_level(5);
+    flier.karma = 5_000;
+    hw_sim::progress::buy(&mut flier, Power::SuperJump, 1).unwrap();
+    hw_sim::progress::buy(&mut flier, Power::Flight, 0).unwrap();
+    for b in &mut bots {
+        b.send(ToServer::Sheet(flier.clone()));
+    }
     let ids: Vec<(PlayerId, NetId)> = bots
         .iter()
         .map(|b| match b.state {

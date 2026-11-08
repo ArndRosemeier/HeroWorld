@@ -244,6 +244,19 @@ The progression from the design: karma, levels 1 to 5, affinities, tiers.
 **Done when:** a new hero reaches level 5 in about an hour of play, the balance run is green,
 and two friends of different levels fight together at one level.
 
+**Status (0.027):** built. Rules in `hw-sim/src/progress.rs` (levels: 960 karma for level 2, each
+level 25% more; tier 1 costs 960, each tier ×1.5, each owned power +25%; affinity discount up to
+30%; origins give 600 affinity; refunds 90%). The hero file (`hw_net::Sheet`) lives in the
+player's profile, is sent on joining, and the server checks every buy. Powers in
+`hw-sim/src/combat.rs`; themes change name, colour and sound. Team level = the host's; all heroes
+fight at it and groups spawn at it. `cargo run -p hw-sim --example balance` fights every power
+against standard groups at level 8 over six seeds and flags outliers (green; tests/powers.rs
+runs it too). Pacing test: a new hero reaches level 5 after about 62 minutes of play. Villains
+walk round walls with a small grid A* over the server's obstacles (`hw-sim/src/nav.rs`), not
+Engine navigation, because the server may only use Engine's headless physics. Not yet: the client
+crashes out of memory after the first seconds under the headless software renderer (lavapipe),
+seemingly from the 17,000 street props (not M7), so in-fight screenshots are pending.
+
 ### M8. A breakable city
 
 **Status (2026-11-08, 0.021):** buildings break. Every building becomes Engine's breakable
