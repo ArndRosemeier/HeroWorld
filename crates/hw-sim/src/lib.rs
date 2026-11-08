@@ -641,15 +641,27 @@ impl Sim {
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
         self.alarms.step(self.tick);
-        // Cars stop for heroes and villains standing in the road, and short
-        // of a fight or a collapse.
-        let standing: Vec<DVec3> = self
+        // Cars stop for anyone in the road (heroes, villains on their feet
+        // or knocked down, a mugging's victim, someone lying hurt), and
+        // short of a fight or a collapse.
+        let mut standing: Vec<DVec3> = self
             .world
-            .query::<(&Motion, Option<&Hero>, Option<&Fighter>)>()
+            .query::<(
+                &Motion,
+                Option<&Hero>,
+                Option<&Fighter>,
+                Has<incidents::Bystander>,
+            )>()
             .iter(&self.world)
-            .filter(|(_, h, f)| h.is_some() || f.is_some_and(|f| f.standing()))
+            .filter(|(_, h, f, b)| {
+                h.is_some() || *b || f.is_some_and(|f| f.status != Status::Carried)
+            })
             .map(|(m, ..)| m.0.pos)
             .collect();
+        standing.extend(self.incidents.open.iter().filter_map(|i| match i.hurt {
+            Some(incidents::Hurt::Lying(p)) => Some(p),
+            _ => None,
+        }));
         let stops = self.alarms.car_stops();
         if let Some(t) = self.wrecks.traffic.as_mut() {
             t.set_blockers(&standing, &stops);

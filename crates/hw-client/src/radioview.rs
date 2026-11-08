@@ -95,6 +95,15 @@ fn beam_colour(kind: IncidentKind) -> Color {
 }
 
 impl Radio {
+    /// Where rescues' hurt people lie in the open (cars stop for them).
+    pub fn lying(&self) -> impl Iterator<Item = Vec3> + '_ {
+        self.calls
+            .values()
+            .filter_map(|c| c.casualty)
+            .filter(|c| c.state == 0)
+            .map(|c| c.at)
+    }
+
     /// An incident message; returns false for other messages.
     pub fn hear(&mut self, world: &mut World, m: &ToClient) -> bool {
         if let ToClient::Casualty {

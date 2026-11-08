@@ -1141,6 +1141,11 @@ impl Traffic {
                     return true;
                 }
                 let od = ahead(of, z.other_from, olen);
+                // Too close and too fast to stop for its red: it comes on
+                // through, so wait for it.
+                if z.other_phase != z.phase && o.v > 2.0 && od < o.v * o.v / (2.0 * BRAKE) + 1.5 {
+                    return true;
+                }
                 if z.other_phase != z.phase || od > LOOK || (o.v < 0.3 && od > 3.0) {
                     return false;
                 }
@@ -1595,7 +1600,7 @@ mod tests {
         }
         let rate = clashes as f64 / passes.max(1) as f64;
         assert!(
-            rate < 0.05,
+            rate < 0.005,
             "{clashes} of {passes} crossings shared ({:.1}%)",
             rate * 100.0
         );

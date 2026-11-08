@@ -1918,18 +1918,19 @@ fn main() -> EngineResult<()> {
                 }
             }
             // Cars on the streets, hover cars and taxis in the sky lanes.
-            // Cars stop for heroes and villains in the road and short of
-            // trouble, as the server's do.
-            let standing: Vec<DVec3> = heroes
+            // Cars stop for anyone in the road (on their feet, knocked down
+            // or lying hurt) and short of trouble, as the server's do.
+            let mut standing: Vec<DVec3> = heroes
                 .iter()
                 .filter(|e| match e.kind {
-                    hw_net::EntityKind::Hero => true,
+                    hw_net::EntityKind::Hero | hw_net::EntityKind::Bystander => true,
                     _ => e
                         .combat
-                        .is_some_and(|c| c.status == hw_net::Status::Standing),
+                        .is_some_and(|c| c.status != hw_net::Status::Carried),
                 })
                 .map(|e| DVec3::from_array(e.pos))
                 .collect();
+            standing.extend(radio.lying().map(|p| p.as_dvec3()));
             traffic.set_blockers(&standing, &alarms.car_stops());
             traffic.advance_to(session.time(tick_clock / hw_sim::DT));
             // Joined a friend: our own hero bumps into the cars near it as

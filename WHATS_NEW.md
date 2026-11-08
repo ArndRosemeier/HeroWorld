@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.063 (2026-11-08)
+
+- Cars stop for people lying in the road: a knocked-down villain, a mugging's victim, someone hurt
+  waiting for the ambulance.
+- Cars no longer drive into each other at junctions: a car whose light just turned green waits for
+  one that was too close to stop for its red.
+
 ## 0.062 (2026-11-08)
 
 - HeroWorld can be downloaded ready to play for Windows: unzip and double-click heroworld.exe,
