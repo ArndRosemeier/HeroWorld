@@ -7,6 +7,7 @@ pub mod citymesh;
 pub mod crowdview;
 pub mod heroview;
 pub mod landmarkview;
+pub mod nightlights;
 pub mod people;
 pub mod poses;
 pub mod profile;

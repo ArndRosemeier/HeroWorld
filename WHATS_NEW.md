@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.019 (2026-11-08)
+
+- After dark the town lights up: street lamps cast warm pools of light, kiosks glow, and the Aether Spire bathes its plaza in cyan. Try it with `HW_HOUR=22`.
+
 ## 0.018 (2026-11-08)
 
 - The town has people! Hundreds of citizens walk the pavements, wait at corners and chat, dressed for the golden age: suits and fedoras, flapper dresses and cloche hats, work clothes and caps.

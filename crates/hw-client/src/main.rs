@@ -65,6 +65,18 @@ const BUILD_BUDGET_MS: f64 = 6.0;
 const TITLE_BUILD_MS: f64 = 20.0;
 /// The hour the game is played at (the title is at golden hour).
 const GAME_HOUR: f32 = 10.5;
+
+/// The hour of day: `HW_HOUR` (0 to 24, e.g. 22 for night) or [`GAME_HOUR`].
+fn game_hour() -> f32 {
+    static HOUR: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *HOUR.get_or_init(|| {
+        std::env::var("HW_HOUR")
+            .ok()
+            .and_then(|h| h.parse::<f32>().ok())
+            .filter(|h| (0.0..=24.0).contains(h))
+            .unwrap_or(GAME_HOUR)
+    })
+}
 /// Seconds the camera takes to swoop from the title down to the hero.
 const SWOOP_SECONDS: f32 = 2.4;
 /// Cells within this distance of the cut focus are redrawn when it changes.
@@ -400,7 +412,7 @@ fn main() -> EngineResult<()> {
         move |world, frame| {
             if frame.first {
                 world.set_view_distance(6000.0)?;
-                world.set_physical_sky(Some(PhysicalSky::at_hour(GAME_HOUR)));
+                world.set_physical_sky(Some(PhysicalSky::at_hour(game_hour())));
                 world.set_moons(moons())?;
                 if let Some(t) = title_screen.as_mut() {
                     t.enter(world);
@@ -531,6 +543,10 @@ fn main() -> EngineResult<()> {
                 return Ok(());
             };
             version_corner(&frame.ui, &mut whats_new, session.room_code());
+            if let Some(lights) = extras.lights.as_mut() {
+                let dark = swoop.is_none() && hw_client::nightlights::dark_at(game_hour());
+                lights.update(world, world.camera().eye(), dark)?;
+            }
             {
                 let eye = world.camera().eye();
                 let step = 48.0;
@@ -807,7 +823,7 @@ fn main() -> EngineResult<()> {
                     from_yaw + turn * k,
                     from_pitch + (to_pitch - from_pitch) * k,
                 );
-                let hour = title::TITLE_HOUR + (GAME_HOUR - title::TITLE_HOUR) * k;
+                let hour = title::TITLE_HOUR + (game_hour() - title::TITLE_HOUR) * k;
                 world.set_physical_sky(Some(PhysicalSky::at_hour(hour)));
                 if k >= 1.0 {
                     swoop = None;
@@ -864,6 +880,7 @@ fn set_town_stream(world: &mut World, generated: &GeneratedTown) -> EngineResult
 struct TownExtras {
     lods: Vec<LodId>,
     entities: Vec<EntityId>,
+    lights: Option<hw_client::nightlights::NightLights>,
 }
 
 impl TownExtras {
@@ -873,6 +890,9 @@ impl TownExtras {
         }
         for e in self.entities.drain(..) {
             world.despawn(e);
+        }
+        if let Some(mut l) = self.lights.take() {
+            l.clear(world);
         }
     }
 }
@@ -891,6 +911,7 @@ fn spawn_extras(world: &mut World, generated: &GeneratedTown) -> EngineResult<To
     Ok(TownExtras {
         lods: props.sets.into_iter().chain(landmarks.sets).collect(),
         entities: waterfront.entities,
+        lights: Some(hw_client::nightlights::NightLights::new(&generated.world)),
     })
 }
 
