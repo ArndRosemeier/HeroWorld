@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.044 (2026-11-08)
+
+- Street furniture up close: cast-iron lamp posts with glowing globes, atomic saucer lamps with
+  spinning-atom tops, rounded traffic lights with hooded lenses, scrolled iron benches, ribbed
+  bins, chrome-capped hydrants, rocket mailboxes with swept fins and turned bollards.
+
 ## 0.043 (2026-11-08)
 
 - The cars got a full makeover: smooth curved bodies, chrome bumpers and grilles, whitewall tyres

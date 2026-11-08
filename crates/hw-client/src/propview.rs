@@ -10,7 +10,7 @@ use crate::citymesh::{MeshBuilder, Surf};
 use engine::prelude::*;
 use engine::vegetation::{shrub_model, tree_model, TreeSpecies};
 use glam::DVec3;
-use hw_gen::urban::props::{CarModel, LampStyle, Prop, PropKind, Species};
+use hw_gen::urban::props::{CarModel, Prop, PropKind, Species};
 use hw_gen::urban::world::TownWorld;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
@@ -170,21 +170,29 @@ fn species(s: Species) -> TreeSpecies {
 
 /// The detail levels of one kind of prop.
 pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
+    use crate::propmesh as pm;
+    let three = |make: &dyn Fn(Lod) -> Mesh, d: [f32; 3]| {
+        vec![
+            LodLevel::new(make(Lod::Near), d[0]),
+            LodLevel::new(make(Lod::Mid), d[1]),
+            LodLevel::new(make(Lod::Far), d[2]),
+        ]
+    };
     let two = |near: Mesh, near_m: f32, far: Mesh, far_m: f32| {
         vec![LodLevel::new(near, near_m), LodLevel::new(far, far_m)]
     };
     Ok(match kind {
         PropKind::Tree(s, v) => tree_model(species(s), v as u32)?.lod_levels(),
         PropKind::Shrub(v) => shrub_model(v as u32)?.lod_levels(),
-        PropKind::Lamp(style) => two(lamp(style, true), 140.0, lamp(style, false), 700.0),
+        PropKind::Lamp(style) => three(&|l| pm::lamp(style, l), [30.0, 140.0, 700.0]),
         PropKind::Car(m, paint) => parked_car_levels(m, paint),
-        PropKind::TrafficLight => two(traffic_light(true), 160.0, traffic_light(false), 500.0),
+        PropKind::TrafficLight => three(&pm::traffic_light, [30.0, 160.0, 500.0]),
         PropKind::Fountain => vec![LodLevel::new(fountain(), 900.0)],
-        PropKind::Bench => vec![LodLevel::new(bench(), 160.0)],
-        PropKind::Bin => vec![LodLevel::new(bin(), 120.0)],
-        PropKind::Hydrant => vec![LodLevel::new(hydrant(), 120.0)],
-        PropKind::Mailbox => vec![LodLevel::new(mailbox(), 180.0)],
-        PropKind::Bollard => vec![LodLevel::new(bollard(), 150.0)],
+        PropKind::Bench => three(&pm::bench, [25.0, 80.0, 160.0]),
+        PropKind::Bin => three(&pm::bin, [20.0, 60.0, 120.0]),
+        PropKind::Hydrant => three(&pm::hydrant, [20.0, 60.0, 120.0]),
+        PropKind::Mailbox => three(&pm::mailbox, [25.0, 80.0, 180.0]),
+        PropKind::Bollard => three(&pm::bollard, [20.0, 60.0, 150.0]),
         PropKind::Kiosk => two(kiosk(true), 200.0, kiosk(false), 600.0),
         PropKind::AdPillar => vec![LodLevel::new(ad_pillar(), 250.0)],
         PropKind::Statue(pose) => vec![LodLevel::new(statue_mesh(pose), 500.0)],
@@ -197,27 +205,6 @@ pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
 fn bx(b: &mut MeshBuilder, lo: DVec3, hi: DVec3, c: Color) {
     let (lo, hi) = (lo.min(hi), lo.max(hi));
     b.oriented_box((lo + hi) * 0.5, DVec3::X, (hi - lo) * 0.5, c);
-}
-
-/// A cylinder lying along x, centred on `c`, `w` wide.
-fn xcyl(b: &mut MeshBuilder, c: DVec3, r: f64, w: f64, seg: usize, col: Color) {
-    let ring = |x: f64| -> Vec<DVec3> {
-        (0..seg)
-            .map(|i| {
-                let a = TAU * i as f64 / seg as f64;
-                c + DVec3::new(x, r * a.cos(), r * a.sin())
-            })
-            .collect()
-    };
-    let (l, rr) = (ring(-w * 0.5), ring(w * 0.5));
-    for i in 0..seg {
-        let j = (i + 1) % seg;
-        let mid = (l[i] + l[j]) * 0.5;
-        let out = DVec3::new(0.0, mid.y - c.y, mid.z - c.z);
-        b.quad([l[i], l[j], rr[j], rr[i]], out, col);
-    }
-    b.polygon(&l, -DVec3::X, col);
-    b.polygon(&rr, DVec3::X, col);
 }
 
 /// A closed ellipsoid.
@@ -264,105 +251,11 @@ fn glass(b: &mut MeshBuilder, f: impl FnOnce(&mut MeshBuilder)) {
     b.surf = Surf::Plain;
 }
 
-const WARM: (u8, u8, u8) = (255, 218, 160);
-
 fn c3(t: (u8, u8, u8)) -> Color {
     rgb(t.0, t.1, t.2)
 }
 
 // ---------------------------------------------------------------- lamps
-
-/// A street lamp, its light towards +z (the road).
-fn lamp(style: LampStyle, near: bool) -> Mesh {
-    let mut b = MeshBuilder::new();
-    let seg = if near { 10 } else { 4 };
-    match style {
-        LampStyle::Lantern => {
-            let iron = rgb(36, 42, 38);
-            metal(&mut b, |b| {
-                b.cylinder(DVec3::ZERO, (0.2, 0.13), 0.7, seg, true, iron);
-                b.cylinder(DVec3::Y * 0.7, (0.07, 0.06), 3.1, seg, false, iron);
-                b.cylinder(DVec3::Y * 3.75, (0.13, 0.13), 0.1, seg, true, iron);
-                b.cylinder(DVec3::Y * 4.45, (0.32, 0.0), 0.35, 4, true, iron);
-            });
-            glow(&mut b, |b| {
-                b.cylinder(DVec3::Y * 3.85, (0.17, 0.24), 0.6, 4, true, c3(WARM))
-            });
-            if near {
-                metal(&mut b, |b| {
-                    b.cylinder(DVec3::Y * 4.8, (0.04, 0.0), 0.25, 6, false, iron)
-                });
-            }
-        }
-        LampStyle::Deco => {
-            let bronze = rgb(58, 76, 64);
-            metal(&mut b, |b| {
-                b.cylinder(DVec3::ZERO, (0.32, 0.2), 1.0, seg, true, bronze);
-                b.cylinder(DVec3::Y, (0.12, 0.08), 4.9, seg, false, bronze);
-                bx(
-                    b,
-                    DVec3::new(-0.95, 5.8, -0.06),
-                    DVec3::new(0.95, 5.92, 0.06),
-                    bronze,
-                );
-                b.cylinder(DVec3::Y * 5.9, (0.08, 0.0), 0.7, seg, false, bronze);
-            });
-            glow(&mut b, |b| {
-                for x in [-0.95, 0.95] {
-                    ellipsoid(
-                        b,
-                        DVec3::new(x, 6.05, 0.0),
-                        DVec3::splat(0.27),
-                        seg,
-                        seg / 2 + 1,
-                        c3(WARM),
-                    );
-                }
-            });
-        }
-        LampStyle::Atomic => {
-            let chrome = rgb(214, 220, 224);
-            let accent = rgb(64, 186, 180);
-            metal(&mut b, |b| {
-                b.cylinder(DVec3::ZERO, (0.12, 0.06), 7.0, seg, true, chrome);
-                bx(
-                    b,
-                    DVec3::new(-0.04, 6.9, 0.0),
-                    DVec3::new(0.04, 7.0, 1.6),
-                    chrome,
-                );
-            });
-            let hub = DVec3::new(0.0, 6.88, 1.75);
-            b.cylinder(hub, (0.8, 0.8), 0.14, seg + 4, true, accent);
-            glow(&mut b, |b| {
-                b.cylinder(
-                    hub - DVec3::Y * 0.03,
-                    (0.62, 0.62),
-                    0.03,
-                    seg + 4,
-                    true,
-                    rgb(225, 245, 255),
-                );
-                ellipsoid(
-                    b,
-                    hub + DVec3::Y * 0.26,
-                    DVec3::splat(0.13),
-                    seg,
-                    5,
-                    rgb(255, 120, 90),
-                );
-            });
-            if near {
-                metal(&mut b, |b| {
-                    b.cylinder(hub + DVec3::Y * 0.14, (0.05, 0.0), 0.5, 6, false, chrome);
-                    // A ring round the pole, as on a ray gun.
-                    b.cylinder(DVec3::Y * 2.6, (0.16, 0.16), 0.08, seg, true, accent);
-                });
-            }
-        }
-    }
-    b.finish()
-}
 
 // ---------------------------------------------------------------- cars
 
@@ -450,152 +343,6 @@ pub fn sky_car_levels(paint: u8) -> Vec<LodLevel> {
 }
 
 // ---------------------------------------------------------------- street
-
-/// Traffic lights facing +z (the traffic coming in).
-fn traffic_light(near: bool) -> Mesh {
-    let mut b = MeshBuilder::new();
-    let pole = rgb(60, 62, 66);
-    let housing = rgb(214, 172, 44);
-    metal(&mut b, |b| {
-        b.cylinder(DVec3::ZERO, (0.1, 0.08), 3.0, 8, true, pole)
-    });
-    bx(
-        &mut b,
-        DVec3::new(-0.2, 2.75, -0.15),
-        DVec3::new(0.2, 3.85, 0.15),
-        housing,
-    );
-    b.dome(DVec3::new(0.0, 3.85, 0.0), 0.2, 10, 3, housing);
-    if near {
-        glow(&mut b, |b| {
-            for (y, c) in [
-                (3.6, rgb(255, 50, 40)),
-                (3.3, rgb(255, 180, 40)),
-                (3.0, rgb(60, 255, 120)),
-            ] {
-                bx(
-                    b,
-                    DVec3::new(-0.11, y - 0.11, 0.15),
-                    DVec3::new(0.11, y + 0.11, 0.18),
-                    c,
-                );
-            }
-        });
-    }
-    b.finish()
-}
-
-/// A deco bench, its sitters looking along +z.
-fn bench() -> Mesh {
-    let mut b = MeshBuilder::new();
-    let iron = rgb(40, 46, 42);
-    let wood = rgb(150, 98, 56);
-    metal(&mut b, |b| {
-        for x in [-0.8, 0.8] {
-            bx(
-                b,
-                DVec3::new(x - 0.04, 0.0, -0.25),
-                DVec3::new(x + 0.04, 0.45, 0.25),
-                iron,
-            );
-            bx(
-                b,
-                DVec3::new(x - 0.04, 0.45, -0.27),
-                DVec3::new(x + 0.04, 0.9, -0.22),
-                iron,
-            );
-        }
-    });
-    for k in 0..3 {
-        let z = -0.2 + k as f64 * 0.15;
-        bx(
-            &mut b,
-            DVec3::new(-0.95, 0.45, z - 0.06),
-            DVec3::new(0.95, 0.5, z + 0.06),
-            wood,
-        );
-    }
-    for y in [0.62, 0.8] {
-        bx(
-            &mut b,
-            DVec3::new(-0.95, y - 0.06, -0.24),
-            DVec3::new(0.95, y + 0.06, -0.2),
-            wood,
-        );
-    }
-    b.finish()
-}
-
-fn bin() -> Mesh {
-    let mut b = MeshBuilder::new();
-    let green = rgb(46, 94, 72);
-    metal(&mut b, |b| {
-        b.cylinder(DVec3::ZERO, (0.26, 0.29), 0.85, 10, true, green);
-        b.cylinder(
-            DVec3::Y * 0.85,
-            (0.31, 0.31),
-            0.06,
-            10,
-            true,
-            rgb(200, 204, 206),
-        );
-    });
-    b.finish()
-}
-
-/// A chrome-capped red hydrant.
-fn hydrant() -> Mesh {
-    let mut b = MeshBuilder::new();
-    let red = rgb(198, 38, 34);
-    b.cylinder(DVec3::ZERO, (0.18, 0.18), 0.07, 10, true, red);
-    b.cylinder(DVec3::Y * 0.07, (0.13, 0.12), 0.5, 10, false, red);
-    metal(&mut b, |b| {
-        b.dome(DVec3::Y * 0.57, 0.13, 10, 3, rgb(220, 224, 228));
-        xcyl(
-            b,
-            DVec3::new(0.0, 0.4, 0.0),
-            0.05,
-            0.38,
-            8,
-            rgb(220, 224, 228),
-        );
-    });
-    b.finish()
-}
-
-/// A mailbox shaped like a rocket: fins, a red nose, a glowing porthole.
-fn mailbox() -> Mesh {
-    let mut b = MeshBuilder::new();
-    let blue = rgb(40, 82, 168);
-    let red = rgb(204, 46, 40);
-    b.cylinder(DVec3::Y * 0.25, (0.22, 0.24), 1.0, 12, true, blue);
-    b.cylinder(DVec3::Y * 1.25, (0.24, 0.0), 0.5, 12, false, red);
-    for k in 0..3 {
-        let a = TAU * (k as f64 / 3.0 + 1.0 / 12.0);
-        let u = DVec3::new(a.cos(), 0.0, a.sin());
-        b.oriented_box(
-            u * 0.3 + DVec3::Y * 0.3,
-            u,
-            DVec3::new(0.14, 0.3, 0.025),
-            red,
-        );
-    }
-    bx(
-        &mut b,
-        DVec3::new(-0.1, 1.0, 0.2),
-        DVec3::new(0.1, 1.04, 0.245),
-        rgb(20, 20, 24),
-    );
-    glow(&mut b, |b| {
-        bx(
-            b,
-            DVec3::new(-0.06, 0.72, 0.2),
-            DVec3::new(0.06, 0.84, 0.25),
-            rgb(255, 210, 120),
-        )
-    });
-    b.finish()
-}
 
 /// A round news kiosk: cream walls, a glowing sign band, a red saucer roof
 /// and an atom on a mast.
@@ -825,18 +572,6 @@ pub fn statue(b: &mut MeshBuilder, pose: u8) {
 }
 
 /// A cast-iron mooring bollard: a squat post with a flared cap.
-fn bollard() -> Mesh {
-    let mut b = MeshBuilder::new();
-    let iron = rgb(30, 34, 36);
-    metal(&mut b, |b| {
-        b.cylinder(DVec3::ZERO, (0.2, 0.2), 0.08, 10, true, iron);
-        b.cylinder(DVec3::Y * 0.08, (0.15, 0.12), 0.42, 10, false, iron);
-        b.cylinder(DVec3::Y * 0.5, (0.12, 0.2), 0.1, 10, false, iron);
-        b.cylinder(DVec3::Y * 0.6, (0.2, 0.18), 0.06, 10, true, iron);
-    });
-    b.finish()
-}
-
 /// A round basin with a bowl on a column and a glowing atom on top.
 fn fountain() -> Mesh {
     let mut b = MeshBuilder::new();

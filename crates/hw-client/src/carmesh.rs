@@ -29,7 +29,7 @@ pub enum Lod {
 }
 
 impl Lod {
-    fn pick<T>(self, near: T, mid: T, far: T) -> T {
+    pub(crate) fn pick<T>(self, near: T, mid: T, far: T) -> T {
         match self {
             Lod::Near => near,
             Lod::Mid => mid,
@@ -50,7 +50,7 @@ pub const PAINTS: [[(u8, u8, u8); 2]; 8] = [
     [(176, 148, 218), (204, 208, 218)],
 ];
 
-type Paint = Option<(Surf, Color)>;
+pub(crate) type Paint = Option<(Surf, Color)>;
 
 /// The colours of one car.
 #[derive(Clone, Copy)]
@@ -106,7 +106,7 @@ impl Kit {
 /// Lays a grid with its normals pointing away from the grid's centre
 /// (right for closed, roughly convex solids, and for open shells such as
 /// a canopy sitting on a body).
-fn surface(
+pub(crate) fn surface(
     b: &mut MeshBuilder,
     rows: &[Vec<DVec3>],
     wrap: bool,
@@ -152,7 +152,7 @@ fn basis(axis: DVec3) -> (DVec3, DVec3) {
 /// A solid of revolution: `profile` is (radius, distance along `axis`)
 /// from one end to the other; start and end at radius 0 to close it.
 /// `paint(k)` colours the band between profile points k and k + 1.
-fn lathe(
+pub(crate) fn lathe(
     b: &mut MeshBuilder,
     origin: DVec3,
     axis: DVec3,
@@ -178,7 +178,13 @@ fn lathe(
 
 /// A tube along `path` with an elliptic section (`rx` across, `ry` up),
 /// its ends rounded off.
-fn tube(b: &mut MeshBuilder, path: &[DVec3], (rx, ry): (f64, f64), seg: usize, paint: Paint) {
+pub(crate) fn tube(
+    b: &mut MeshBuilder,
+    path: &[DVec3],
+    (rx, ry): (f64, f64),
+    seg: usize,
+    paint: Paint,
+) {
     if path.len() < 2 {
         return;
     }
@@ -222,7 +228,7 @@ fn tube(b: &mut MeshBuilder, path: &[DVec3], (rx, ry): (f64, f64), seg: usize, p
 
 /// A closed loop of points through `pts` (Catmull-Rom), `per` points per
 /// span; `closed` joins the last point back to the first.
-fn spline(pts: &[DVec3], per: usize, closed: bool) -> Vec<DVec3> {
+pub(crate) fn spline(pts: &[DVec3], per: usize, closed: bool) -> Vec<DVec3> {
     let n = pts.len();
     if n < 2 {
         return pts.to_vec();
@@ -259,7 +265,14 @@ fn spline(pts: &[DVec3], per: usize, closed: bool) -> Vec<DVec3> {
 }
 
 /// A flat elliptic disc facing `n` (for grille backs and glow plates).
-fn disc(b: &mut MeshBuilder, c: DVec3, (u, v): (DVec3, DVec3), seg: usize, n: DVec3, col: Color) {
+pub(crate) fn disc(
+    b: &mut MeshBuilder,
+    c: DVec3,
+    (u, v): (DVec3, DVec3),
+    seg: usize,
+    n: DVec3,
+    col: Color,
+) {
     let pts: Vec<DVec3> = (0..seg)
         .map(|k| {
             let a = TAU * k as f64 / seg as f64;
@@ -271,7 +284,7 @@ fn disc(b: &mut MeshBuilder, c: DVec3, (u, v): (DVec3, DVec3), seg: usize, n: DV
 
 /// A box with its own axes: `axes[0]` and `axes[1]` (unit, at right
 /// angles), the third their cross product; `half` sizes along the three.
-fn slab(b: &mut MeshBuilder, c: DVec3, axes: [DVec3; 2], half: DVec3, col: Color) {
+pub(crate) fn slab(b: &mut MeshBuilder, c: DVec3, axes: [DVec3; 2], half: DVec3, col: Color) {
     let (e1, e2) = (axes[0] * half.x, axes[1] * half.y);
     let e3 = axes[0].cross(axes[1]).normalize() * half.z;
     let q = |z: f64| {

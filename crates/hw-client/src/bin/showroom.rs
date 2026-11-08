@@ -29,9 +29,26 @@ fn model(name: &str, lod: Lod, paint: u8) -> Mesh {
         "taxi" => taxi_into(&mut b, lod),
         "ambulance" => hw_client::carmesh::ambulance_into(&mut b, lod),
         "wheel" => wheel(&mut b, DVec3::new(0.0, 0.36, 0.0), 0.36, 0.22, lod),
-        _ => {}
+        _ => return prop(name, lod),
     }
     b.finish()
+}
+
+fn prop(name: &str, lod: Lod) -> Mesh {
+    use hw_client::propmesh as pm;
+    use hw_gen::urban::props::LampStyle;
+    match name {
+        "lantern" => pm::lamp(LampStyle::Lantern, lod),
+        "deco" => pm::lamp(LampStyle::Deco, lod),
+        "atomic" => pm::lamp(LampStyle::Atomic, lod),
+        "traffic" => pm::traffic_light(lod),
+        "bench" => pm::bench(lod),
+        "bin" => pm::bin(lod),
+        "hydrant" => pm::hydrant(lod),
+        "mailbox" => pm::mailbox(lod),
+        "bollard" => pm::bollard(lod),
+        _ => Mesh::new(),
+    }
 }
 
 fn main() -> EngineResult<()> {
@@ -44,10 +61,14 @@ fn main() -> EngineResult<()> {
     let paint = env_f("HW_PAINT", 0.0) as u8;
     let names: Vec<&str> = if show == "cars" {
         vec!["cruiser", "bubble", "hover", "taxi"]
+    } else if show == "street" {
+        vec!["bench", "bin", "hydrant", "mailbox", "bollard"]
+    } else if show == "lamps" {
+        vec!["lantern", "deco", "atomic", "traffic"]
     } else {
         vec![show.as_str()]
     };
-    let spacing = 3.4f32;
+    let spacing = if show == "street" { 1.6f32 } else { 3.4 };
     let width = spacing * (names.len() as f32 - 1.0);
     let meshes: Vec<Mesh> = names
         .iter()
@@ -74,7 +95,8 @@ fn main() -> EngineResult<()> {
             )?);
             world.set_sun((0.5, 1.0, 0.35), 0.25);
         }
-        world.look_orbit((0.0, 0.8, 0.0), dist, yaw, pitch);
+        let target_y = env_f("HW_LOOK_Y", 0.8);
+        world.look_orbit((0.0, target_y, 0.0), dist, yaw, pitch);
         Ok(())
     })
 }

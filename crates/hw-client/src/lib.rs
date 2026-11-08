@@ -21,6 +21,7 @@ pub mod people;
 pub mod poses;
 pub mod powersview;
 pub mod profile;
+pub mod propmesh;
 pub mod propview;
 pub mod radioview;
 pub mod robotview;
