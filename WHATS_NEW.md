@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.054 (2026-11-08)
+
+- Cars are lighter to draw: the same curves with fewer triangles, so busy streets cost less
+  memory and frame time.
+
 ## 0.053 (2026-11-08)
 
 - Escape opens a menu in the game: settings, the controls, and quit (no more quitting by accident).

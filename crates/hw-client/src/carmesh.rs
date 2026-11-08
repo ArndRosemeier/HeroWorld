@@ -484,7 +484,7 @@ impl Body<'_> {
 
     /// Lays the body; `paint` colours every quad from where it sits.
     fn build(&self, b: &mut MeshBuilder, lod: Lod, paint: impl Fn(At) -> Paint) {
-        let around = lod.pick(30, 16, 10);
+        let around = lod.pick(24, 12, 10);
         let mut angles: Vec<f64> = (0..around)
             .map(|k| TAU * k as f64 / around as f64)
             .collect();
@@ -501,13 +501,13 @@ impl Body<'_> {
         let [z0, z1] = self.z;
         let [r0, r1] = self.end_r;
         let (a, bz) = (z0 + r0, z1 - r1);
-        let step = lod.pick(0.11, 0.24, 0.6);
+        let step = lod.pick(0.15, 0.3, 0.6);
         let n = ((bz - a) / step).ceil().max(1.0) as usize;
         let mut zs: Vec<f64> = (0..=n)
             .map(|k| a + (bz - a) * k as f64 / n as f64)
             .collect();
         if lod != Lod::Far {
-            let k = lod.pick(12, 6, 0);
+            let k = lod.pick(10, 5, 0);
             for arch in &self.arches {
                 for i in 0..=k {
                     let z = arch.z + arch.r * (PI * i as f64 / k as f64).cos();
@@ -540,7 +540,7 @@ impl Body<'_> {
                 })
                 .collect()
         };
-        let caps = lod.pick(6, 3, 1);
+        let caps = lod.pick(5, 3, 1);
         let mut rows: Vec<Vec<DVec3>> = Vec::new();
         let mut row_z: Vec<f64> = Vec::new();
         // The tail: from the tip in to the first full section.
@@ -649,7 +649,7 @@ impl Cabin<'_> {
     }
 
     fn build(&self, b: &mut MeshBuilder, lod: Lod, paint: impl Fn(At) -> Paint) {
-        let around = lod.pick(22, 10, 6);
+        let around = lod.pick(18, 8, 6);
         let mut angles: Vec<f64> = (0..=around)
             .map(|k| PI * k as f64 / around as f64)
             .collect();
@@ -663,7 +663,7 @@ impl Cabin<'_> {
         angles.sort_by(f64::total_cmp);
         angles.dedup_by(|a, b| (*a - *b).abs() < 0.004);
         let [z0, z1] = self.z;
-        let step = lod.pick(0.08, 0.18, 0.4);
+        let step = lod.pick(0.11, 0.2, 0.4);
         let n = ((z1 - z0) / step).ceil().max(2.0) as usize;
         let mut zs: Vec<f64> = (0..=n)
             .map(|k| z0 + (z1 - z0) * k as f64 / n as f64)
@@ -1106,7 +1106,7 @@ fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod, part: Part) {
     body.build(b, lod, |at| part.paint(door_of(at), outer(at)));
     // The door's inner panel, in the cabin's colour.
     let trim = k.top;
-    if lod != Lod::Far && part != Part::Shell {
+    if lod != Lod::Far && matches!(part, Part::Door(_)) {
         inside(|| {
             body.build(b, lod, |at| {
                 door_of(at).and_then(|d| part.paint(Some(d), Kit::plain(trim)))
@@ -1154,7 +1154,7 @@ fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod, part: Part) {
         k.glazed()
     };
     cabin.build(b, lod, |at| part.paint(window_of(at), glass(at)));
-    if lod != Lod::Far && part != Part::Shell {
+    if lod != Lod::Far && matches!(part, Part::Door(_)) {
         // The window seen from inside.
         inside(|| {
             cabin.build(b, lod, |at| {
@@ -1448,7 +1448,7 @@ fn chrome_ends(b: &mut MeshBuilder, lod: Lod, k: &Kit, nose: f64, tail: f64) {
                 p(0.98, -0.12),
                 p(1.0, -0.42),
             ],
-            lod.pick(6, 3, 1),
+            lod.pick(4, 3, 1),
             false,
         )
     };
@@ -1489,7 +1489,7 @@ fn chrome_ends(b: &mut MeshBuilder, lod: Lod, k: &Kit, nose: f64, tail: f64) {
     );
     tube(
         b,
-        &spline(&oval, lod.pick(2, 1, 1), true),
+        &spline(&oval, 1, true),
         (0.022, 0.022),
         lod.pick(10, 6, 4),
         k.metal(),
