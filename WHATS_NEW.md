@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.014 (2026-11-08)
+
+- Play with friends anywhere: a hosted world (`HW_HOST=1`) now gets a six-letter room code, shown top right. Friends join with `HW_JOIN=<code>`, no port forwarding needed: the game travels through GameHub when it has to.
+- Dedicated hosts can list their world on GameHub too (`HW_ONLINE=1`).
+
 ## 0.013 (2026-11-08)
 
 - Every town now has its Aether Spire: a gleaming finned tower on a paved plaza near the old centre, ringed with glowing Aether coils and crowned with a shining orb.

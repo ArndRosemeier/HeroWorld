@@ -20,3 +20,4 @@ hw-sim = { workspace = true }
 hw-net = { workspace = true }
 engine = { workspace = true }
 glam = { workspace = true }
+serde_json = { workspace = true }

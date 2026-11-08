@@ -3,12 +3,14 @@
 //! Environment: `HW_SEED` (default 1), `HW_PORT` (default 7777),
 //! `HW_TICKS` (stop after this many ticks; default: run forever),
 //! `HW_SAVE` (world save file: loaded at start if it exists, written every
-//! minute and at the end).
+//! minute and at the end), `HW_ONLINE=1` (also list the world on GameHub;
+//! friends join with the room code it prints), `HW_NAME` (the room's name).
 //!
 //! Type into the console: `quit` ends the session cleanly (players are told
 //! and the world is saved), `save` saves now, anything else is chat.
 
 use hw_core::Seed;
+use hw_net::gamehub::{Hub, HubServerLink};
 use hw_sim::host::{Host, HostEvent};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -33,6 +35,19 @@ fn main() -> std::io::Result<()> {
     }
     let addr = host.listen(("0.0.0.0", port))?;
     println!("hw-headless: world {seed} listening on {addr}");
+    if std::env::var_os("HW_ONLINE").is_some() {
+        let name = std::env::var("HW_NAME").unwrap_or_else(|_| "A HeroWorld".into());
+        let meta = serde_json::json!({
+            "seed": seed,
+            "population": host.sim.town_population,
+            "version": hw_core::version(),
+            "protocol": hw_net::PROTOCOL_VERSION,
+        });
+        let mut hub = Hub::connect(&hw_net::gamehub::hub_url(), &name)?;
+        let code = hub.host_room(&format!("{name} (dedicated)"), meta)?;
+        host.add_link(Box::new(HubServerLink::new(hub)));
+        println!("hw-headless: on GameHub as room {code}: friends join with HW_JOIN={code}");
+    }
 
     let (tx, console) = mpsc::channel::<String>();
     std::thread::spawn(move || {

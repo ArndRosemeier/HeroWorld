@@ -52,7 +52,7 @@ and baked clips). Humans are done; animals, robots and the creator's screens are
 | M2 | People: the hero and the crowd are Actors | Characters | — | M1, M5 |
 | M3 | Hero creator and hero file | Characters | M2 | M5, M6, M8 |
 | M4 | Title screen | Front end | M2 (hero on it), title music | M5, M6, M8 |
-| M5 | The server on Engine physics, real netcode | Server | — | M1, M2 |
+| M5 | The server on Engine physics, real netcode | Server | (built, needs a play test) | M1, M2 |
 | M6 | First fight | Combat | M2, M5 (physics part) | M3, M8 |
 | M7 | Karma, levels and powers | Combat | M6 | M8, M9 |
 | M8 | A breakable city | World + Server | M1, M5 | M6, M7 |
@@ -165,6 +165,14 @@ Scale's start screen (rising title letters, the sunset city behind, the title th
 the target PC and appears within a few seconds of launch.
 
 ### M5. The server on Engine physics, real netcode
+
+**Status (2026-11-08, 0.014):** built. Change-only updates per client with acks, interest
+(500 m plus the player's bubble), a reliable channel (joins, chat, session end), bubbles
+that merge and split, Engine `PhysicsWorld` for loose bodies (crates) with building colliders
+streamed in, world save, clean session end, GameHub rooms and relay (join by six-letter code).
+Ten bots for ten minutes: about 6.4 KB/s per client (budget 25 KB/s). Still open: the hour-long
+play test on one machine and over the internet, and Engine's fixed tick and interpolation on the
+client (the client still interpolates on its own).
 
 The base for everything that fights, breaks or travels. Pure server and network work, so it
 runs alongside the visual milestones.

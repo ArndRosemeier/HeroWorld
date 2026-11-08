@@ -271,7 +271,7 @@ Clients send inputs up and receive state changes down. The world itself is never
 - **Determinism where it pays:** world generation is identical everywhere. Debris physics is cosmetic on each client; only what matters for gameplay (a collapse, settled rubble, broken elements) is authoritative and synced.
 - **Bubbles:** one detailed simulation area per player or group, merged when players are close. Each bubble has a budget and fills in less when the host struggles. Ten bubbles is the worst case.
 - **The rest of the planet** runs at an abstract level: villain organizations, incidents and news as pure functions of time.
-- **Networking:** direct UDP with reliable and unreliable channels. Automatic port mapping (UPnP) where possible, so most friends never open a port. GameHub is only the lobby.
+- **Networking:** direct UDP with reliable and unreliable channels. Automatic port mapping (UPnP) where possible, so most friends never open a port. GameHub lists the worlds (a six-letter room code to join) and relays the game's packets for friends who cannot reach the host directly.
 - **Platforms:** native Windows first. Mac and iPad later: wgpu runs on Metal, no Windows-only APIs, input that works with touch and gamepad, low quality presets. An iPad joins games or plays alone but doesn't host 10 players.
 - **Space later:** positions from the planet's centre leave room for orbit and the moons as an expansion.
 

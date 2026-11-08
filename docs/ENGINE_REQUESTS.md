@@ -128,6 +128,7 @@ Not needed for the first playable city, but the design depends on them eventuall
 - **Sky and atmosphere at altitude:** flying high enough to see the curvature and the atmosphere's edge.
 - **Digging and craters in built-up ground:** the voxel terrain exists; this is about craters in streets and cities. Its design is still to be discussed.
 - **Touch and gamepad input**, and quality presets for Mac and iPad (wgpu on Metal).
+- **A physics-only build** (added 2026-11-08): HeroWorld's server now uses `PhysicsWorld`, but `engine` is one crate, so the server also compiles wgpu, winit, egui and rodio (and needs `libasound2-dev` on Linux). Cargo features (say `render` and `audio`, on by default) would let a dedicated server link only physics.
 
 ## Ground rules
 

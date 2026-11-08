@@ -16,8 +16,10 @@
 //! around where you look (F moves the cut there), Z/X pick the floor.
 //!
 //! By default the server runs inside the game (single player). `HW_HOST=1`
-//! also opens it to friends on UDP port 7777; `HW_JOIN=host:port` joins
-//! someone else's world instead.
+//! also opens it to friends: on UDP port 7777, and listed on GameHub with a
+//! six-letter room code (shown top right) that works from anywhere through
+//! GameHub's relay. `HW_JOIN=<code>` or `HW_JOIN=host:port` joins someone
+//! else's world instead.
 //!
 //! Environment: `HW_SEED` (world seed, default 1); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
@@ -336,7 +338,7 @@ fn main() -> EngineResult<()> {
                 );
                 hw_client::landmarkview::LandmarkView::spawn(world, &generated.world)?;
             }
-            version_corner(&frame.ui, &mut whats_new);
+            version_corner(&frame.ui, &mut whats_new, session.room_code());
             {
                 let eye = world.camera().eye();
                 let step = 48.0;
@@ -520,7 +522,7 @@ fn main() -> EngineResult<()> {
 }
 
 /// The version at the top right, with a "What's new" button and its list.
-fn version_corner(ui: &engine::ui::UiFrame, open: &mut bool) {
+fn version_corner(ui: &engine::ui::UiFrame, open: &mut bool, room: Option<&str>) {
     use engine::ui::egui;
     egui::Area::new(egui::Id::new("version"))
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
@@ -532,6 +534,14 @@ fn version_corner(ui: &engine::ui::UiFrame, open: &mut bool) {
                 .inner_margin(egui::Margin::symmetric(8, 4))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
+                        if let Some(code) = room {
+                            // What friends type to join this world.
+                            ui.label(
+                                egui::RichText::new(format!("Room {code}"))
+                                    .color(egui::Color32::from_rgb(255, 214, 90))
+                                    .strong(),
+                            );
+                        }
                         ui.label(
                             egui::RichText::new(format!("HeroWorld {}", hw_core::version()))
                                 .color(egui::Color32::WHITE),

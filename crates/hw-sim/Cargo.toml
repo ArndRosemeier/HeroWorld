@@ -20,3 +20,7 @@ bevy_ecs = { workspace = true }
 glam = { workspace = true }
 # Only for `engine::physics::PhysicsWorld`: physics without a window or GPU.
 engine = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tungstenite = { workspace = true }

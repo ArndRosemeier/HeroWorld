@@ -7,6 +7,7 @@
 //! packets.
 
 pub mod connection;
+pub mod gamehub;
 pub mod protocol;
 pub mod reliable;
 pub mod replication;
@@ -22,6 +23,9 @@ pub use transport::{ClientSocket, Link, PeerAddr, ServerEvent, ServerLink, Serve
 
 /// Protocol version. Server and client must match exactly to play together.
 pub const PROTOCOL_VERSION: u32 = 7;
+
+/// Most players in one world.
+pub const MAX_PLAYERS: usize = 10;
 
 /// Port a host listens on unless told otherwise.
 pub const DEFAULT_PORT: u16 = 7777;

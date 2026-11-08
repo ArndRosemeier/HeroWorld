@@ -36,6 +36,10 @@ engine = { git = "https://github.com/ArndRosemeier/Engine", branch = "main" }
 bevy_ecs = { version = "0.20", default-features = false, features = ["std"] }
 glam = "0.33"
 libm = "0.2"
+# The GameHub lobby and relay: a WebSocket over TLS (ring, so Windows builds need no extra tools).
+tungstenite = { version = "0.30", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde_json = "1"
 
 # Engine's generators and renderer crawl without optimisation; optimise
 # dependencies in debug builds so the game stays playable while our own code

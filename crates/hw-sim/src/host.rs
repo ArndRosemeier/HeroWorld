@@ -27,7 +27,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 /// Most players in one world.
-pub const MAX_PLAYERS: usize = 10;
+pub const MAX_PLAYERS: usize = hw_net::MAX_PLAYERS;
 /// A client hears about everything within this distance of its hero.
 pub const INTEREST_RADIUS: f64 = 500.0;
 /// Bytes of entities and removals per update; the rest of the per-tick

@@ -10,3 +10,6 @@ workspace = true
 
 [dependencies]
 hw-core = { workspace = true }
+tungstenite = { workspace = true }
+rustls = { workspace = true }
+serde_json = { workspace = true }

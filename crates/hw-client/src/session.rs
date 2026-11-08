@@ -4,6 +4,7 @@
 
 use glam::DVec3;
 use hw_core::{NetId, Seed};
+use hw_net::gamehub::{Hub, HubClientLink, HubServerLink};
 use hw_net::{ConnState, Connection, EntityState, InputState, PlayerId};
 use hw_sim::host::Host;
 use hw_sim::predict::{Interpolator, Predictor};
@@ -14,6 +15,8 @@ pub enum Session {
     Local {
         host: Box<Host>,
         me: PlayerId,
+        /// The GameHub room code friends join with, when hosting online.
+        room: Option<String>,
     },
     Remote {
         conn: Box<Connection>,
@@ -37,17 +40,52 @@ impl Session {
             let addr = host.listen(("0.0.0.0", hw_net::DEFAULT_PORT))?;
             println!("Hosting on {addr}");
         }
+        let mut room = None;
+        if open {
+            // Also list the world on GameHub, so friends anywhere can join
+            // by its code through the relay; without it, LAN and UDP still work.
+            let meta = serde_json::json!({
+                "seed": seed.0,
+                "population": town.population(),
+                "version": hw_core::version(),
+                "protocol": hw_net::PROTOCOL_VERSION,
+            });
+            let online = Hub::connect(&hw_net::gamehub::hub_url(), name).and_then(|mut hub| {
+                let code = hub.host_room(&format!("{name}'s world"), meta)?;
+                Ok((hub, code))
+            });
+            match online {
+                Ok((hub, code)) => {
+                    println!("Friends can join with the code {code} (HW_JOIN={code})");
+                    host.add_link(Box::new(HubServerLink::new(hub)));
+                    room = Some(code);
+                }
+                Err(e) => {
+                    println!("Not listed on GameHub ({e}); friends can still join by address")
+                }
+            }
+        }
         let me = host.join_local(name);
         Ok(Self::Local {
             host: Box::new(host),
             me,
+            room,
         })
     }
 
     /// Connects to a host and waits (up to 5 s) for its welcome. Returns the
     /// session, the host's world seed and its town's population.
+    /// `addr` is a GameHub room code (six letters and digits) or a UDP
+    /// address (`host:port`).
     pub fn join(addr: &str, name: &str) -> std::io::Result<(Self, u64, f64)> {
-        let mut conn = Connection::open(addr, name)?;
+        let is_code = addr.len() == 6 && addr.chars().all(|c| c.is_ascii_alphanumeric());
+        let mut conn = if is_code {
+            let mut hub = Hub::connect(&hw_net::gamehub::hub_url(), name)?;
+            hub.join_room(addr)?;
+            Connection::over(Box::new(HubClientLink::new(hub)), name)
+        } else {
+            Connection::open(addr, name)?
+        };
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(5) {
             conn.update(InputState::default());
@@ -93,7 +131,7 @@ impl Session {
     /// One game tick with this frame's input.
     pub fn tick(&mut self, input: InputState) {
         match self {
-            Session::Local { host, me } => {
+            Session::Local { host, me, .. } => {
                 host.sim.set_input(*me, input);
                 for e in host.tick() {
                     println!("{e:?}");
@@ -159,7 +197,7 @@ impl Session {
 
     /// Puts our hero somewhere (single player only; for tests and screenshots).
     pub fn teleport(&mut self, pos: DVec3) {
-        if let Session::Local { host, me } = self {
+        if let Session::Local { host, me, .. } = self {
             if let Some(id) = host.sim.hero_of(*me) {
                 host.sim.set_body(
                     id,
@@ -172,9 +210,17 @@ impl Session {
         }
     }
 
+    /// The GameHub room code of a world we host online.
+    pub fn room_code(&self) -> Option<&str> {
+        match self {
+            Session::Local { room, .. } => room.as_deref(),
+            Session::Remote { .. } => None,
+        }
+    }
+
     pub fn my_hero(&mut self) -> Option<NetId> {
         match self {
-            Session::Local { host, me } => host.sim.hero_of(*me),
+            Session::Local { host, me, .. } => host.sim.hero_of(*me),
             Session::Remote { conn, .. } => conn.hero(),
         }
     }
