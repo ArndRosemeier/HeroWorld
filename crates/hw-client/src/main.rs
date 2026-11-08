@@ -461,6 +461,25 @@ fn main() -> EngineResult<()> {
             let (up, pitch) = if sky { (30.0, 4.0) } else { (6.0, -10.0) };
             FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, pitch)
         }
+        "rooftop" => {
+            // Across the street from the quarter's first rooftop lookout, a
+            // little above its roof.
+            let w = &generated.world;
+            let corners = hw_sim::quarter::corners(w);
+            match hw_sim::quarter::lookouts(w, &corners).first() {
+                Some(l) => {
+                    let top = hw_sim::quarter::perch(&solids, l)
+                        .unwrap_or(glam::DVec3::new(l.at.x, 20.0, l.at.y));
+                    let (at, roof) = (glam::DVec2::new(top.x, top.z), top.y);
+                    let p = at + l.facing * 13.0 + l.facing.perp() * 5.0;
+                    let d = at - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    let pitch = (-2.0 / d.length()).atan().to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, roof as f32 + 3.0, p.y as f32), yaw, pitch)
+                }
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
         "quarter" => {
             // On a street in the mad scientist's quarter, looking at his tower.
             use hw_gen::urban::landmarks::LandmarkKind;
@@ -599,6 +618,17 @@ fn main() -> EngineResult<()> {
         }
         let ahead = -spawn_dir;
         hero_cam_yaw = ahead.x.atan2(ahead.y).to_degrees() as f32 + 18.0;
+    }
+    if view == "rooftop" {
+        // In the street below the quarter's first rooftop lookout.
+        let w = &generated.world;
+        let corners = hw_sim::quarter::corners(w);
+        if let Some(l) = hw_sim::quarter::lookouts(w, &corners).first() {
+            let p = l.at + l.facing * 30.0;
+            if let Some(s) = session.as_mut() {
+                s.teleport(glam::DVec3::new(p.x, ground(p) + 0.3, p.y));
+            }
+        }
     }
     if view == "sky" {
         // Hovering above the town centre (with HW_FLY or V held on).

@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.037 (2026-11-08)
+
+- The mad scientist's technicians keep watch from the rooftops of his quarter and shoot down
+  at heroes in the street. Fly up and knock them off.
+
 ## 0.036 (2026-11-08)
 
 - The last person out of a fire or a crash is hurt. Carry them to the ambulance waiting down

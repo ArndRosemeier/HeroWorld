@@ -445,7 +445,13 @@ pub struct Enemy {
     pub windup: Option<(u64, NetId)>,
     /// No new attack before this tick.
     pub next_attack: u64,
+    /// Up on a roof: it holds its place and shoots down, farther and
+    /// sooner, and never walks off the edge.
+    pub perch: bool,
 }
+
+/// A perched villain notices and reaches this much farther.
+pub const PERCH_RANGE: f64 = 1.6;
 
 /// A drone lifting someone away.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -496,6 +502,8 @@ pub struct Spot {
     pub size: Option<u32>,
     pub only: Option<EnemyKind>,
     pub once: bool,
+    /// On a roof (`center` on top of it): its group stands up there.
+    pub perch: bool,
 }
 
 impl Spot {
@@ -512,6 +520,7 @@ impl Spot {
             size: None,
             only: None,
             once: false,
+            perch: false,
         }
     }
 }
@@ -664,7 +673,11 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
         let row = if kind == EnemyKind::Brute { 1.5 } else { -3.5 };
         let across = (k as f64 - (size as f64 - 1.0) * 0.5) * 1.6;
         let p = DVec2::new(spot.center.x, spot.center.z) + spot.facing * row + side * across;
-        let y = solids.ground_at(p).max(GROUND_Y);
+        let y = if spot.perch {
+            solids.floor_under(p, spot.center.y + 1.0)
+        } else {
+            solids.ground_at(p).max(GROUND_Y)
+        };
         let home = DVec3::new(p.x, y, p.y);
         let id = world.resource_mut::<Ids>().0.allocate();
         let fighter = Fighter::enemy(kind, level);
@@ -683,6 +696,7 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
                 home,
                 windup: None,
                 next_attack: tick,
+                perch: spot.perch,
             },
             LastChange(tick),
         ));
@@ -1526,7 +1540,11 @@ fn enemies_act(
         let Some(mut en) = actors[i].enemy else {
             continue;
         };
-        let spec = enemy_spec(en.kind);
+        let mut spec = enemy_spec(en.kind);
+        if en.perch {
+            spec.aggro *= PERCH_RANGE;
+            spec.reach *= PERCH_RANGE;
+        }
         let mut input = InputState::default();
         let getting_up = tick < actors[i].f.busy_until;
         let held = actors[i].f.held(tick);
@@ -1547,7 +1565,10 @@ fn enemies_act(
                     .copied()
                     .filter(|&j| foe_ok(&actors[j]))
                     .map(|j| (j, actors[j].body.pos.distance(actors[i].body.pos)))
-                    .filter(|(j, d)| *d < spec.aggro && clear_line(solids, me, actors[*j].chest()))
+                    .filter(|(j, d)| {
+                        // A lookout hears the street below without seeing it.
+                        *d < spec.aggro && (en.perch || clear_line(solids, me, actors[*j].chest()))
+                    })
                     .min_by(|x, y| x.1.total_cmp(&y.1))
                     .map(|(j, _)| j);
                 if let Some(j) = foe {
@@ -1572,7 +1593,15 @@ fn enemies_act(
                     // Back to the corner, walking.
                     let to = en.home - here;
                     let flat = DVec2::new(to.x, to.z);
-                    if flat.length() > 1.0 {
+                    if en.perch {
+                        // Back to its place if still up on the roof (one
+                        // knocked off stays down there).
+                        if flat.length() > 1.0 && to.y.abs() < 1.0 {
+                            let d = flat.normalize_or_zero() * 0.3;
+                            input.move_x = d.x as f32;
+                            input.move_z = d.y as f32;
+                        }
+                    } else if flat.length() > 1.0 {
                         let d = heading(paths, solids, id, tick, here, en.home) * 0.3;
                         input.move_x = d.x as f32;
                         input.move_z = d.y as f32;
@@ -1623,7 +1652,17 @@ fn enemies_act(
                             EnemyKind::Technician => (7.0, 16.0),
                         };
                         let mut go = DVec2::ZERO;
-                        if dist > far || !seen {
+                        if en.perch {
+                            // Holds its place up there; out of sight, it
+                            // steps up to the edge to look down, but never
+                            // past it.
+                            if !seen {
+                                let ahead = DVec2::new(here.x, here.z) + dir * 0.8;
+                                if solids.floor_under(ahead, here.y + 0.5) > here.y - 0.3 {
+                                    go = dir * spec.speed;
+                                }
+                            }
+                        } else if dist > far || !seen {
                             go = heading(paths, solids, id, tick, here, there) * spec.speed;
                         } else if dist < near {
                             go = -dir * spec.speed * 0.8;

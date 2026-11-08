@@ -81,3 +81,80 @@ fn villains_wait_on_the_quarters_corners_for_heroes() {
         .iter()
         .all(|e| e.2.distance(spot.center) > 30.0));
 }
+
+#[test]
+fn technicians_shoot_down_from_the_quarters_roofs() {
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    let hero = sim.spawn_hero(PlayerId(1), sim.spawn_point(1));
+    let roofs: Vec<usize> = sim
+        .fights()
+        .spots
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.perch)
+        .map(|(i, _)| i)
+        .collect();
+    assert!(roofs.len() >= 2, "{} rooftop lookouts", roofs.len());
+    // In the street below the first one.
+    let spot = sim.fights().spots[roofs[0]].clone();
+    let out = DVec3::new(spot.facing.x, 0.0, spot.facing.y);
+    let street = spot.center + out * 10.0;
+    let ground = sim.solids().ground_at(glam::DVec2::new(street.x, street.z));
+    assert!(
+        spot.center.y > ground + 5.0,
+        "the roof is {:.1} m up",
+        spot.center.y - ground
+    );
+    // Coming up the street: they stand up there as the hero nears...
+    let far = spot.center + out * 100.0;
+    sim.set_body(
+        hero,
+        Body {
+            pos: DVec3::new(far.x, ground + 30.0, far.z),
+            vel: DVec3::ZERO,
+            grounded: false,
+        },
+    );
+    sim.step();
+    sim.step();
+    assert_eq!(
+        sim.fights().spots[roofs[0]].members,
+        hw_sim::quarter::ROOF_GROUP
+    );
+    // ...and shoot down at them in the street below.
+    sim.set_body(
+        hero,
+        Body {
+            pos: DVec3::new(street.x, ground + 0.1, street.z),
+            vel: DVec3::ZERO,
+            grounded: true,
+        },
+    );
+    let full = sim.fighter(hero).unwrap().health;
+    for _ in 0..(8 * TICK_HZ) {
+        sim.step();
+    }
+    let up: Vec<_> = sim
+        .enemies()
+        .into_iter()
+        .filter(|e| e.2.distance(spot.center) < 12.0)
+        .collect();
+    assert_eq!(
+        up.len() as u32,
+        hw_sim::quarter::ROOF_GROUP,
+        "not on the roof"
+    );
+    for e in &up {
+        assert_eq!(e.1, hw_sim::combat::EnemyKind::Technician);
+        assert!(
+            e.2.y > ground + 5.0,
+            "came down from the roof: {:.1}",
+            e.2.y
+        );
+    }
+    assert!(
+        sim.fighter(hero).unwrap().health < full,
+        "nobody shot at the hero below"
+    );
+}

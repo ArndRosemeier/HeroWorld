@@ -361,6 +361,14 @@ them to the ambulance, N m". `HW_CARRY=1` (with `HW_INCIDENT=fire|crash`) starts
 one in your arms; `HW_VIEW=medic` looks at the ambulance. Not yet: carrying slows you or
 blocks powers; people in buildings that heroes broke.
 
+**Status (0.037):** rooftop lookouts. Flat roofs of two to six floors in the quarter, 80 m
+apart and away from the corners (`quarter::lookouts`), each hold three technicians a metre
+behind the front parapet (`quarter::perch` finds it from the solids), two levels above the
+team, while a hero is within 220 m. A perched villain (`Enemy::perch`) holds its place and
+never walks off the edge, notices heroes in the street below without a clear line, steps to
+the edge to see them, and reaches 1.6 times as far; one knocked off stays down.
+`HW_VIEW=rooftop` looks at the first one.
+
 ### M10. Traffic, taxis and the underground (in progress)
 
 - Ground traffic on the streets (AssetGenerator cars with spinning wheels and opening doors as

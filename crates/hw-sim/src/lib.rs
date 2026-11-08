@@ -412,7 +412,8 @@ impl Sim {
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.world.clone()));
         sim.incidents = incidents::Incidents::new(town.world.clone());
         let solids = sim.solids();
-        for c in quarter::corners(&town.world) {
+        let corners = quarter::corners(&town.world);
+        for c in &corners {
             let y = solids.ground_at(c.at).max(GROUND_Y);
             sim.add_villain_corner(
                 DVec3::new(c.at.x, y, c.at.y),
@@ -420,6 +421,11 @@ impl Sim {
                 c.extra,
                 quarter::WAKE,
             );
+        }
+        for l in quarter::lookouts(&town.world, &corners) {
+            if let Some(p) = quarter::perch(&solids, &l) {
+                sim.add_lookout(p, l.facing);
+            }
         }
         sim
     }
@@ -810,6 +816,22 @@ impl Sim {
             ..Spot::corner(at, facing)
         });
         f.spots.len() - 1
+    }
+
+    /// A rooftop lookout: technicians up on the roof at `at` (its top),
+    /// watching the street that way, [`quarter::CORNER_EXTRA`] levels above
+    /// the team, while a hero is near. Returns the spot's index.
+    pub fn add_lookout(&mut self, at: DVec3, facing: DVec2) -> usize {
+        let i = self.add_villain_corner(at, facing, quarter::CORNER_EXTRA, quarter::WAKE);
+        let mut f = self.world.resource_mut::<Fights>();
+        let spot = &mut f.spots[i];
+        // They stand in a line across the roof's middle (technicians form
+        // up 3.5 m behind a spot's centre).
+        spot.center += DVec3::new(spot.facing.x, 0.0, spot.facing.y) * 3.5;
+        spot.perch = true;
+        spot.only = Some(combat::EnemyKind::Technician);
+        spot.size = Some(quarter::ROOF_GROUP);
+        i
     }
 
     /// The first fight: a group of minions on the street, the other way
