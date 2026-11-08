@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.035 (2026-11-08)
+
+- A new title theme: a swinging golden-age serial tune with a heroic trumpet and glockenspiel sparkles.
+
 ## 0.034 (2026-11-08)
 
 - The Hero Signal: when mutants run riot or villains break out, a searchlight on the Aether

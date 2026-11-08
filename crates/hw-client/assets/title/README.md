@@ -5,7 +5,7 @@ again, use the same model and prompt; the outputs differ from run to run.
 
 | File | Model | Prompt |
 | --- | --- | --- |
-| `title_theme.ogg` | `google/lyria-3-pro-preview` | Instrumental title theme for a playful golden-age comic superhero video game set in a sunny retro-futurist utopia city (1939 World's Fair, flying cars, ray guns). Heroic, warm and inviting, a little whimsical. Soft opening with shimmering strings and a gentle theremin-like lead, then a bold, catchy brass fanfare melody over a bouncy march rhythm with snare and timpani, full orchestra, big band swing touches. Optimistic, uplifting, adventurous. No vocals. |
+| `title_theme.ogg` | `google/lyria-3-pro-preview` | Instrumental main menu music for a cheerful retro superhero game: 1940s cartoon adventure serial orchestra, a memorable heroic trumpet melody, swinging strings, glockenspiel sparkles, light march drums, playful woodwinds, sunset over a gleaming chrome city. Bright, friendly, grand but fun. Starts gently and builds. No vocals. (Arnd picked it over the first take, 2026-11-08.) |
 | `whoosh.ogg` | `bytedance-seed/seed-audio-1-0` | The sound of a fast cartoon whoosh swooping past, a bright airy swish with a rising shimmer at the end |
 | `glint.ogg` | `bytedance-seed/seed-audio-1-0` | The sound of a magical sparkle glint, a short twinkling chime like light flashing off polished chrome |
 | `click.ogg` | `bytedance-seed/seed-audio-1-0` | The sound of a satisfying chunky retro button click with a tiny bright bell ding, very short |
