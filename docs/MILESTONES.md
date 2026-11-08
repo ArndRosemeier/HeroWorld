@@ -318,7 +318,7 @@ resolves in single player and co-op.
 **Done when:** the streets and the sky are busy at noon, a taxi ride crosses the city, and
 there is somewhere to go below.
 
-**Status (0.027):** cars drive closed lane loops through the street network (keep right,
+**Status (0.030):** cars drive closed lane loops through the street network (keep right,
 rounded corners, wheels turning), hover cars and taxis fly three sky layers over the main
 roads; every vehicle's place is a function of seed and time, so all players see the same
 traffic. G opens "TAXI! Where to?": a server-driven taxi comes down at the hero, flies the
@@ -328,8 +328,11 @@ under the main roads, Aether lifts in Googie pavilions on the pavements, and Mol
 mole people's cavern (a great hall, side chambers, a ramp to the tunnels, its own lift),
 carved from Engine's voxel ground and walkable on the server. Moving cars can be wrecked: a hero's
 blow stops one dented, smoking and askew, its lane jams behind it until the wreck is towed
-away unseen. Still to do: opening doors, cars yielding at junctions (crossing loops can
-overlap in a junction), people in Molehaven.
+away unseen. Street cars are a shared simulation (every machine
+steps it alike, late joiners are sent it): they follow the car ahead, junctions have two-phase
+lights with give-way inside a phase, nobody enters a junction they cannot leave, and a car
+stuck a minute turns off the road and comes back where there is room. Still to do: opening
+doors, the traffic-light props showing the lights' state, people in Molehaven.
 
 ### M11. Robots and the colossus
 

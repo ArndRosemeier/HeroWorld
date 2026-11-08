@@ -1035,9 +1035,23 @@ fn main() -> EngineResult<()> {
                     false
                 }
                 hw_net::ToClient::CarsWrecked { cars, live } => {
-                    for &(id, tick, fell) in cars {
-                        let _ = traffic_view.wreck(world, &mut traffic, id, tick, fell, *live);
+                    for &(id, _, fell, along) in cars {
+                        let _ = traffic_view.wreck(world, &mut traffic, id, fell, along, *live);
                     }
+                    false
+                }
+                hw_net::ToClient::Traffic {
+                    time,
+                    lane,
+                    first,
+                    cars,
+                } => {
+                    traffic.sync_in(&hw_sim::traffic::TrafficChunk {
+                        time: *time,
+                        lane: *lane,
+                        first: *first,
+                        cars: cars.clone(),
+                    });
                     false
                 }
                 hw_net::ToClient::CarsCleared { cars } => {
@@ -1361,6 +1375,7 @@ fn main() -> EngineResult<()> {
                 frame.dt as f64,
             )?;
             // Cars on the streets, hover cars and taxis in the sky lanes.
+            traffic.advance_to(session.time(tick_clock / hw_sim::DT));
             traffic_view.update(
                 world,
                 &traffic,

@@ -29,6 +29,8 @@ pub struct Wreck {
     pub tick: u64,
     /// Which way the blow went (a yaw byte).
     pub fell: u8,
+    /// Where along its lane it stands.
+    pub along: f32,
     /// Where it stands.
     pub at: DVec3,
     pub last_seen: u64,
@@ -87,19 +89,20 @@ impl Wrecks {
             if d >= r || power as f64 * (1.0 - d / r) < STRENGTH {
                 continue;
             }
+            let Some(along) = self.traffic.as_mut().and_then(|t| t.wreck(v.id)) else {
+                continue;
+            };
             self.cars.insert(
                 v.id,
                 Wreck {
                     tick,
                     fell,
+                    along,
                     at: v.pos,
                     last_seen: tick,
                 },
             );
-            fresh.push((v.id, tick, fell));
-        }
-        if !fresh.is_empty() {
-            self.restop();
+            fresh.push((v.id, tick, fell, along));
         }
         for chunk in fresh.chunks(hw_net::protocol::MAX_DAMAGE_IDS) {
             self.news.push(ToClient::CarsWrecked {
@@ -149,8 +152,10 @@ impl Wrecks {
         }
         for id in &gone {
             self.cars.remove(id);
+            if let Some(t) = self.traffic.as_mut() {
+                t.clear_wreck(*id);
+            }
         }
-        self.restop();
         for chunk in gone.chunks(hw_net::protocol::MAX_DAMAGE_IDS) {
             self.news.push(ToClient::CarsCleared {
                 cars: chunk.to_vec(),
@@ -160,10 +165,10 @@ impl Wrecks {
 
     /// Every wreck as messages, for a player who joins.
     pub fn snapshot(&self) -> Vec<ToClient> {
-        let all: Vec<(u64, u64, u8)> = self
+        let all: Vec<(u64, u64, u8, f32)> = self
             .cars
             .iter()
-            .map(|(id, w)| (*id, w.tick, w.fell))
+            .map(|(id, w)| (*id, w.tick, w.fell, w.along))
             .collect();
         all.chunks(hw_net::protocol::MAX_DAMAGE_IDS)
             .map(|c| ToClient::CarsWrecked {
@@ -181,17 +186,24 @@ impl Wrecks {
     pub fn clear(&mut self) {
         self.cars.clear();
         self.news.clear();
-        self.restop();
+        if let Some(t) = self.traffic.as_mut() {
+            t.clear_wrecks();
+        }
     }
 
-    fn restop(&mut self) {
-        let stops: Vec<(u64, f64)> = self
-            .cars
-            .iter()
-            .map(|(id, w)| (*id, w.tick as f64 * DT))
-            .collect();
-        if let Some(t) = self.traffic.as_mut() {
-            t.set_stops(stops);
-        }
+    /// The street cars as they are, for a player who joins (before the
+    /// wrecks in [`Self::snapshot`]).
+    pub fn traffic_sync(&self) -> Vec<ToClient> {
+        self.traffic.as_ref().map_or(Vec::new(), |t| {
+            t.sync_out()
+                .into_iter()
+                .map(|c| ToClient::Traffic {
+                    time: c.time,
+                    lane: c.lane,
+                    first: c.first,
+                    cars: c.cars,
+                })
+                .collect()
+        })
     }
 }

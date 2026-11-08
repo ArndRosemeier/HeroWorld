@@ -1,12 +1,19 @@
 //! Traffic: golden-age cars on the streets, hover cars and flying taxis in
 //! lanes over the main roads.
 //!
-//! Like the citizens, every vehicle is a pure function of the town seed, its
-//! id and the time, so every machine in a co-op game sees the same traffic
-//! without it being sent. The lanes come from `hw_gen::urban::lanes`: closed
-//! loops through the town. Each loop carries a number of vehicles spaced
-//! evenly and driving at the loop's own speed, so they never catch up with
-//! each other. Streets near the town's core and main roads are busier.
+//! The lanes come from `hw_gen::urban::lanes`: closed loops through the
+//! town. Streets near the town's core and main roads are busier.
+//!
+//! Street cars are a small simulation every machine runs alike, stepped
+//! [`STEP`] at a time from the same start: they keep their distance from
+//! the car ahead, and where lanes cross in a junction the one that gets
+//! there later gives way (whoever has waited long goes first, so nothing
+//! jams for good). A friend who joins late is sent the cars as they are
+//! ([`Traffic::sync_out`]). A wrecked car stands still and the lane queues
+//! behind it.
+//!
+//! Fliers do not need to give way (their lanes never cross at one height):
+//! each is a pure function of the seed, its id and the time.
 //!
 //! The sky lanes follow the main roads at set heights above them (three
 //! layers), so fliers keep clear of the buildings; most fliers are taxis.
@@ -25,12 +32,50 @@ pub const SKY_LAYERS: [f64; 3] = [34.0, 46.0, 58.0];
 const CELL: f64 = 64.0;
 /// Closest spacing of cars on one lane at the town's core, and in the
 /// outskirts (m); fliers keep further apart.
-const GAP_CORE: f64 = 26.0;
-const GAP_EDGE: f64 = 110.0;
+const GAP_CORE: f64 = 34.0;
+const GAP_EDGE: f64 = 140.0;
 const SKY_GAP_CORE: f64 = 48.0;
 const SKY_GAP_EDGE: f64 = 170.0;
 /// Bit set in the ids of fliers.
 pub const SKY_BIT: u64 = 1 << 40;
+/// Street cars are simulated this many seconds at a time.
+pub const STEP: f64 = 0.1;
+/// A car's length (m): positions are its middle.
+const CAR_LEN: f64 = 4.8;
+/// Lanes closer than this where they cross (m) conflict.
+const CONFLICT: f64 = 2.4;
+/// How far ahead a driver looks for a junction to give way at (m).
+const LOOK: f64 = 15.0;
+/// After waiting this long (s) a driver goes first; after
+/// [`IMPATIENT`] they go whatever happens.
+const PATIENT: f64 = 4.0;
+const IMPATIENT: f64 = 12.0;
+/// Stuck this long (s), a driver drives on through anything but the car
+/// ahead: a jam round a block clears.
+const STUCK: f64 = 30.0;
+/// Stuck this long (s), a car turns off the road (it is not drawn and
+/// holds nobody up), and comes back where there is room again.
+const PARK: f64 = 60.0;
+/// Crossings closer than this (m) are one junction.
+const JUNCTION: f64 = 16.0;
+/// Longest stretch of lane one crossing takes up (m; they are found within
+/// this).
+const MAX_ZONE: f64 = 20.0;
+/// Traffic lights: one cycle (s), green for each half but for an all-red
+/// moment at its end.
+const CYCLE: f64 = 24.0;
+const ALL_RED: f64 = 2.0;
+/// Room (m) between the cars either side for a car to come back.
+const ROOM_BACK: f64 = 40.0;
+/// Driving: comfortable acceleration and braking (m/s²), time gap kept to
+/// the car ahead (s) and distance kept standing (m).
+const ACCEL: f64 = 2.2;
+const BRAKE: f64 = 3.5;
+const HEADWAY: f64 = 1.2;
+const STANDSTILL: f64 = 2.0;
+/// Further behind than this (s), the cars are put where they would be
+/// without junctions instead of being driven there.
+const CATCH_UP: f64 = 120.0;
 
 /// What a vehicle is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -90,6 +135,77 @@ struct Lane {
 /// A stretch of lane in a grid cell: (sky, lane, from, to).
 type Span = (bool, u32, f64, f64);
 
+/// A point on a street lane: (lane, distance along, where, which way).
+type LanePoint = (u32, f64, DVec2, DVec2);
+
+/// One street car's state.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Car {
+    /// Distance along its lane (grows without wrapping; larger is ahead).
+    s: f64,
+    v: f64,
+    /// How many steps it has stood.
+    waited: u32,
+    wrecked: bool,
+    /// Off the road for now (out of a jam).
+    parked: bool,
+}
+
+/// Where another lane crosses this one: the stretch of this lane
+/// (`from`..`to`, round the loop) and of the other.
+#[derive(Clone, Copy, Debug)]
+struct Zone {
+    from: f64,
+    to: f64,
+    other: u32,
+    other_from: f64,
+    other_to: f64,
+    /// The junction it is in, this lane's light there and the other's.
+    junction: u32,
+    phase: u8,
+    other_phase: u8,
+}
+
+impl Car {
+    /// How long it has stood (s).
+    fn wait(&self) -> f64 {
+        self.waited as f64 * STEP
+    }
+}
+
+/// Roughly how long a car `d` metres from a crossing, going `v`, takes to
+/// get there (from standing, it speeds up).
+fn eta(d: f64, v: f64) -> f64 {
+    if v > 2.0 {
+        d / v
+    } else {
+        (2.0 * d / ACCEL).sqrt().min(d / v.max(0.1))
+    }
+}
+
+/// The cars (by number) whose middle is within `w` metres after `from`
+/// round a loop of length `len`; `order` is the cars' places round the
+/// loop, sorted.
+fn in_stretch(
+    order: &[(f64, usize)],
+    from: f64,
+    w: f64,
+    len: f64,
+) -> impl Iterator<Item = usize> + '_ {
+    let a = from.rem_euclid(len);
+    let i = order.partition_point(|o| o.0 < a);
+    let n = order.len();
+    (0..n)
+        .map(move |k| order[(i + k) % n])
+        .take_while(move |o| ahead(a, o.0, len) <= w)
+        .map(|o| o.1)
+}
+
+/// Distance from `a` forward to `b` round a loop of length `len`.
+fn ahead(a: f64, b: f64, len: f64) -> f64 {
+    (b - a).rem_euclid(len)
+}
+
 /// The town's traffic.
 pub struct Traffic {
     seed: Seed,
@@ -98,8 +214,15 @@ pub struct Traffic {
     /// Stretches of lane by grid cell: (sky, lane, from, to).
     grid: BTreeMap<(i64, i64), Vec<Span>>,
     world: Arc<TownWorld>,
-    /// Street lanes held up by a wreck: the time they stopped.
-    stops: BTreeMap<u32, f64>,
+    /// Where each street lane is crossed by others, by `from`.
+    zones: Vec<Vec<Zone>>,
+    /// Where each junction's lights are in their cycle at time 0.
+    offsets: Vec<f64>,
+    /// The street cars now and one step ago, by lane, in order along it.
+    cars: Vec<Vec<Car>>,
+    prev: Vec<Vec<Car>>,
+    /// The time of `cars`.
+    time: f64,
 }
 
 impl Traffic {
@@ -187,31 +310,679 @@ impl Traffic {
             ground,
             sky,
             grid,
+            zones: Vec::new(),
+            offsets: Vec::new(),
+            cars: Vec::new(),
+            prev: Vec::new(),
+            time: 0.0,
             world,
-            stops: BTreeMap::new(),
         }
+        .with_zones()
     }
 
-    /// Holds up the street lanes with wrecks on them: each stands still
-    /// from the earliest wreck's time (see [`crate::wrecks`]).
-    pub fn set_stops(&mut self, wrecks: impl IntoIterator<Item = (u64, f64)>) {
-        self.stops.clear();
-        for (id, time) in wrecks {
-            if id & SKY_BIT != 0 {
+    /// Finds where street lanes cross, and puts the cars at time 0.
+    fn with_zones(mut self) -> Self {
+        // Points every metre along every lane, in a grid.
+        let mut grid: BTreeMap<(i64, i64), Vec<LanePoint>> = BTreeMap::new();
+        let key = |p: DVec2| ((p.x / 4.0).floor() as i64, (p.y / 4.0).floor() as i64);
+        for (i, l) in self.ground.iter().enumerate() {
+            if l.count == 0 {
                 continue;
             }
-            let lane = (id >> 16) as u32;
-            let t = self.stops.entry(lane).or_insert(time);
-            *t = t.min(time);
+            let len = l.path.len();
+            let n = len.ceil() as usize;
+            for k in 0..n {
+                let a = len * k as f64 / n as f64;
+                let (p, d) = l.path.sample(a);
+                grid.entry(key(p)).or_default().push((i as u32, a, p, d));
+            }
+        }
+        // Close points of two lanes crossing at an angle, by lane pair.
+        let mut hits: BTreeMap<(u32, u32), Vec<(f64, f64)>> = BTreeMap::new();
+        for (k, list) in &grid {
+            for dx in 0..=1 {
+                for dz in -1..=1 {
+                    if dx == 0 && dz < 0 {
+                        continue;
+                    }
+                    let Some(other) = grid.get(&(k.0 + dx, k.1 + dz)) else {
+                        continue;
+                    };
+                    let same = dx == 0 && dz == 0;
+                    for (ia, &(la, a, pa, da)) in list.iter().enumerate() {
+                        for (ib, &(lb, b, pb, db)) in other.iter().enumerate() {
+                            if same && ib <= ia {
+                                continue;
+                            }
+                            if pa.distance(pb) >= CONFLICT || da.dot(db).abs() > 0.9 {
+                                continue;
+                            }
+                            if la == lb {
+                                let len = self.ground[la as usize].path.len();
+                                if ahead(a, b, len).min(ahead(b, a, len)) < 30.0 {
+                                    continue;
+                                }
+                            }
+                            let ((la, a), (lb, b)) = if (la, a) <= (lb, b) {
+                                ((la, a), (lb, b))
+                            } else {
+                                ((lb, b), (la, a))
+                            };
+                            hits.entry((la, lb)).or_default().push((a, b));
+                        }
+                    }
+                }
+            }
+        }
+        let mut zones: Vec<Vec<Zone>> = vec![Vec::new(); self.ground.len()];
+        for ((la, lb), mut pts) in hits {
+            let (len_a, len_b) = (
+                self.ground[la as usize].path.len(),
+                self.ground[lb as usize].path.len(),
+            );
+            pts.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.total_cmp(&y.1)));
+            // Runs of nearby points are one crossing.
+            let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
+            for p in pts {
+                let joined = runs.iter_mut().any(|r| {
+                    let near = r.iter().any(|q| {
+                        ahead(q.0, p.0, len_a).min(ahead(p.0, q.0, len_a)) < 3.0
+                            && ahead(q.1, p.1, len_b).min(ahead(p.1, q.1, len_b)) < 3.0
+                    });
+                    if near {
+                        r.push(p);
+                    }
+                    near
+                });
+                if !joined {
+                    runs.push(vec![p]);
+                }
+            }
+            for r in runs {
+                // The stretch on each lane: from the first point to the
+                // last (round the loop), a little wider.
+                let span = |vals: Vec<f64>, len: f64| {
+                    let first = vals[0];
+                    let rel: Vec<f64> = vals
+                        .iter()
+                        .map(|v| {
+                            let d = ahead(first, *v, len);
+                            if d > len * 0.5 {
+                                d - len
+                            } else {
+                                d
+                            }
+                        })
+                        .collect();
+                    let lo = rel.iter().cloned().fold(f64::MAX, f64::min);
+                    let hi = rel.iter().cloned().fold(f64::MIN, f64::max);
+                    (
+                        (first + lo - 1.0).rem_euclid(len),
+                        (first + hi + 1.0).rem_euclid(len),
+                    )
+                };
+                let (fa, ta) = span(r.iter().map(|p| p.0).collect(), len_a);
+                let (fb, tb) = span(r.iter().map(|p| p.1).collect(), len_b);
+                zones[la as usize].push(Zone {
+                    from: fa,
+                    to: ta,
+                    other: lb,
+                    other_from: fb,
+                    other_to: tb,
+                    junction: 0,
+                    phase: 0,
+                    other_phase: 0,
+                });
+                zones[lb as usize].push(Zone {
+                    from: fb,
+                    to: tb,
+                    other: la,
+                    other_from: fa,
+                    other_to: ta,
+                    junction: 0,
+                    phase: 0,
+                    other_phase: 0,
+                });
+            }
+        }
+        for z in &mut zones {
+            z.sort_by(|a, b| a.from.total_cmp(&b.from).then(a.other.cmp(&b.other)));
+        }
+        self.zones = zones;
+        self.light_junctions();
+        self.reset_at(0.0);
+        self
+    }
+
+    /// Groups crossings into junctions and gives each junction two-phase
+    /// lights: lanes coming in along its main axis go together, the others
+    /// together.
+    fn light_junctions(&mut self) {
+        // Every crossing as (lane, index), where it is and which way the
+        // lane runs there.
+        let mut all: Vec<(usize, usize, DVec2, DVec2)> = Vec::new();
+        for (li, zs) in self.zones.iter().enumerate() {
+            for (zi, z) in zs.iter().enumerate() {
+                let (p, d) = self.ground[li].path.sample(z.from);
+                all.push((li, zi, p, d));
+            }
+        }
+        // Union crossings within a junction's reach of each other.
+        let mut parent: Vec<usize> = (0..all.len()).collect();
+        fn root(parent: &mut [usize], mut i: usize) -> usize {
+            while parent[i] != i {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            i
+        }
+        let mut grid: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+        let key = |p: DVec2| {
+            (
+                (p.x / JUNCTION).floor() as i64,
+                (p.y / JUNCTION).floor() as i64,
+            )
+        };
+        for (i, a) in all.iter().enumerate() {
+            grid.entry(key(a.2)).or_default().push(i);
+        }
+        for (i, a) in all.iter().enumerate() {
+            let k = key(a.2);
+            for dx in -1..=1 {
+                for dz in -1..=1 {
+                    for &j in grid.get(&(k.0 + dx, k.1 + dz)).into_iter().flatten() {
+                        if j > i && a.2.distance(all[j].2) < JUNCTION {
+                            let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
+                            if ri != rj {
+                                parent[ri.max(rj)] = ri.min(rj);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Junction numbers in order of their first crossing; each one's axis
+        // is the way its first lane runs.
+        let mut number: BTreeMap<usize, (u32, DVec2)> = BTreeMap::new();
+        let mut at: Vec<(u32, u8)> = Vec::with_capacity(all.len());
+        for (i, a) in all.iter().enumerate() {
+            let r = root(&mut parent, i);
+            let n = number.len() as u32;
+            let (j, axis) = *number.entry(r).or_insert((n, a.3));
+            let phase = u8::from(a.3.dot(axis).abs() < std::f64::consts::FRAC_1_SQRT_2);
+            at.push((j, phase));
+        }
+        let mut lookup: BTreeMap<(usize, usize), (u32, u8)> = BTreeMap::new();
+        for (i, a) in all.iter().enumerate() {
+            lookup.insert((a.0, a.1), at[i]);
+        }
+        // This lane's light at each crossing, and the other lane's (from
+        // its mirror entry).
+        let mut mirror: BTreeMap<(usize, u64, usize, u64), u8> = BTreeMap::new();
+        for (li, zs) in self.zones.iter().enumerate() {
+            for (zi, z) in zs.iter().enumerate() {
+                mirror.insert(
+                    (
+                        li,
+                        z.from.to_bits(),
+                        z.other as usize,
+                        z.other_from.to_bits(),
+                    ),
+                    lookup[&(li, zi)].1,
+                );
+            }
+        }
+        let mut rng = self.seed.child("lights").rng();
+        self.offsets = (0..number.len()).map(|_| rng.range(0.0, CYCLE)).collect();
+        for (li, zs) in self.zones.iter_mut().enumerate() {
+            for (zi, z) in zs.iter_mut().enumerate() {
+                let (j, ph) = lookup[&(li, zi)];
+                z.junction = j;
+                z.phase = ph;
+                z.other_phase = mirror
+                    .get(&(
+                        z.other as usize,
+                        z.other_from.to_bits(),
+                        li,
+                        z.from.to_bits(),
+                    ))
+                    .copied()
+                    .unwrap_or(1 - ph);
+            }
         }
     }
 
-    /// The time lane `lane` has reached by `time` (stopped lanes stand).
-    fn lane_time(&self, flies: bool, lane: u32, time: f64) -> f64 {
-        match (flies, self.stops.get(&lane)) {
-            (false, Some(&t)) => t.min(time),
-            _ => time,
+    /// Whether `phase` has green at junction `j` at `time`.
+    fn green(&self, j: u32, phase: u8, time: f64) -> bool {
+        let u = (time + self.offsets[j as usize]).rem_euclid(CYCLE);
+        let half = CYCLE * 0.5;
+        if phase == 0 {
+            u < half - ALL_RED
+        } else {
+            (half..CYCLE - ALL_RED).contains(&u)
         }
+    }
+
+    /// Every street car where it would be at `time` with no junctions to
+    /// give way at (wrecks stay where they are).
+    pub fn reset_at(&mut self, time: f64) {
+        let old = std::mem::take(&mut self.cars);
+        self.cars = self
+            .ground
+            .iter()
+            .enumerate()
+            .map(|(i, l)| {
+                let len = l.path.len();
+                (0..l.count as usize)
+                    .map(|k| {
+                        let mut c = Car {
+                            s: l.phase + l.speed * time + len * k as f64 / l.count as f64,
+                            v: l.speed,
+                            waited: 0,
+                            wrecked: false,
+                            parked: false,
+                        };
+                        if let Some(w) = old.get(i).and_then(|o| o.get(k)).filter(|w| w.wrecked) {
+                            c = *w;
+                        }
+                        c
+                    })
+                    .collect()
+            })
+            .collect();
+        self.prev = self.cars.clone();
+        self.time = time;
+    }
+
+    /// The time the street cars have been driven to.
+    pub fn time(&self) -> f64 {
+        self.time
+    }
+
+    /// Drives the street cars on to `time` (a step at a time; far behind or
+    /// back in time, they are put there instead).
+    pub fn advance_to(&mut self, time: f64) {
+        if time < self.time - 1.0 || time - self.time > CATCH_UP {
+            self.reset_at(time);
+            return;
+        }
+        while self.time + STEP <= time + 1e-9 {
+            self.step();
+        }
+    }
+
+    /// The next car on the road after `k` (round the loop), and its
+    /// distance along from `k`'s position.
+    fn next_active(cars: &[Car], k: usize, len: f64) -> Option<(usize, f64)> {
+        let n = cars.len();
+        (1..n)
+            .map(|i| (k + i) % n)
+            .find(|&j| !cars[j].parked)
+            .map(|j| {
+                let s = cars[j].s + if j <= k { len } else { 0.0 };
+                (j, s - cars[k].s)
+            })
+    }
+
+    /// One step of driving.
+    fn step(&mut self) {
+        let old = &self.cars;
+        // Where the cars are round each lane, sorted, for finding those
+        // near a crossing.
+        let order: Vec<Vec<(f64, usize)>> = old
+            .iter()
+            .enumerate()
+            .map(|(i, cars)| {
+                let len = self.ground[i].path.len();
+                let mut o: Vec<(f64, usize)> = cars
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| !c.parked)
+                    .map(|(k, c)| (c.s.rem_euclid(len), k))
+                    .collect();
+                o.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                o
+            })
+            .collect();
+        let mut next: Vec<Vec<Car>> = Vec::with_capacity(old.len());
+        for (li, cars) in old.iter().enumerate() {
+            let l = &self.ground[li];
+            let len = l.path.len();
+            let n = cars.len();
+            let mut out = Vec::with_capacity(n);
+            for (k, c) in cars.iter().enumerate() {
+                if c.wrecked {
+                    out.push(Car { v: 0.0, ..*c });
+                    continue;
+                }
+                if c.parked {
+                    out.push(self.come_back(li, k));
+                    continue;
+                }
+                // The car ahead (round the loop for the last one).
+                let mut gap = f64::MAX;
+                let mut lead_v = l.speed;
+                if let Some((j, d)) = Self::next_active(cars, k, len) {
+                    gap = d - CAR_LEN;
+                    lead_v = cars[j].v;
+                }
+                let room = gap;
+                // A crossing ahead someone else has: stop before it.
+                if let Some(stop) = self.give_way(&order, li as u32, k, c, (gap, lead_v)) {
+                    if stop < gap {
+                        gap = stop;
+                        lead_v = 0.0;
+                    }
+                }
+                // Following the car (or stop line) ahead.
+                let want = STANDSTILL
+                    + (c.v * HEADWAY + c.v * (c.v - lead_v) / (2.0 * (ACCEL * BRAKE).sqrt()))
+                        .max(0.0);
+                let free = 1.0 - (c.v / l.speed).powi(4);
+                let a = if gap > 0.0 {
+                    ACCEL * (free - (want / gap).powi(2))
+                } else {
+                    -BRAKE * 3.0
+                };
+                let v = (c.v + a.clamp(-BRAKE * 3.0, ACCEL) * STEP).clamp(0.0, l.speed);
+                // Never into the car ahead.
+                let moved = ((c.v + v) * 0.5 * STEP).min((room + CAR_LEN * 0.1).max(0.0));
+                let waited = if v < 0.3 { c.waited + 1 } else { 0 };
+                out.push(Car {
+                    s: c.s + moved,
+                    v,
+                    waited,
+                    wrecked: false,
+                    parked: waited as f64 * STEP >= PARK,
+                });
+            }
+            next.push(out);
+        }
+        self.prev = std::mem::replace(&mut self.cars, next);
+        self.time += STEP;
+    }
+
+    /// Parked car `k` on lane `li` next step: back on the road halfway
+    /// along a long enough gap (if it is the first parked one after the
+    /// car behind, and not in a junction), else still parked.
+    fn come_back(&self, li: usize, k: usize) -> Car {
+        let cars = &self.cars[li];
+        let c = cars[k];
+        let len = self.ground[li].path.len();
+        let n = cars.len();
+        let behind = (1..n).map(|i| (k + n - i) % n).find(|&j| !cars[j].parked);
+        let Some(b) = behind else {
+            // Everyone parked: come back where it is.
+            return Car {
+                parked: false,
+                waited: 0,
+                ..c
+            };
+        };
+        // Only the first parked car after the one behind comes back.
+        if (b + 1) % n != k {
+            return c;
+        }
+        let gap = Self::next_active(cars, b, len).map_or(len, |(_, d)| d);
+        if gap < ROOM_BACK {
+            return c;
+        }
+        let s = cars[b].s + gap * 0.5;
+        let sm = s.rem_euclid(len);
+        let in_junction = self.zones[li].iter().any(|z| {
+            ahead(z.from, sm, len) < ahead(z.from, z.to, len) + CAR_LEN * 2.0
+                || ahead(sm, z.from, len) < CAR_LEN * 2.0
+        });
+        if in_junction {
+            return c;
+        }
+        // Unwrapped next to the car behind, so the order holds.
+        let s = if (b as i64) < k as i64 { s } else { s - len };
+        Car {
+            s,
+            v: self.ground[li].speed * 0.6,
+            waited: 0,
+            wrecked: false,
+            parked: false,
+        }
+    }
+
+    /// The crossings ahead of a car whose front is at `front` on lane
+    /// `li`, nearest first, within [`LOOK`]: (distance to it, crossing).
+    fn zones_ahead(&self, li: u32, front: f64) -> impl Iterator<Item = (f64, &Zone)> + '_ {
+        let len = self.ground[li as usize].path.len();
+        let fm = front.rem_euclid(len);
+        let zs = &self.zones[li as usize];
+        let i = zs.partition_point(|z| z.from < fm);
+        zs[i..]
+            .iter()
+            .chain(zs[..i].iter())
+            .map(move |z| (ahead(fm, z.from, len), z))
+            .take_while(|(d, _)| *d <= LOOK)
+    }
+
+    /// If car `k` on lane `li` must give way at a crossing ahead, how far
+    /// it may still drive (to just before the crossing). `room`: the free
+    /// road past the car's front (to the car ahead), and how fast that car
+    /// goes: nobody drives into a crossing they cannot leave again.
+    fn give_way(
+        &self,
+        order: &[Vec<(f64, usize)>],
+        li: u32,
+        k: usize,
+        c: &Car,
+        room: (f64, f64),
+    ) -> Option<f64> {
+        let len = self.ground[li as usize].path.len();
+        let front = c.s + CAR_LEN * 0.5;
+        if c.wait() >= STUCK {
+            return None;
+        }
+        let mine = c.wait() >= PATIENT;
+        // In a junction already: drive on out of it.
+        let fm = front.rem_euclid(len);
+        let zs = &self.zones[li as usize];
+        let i = zs.partition_point(|z| z.from <= fm);
+        let inside = (1..=zs.len())
+            .map(|b| &zs[(i + zs.len() - b) % zs.len()])
+            .take_while(|z| ahead(z.from, fm, len) < MAX_ZONE + CAR_LEN)
+            .any(|z| ahead(z.from, fm, len) < ahead(z.from, z.to, len) + CAR_LEN);
+        // The junction ahead: its crossings on this lane.
+        let mut cluster: Vec<(f64, &Zone)> = Vec::new();
+        let mut end = 0.0;
+        for (d, z) in self.zones_ahead(li, front) {
+            if inside && d < CAR_LEN * 2.0 {
+                continue;
+            }
+            if cluster.first().is_some_and(|f| f.1.junction != z.junction) {
+                break;
+            }
+            cluster.push((d, z));
+            end = f64::max(end, d + ahead(z.from, z.to, len));
+        }
+        let (first, fz) = *cluster.first()?;
+        let stop = Some((first - 1.0).max(0.0));
+        // No room past it: wait before it, whatever the others do.
+        if room.1 < 3.0 && room.0 + room.1 * 2.0 < end + CAR_LEN + 1.0 {
+            return stop;
+        }
+        // A red light, unless too close to stop.
+        if !inside
+            && !self.green(fz.junction, fz.phase, self.time)
+            && first > c.v * c.v / (2.0 * BRAKE) + 0.5
+        {
+            return stop;
+        }
+        if c.wait() >= IMPATIENT {
+            return None;
+        }
+        // Anyone in it, or coming first on green with us, at any of its
+        // crossings: wait.
+        for &(d, z) in &cluster {
+            let olen = self.ground[z.other as usize].path.len();
+            let olen_z = ahead(z.other_from, z.other_to, olen);
+            let others = &self.cars[z.other as usize];
+            let yields = in_stretch(
+                &order[z.other as usize],
+                z.other_from - LOOK - CAR_LEN,
+                LOOK + olen_z + CAR_LEN * 2.0,
+                olen,
+            )
+            .map(|j| (j, &others[j]))
+            .any(|(j, o)| {
+                // On a lane that crosses itself, only those ahead count
+                // (never wait for the cars queueing behind).
+                if o.parked || z.other == li && (j == k || ahead(c.s, o.s, len) > len * 0.5) {
+                    return false;
+                }
+                let of = (o.s + CAR_LEN * 0.5).rem_euclid(olen);
+                // In the crossing now.
+                if ahead(z.other_from, of, olen) < olen_z + CAR_LEN {
+                    return true;
+                }
+                let od = ahead(of, z.other_from, olen);
+                if z.other_phase != z.phase || od > LOOK || (o.v < 0.3 && od > 3.0) {
+                    return false;
+                }
+                // Coming: who gets there first goes first, but whoever has
+                // waited long goes before those who have not.
+                let theirs = (o.wait() >= PATIENT, eta(od, o.v));
+                match (theirs.0, mine) {
+                    (true, false) => true,
+                    (false, true) => false,
+                    _ => {
+                        let mt = eta(d, c.v);
+                        theirs.1 < mt - 0.05
+                            || ((theirs.1 - mt).abs() <= 0.05 && (z.other, j) < (li, k))
+                    }
+                }
+            });
+            if yields {
+                return stop;
+            }
+        }
+        None
+    }
+
+    /// The car behind `id` on its lane (the one that queues behind it).
+    pub fn behind(&self, id: u64) -> Option<u64> {
+        if id & SKY_BIT != 0 {
+            return None;
+        }
+        let lane = (id >> 16) as u32;
+        let n = self.cars.get(lane as usize)?.len() as u64;
+        let k = id & 0xFFFF;
+        (n > 1 && k < n).then(|| id_of(false, lane, (k + n - 1) % n))
+    }
+
+    /// Wrecks street car `id`: it stops dead. Returns where along its lane
+    /// it stands (for [`Self::place_wreck`] elsewhere).
+    pub fn wreck(&mut self, id: u64) -> Option<f32> {
+        let (lane, k) = Self::street_slot(id)?;
+        let len = self.ground.get(lane)?.path.len();
+        let c = self.cars.get_mut(lane)?.get_mut(k)?;
+        c.wrecked = true;
+        c.parked = false;
+        c.v = 0.0;
+        let s = c.s;
+        if let Some(p) = self.prev.get_mut(lane).and_then(|p| p.get_mut(k)) {
+            p.s = s;
+            p.v = 0.0;
+        }
+        Some(s.rem_euclid(len) as f32)
+    }
+
+    /// Wreck `id` standing at `at` along its lane (as another machine had it).
+    pub fn place_wreck(&mut self, id: u64, at: f32) {
+        let Some((lane, k)) = Self::street_slot(id) else {
+            return;
+        };
+        let Some(len) = self.ground.get(lane).map(|l| l.path.len()) else {
+            return;
+        };
+        let Some(c) = self.cars.get_mut(lane).and_then(|c| c.get_mut(k)) else {
+            return;
+        };
+        // The same place, unwrapped near where this machine has the car.
+        let mut d = ahead(c.s.rem_euclid(len), at as f64, len);
+        if d > len * 0.5 {
+            d -= len;
+        }
+        c.s += d;
+        c.v = 0.0;
+        c.wrecked = true;
+        c.parked = false;
+        let c = *c;
+        if let Some(p) = self.prev.get_mut(lane).and_then(|p| p.get_mut(k)) {
+            *p = c;
+        }
+    }
+
+    /// Wreck `id` towed away: the car drives on.
+    pub fn clear_wreck(&mut self, id: u64) {
+        if let Some((lane, k)) = Self::street_slot(id) {
+            if let Some(c) = self.cars.get_mut(lane).and_then(|c| c.get_mut(k)) {
+                c.wrecked = false;
+                c.waited = 0;
+            }
+        }
+    }
+
+    /// Every wreck taken away (a save is loaded).
+    pub fn clear_wrecks(&mut self) {
+        for c in self.cars.iter_mut().flatten() {
+            c.wrecked = false;
+        }
+    }
+
+    fn street_slot(id: u64) -> Option<(usize, usize)> {
+        (id & SKY_BIT == 0).then_some(((id >> 16) as usize, (id & 0xFFFF) as usize))
+    }
+
+    /// The street cars as they are, lane by lane in chunks, for a friend who
+    /// joins: (time, lane, first car, [(along, speed, waited)]).
+    pub fn sync_out(&self) -> Vec<TrafficChunk> {
+        let mut out = Vec::new();
+        for (i, cars) in self.cars.iter().enumerate() {
+            let len = self.ground[i].path.len();
+            // Along the lane from a base every car on it is past.
+            let base = cars.first().map_or(0.0, |c| (c.s / len).floor() * len);
+            for (n, chunk) in cars.chunks(SYNC_CHUNK).enumerate() {
+                out.push(TrafficChunk {
+                    time: self.time,
+                    lane: i as u32,
+                    first: (n * SYNC_CHUNK) as u16,
+                    cars: chunk
+                        .iter()
+                        .map(|c| {
+                            let waited = if c.parked { u32::MAX } else { c.waited };
+                            (c.s - base, c.v, waited)
+                        })
+                        .collect(),
+                });
+            }
+        }
+        out
+    }
+
+    /// Takes over street cars from [`Self::sync_out`] on another machine.
+    pub fn sync_in(&mut self, chunk: &TrafficChunk) {
+        if (chunk.time - self.time).abs() > 1e-6 {
+            self.advance_to(chunk.time);
+            self.time = chunk.time;
+        }
+        let Some(cars) = self.cars.get_mut(chunk.lane as usize) else {
+            return;
+        };
+        for (i, &(s, v, wait)) in chunk.cars.iter().enumerate() {
+            if let Some(c) = cars.get_mut(chunk.first as usize + i) {
+                c.s = s;
+                c.v = v;
+                c.parked = wait == u32::MAX;
+                c.waited = if c.parked { 0 } else { wait };
+            }
+        }
+        self.prev[chunk.lane as usize] = self.cars[chunk.lane as usize].clone();
     }
 
     /// Vehicles on the streets and in the air.
@@ -231,9 +1002,20 @@ impl Traffic {
                 for &(flies, lane, s0, s1) in list {
                     let l = self.lane(flies, lane);
                     let len = l.path.len();
+                    if !flies {
+                        for (k, c) in self.cars[lane as usize].iter().enumerate() {
+                            if c.parked {
+                                continue;
+                            }
+                            let a = c.s.rem_euclid(len);
+                            if a >= s0 - 3.0 && a <= s1 + 3.0 {
+                                ids.push(id_of(false, lane, k as u64));
+                            }
+                        }
+                        continue;
+                    }
                     let gap = len / l.count as f64;
-                    let t = self.lane_time(flies, lane, time);
-                    let base = (l.phase + l.speed * t).rem_euclid(len);
+                    let base = (l.phase + l.speed * time).rem_euclid(len);
                     // Vehicle k sits at base + k * gap (round the loop).
                     let u0 = (s0 - base).rem_euclid(len);
                     let first = (u0 / gap).ceil() as i64;
@@ -279,9 +1061,25 @@ impl Traffic {
             return None;
         }
         let len = l.path.len();
-        let stopped = self.lane_time(flies, lane, time) < time;
-        let lt = self.lane_time(flies, lane, time);
-        let s = l.phase + l.speed * lt + len * k as f64 / l.count as f64;
+        // Street cars: between the last two steps.
+        let (s, speed) = if flies {
+            (
+                l.phase + l.speed * time + len * k as f64 / l.count as f64,
+                l.speed,
+            )
+        } else {
+            let (a, b) = (
+                self.prev.get(lane as usize)?.get(k as usize)?,
+                self.cars.get(lane as usize)?.get(k as usize)?,
+            );
+            if b.parked {
+                return None;
+            }
+            // Just back on the road: no sliding from where it parked.
+            let a = if a.parked { b } else { a };
+            let f = ((time - (self.time - STEP)) / STEP).clamp(0.0, 1.0);
+            (a.s + (b.s - a.s) * f, a.v + (b.v - a.v) * f)
+        };
         let (p, d) = l.path.sample(s);
         let mut rng = self.seed.child(id).rng();
         let kind = if flies {
@@ -331,10 +1129,24 @@ impl Traffic {
             pos,
             dir,
             roll,
-            speed: if stopped { 0.0 } else { l.speed },
+            speed,
             odometer: s,
         })
     }
+}
+
+/// Street cars per [`TrafficChunk`].
+pub const SYNC_CHUNK: usize = 48;
+
+/// Some street cars of one lane as they are, for a friend who joins: the
+/// time, the lane, the first car's number and each car's (distance along,
+/// speed, steps waited, or `u32::MAX` while off the road).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TrafficChunk {
+    pub time: f64,
+    pub lane: u32,
+    pub first: u16,
+    pub cars: Vec<(f64, f64, u32)>,
 }
 
 fn id_of(flies: bool, lane: u32, k: u64) -> u64 {
@@ -357,20 +1169,27 @@ mod tests {
 
     #[test]
     fn streets_and_sky_are_busy_and_vehicles_move_smoothly() {
-        let t = traffic();
+        let mut t = traffic();
         let (cars, fliers) = t.count();
         assert!(cars > 200, "{cars} cars");
         assert!(fliers > 20, "{fliers} fliers");
+        t.advance_to(100.0);
         let p = t.world.spawn_line().0;
         let near = t.near(p, 400.0, 100.0, 1000);
         assert!(near.len() > 20, "{} near the core", near.len());
         assert!(near.iter().any(|v| v.flies()));
-        for a in &near {
-            let b = t.vehicle(a.id, 100.0 + 1.0 / 30.0).unwrap();
+        let before: Vec<Vehicle> = near
+            .iter()
+            .map(|a| t.vehicle(a.id, 100.0).unwrap())
+            .collect();
+        t.advance_to(100.0 + STEP);
+        for a in &before {
+            let b = t.vehicle(a.id, 100.0 + STEP).unwrap();
             assert!(a.pos.is_finite());
-            // A tick's drive, no more (a little extra round tight corners).
+            // A step's drive, no more (a little extra round tight corners).
+            let top = t.lane(a.flies(), ((a.id & !SKY_BIT) >> 16) as u32).speed;
             let step = a.pos.distance(b.pos);
-            assert!(step < a.speed / 30.0 + 0.5, "{} jumped {step} m", a.id);
+            assert!(step < top * STEP + 0.5, "{} jumped {step} m", a.id);
             if !a.flies() {
                 let ground = t.world.road_height(DVec2::new(a.pos.x, a.pos.z));
                 assert!((a.pos.y - ground).abs() < 1.5, "car off the road");
@@ -380,7 +1199,7 @@ mod tests {
 
     #[test]
     fn cars_on_one_lane_keep_their_distance() {
-        let t = traffic();
+        let mut t = traffic();
         for l in t.ground.iter().filter(|l| l.count > 0) {
             let gap = l.path.len() / l.count as f64;
             assert!(gap > GAP_CORE * 0.6, "cars {gap:.1} m apart");
@@ -388,12 +1207,104 @@ mod tests {
         for l in t.sky.iter().filter(|l| l.count > 0) {
             assert!(l.path.len() / l.count as f64 > SKY_GAP_CORE * 0.6);
         }
+        // Driving with junctions to give way at, nobody runs into the car
+        // ahead.
+        for _ in 0..60 {
+            t.advance_to(t.time() + 2.0);
+            for (i, cars) in t.cars.iter().enumerate() {
+                let len = t.ground[i].path.len();
+                let on: Vec<&Car> = cars.iter().filter(|c| !c.parked).collect();
+                for k in 0..on.len().saturating_sub(1) {
+                    assert!(on[k + 1].s - on[k].s > CAR_LEN * 0.85, "a crash");
+                }
+                if on.len() > 1 {
+                    let (a, b) = (on[on.len() - 1], on[0]);
+                    assert!(b.s + len - a.s > CAR_LEN * 0.85, "a crash round the loop");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cars_give_way_at_junctions_and_keep_moving() {
+        let mut t = traffic();
+        let zones: usize = t.zones.iter().map(|z| z.len()).sum();
+        assert!(zones > 100, "only {zones} crossings");
+        t.advance_to(30.0);
+        // Two cars in one crossing from different lanes, counted every step.
+        let (mut clashes, mut passes) = (0usize, 0usize);
+        let mut moving = 0.0;
+        let mut parked: f64 = 0.0;
+        let steps = 1200;
+        for _ in 0..steps {
+            t.advance_to(t.time() + STEP);
+            let inside = |lane: usize, from: f64, to: f64| -> Vec<usize> {
+                let len = t.ground[lane].path.len();
+                let zl = ahead(from, to, len);
+                t.cars[lane]
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| !c.parked)
+                    .filter(|(_, c)| {
+                        ahead(from, (c.s + CAR_LEN * 0.5).rem_euclid(len), len) < zl + CAR_LEN
+                    })
+                    .map(|(k, _)| k)
+                    .collect()
+            };
+            for (li, zs) in t.zones.iter().enumerate() {
+                for z in zs.iter().filter(|z| (z.other as usize) > li) {
+                    let mine = inside(li, z.from, z.to);
+                    if mine.is_empty() {
+                        continue;
+                    }
+                    passes += 1;
+                    if !inside(z.other as usize, z.other_from, z.other_to).is_empty() {
+                        clashes += 1;
+                    }
+                }
+            }
+            let every = t.cars.iter().flatten().count() as f64;
+            let all: Vec<&Car> = t.cars.iter().flatten().filter(|c| !c.parked).collect();
+            parked = parked.max(1.0 - all.len() as f64 / every);
+            moving += all.iter().filter(|c| c.v > 1.0).count() as f64 / all.len() as f64;
+        }
+        let rate = clashes as f64 / passes.max(1) as f64;
+        assert!(
+            rate < 0.05,
+            "{clashes} of {passes} crossings shared ({:.1}%)",
+            rate * 100.0
+        );
+        let moving = moving / steps as f64;
+        assert!(
+            moving > 0.5,
+            "only {:.0}% of cars moving: a jam",
+            moving * 100.0
+        );
+        assert!(
+            parked < 0.1,
+            "{:.0}% of cars turned off the road",
+            parked * 100.0
+        );
     }
 
     #[test]
     fn same_seed_same_traffic() {
-        let (a, b) = (traffic(), traffic());
+        let (mut a, mut b) = (traffic(), traffic());
+        a.advance_to(7.0);
+        b.advance_to(7.0);
         let p = a.world.spawn_line().0;
         assert_eq!(a.near(p, 300.0, 7.0, 400), b.near(p, 300.0, 7.0, 400));
+        // A friend who joins later is sent the cars and drives on alike.
+        let mut c = traffic();
+        for chunk in a.sync_out() {
+            c.sync_in(&chunk);
+        }
+        a.advance_to(20.0);
+        c.advance_to(20.0);
+        let (na, nc) = (a.near(p, 300.0, 20.0, 400), c.near(p, 300.0, 20.0, 400));
+        assert_eq!(na.len(), nc.len());
+        for (x, y) in na.iter().zip(&nc) {
+            assert!(x.pos.distance(y.pos) < 0.05, "{} drifted", x.id);
+        }
     }
 }

@@ -467,6 +467,9 @@ impl Sim {
         combat::step(&mut self.world, self.tick);
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
+        if let Some(t) = self.wrecks.traffic.as_mut() {
+            t.advance_to(self.tick as f64 * DT);
+        }
         self.pay_karma();
         self.sync_levels();
         self.clear_rubble();

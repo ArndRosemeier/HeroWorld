@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.030 (2026-11-08)
+
+- Junctions have traffic lights now: cars wait at red, take turns, give way to whoever got
+  there first and keep out of a junction they could not leave. Queues form behind a wreck.
+- Friends who join a game see the same cars in the same places as the host.
+
 ## 0.029 (2026-11-08)
 
 - The town needs much less memory (about a fifth less at its peak), so big towns load more

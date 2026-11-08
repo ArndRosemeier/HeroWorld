@@ -47,6 +47,7 @@ fn is_world_news(m: &ToClient) -> bool {
             | ToClient::PropsRepaired { .. }
             | ToClient::CarsWrecked { .. }
             | ToClient::CarsCleared { .. }
+            | ToClient::Traffic { .. }
     )
 }
 

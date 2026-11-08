@@ -636,11 +636,21 @@ pub enum ToClient {
         props: Vec<u32>,
     },
     /// Moving cars wrecked: (vehicle id, the tick it happened, which way
-    /// the blow went as a yaw byte). Every machine knows where the car was
-    /// then from the traffic plan. `live` as for [`ToClient::Damage`].
+    /// the blow went as a yaw byte, where along its lane it stands).
+    /// `live` as for [`ToClient::Damage`].
     CarsWrecked {
-        cars: Vec<(u64, u64, u8)>,
+        cars: Vec<(u64, u64, u8, f32)>,
         live: bool,
+    },
+    /// Street cars of one lane as they are, for a player who joins: the
+    /// traffic time, the lane, the first car's number, and each car's
+    /// (distance along, speed, steps waited or `u32::MAX` while off the
+    /// road). Exact, so both machines drive on alike.
+    Traffic {
+        time: f64,
+        lane: u32,
+        first: u16,
+        cars: Vec<(f64, f64, u32)>,
     },
     /// Wrecked cars towed away: their lanes drive on.
     CarsCleared {
@@ -699,7 +709,8 @@ impl ToClient {
             ToClient::Impact { .. } => 12 + 6 + 1 + 1,
             ToClient::PropsBroken { props, .. } => 1 + 1 + 5 * props.len().min(255),
             ToClient::PropsRepaired { props } => 1 + 4 * props.len().min(255),
-            ToClient::CarsWrecked { cars, .. } => 1 + 1 + 17 * cars.len().min(255),
+            ToClient::CarsWrecked { cars, .. } => 1 + 1 + 21 * cars.len().min(255),
+            ToClient::Traffic { cars, .. } => 8 + 4 + 2 + 1 + 20 * cars.len().min(255),
             ToClient::CarsCleared { cars } => 1 + 8 * cars.len().min(255),
             ToClient::Fx(_) => FX_BYTES,
             ToClient::Sheet(s) => s.wire_size(),
@@ -767,8 +778,20 @@ impl ToClient {
             ToClient::CarsWrecked { cars, live } => {
                 let n = cars.len().min(255);
                 w.u8(12).bool(*live).u8(n as u8);
-                for (id, tick, fell) in &cars[..n] {
-                    w.u64(*id).u64(*tick).u8(*fell);
+                for (id, tick, fell, along) in &cars[..n] {
+                    w.u64(*id).u64(*tick).u8(*fell).f32(*along);
+                }
+            }
+            ToClient::Traffic {
+                time,
+                lane,
+                first,
+                cars,
+            } => {
+                let n = cars.len().min(255);
+                w.u8(14).f64(*time).u32(*lane).u16(*first).u8(n as u8);
+                for (s, v, wait) in &cars[..n] {
+                    w.f64(*s).f64(*v).u32(*wait);
                 }
             }
             ToClient::CarsCleared { cars } => {
@@ -871,9 +894,25 @@ impl ToClient {
                 let n = r.u8()? as usize;
                 let mut cars = Vec::with_capacity(n);
                 for _ in 0..n {
-                    cars.push((r.u64()?, r.u64()?, r.u8()?));
+                    cars.push((r.u64()?, r.u64()?, r.u8()?, r.f32()?));
                 }
                 ToClient::CarsWrecked { cars, live }
+            }
+            14 => {
+                let time = r.f64()?;
+                let lane = r.u32()?;
+                let first = r.u16()?;
+                let n = r.u8()? as usize;
+                let mut cars = Vec::with_capacity(n);
+                for _ in 0..n {
+                    cars.push((r.f64()?, r.f64()?, r.u32()?));
+                }
+                ToClient::Traffic {
+                    time,
+                    lane,
+                    first,
+                    cars,
+                }
             }
             13 => {
                 let n = r.u8()? as usize;
@@ -1425,8 +1464,17 @@ mod tests {
                 (
                     7,
                     ToClient::CarsWrecked {
-                        cars: vec![(1 << 40 | 3 << 16 | 2, 9000, 77)],
+                        cars: vec![(1 << 40 | 3 << 16 | 2, 9000, 77, 31.5)],
                         live: true,
+                    },
+                ),
+                (
+                    9,
+                    ToClient::Traffic {
+                        time: 12.3,
+                        lane: 7,
+                        first: 48,
+                        cars: vec![(10.5, 9.25, 0), (40.0, 0.0, u32::MAX)],
                     },
                 ),
                 (8, ToClient::CarsCleared { cars: vec![65538] }),

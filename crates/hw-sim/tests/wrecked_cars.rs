@@ -56,23 +56,27 @@ fn a_blast_wrecks_a_passing_car_and_holds_up_its_lane() {
     let news = sim.take_news();
     assert!(news.iter().any(|m| matches!(m,
         ToClient::CarsWrecked { cars, live: true } if cars.iter().any(|c| c.0 == car.id))));
-    // It and its lane stand still.
+    // It stands still, and the car behind it queues.
     let traffic = sim.wrecks.traffic.as_ref().unwrap();
     let t0 = sim.tick as f64 * DT;
-    let behind = car.id ^ 1;
-    let a = traffic.vehicle(behind, t0);
-    let b = traffic.vehicle(behind, t0 + 20.0);
-    if let (Some(a), Some(b)) = (a, b) {
-        assert!(a.pos.distance(b.pos) < 1e-6, "the lane drove on");
-        assert_eq!(b.speed, 0.0);
+    let wreck_at = traffic.vehicle(car.id, t0).unwrap().pos;
+    let behind = traffic.behind(car.id);
+    for _ in 0..(TICK_HZ * 40) {
+        sim.step();
     }
-    // The wreck itself stays put.
-    let still = traffic
-        .vehicle(car.id, t0)
-        .unwrap()
-        .pos
-        .distance(traffic.vehicle(car.id, t0 + 5.0).unwrap().pos);
-    assert!(still < 1e-6);
+    let traffic = sim.wrecks.traffic.as_ref().unwrap();
+    let t1 = sim.tick as f64 * DT;
+    let still = traffic.vehicle(car.id, t1).unwrap().pos;
+    assert!(still.distance(wreck_at) < 1e-6, "the wreck moved");
+    if let Some(v) = behind.and_then(|b| traffic.vehicle(b, t1)) {
+        // Queued behind it (or turned off the road and gone, `None`).
+        assert!(
+            v.speed < 0.5,
+            "drove through the wreck at {:.1} m/s",
+            v.speed
+        );
+        assert!(v.pos.distance(wreck_at) > 4.0, "ran into the wreck");
+    }
     // Leave town: it is towed away after a while.
     let far = DVec3::new(1e6, 0.0, 1e6);
     let later = sim.tick + (REPAIR_SECONDS * TICK_HZ as f64) as u64 + 1;
@@ -83,8 +87,15 @@ fn a_blast_wrecks_a_passing_car_and_holds_up_its_lane() {
     assert!(news
         .iter()
         .any(|m| matches!(m, ToClient::CarsCleared { cars } if cars.contains(&car.id))));
+    for _ in 0..(TICK_HZ * 10) {
+        sim.step();
+    }
     let traffic = sim.wrecks.traffic.as_ref().unwrap();
-    let a = traffic.vehicle(car.id, t0).unwrap().pos;
-    let b = traffic.vehicle(car.id, t0 + 5.0).unwrap().pos;
-    assert!(a.distance(b) > 10.0, "the lane did not drive on");
+    let t2 = sim.tick as f64 * DT;
+    if let Some(v) = traffic.vehicle(car.id, t2) {
+        assert!(
+            v.pos.distance(wreck_at) > 5.0,
+            "the towed car never drove on"
+        );
+    }
 }

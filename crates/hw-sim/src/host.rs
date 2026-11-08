@@ -181,6 +181,9 @@ impl Host {
             for m in self.sim.street.snapshot() {
                 r.rel_out.push(m);
             }
+            for m in self.sim.wrecks.traffic_sync() {
+                r.rel_out.push(m);
+            }
             for m in self.sim.wrecks.snapshot() {
                 r.rel_out.push(m);
             }
