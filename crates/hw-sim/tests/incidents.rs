@@ -279,3 +279,48 @@ fn a_mugging_has_a_victim_and_the_crooks_turn_on_a_hero_who_steps_in() {
     run(&mut sim, incidents::LEAVE_SECONDS + 1.0, &mut news);
     assert!(victim(&mut sim).is_none());
 }
+
+#[test]
+fn a_building_brought_down_traps_people_in_its_rubble() {
+    use hw_sim::incidents::IncidentKind;
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    let at = sim.spawn_point(1);
+    sim.spawn_hero(PlayerId(1), at);
+    // The building nearest the hero comes down (as a fight would bring it).
+    let solids = sim.solids();
+    let b = solids
+        .buildings_near(glam::DVec2::new(at.x, at.z), 80.0)
+        .into_iter()
+        .find(|&i| solids.building(i).is_some())
+        .expect("a building near");
+    sim.incidents.collapsed(b);
+    let mut news = Vec::new();
+    run(&mut sim, 1.5, &mut news);
+    let inc = sim
+        .incidents
+        .open
+        .iter()
+        .find(|i| i.kind == IncidentKind::Collapse)
+        .expect("a rescue in the rubble")
+        .clone();
+    assert_eq!(inc.left, 3);
+    assert!(inc.medic.is_some(), "no ambulance");
+    assert!(news
+        .iter()
+        .any(|n| n.0 == inc.id && n.1 == IncidentKind::Collapse.code()));
+    let (plan, _) = solids.building(b).unwrap();
+    let s = &plan.site;
+    let front = s.origin + s.along * s.size.x * 0.5;
+    assert!(glam::DVec2::new(inc.at.x, inc.at.z).distance(front) < 5.0);
+    // The same pile does not start a second one.
+    sim.incidents.collapsed(b);
+    run(&mut sim, 1.5, &mut news);
+    let n = sim
+        .incidents
+        .open
+        .iter()
+        .filter(|i| i.kind == IncidentKind::Collapse)
+        .count();
+    assert_eq!(n, 1);
+}

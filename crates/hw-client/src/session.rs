@@ -574,8 +574,7 @@ impl Session {
                 let at = f.to_world(DVec3::new(x, floor.elevation + 1.8, 0.0));
                 let r = host
                     .sim
-                    .damage
-                    .hit(&solids, at, power.blast_radius, power.blast, by, tick);
+                    .hit_buildings(at, power.blast_radius, power.blast, by);
                 let into =
                     f.to_world(DVec3::new(x, 0.0, 1.0)) - f.to_world(DVec3::new(x, 0.0, 0.0));
                 host.sim.damage.tell(ToClient::Impact {
@@ -594,8 +593,7 @@ impl Session {
             while x < plan2.site.size.x {
                 let at = g.to_world(DVec3::new(x, plan2.floors[0].elevation + 1.6, z));
                 host.sim
-                    .damage
-                    .hit(&solids, at, power.punch_radius, power.punch, by, tick);
+                    .hit_buildings(at, power.punch_radius, power.punch, by);
                 x += 1.0;
             }
         }

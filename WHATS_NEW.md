@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.064 (2026-11-08)
+
+- Bring a building down and there are people in the rubble: the wrist radio calls it in, and
+  you can dig them out and carry the hurt one to the ambulance.
+
 ## 0.063 (2026-11-08)
 
 - Cars stop for people lying in the road: a knocked-down villain, a mugging's victim, someone hurt

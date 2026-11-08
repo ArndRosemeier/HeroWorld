@@ -91,6 +91,7 @@ fn beam_colour(kind: IncidentKind) -> Color {
         IncidentKind::CarCrash => rgb(120, 200, 255),
         IncidentKind::Fire => rgb(255, 130, 40),
         IncidentKind::Colossus => rgb(255, 40, 60),
+        IncidentKind::Collapse => rgb(230, 210, 170),
     }
 }
 
@@ -194,6 +195,9 @@ impl Radio {
             let word = match (*state, kind.trapped() > 0) {
                 (1, true) => "Everyone is out. You saved them!".to_string(),
                 (1, false) => format!("{} handled. Nice work!", kind.name()),
+                (_, true) if kind == IncidentKind::Collapse => {
+                    "The rescue crews dug them out.".to_string()
+                }
                 (_, true) => "The fire brigade got there first.".to_string(),
                 _ => format!("{}: they got away.", kind.name()),
             };
@@ -255,6 +259,21 @@ impl Radio {
                     Vec3::Y * 5.0,
                     60,
                 ));
+            }
+            IncidentKind::Collapse => {
+                // The rubble still settling: dust hanging over it.
+                let p = world.particles_mut();
+                let pile = c.at - f * 2.5 + Vec3::Y * 0.8;
+                for (dx, size) in [(-2.5, 2.4), (2.5, 2.0)] {
+                    // Pale plaster dust, not a fire's black smoke.
+                    let dust = ParticleEmitter::smoke(pile + side * dx, size)
+                        .with_color(Color::rgba(150, 140, 125, 120))
+                        .with_secondary_color(Color::rgba(200, 192, 178, 50));
+                    if let Ok(e) = p.start(dust) {
+                        scene.fire.push(e);
+                    }
+                }
+                let _ = p.burst(ParticleEmitter::dust(pile, 4.0, Color::rgb(158, 148, 133)));
             }
             _ => {
                 // The front of the house ablaze: flames at the door and up

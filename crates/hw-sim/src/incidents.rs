@@ -77,10 +77,13 @@ pub enum IncidentKind {
     Fire,
     /// The mad scientist's walking tank marches out of his quarter.
     Colossus,
+    /// A building brought down in a fight (by heroes or the colossus),
+    /// people trapped in the rubble. Never rolled: it follows a collapse.
+    Collapse,
 }
 
 impl IncidentKind {
-    pub const ALL: [IncidentKind; 7] = [
+    pub const ALL: [IncidentKind; 8] = [
         IncidentKind::Mugging,
         IncidentKind::Robbery,
         IncidentKind::Rampage,
@@ -88,6 +91,7 @@ impl IncidentKind {
         IncidentKind::CarCrash,
         IncidentKind::Fire,
         IncidentKind::Colossus,
+        IncidentKind::Collapse,
     ];
 
     pub fn code(self) -> u8 {
@@ -108,6 +112,7 @@ impl IncidentKind {
             IncidentKind::CarCrash => "Car crash, people trapped",
             IncidentKind::Fire => "Fire, people inside",
             IncidentKind::Colossus => "The colossus is loose!",
+            IncidentKind::Collapse => "Building collapse, people trapped",
         }
     }
 
@@ -115,7 +120,7 @@ impl IncidentKind {
     pub fn trapped(self) -> u8 {
         match self {
             IncidentKind::CarCrash => 2,
-            IncidentKind::Fire => 3,
+            IncidentKind::Fire | IncidentKind::Collapse => 3,
             _ => 0,
         }
     }
@@ -124,6 +129,8 @@ impl IncidentKind {
     pub fn rescue_seconds(self) -> f64 {
         match self {
             IncidentKind::CarCrash => 4.0,
+            // Digging them out.
+            IncidentKind::Collapse => 5.0,
             _ => 3.0,
         }
     }
@@ -136,7 +143,7 @@ impl IncidentKind {
             IncidentKind::Rampage => (3, Some(EnemyKind::Brute), 2),
             IncidentKind::Breakout => (5, Some(EnemyKind::Technician), 2),
             IncidentKind::Colossus => (1, Some(EnemyKind::Colossus), 3),
-            IncidentKind::CarCrash | IncidentKind::Fire => (0, None, 0),
+            IncidentKind::CarCrash | IncidentKind::Fire | IncidentKind::Collapse => (0, None, 0),
         }
     }
 
@@ -151,6 +158,7 @@ impl IncidentKind {
             IncidentKind::CarCrash => 3.0,
             IncidentKind::Fire => 2.5,
             IncidentKind::Colossus => 1.5,
+            IncidentKind::Collapse => 3.0,
         }
     }
 
@@ -165,7 +173,7 @@ impl IncidentKind {
             IncidentKind::Breakout => 18.0,
             // The walking tank fights whoever comes.
             IncidentKind::Colossus => f64::INFINITY,
-            IncidentKind::CarCrash | IncidentKind::Fire => 0.0,
+            IncidentKind::CarCrash | IncidentKind::Fire | IncidentKind::Collapse => 0.0,
         }
     }
 
@@ -414,6 +422,8 @@ pub struct Incidents {
     free: Vec<usize>,
     /// When the colossus last came out.
     last_colossus: Option<u64>,
+    /// Buildings that came down since the last second (people trapped).
+    collapses: Vec<usize>,
     news: Vec<ToClient>,
 }
 
@@ -453,6 +463,9 @@ impl Incidents {
             .collect();
         heroes.sort_by_key(|h| h.0);
         self.settle(world, tick, &heroes);
+        for b in std::mem::take(&mut self.collapses) {
+            self.start_collapse(world, tick, b);
+        }
         if heroes.is_empty() || self.open.len() >= wanted(heroes.len()) {
             return;
         }
@@ -462,6 +475,75 @@ impl Incidents {
         };
         if due {
             self.start(world, tick, &heroes);
+        }
+    }
+
+    /// Building `b` (a collider of the city's solids) started to come
+    /// down: people are trapped in it.
+    pub fn collapsed(&mut self, b: usize) {
+        if self.town.is_some() && !self.collapses.contains(&b) {
+            self.collapses.push(b);
+        }
+    }
+
+    /// A rescue in the rubble of building `b`, at its front.
+    fn start_collapse(&mut self, world: &mut World, tick: u64, b: usize) {
+        let solids = world.resource::<Solids>().0.clone();
+        let Some((plan, _)) = solids.building(b) else {
+            return;
+        };
+        let s = &plan.site;
+        let p = s.origin + s.along * s.size.x * 0.5 - s.inward * 3.0;
+        // One rescue per pile of rubble.
+        if self
+            .open
+            .iter()
+            .any(|i| DVec2::new(i.at.x, i.at.z).distance(p) < 30.0)
+        {
+            return;
+        }
+        self.count += 1;
+        let y = solids.ground_at(p).max(GROUND_Y);
+        let inc = self.rescue_at(
+            world,
+            tick,
+            IncidentKind::Collapse,
+            DVec3::new(p.x, y, p.y),
+            (-s.inward).normalize_or(DVec2::X),
+        );
+        self.news.push(inc.news());
+        self.news.extend(inc.casualty(false));
+        self.open.push(inc);
+    }
+
+    /// A new rescue of `kind` at `at`, facing out of its place; the
+    /// ambulance waits on a straight street near.
+    fn rescue_at(
+        &self,
+        world: &mut World,
+        tick: u64,
+        kind: IncidentKind,
+        at: DVec3,
+        facing: DVec2,
+    ) -> Incident {
+        let town = self.town.as_ref().expect("a town");
+        let level = world.resource::<Fights>().team_level;
+        let medic = medic_spot(town, &world.resource::<Solids>().0, DVec2::new(at.x, at.z));
+        Incident {
+            id: self.count,
+            kind,
+            at,
+            spot: None,
+            facing,
+            left: kind.trapped(),
+            freeing: 0.0,
+            hurt: None,
+            medic: Some(medic),
+            level,
+            started: tick,
+            expires: tick + ticks(kind.timeout()),
+            answered: false,
+            state: State::Open,
         }
     }
 
@@ -797,25 +879,7 @@ impl Incidents {
         };
         let (size, only, extra) = kind.group();
         if kind.trapped() > 0 {
-            let level = world.resource::<Fights>().team_level;
-            let medic = medic_spot(&town, &world.resource::<Solids>().0, p);
-            let inc = Incident {
-                id: self.count,
-                kind,
-                at,
-                spot: None,
-                facing,
-                left: kind.trapped(),
-                freeing: 0.0,
-                hurt: None,
-                medic: Some(medic),
-                level,
-                started: tick,
-                expires: tick + ticks(kind.timeout()),
-                answered: false,
-                state: State::Open,
-            };
-            let mut inc = inc;
+            let mut inc = self.rescue_at(world, tick, kind, at, facing);
             if std::mem::take(&mut self.carried_start) {
                 let id = heroes
                     .iter()

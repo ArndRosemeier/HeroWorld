@@ -707,11 +707,10 @@ impl Sim {
         if blows.is_empty() {
             return;
         }
-        let solids = self.solids();
         for (at, radius, power) in blows {
             let (_, _) = self.street.hit(at, DVec3::Y, radius, power, self.tick);
             let (_, _) = self.wrecks.hit(at, DVec3::Y, radius, power, self.tick);
-            let hit = self.damage.hit(&solids, at, radius, power, None, self.tick);
+            let hit = self.hit_buildings(at, radius, power, None);
             let broke = hit.broken;
             self.alarm_for_damage(at, broke, !hit.collapsed.is_empty());
             if broke > 0 {
@@ -800,9 +799,7 @@ impl Sim {
             // A punch at thin air hits nothing (a prop it broke counts).
             let solid = solids.solid_at(at) || solids.solid_at(at + aim * 0.4);
             let broken = if kind == ImpactKind::Blast || solid {
-                let hit = self
-                    .damage
-                    .hit(&solids, at, radius, strength, Some(owner), tick);
+                let hit = self.hit_buildings(at, radius, strength, Some(owner));
                 self.alarm_for_damage(at, hit.broken + props, !hit.collapsed.is_empty());
                 hit.broken
             } else {
@@ -818,6 +815,23 @@ impl Sim {
                 broke: broken + props > 0,
             });
         }
+    }
+
+    /// A blow at the buildings round `at` (`by`: the hero who struck, for
+    /// the collateral tally). A building it brings down traps people.
+    pub fn hit_buildings(
+        &mut self,
+        at: DVec3,
+        radius: f32,
+        power: f32,
+        by: Option<PlayerId>,
+    ) -> destruction::HitResult {
+        let solids = self.solids();
+        let hit = self.damage.hit(&solids, at, radius, power, by, self.tick);
+        for &b in &hit.collapsed {
+            self.incidents.collapsed(b);
+        }
+        hit
     }
 
     /// Walls and props smashed at `at` (`broke` pieces; a building

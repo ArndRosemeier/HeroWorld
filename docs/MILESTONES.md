@@ -529,6 +529,12 @@ them with a README, `Host.bat` and `Join.bat` (`packaging/windows/`), and publis
 by hand from the Actions tab. Multiplayer play tests wait until Arnd has someone to play with
 (2026-11-08).
 
+**Status (0.064):** people in buildings heroes broke. A building that starts to collapse (a hero's
+blows, the colossus) starts a "Building collapse, people trapped" rescue at its front (protocol
+22): three people to dig out (5 s each, the help key), the last one carried to the ambulance,
+karma like a fire. Pale dust hangs over the rubble. One per pile; it does not count against the
+radio's own incidents. `HW_VIEW=wrecked` shows one; `tests/incidents.rs` covers it.
+
 ## Sound, music and pictures
 
 OpenRouter is available for images, sound effects and music (Arnd's model preferences are in

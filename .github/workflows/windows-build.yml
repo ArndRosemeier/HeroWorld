@@ -46,9 +46,10 @@ jobs:
         if: steps.want.outputs.build == 'yes'
         shell: bash
         run: |
-          # The game opens without a console window; the server keeps one.
-          RUSTFLAGS="-C link-args=/SUBSYSTEM:WINDOWS -C link-args=/ENTRY:mainCRTStartup" \
-            cargo build --release -p hw-client --bin heroworld
+          # The game opens without a console window (link flags for the game
+          # itself only, not the build scripts); the server keeps one.
+          cargo rustc --release -p hw-client --bin heroworld -- \
+            -C link-args=/SUBSYSTEM:WINDOWS -C link-args=/ENTRY:mainCRTStartup
           cargo build --release -p hw-sim --bin hw-headless
       - name: Package
         if: steps.want.outputs.build == 'yes'
