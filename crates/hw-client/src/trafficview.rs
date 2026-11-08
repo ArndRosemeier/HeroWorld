@@ -27,6 +27,11 @@ pub struct TrafficView {
     /// Cars wrecked by heroes: as they stand, and the smoke rising from
     /// them (wrecked while someone watched).
     wrecks: BTreeMap<u64, (Vehicle, Option<EmitterId>)>,
+    /// Wrecked cars are drawn without their doors, which hang open on
+    /// their own: shells per model and paint, and each door's set with its
+    /// hinge, axis and how far it opens.
+    shells: BTreeMap<VehicleKind, LodId>,
+    doors: BTreeMap<VehicleKind, Vec<(LodId, DVec3, DVec3, f64)>>,
 }
 
 impl TrafficView {
@@ -41,6 +46,14 @@ impl TrafficView {
         }
         for (_, id) in std::mem::take(&mut self.wheels) {
             world.despawn_lod(id);
+        }
+        for (_, id) in std::mem::take(&mut self.shells) {
+            world.despawn_lod(id);
+        }
+        for (_, doors) in std::mem::take(&mut self.doors) {
+            for (id, ..) in doors {
+                world.despawn_lod(id);
+            }
         }
         self.near.clear();
         self.refresh = 0.0;
@@ -129,18 +142,48 @@ impl TrafficView {
         }
         let mut bodies: BTreeMap<VehicleKind, Vec<Place>> = BTreeMap::new();
         let mut wheels: BTreeMap<CarModel, Vec<Place>> = BTreeMap::new();
-        for (v, _) in self.wrecks.values() {
+        let mut shells: BTreeMap<VehicleKind, Vec<Place>> = BTreeMap::new();
+        let mut doors: BTreeMap<(VehicleKind, usize), Vec<Place>> = BTreeMap::new();
+        for (&id, (v, _)) in &self.wrecks {
             if DVec2::new(v.pos.x, v.pos.z).distance(eye) > SHOW_RADIUS {
                 continue;
             }
-            let body = body_place(v);
-            bodies.entry(v.kind).or_default().push(Place {
-                stretch: Vec3::new(1.03, 0.86, 0.94),
+            let crumpled = |p: Place| Place {
+                stretch: WRECK_STRETCH,
                 tint: Color::rgb(92, 86, 82),
-                ..body
-            });
-            if let VehicleKind::Car(model, _) = v.kind {
-                wheel_places(v, model, wheels.entry(model).or_default());
+                ..p
+            };
+            let body = crumpled(body_place(v));
+            let VehicleKind::Car(model, paint) = v.kind else {
+                bodies.entry(v.kind).or_default().push(body);
+                continue;
+            };
+            wheel_places(v, model, wheels.entry(model).or_default());
+            shells.entry(v.kind).or_default().push(body);
+            // The doors sprung by the crash: hanging part open, each wreck
+            // its own way.
+            if let std::collections::btree_map::Entry::Vacant(e) = self.doors.entry(v.kind) {
+                let mut sets = Vec::new();
+                for (levels, hinge, axis, open) in crate::propview::car_door_levels(model, paint) {
+                    sets.push((world.spawn_lod(levels)?, hinge, axis, open));
+                }
+                e.insert(sets);
+            }
+            let (yaw, pitch, roll) = angles(v);
+            let q = DQuat::from_rotation_y(yaw)
+                * DQuat::from_rotation_x(pitch)
+                * DQuat::from_rotation_z(roll);
+            for (k, &(_, hinge, axis, open)) in self.doors[&v.kind].iter().enumerate() {
+                let ajar = open * (0.25 + ((id >> (k * 3)) % 5) as f64 * 0.12);
+                let at = v.pos + q * (hinge * WRECK_STRETCH.as_dvec3());
+                let turn = q * DQuat::from_axis_angle(axis.normalize(), ajar);
+                let (y, x, z) = turn.to_euler(glam::EulerRot::YXZ);
+                doors.entry((v.kind, k)).or_default().push(crumpled(
+                    Place::new(at.x as f32, at.y as f32, at.z as f32)
+                        .with_yaw_deg(y.to_degrees() as f32)
+                        .with_pitch_deg(x.to_degrees() as f32)
+                        .with_roll_deg(z.to_degrees() as f32),
+                ));
             }
         }
         for &id in &self.near {
@@ -185,8 +228,43 @@ impl TrafficView {
             let places = wheels.get(model).map_or(&[][..], |v| &v[..]);
             world.set_lod_places(*id, places)?;
         }
+        for kind in shells.keys() {
+            if let (false, VehicleKind::Car(model, paint)) = (self.shells.contains_key(kind), *kind)
+            {
+                let id = world.spawn_lod(shell_levels(model, paint))?;
+                self.shells.insert(*kind, id);
+            }
+        }
+        for (kind, id) in &self.shells {
+            let places = shells.get(kind).map_or(&[][..], |v| &v[..]);
+            world.set_lod_places(*id, places)?;
+        }
+        for (kind, sets) in &self.doors {
+            for (k, (id, ..)) in sets.iter().enumerate() {
+                let places = doors.get(&(*kind, k)).map_or(&[][..], |v| &v[..]);
+                world.set_lod_places(*id, places)?;
+            }
+        }
         Ok(())
     }
+}
+
+/// A wreck is squashed this much (x, y, z).
+const WRECK_STRETCH: Vec3 = Vec3::new(1.03, 0.86, 0.94);
+
+/// A car without its doors and wheels (both drawn on their own).
+fn shell_levels(model: CarModel, paint: u8) -> Vec<LodLevel> {
+    use crate::carmesh::Lod;
+    let make = |lod: Lod| {
+        let mut b = crate::citymesh::MeshBuilder::new();
+        crate::carmesh::car_shell_into(&mut b, model, paint, lod, false);
+        b.finish()
+    };
+    vec![
+        LodLevel::new(make(Lod::Near), 35.0),
+        LodLevel::new(make(Lod::Mid), 140.0),
+        LodLevel::new(make(Lod::Far), 650.0),
+    ]
 }
 
 /// Engine's turn for a vehicle: yaw, then pitch (positive noses down), then

@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.051 (2026-11-08)
+
+- Hail a taxi and its bubble canopy swings up when it lands; hop in, it shuts, and it opens again
+  at the stand to let you out.
+- Wrecked cars' doors spring open in the crash.
+
 ## 0.050 (2026-11-08)
 
 - The cruisers have a real cabin: two-tone bench seats, a padded dash with glowing dials and a

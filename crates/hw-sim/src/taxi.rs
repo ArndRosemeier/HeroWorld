@@ -36,6 +36,8 @@ const CLIMB: f64 = 9.0;
 const CRUISE: f64 = 48.0;
 /// How long a taxi waits for its fare, in seconds.
 const WAIT: f64 = 25.0;
+/// Seconds the canopy takes to swing open or shut.
+pub const CANOPY: f64 = 1.2;
 /// A hero this close to a waiting taxi gets in.
 const BOARD: f64 = 6.0;
 /// Express height: this far above the tallest roof near the way (m).
@@ -73,6 +75,8 @@ enum Stage {
     Waiting(u64),
     /// The fare is in.
     Riding,
+    /// Down at the stand, the canopy opening to let the fare out.
+    Alighting,
     /// Off again, empty.
     Leaving,
 }
@@ -86,6 +90,9 @@ struct Ride {
     /// Tick the current legs began.
     since: u64,
     yaw: f64,
+    /// The canopy is open until this many seconds into the current legs
+    /// (replicated as the taxi's `grounded`: parked, canopy up).
+    open: f64,
 }
 
 /// The town's taxi stands and the taxis flying fares.
@@ -148,7 +155,7 @@ pub fn hail(
         };
         let pos = world.get::<Motion>(r.taxi).map_or(at, |m| m.0.pos);
         let vel = world.get::<Motion>(r.taxi).map_or(DVec3::ZERO, |m| m.0.vel);
-        if r.stage == Stage::Riding {
+        if matches!(r.stage, Stage::Riding | Stage::Alighting) {
             if let Ok(mut e) = world.get_entity_mut(hero) {
                 e.remove::<Riding>();
                 if let Some(mut m) = e.get_mut::<Motion>() {
@@ -163,6 +170,7 @@ pub fn hail(
         r.stage = Stage::Leaving;
         r.legs = vec![leg(pos, pos + DVec3::new(0.0, 80.0, 0.0), CLIMB * 1.5)];
         r.since = tick;
+        r.open = 0.0;
         return;
     }
     if taxis.has_ride(owner) || dest as usize >= taxis.stands.len() {
@@ -205,6 +213,7 @@ pub fn hail(
         legs: vec![leg(from, hover, CLIMB * 1.4)],
         since: tick,
         yaw,
+        open: 0.0,
     });
 }
 
@@ -228,8 +237,12 @@ pub fn step(world: &mut World, taxis: &mut Taxis, solids: &Obstacles, tick: u64,
         if hero.is_none() && r.stage != Stage::Leaving {
             r.stage = Stage::Leaving;
             let p = world.get::<Motion>(r.taxi).map_or(DVec3::ZERO, |m| m.0.pos);
-            r.legs = vec![leg(p, p + DVec3::new(0.0, 80.0, 0.0), CLIMB * 1.5)];
+            r.legs = vec![
+                hold(p, CANOPY),
+                leg(p, p + DVec3::new(0.0, 80.0, 0.0), CLIMB * 1.5),
+            ];
             r.since = tick;
+            r.open = 0.0;
         }
         let t = (tick - r.since) as f64 * dt;
         let total: f64 = r.legs.iter().map(|l| l.secs).sum();
@@ -243,7 +256,7 @@ pub fn step(world: &mut World, taxis: &mut Taxis, solids: &Obstacles, tick: u64,
                 m.set_if_neq(Motion(crate::collision::Body {
                     pos,
                     vel,
-                    grounded: false,
+                    grounded: t < r.open,
                 }));
             }
             if let Some(mut o) = e.get_mut::<Orientation>() {
@@ -254,10 +267,16 @@ pub fn step(world: &mut World, taxis: &mut Taxis, solids: &Obstacles, tick: u64,
         match r.stage {
             Stage::Coming if arrived => {
                 r.stage = Stage::Waiting(tick);
+                // Parked: the canopy swings up for the fare.
+                r.legs = vec![hold(pos, f64::MAX)];
+                r.since = tick;
+                r.open = f64::MAX;
             }
             Stage::Waiting(since) => {
                 let Some((he, _, hp)) = hero else { continue };
-                if hp.distance(pos) < BOARD {
+                // In once the canopy is up.
+                let opened = (tick - since) as f64 * dt >= CANOPY;
+                if opened && hp.distance(pos) < BOARD {
                     // In you get: up, across above the roofs, and down.
                     let Some(stand) = stands.get(r.dest) else {
                         continue;
@@ -266,22 +285,40 @@ pub fn step(world: &mut World, taxis: &mut Taxis, solids: &Obstacles, tick: u64,
                     let high = express_height(town.as_deref(), pos, drop);
                     let up = DVec3::new(pos.x, high, pos.z);
                     let over = DVec3::new(drop.x, high, drop.z);
+                    // The canopy shuts before it lifts off.
                     r.legs = vec![
+                        hold(pos, CANOPY),
                         leg(pos, up, CLIMB),
                         leg(up, over, CRUISE),
                         leg(over, drop, CLIMB),
                     ];
                     r.since = tick;
+                    r.open = 0.0;
                     r.stage = Stage::Riding;
                     world.entity_mut(he).insert(Riding);
                     seat(world, he, pos, DVec3::ZERO);
                 } else if (tick - since) as f64 * dt > WAIT {
                     r.stage = Stage::Leaving;
-                    r.legs = vec![leg(pos, pos + DVec3::new(0.0, 80.0, 0.0), CLIMB * 1.5)];
+                    r.legs = vec![
+                        hold(pos, CANOPY),
+                        leg(pos, pos + DVec3::new(0.0, 80.0, 0.0), CLIMB * 1.5),
+                    ];
                     r.since = tick;
+                    r.open = 0.0;
                 }
             }
             Stage::Riding => {
+                let Some((he, _, _)) = hero else { continue };
+                if arrived {
+                    // Down at the stand: the canopy opens first.
+                    r.stage = Stage::Alighting;
+                    r.legs = vec![hold(pos, CANOPY)];
+                    r.since = tick;
+                    r.open = f64::MAX;
+                }
+                seat(world, he, pos, vel);
+            }
+            Stage::Alighting => {
                 let Some((he, _, _)) = hero else { continue };
                 if arrived {
                     // Out at the stand, the taxi off again.
@@ -298,9 +335,14 @@ pub fn step(world: &mut World, taxis: &mut Taxis, solids: &Obstacles, tick: u64,
                             };
                         }
                     }
+                    // Open while the fare steps out, then shut, and away.
                     r.stage = Stage::Leaving;
-                    r.legs = vec![leg(pos, pos + DVec3::new(0.0, 80.0, 0.0), CLIMB * 1.5)];
+                    r.legs = vec![
+                        hold(pos, 2.0 + CANOPY),
+                        leg(pos, pos + DVec3::new(0.0, 80.0, 0.0), CLIMB * 1.5),
+                    ];
                     r.since = tick;
+                    r.open = 2.0;
                 } else {
                     seat(world, he, pos, vel);
                 }
@@ -347,6 +389,11 @@ fn seat(world: &mut World, hero: Entity, taxi: DVec3, vel: DVec3) {
             grounded: false,
         }));
     }
+}
+
+/// Standing still at `p` for `secs` (the canopy opening or closing).
+fn hold(p: DVec3, secs: f64) -> Leg {
+    Leg { a: p, b: p, secs }
 }
 
 fn leg(a: DVec3, b: DVec3, speed: f64) -> Leg {

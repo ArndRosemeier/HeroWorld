@@ -53,6 +53,9 @@ fn a_taxi_ride_crosses_the_town() {
     let mut highest = f64::MIN;
     let mut was_riding = false;
     let mut done_at = None;
+    // The canopy (a taxi's `grounded`): up while parked for the fare, shut
+    // in flight, up again at the stand.
+    let (mut open_waiting, mut open_flying, mut open_at_stand) = (false, false, false);
     for t in 0..(TICK_HZ * 300) {
         // Pressing keys while riding changes nothing.
         let input = hw_net::InputState {
@@ -64,6 +67,20 @@ fn a_taxi_ride_crosses_the_town() {
         let all = sim.snapshot();
         let mine = all.iter().find(|e| e.id == hero).unwrap();
         let now = riding(mine, &all);
+        if let Some(cab) = all.iter().find(|e| e.kind == EntityKind::Taxi) {
+            let speed = glam::Vec3::from_array(cab.vel).length();
+            if cab.grounded {
+                assert!(speed < 0.01, "canopy open at {speed:.1} m/s");
+                if rode == 0 {
+                    open_waiting = true;
+                } else {
+                    open_at_stand = true;
+                }
+            }
+            if now && speed > 5.0 && cab.grounded {
+                open_flying = true;
+            }
+        }
         if now {
             rode += 1;
             highest = highest.max(mine.pos[1]);
@@ -80,6 +97,9 @@ fn a_taxi_ride_crosses_the_town() {
         was_riding = now;
     }
     assert!(done_at.is_some(), "never arrived");
+    assert!(open_waiting, "the canopy never opened for the fare");
+    assert!(open_at_stand, "the canopy never opened at the stand");
+    assert!(!open_flying);
     let end = sim.position(hero).unwrap();
     let off = DVec2::new(end.x - stands[to].pos.x, end.z - stands[to].pos.z).length();
     assert!(off < 4.0, "let out {off:.1} m from the stand");

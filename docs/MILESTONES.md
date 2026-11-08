@@ -403,7 +403,7 @@ box (`BarricadePiece::block`) is in the solids, which drop it when it breaks
 (`Obstacles::set_prop_broken`, on the server and on every client). Breaking the villains'
 barricades costs no collateral. `WORLD_VERSION` 18.
 
-### M10. Traffic, taxis and the underground (in progress)
+### M10. Traffic, taxis and the underground (done)
 
 - Ground traffic on the streets (AssetGenerator cars with spinning wheels and opening doors as
   Engine prefabs); cars dent, spark and die.
@@ -441,7 +441,13 @@ walking from their doors to the market and back, strollers round the well, neigh
 in the side chambers. They are citizens like the street's (a pure function of seed and time,
 `hw-sim/src/citizens.rs`, looks `LOOKS..LOOKS + MOLE_LOOKS`, built by `people::mole_person`),
 and keep clear of the furniture laid out by `hw_gen::urban::underground::molehaven_layout`.
-`HW_VIEW=market` looks at them. Left: opening doors.
+`HW_VIEW=market` looks at them.
+
+**Status (0.051):** doors open. A hailed taxi lands, swings its canopy up (the server holds it
+parked `CANOPY` seconds; the taxi's replicated `grounded` means canopy up), the fare climbs in
+once it is open, it shuts before lift-off, and opens again at the stand to let them out.
+Wrecked cars' doors (and bubble cars' canopies) spring open, each wreck its own way
+(`trafficview`, on the quality thread's `car_door_levels`). M10 is done apart from a play test.
 
 ### M11. Robots and the colossus
 

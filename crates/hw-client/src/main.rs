@@ -732,6 +732,8 @@ fn main() -> EngineResult<()> {
     };
     // Each hero's entity, and whether it is the Actors character yet.
     let mut hero_entities: BTreeMap<hw_core::NetId, (EntityId, bool)> = BTreeMap::new();
+    // Taxi canopies: the hinged part, and how far open (0 shut, 1 up).
+    let mut canopies: BTreeMap<hw_core::NetId, (EntityId, f32)> = BTreeMap::new();
     let mut tick_clock = 0.0f64;
     // The hero's flight toggle (V); sent with every input.
     let mut hero_flies = std::env::var_os("HW_FLY").is_some() || view == "sky";
@@ -1397,6 +1399,13 @@ fn main() -> EngineResult<()> {
                 keep
             });
             hero_who.retain(|id, _| hero_entities.contains_key(id));
+            canopies.retain(|id, (e, _)| {
+                let keep = hero_entities.contains_key(id);
+                if !keep {
+                    world.despawn(*e);
+                }
+                keep
+            });
             let mine = session.my_hero();
             // Where everyone the server sends is, for the fight's lookups.
             let at_of = |id: hw_core::NetId| {
@@ -1422,7 +1431,7 @@ fn main() -> EngineResult<()> {
                     match hero_entities.get(&h.id) {
                         Some(&(e, _)) => world.set_place(e, place)?,
                         None if !hidden => {
-                            let mesh = hw_client::propview::taxi_levels()
+                            let mesh = hw_client::propview::taxi_open_levels()
                                 .into_iter()
                                 .next()
                                 .map(|l| l.mesh)
@@ -1431,6 +1440,38 @@ fn main() -> EngineResult<()> {
                             hero_entities.insert(h.id, (e, false));
                         }
                         None => {}
+                    }
+                    if !hidden {
+                        // The canopy swings up on its front hinge while the
+                        // taxi is parked for a fare (the server's
+                        // `grounded`), and shuts before it flies.
+                        let (levels, hinge, _) = hw_client::propview::taxi_door_levels();
+                        let (e, open) = match canopies.get(&h.id) {
+                            Some(&c) => c,
+                            None => {
+                                let mesh =
+                                    levels.into_iter().next().map(|l| l.mesh).expect("canopy");
+                                (world.place(mesh, place)?, 0.0)
+                            }
+                        };
+                        let step = frame.dt / hw_sim::taxi::CANOPY as f32;
+                        let open = if h.grounded {
+                            (open + step).min(1.0)
+                        } else {
+                            (open - step).max(0.0)
+                        };
+                        canopies.insert(h.id, (e, open));
+                        let turn = glam::Quat::from_rotation_y(y);
+                        let at =
+                            Vec3::from_array([h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32])
+                                + turn * hinge.as_vec3();
+                        let eased = open * open * (3.0 - 2.0 * open);
+                        world.set_place(
+                            e,
+                            Place::new(at.x, at.y, at.z)
+                                .with_yaw_deg(y.to_degrees())
+                                .with_pitch_deg(eased * 52.0),
+                        )?;
                     }
                     continue;
                 }
