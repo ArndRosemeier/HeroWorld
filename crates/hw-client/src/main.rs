@@ -16,6 +16,10 @@
 //! Left mouse (or 1) punches, Q (or 2) fires an energy bolt: at the villain
 //! you have picked with Tab, else where you look, breaking glass, plaster
 //! and brick at level 1 (`HW_LEVEL` sets the hero level for now).
+//! G hails a flying taxi: pick a stand under "Where to?", walk up to the
+//! taxi when it lands beside you, and it flies you there above the roofs
+//! (G again hops out). Cars drive the streets; hover cars and taxis fly
+//! lanes over the main roads.
 //! O switches to a free-flying camera and back. C cuts buildings open
 //! around where you look (F moves the cut there), Z/X pick the floor.
 //!
@@ -40,12 +44,14 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay`, `wrecked` or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay`, `wrecked`, `traffic`, `skylanes` or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
 //! `HW_VIEW=fight` starts in front of the minions, `HW_AUTOFIGHT=1`
 //! fights them on its own (both for screenshots);
+//! `HW_TAXI=<stand>` hails a taxi at the start and `HW_TAXI_SECS=<s>` runs
+//! the world on that far (screenshots of a ride);
 //! `HW_WAIT_PEOPLE=1` waits at the start until every character is built
 //! (for screenshots); `HW_PACKS` points at the Actors packs (default
 //! `assets/packs`, fetched by `scripts/fetch-packs`);
@@ -194,6 +200,17 @@ fn main() -> EngineResult<()> {
         };
     let mut solids = generated.obstacles.clone();
     let mut citizens = hw_sim::citizens::Citizens::new(generated.world.clone());
+    let mut traffic = hw_sim::traffic::Traffic::new(generated.world.clone());
+    // Taxi stands of the town, the "Where to?" list (G), and where we asked to go.
+    let mut stands = hw_sim::taxi::stands(&generated.world);
+    let mut taxi_menu = false;
+    let mut taxi_dest: Option<usize> = None;
+    let mut taxi_seen = false;
+    // HW_TAXI=<stand> hails a taxi at the start and HW_TAXI_SECS runs the
+    // world on that far (for screenshots of a ride).
+    let mut taxi_demo =
+        env_num("HW_TAXI").map(|d| (d as usize, env_num("HW_TAXI_SECS").unwrap_or(0)));
+    let mut traffic_view = hw_client::trafficview::TrafficView::new();
     // People from Actors, built on a worker thread from the packs.
     let actors = match people::packs_dir() {
         Some(dir) => {
@@ -359,6 +376,27 @@ fn main() -> EngineResult<()> {
             let pitch = (d.y / DVec2::new(d.x, d.z).length()).atan().to_degrees() as f32;
             FlyCamera::new((eye.x as f32, eye.y as f32, eye.z as f32), yaw, pitch)
         }
+        "traffic" | "skylanes" => {
+            // Down the main road nearest the start: cars on it, or (from
+            // higher up) the sky lanes over it.
+            let mut best: Option<(f64, DVec2, DVec2)> = None;
+            let sky = view == "skylanes";
+            let long = if sky { 60.0 } else { 45.0 };
+            for r in generated.world.roads.iter().filter(|r| r.main) {
+                for w in r.pts.windows(2) {
+                    let d = w[0].distance(spawn);
+                    if w[0].distance(w[1]) > long && best.is_none_or(|b| d < b.0) {
+                        best = Some((d, w[0], (w[1] - w[0]).normalize()));
+                    }
+                }
+            }
+            let (_, c, dir) = best.unwrap_or((0.0, spawn, spawn_dir));
+            // From the start of a straight stretch, along it.
+            let p = c - dir * if sky { 30.0 } else { 2.0 };
+            let yaw = dir.x.atan2(dir.y).to_degrees() as f32;
+            let (up, pitch) = if sky { (30.0, 4.0) } else { (6.0, -10.0) };
+            FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, pitch)
+        }
         "cutaway" => {
             let f = town.cut_focus;
             let h = ground(f) as f32;
@@ -505,6 +543,9 @@ fn main() -> EngineResult<()> {
                     solids = generated.obstacles.clone();
                     town = TownView::new(generated.world.clone());
                     citizens = hw_sim::citizens::Citizens::new(generated.world.clone());
+                    traffic = hw_sim::traffic::Traffic::new(generated.world.clone());
+                    stands = hw_sim::taxi::stands(&generated.world);
+                    traffic_view.clear(world);
                     crowd.clear(world);
                     set_town_stream(world, &generated)?;
                     extras = spawn_extras(world, &generated)?;
@@ -645,6 +686,55 @@ fn main() -> EngineResult<()> {
             if input.pressed(Key::P) {
                 let locked = world.pointer_lock();
                 world.set_pointer_lock(!locked);
+            }
+            if let Some((dest, secs)) = taxi_demo.take() {
+                session.hail_taxi(dest as u8);
+                taxi_dest = Some(dest);
+                session.fast_forward(secs as u32 * hw_sim::TICK_HZ);
+            }
+            let ride_yaw: Option<f32>;
+            // G: a taxi. "Where to?", or out of the one you are in (sending
+            // a coming one away).
+            {
+                let my_id = session.my_hero();
+                let me = drawn.iter().find(|e| Some(e.id) == my_id);
+                let cab = me.and_then(|m| {
+                    drawn
+                        .iter()
+                        .find(|t| t.kind == hw_net::EntityKind::Taxi && t.owner == m.owner)
+                });
+                let riding = me.is_some_and(|m| hw_sim::taxi::riding(m, &drawn));
+                // Riding, the camera swings round behind the taxi.
+                ride_yaw = cab.filter(|_| riding).map(|t| {
+                    let (y, _, _) = glam::Quat::from_array(t.rot).to_euler(glam::EulerRot::YXZ);
+                    y.to_degrees()
+                });
+                if !flying && input.pressed(Key::G) {
+                    if cab.is_some() {
+                        session.hail_taxi(hw_sim::taxi::HOP_OUT);
+                        taxi_dest = None;
+                    } else {
+                        taxi_menu = !taxi_menu;
+                        if taxi_menu {
+                            world.set_pointer_lock(false);
+                        }
+                    }
+                }
+                if let Some(i) = taxi_panel(&frame.ui, &mut taxi_menu, &stands) {
+                    session.hail_taxi(i as u8);
+                    taxi_dest = Some(i);
+                }
+                // The ride is over once our taxi has come and gone.
+                if cab.is_some() {
+                    taxi_seen = true;
+                } else if taxi_seen {
+                    taxi_seen = false;
+                    taxi_dest = None;
+                }
+                let to = taxi_dest
+                    .and_then(|i| stands.get(i))
+                    .map(|s| s.name.as_str());
+                taxi_status(&frame.ui, cab.is_some(), riding, to);
             }
 
             // Cut-open view.
@@ -846,6 +936,33 @@ fn main() -> EngineResult<()> {
             };
             for h in &heroes {
                 let vel = Vec3::from_array(h.vel);
+                if h.kind == hw_net::EntityKind::Taxi
+                    || (h.kind == hw_net::EntityKind::Hero && hw_sim::taxi::riding(h, &heroes))
+                {
+                    // A taxi, and its fare out of sight inside.
+                    let (y, _, _) = glam::Quat::from_array(h.rot).to_euler(glam::EulerRot::YXZ);
+                    let hidden = h.kind == hw_net::EntityKind::Hero;
+                    let place = Place::new(
+                        h.pos[0] as f32,
+                        h.pos[1] as f32 - if hidden { 2000.0 } else { 0.0 },
+                        h.pos[2] as f32,
+                    )
+                    .with_yaw_deg(y.to_degrees());
+                    match hero_entities.get(&h.id) {
+                        Some(&(e, _)) => world.set_place(e, place)?,
+                        None if !hidden => {
+                            let mesh = hw_client::propview::taxi_levels()
+                                .into_iter()
+                                .next()
+                                .map(|l| l.mesh)
+                                .expect("taxi model");
+                            let e = world.place(mesh, place)?;
+                            hero_entities.insert(h.id, (e, false));
+                        }
+                        None => {}
+                    }
+                    continue;
+                }
                 if matches!(
                     h.kind,
                     hw_net::EntityKind::Crate | hw_net::EntityKind::Drone
@@ -1053,6 +1170,14 @@ fn main() -> EngineResult<()> {
                 session.time(tick_clock / hw_sim::DT),
                 frame.dt as f64,
             )?;
+            // Cars on the streets, hover cars and taxis in the sky lanes.
+            traffic_view.update(
+                world,
+                &traffic,
+                DVec2::new(eye.x as f64, eye.z as f64),
+                session.time(tick_clock / hw_sim::DT),
+                frame.dt as f64,
+            )?;
             // K knocks the people around the hero over (a test of ragdolls).
             if !flying && input.pressed(Key::K) {
                 if let Some(p) = session.my_position(&heroes) {
@@ -1080,6 +1205,13 @@ fn main() -> EngineResult<()> {
             });
             match (flying, me) {
                 (false, Some(p)) => {
+                    if let Some(y) = ride_yaw {
+                        if !frame.input.mouse_down(MouseButton::Right) {
+                            let turn = (y - hero_cam.yaw + 540.0).rem_euclid(360.0) - 180.0;
+                            hero_cam.yaw += turn * (1.0 - 0.3f32.powf(frame.dt));
+                        }
+                        hero_cam.distance = hero_cam.distance.max(10.0);
+                    }
                     hero_cam.update(world, frame, p.as_vec3(), &solids, open_above);
                     let shake = fight.shake();
                     if shake != Vec3::ZERO {
@@ -1219,6 +1351,84 @@ fn spawn_extras(world: &mut World, generated: &GeneratedTown) -> EngineResult<To
         lights: Some(hw_client::nightlights::NightLights::new(&generated.world)),
         props: Some(props),
     })
+}
+
+/// "Where to?": the town's taxi stands as buttons. Returns the one picked.
+fn taxi_panel(
+    ui: &engine::ui::UiFrame,
+    open: &mut bool,
+    stands: &[hw_sim::taxi::Stand],
+) -> Option<usize> {
+    use engine::ui::egui;
+    if !*open {
+        return None;
+    }
+    let mut picked = None;
+    egui::Area::new(egui::Id::new("taxi"))
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_unmultiplied(30, 26, 12, 230))
+                .stroke(egui::Stroke::new(
+                    2.0_f32,
+                    egui::Color32::from_rgb(255, 210, 60),
+                ))
+                .corner_radius(8.0)
+                .inner_margin(egui::Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_min_width(280.0);
+                    ui.label(
+                        egui::RichText::new("TAXI! Where to?")
+                            .color(egui::Color32::from_rgb(255, 214, 70))
+                            .strong()
+                            .size(20.0),
+                    );
+                    ui.add_space(6.0);
+                    for (i, s) in stands.iter().enumerate() {
+                        let b = egui::Button::new(egui::RichText::new(&s.name).size(15.0))
+                            .min_size(egui::vec2(260.0, 26.0));
+                        if ui.add(b).clicked() {
+                            picked = Some(i);
+                        }
+                    }
+                    ui.add_space(4.0);
+                    if ui.button("Never mind (G)").clicked() {
+                        *open = false;
+                    }
+                });
+        });
+    if picked.is_some() {
+        *open = false;
+    }
+    picked
+}
+
+/// A line at the top while a taxi comes for you or takes you somewhere.
+fn taxi_status(ui: &engine::ui::UiFrame, cab: bool, riding: bool, to: Option<&str>) {
+    use engine::ui::egui;
+    if !cab {
+        return;
+    }
+    let text = match (riding, to) {
+        (true, Some(to)) => format!("Taxi to {to}  ·  G to hop out"),
+        (true, None) => "In a taxi  ·  G to hop out".into(),
+        (false, _) => "Your taxi is coming: walk up to it to get in  ·  G sends it away".into(),
+    };
+    egui::Area::new(egui::Id::new("taxi status"))
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 14.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_black_alpha(160))
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(10, 5))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(text)
+                            .color(egui::Color32::from_rgb(255, 214, 70))
+                            .size(15.0),
+                    );
+                });
+        });
 }
 
 /// The version at the top right, with a "What's new" button and its list.

@@ -17,5 +17,6 @@ pub mod profile;
 pub mod propview;
 pub mod title;
 pub mod townmesh;
+pub mod trafficview;
 pub mod waterfrontview;
 pub mod zfight;

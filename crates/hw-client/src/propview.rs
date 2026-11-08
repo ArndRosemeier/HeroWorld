@@ -397,7 +397,86 @@ const PAINTS: [[(u8, u8, u8); 2]; 8] = [
 
 /// A golden-age car, its nose to +z.
 fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
+    car_parts(model, paint, near, true)
+}
+
+/// Where a model's wheels sit: half the track, the axles along z, the
+/// radius. Hover cars have none.
+pub fn wheel_layout(model: CarModel) -> Option<(f64, [f64; 2], f64)> {
+    match model {
+        CarModel::Cruiser => Some((0.95, [-1.6, 1.65], 0.36)),
+        CarModel::Bubble => Some((0.8, [-1.05, 1.1], 0.3)),
+        CarModel::Hover => None,
+    }
+}
+
+/// A car driving in traffic: its body (the wheels turn on their own, see
+/// [`wheel_levels`]), close up and far.
+pub fn moving_car_levels(model: CarModel, paint: u8) -> Vec<LodLevel> {
+    vec![
+        LodLevel::new(car_parts(model, paint, true, false), 140.0),
+        LodLevel::new(car_parts(model, paint, false, false), 700.0),
+    ]
+}
+
+/// One wheel of `model`, centred, its axle along x: tyre, whitewalls and a
+/// spoked chrome hub on both faces, so it can be seen to turn.
+pub fn wheel_levels(model: CarModel) -> Option<Vec<LodLevel>> {
+    let (_, _, r) = wheel_layout(model)?;
+    let make = |near: bool| {
+        let mut b = MeshBuilder::new();
+        let seg = if near { 14 } else { 6 };
+        let tyre = rgb(24, 24, 26);
+        let chrome = rgb(225, 228, 232);
+        xcyl(&mut b, DVec3::ZERO, r, 0.24, seg, tyre);
+        if near {
+            for sx in [-1.0, 1.0] {
+                let o = sx * 0.125;
+                xcyl(
+                    &mut b,
+                    DVec3::new(o, 0.0, 0.0),
+                    r * 0.72,
+                    0.01,
+                    seg,
+                    rgb(240, 238, 230),
+                );
+                metal(&mut b, |b| {
+                    xcyl(b, DVec3::new(o * 1.1, 0.0, 0.0), r * 0.4, 0.02, seg, chrome);
+                    // Three spokes across the hub.
+                    for k in 0..3 {
+                        let a = std::f64::consts::PI * k as f64 / 3.0;
+                        let d = DVec3::new(0.0, a.cos(), a.sin());
+                        let e = DVec3::new(0.0, -a.sin(), a.cos());
+                        let (l, t) = (r * 0.62, 0.035);
+                        let q = |x: f64| {
+                            let c = DVec3::new(x, 0.0, 0.0);
+                            [
+                                c - d * l - e * t,
+                                c + d * l - e * t,
+                                c + d * l + e * t,
+                                c - d * l + e * t,
+                            ]
+                        };
+                        b.hexa(q(o * 1.2 - 0.02), q(o * 1.2 + 0.02), rgb(150, 152, 160));
+                    }
+                });
+            }
+        }
+        b.finish()
+    };
+    Some(vec![
+        LodLevel::new(make(true), 60.0),
+        LodLevel::new(make(false), 260.0),
+    ])
+}
+
+fn car_parts(model: CarModel, paint: u8, near: bool, with_wheels: bool) -> Mesh {
     let mut b = MeshBuilder::new();
+    car_into(&mut b, model, paint, near, with_wheels);
+    b.finish()
+}
+
+fn car_into(b: &mut MeshBuilder, model: CarModel, paint: u8, near: bool, with_wheels: bool) {
     let [body, top] = PAINTS[paint as usize % PAINTS.len()].map(c3);
     let chrome = rgb(225, 228, 232);
     let tyre = rgb(24, 24, 26);
@@ -407,21 +486,11 @@ fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
         CarModel::Cruiser => {
             // Long, low, with tail fins and a glassy cabin under a
             // contrasting roof.
-            taper(
-                &mut b,
-                (0.3, 0.98, -2.55, 2.6),
-                (0.86, 1.0, -2.62, 2.5),
-                body,
-            );
-            glass(&mut b, |b| {
+            taper(b, (0.3, 0.98, -2.55, 2.6), (0.86, 1.0, -2.62, 2.5), body);
+            glass(b, |b| {
                 taper(b, (0.86, 0.93, -1.1, 1.0), (1.34, 0.8, -0.78, 0.5), window)
             });
-            taper(
-                &mut b,
-                (1.34, 0.8, -0.78, 0.5),
-                (1.42, 0.76, -0.72, 0.44),
-                top,
-            );
+            taper(b, (1.34, 0.8, -0.78, 0.5), (1.42, 0.76, -0.72, 0.44), top);
             for x in [-1.0, 1.0] {
                 let q = |y: f64, za: f64, zb: f64, w: f64| {
                     [
@@ -435,7 +504,7 @@ fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
                 b.hexa(q(0.86, -2.62, -1.2, 0.16), q(1.2, -2.7, -2.35, 0.1), top);
             }
             if near {
-                metal(&mut b, |b| {
+                metal(b, |b| {
                     for z in [-2.66, 2.64] {
                         bx(
                             b,
@@ -453,7 +522,7 @@ fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
                         );
                     }
                 });
-                glow(&mut b, |b| {
+                glow(b, |b| {
                     for x in [-0.7, 0.7] {
                         bx(
                             b,
@@ -472,24 +541,21 @@ fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
                     }
                 });
             }
-            wheels(&mut b, 0.95, &[-1.6, 1.65], 0.36, seg, tyre, chrome, near);
+            if with_wheels {
+                wheels(b, 0.95, &[-1.6, 1.65], 0.36, seg, tyre, chrome, near);
+            }
         }
         CarModel::Bubble => {
-            taper(
-                &mut b,
-                (0.28, 0.8, -1.55, 1.6),
-                (0.62, 0.86, -1.7, 1.75),
-                body,
-            );
+            taper(b, (0.28, 0.8, -1.55, 1.6), (0.62, 0.86, -1.7, 1.75), body);
             ellipsoid(
-                &mut b,
+                b,
                 DVec3::new(0.0, 0.7, 0.05),
                 DVec3::new(0.87, 0.36, 1.85),
                 seg,
                 seg / 2 + 1,
                 body,
             );
-            glass(&mut b, |b| {
+            glass(b, |b| {
                 ellipsoid(
                     b,
                     DVec3::new(0.0, 0.98, -0.15),
@@ -500,7 +566,7 @@ fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
                 )
             });
             if near {
-                metal(&mut b, |b| {
+                metal(b, |b| {
                     ellipsoid(
                         b,
                         DVec3::new(0.0, 0.62, 0.05),
@@ -510,7 +576,7 @@ fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
                         top,
                     )
                 });
-                glow(&mut b, |b| {
+                glow(b, |b| {
                     for x in [-0.5, 0.5] {
                         ellipsoid(
                             b,
@@ -523,12 +589,14 @@ fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
                     }
                 });
             }
-            wheels(&mut b, 0.8, &[-1.05, 1.1], 0.3, seg, tyre, chrome, near);
+            if with_wheels {
+                wheels(b, 0.8, &[-1.05, 1.1], 0.3, seg, tyre, chrome, near);
+            }
         }
         CarModel::Hover => {
             // Parked a little off the ground, glowing underneath.
             ellipsoid(
-                &mut b,
+                b,
                 DVec3::new(0.0, 1.0, 0.0),
                 DVec3::new(1.0, 0.32, 2.3),
                 seg,
@@ -536,14 +604,14 @@ fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
                 body,
             );
             ellipsoid(
-                &mut b,
+                b,
                 DVec3::new(0.0, 1.13, -0.55),
                 DVec3::new(0.62, 0.2, 1.3),
                 seg,
                 seg / 2,
                 top,
             );
-            glass(&mut b, |b| {
+            glass(b, |b| {
                 ellipsoid(
                     b,
                     DVec3::new(0.0, 1.22, 0.35),
@@ -553,7 +621,7 @@ fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
                     window,
                 )
             });
-            metal(&mut b, |b| {
+            metal(b, |b| {
                 for x in [-1.05, 1.05] {
                     ellipsoid(
                         b,
@@ -574,7 +642,7 @@ fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
                 ]
             };
             b.hexa(fin(1.15, -2.2, -1.3), fin(1.85, -2.5, -2.15), top);
-            glow(&mut b, |b| {
+            glow(b, |b| {
                 ellipsoid(
                     b,
                     DVec3::new(0.0, 0.68, 0.0),
@@ -598,7 +666,64 @@ fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
             });
         }
     }
+}
+
+/// A flying taxi: the hover car in taxi yellow, a black-and-white check
+/// along its flanks and a glowing TAXI lamp on the roof.
+fn taxi(near: bool) -> Mesh {
+    let mut b = MeshBuilder::new();
+    car_into(&mut b, CarModel::Hover, 5, near, false);
+    if near {
+        // The check: two rows of squares along each flank.
+        for x in [-1.0f64, 1.0] {
+            for k in 0..14 {
+                for row in 0..2 {
+                    let z = -1.55 + k as f64 * 0.22;
+                    let y = 1.02 + row as f64 * 0.11;
+                    // How far out the flank bulges at this point.
+                    let t = (z / 2.3).clamp(-1.0, 1.0);
+                    let w = (1.0 - t * t).max(0.0).sqrt() * 1.0 + 0.012;
+                    let dark = (k + row) % 2 == 0;
+                    let c = if dark {
+                        rgb(22, 22, 24)
+                    } else {
+                        rgb(245, 245, 240)
+                    };
+                    bx(
+                        &mut b,
+                        DVec3::new(x * w - 0.005, y, z),
+                        DVec3::new(x * w + 0.005 * x.signum(), y + 0.1, z + 0.21),
+                        c,
+                    );
+                }
+            }
+        }
+    }
+    glow(&mut b, |b| {
+        bx(
+            b,
+            DVec3::new(-0.32, 1.52, -0.05),
+            DVec3::new(0.32, 1.72, 0.25),
+            rgb(255, 214, 70),
+        )
+    });
     b.finish()
+}
+
+/// Flying taxis, close up and far.
+pub fn taxi_levels() -> Vec<LodLevel> {
+    vec![
+        LodLevel::new(taxi(true), 200.0),
+        LodLevel::new(taxi(false), 1200.0),
+    ]
+}
+
+/// A private hover car flying in a sky lane.
+pub fn sky_car_levels(paint: u8) -> Vec<LodLevel> {
+    vec![
+        LodLevel::new(car_parts(CarModel::Hover, paint, true, false), 200.0),
+        LodLevel::new(car_parts(CarModel::Hover, paint, false, false), 1200.0),
+    ]
 }
 
 #[allow(clippy::too_many_arguments)]

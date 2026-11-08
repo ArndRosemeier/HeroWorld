@@ -29,6 +29,8 @@ pub struct Predictor {
     /// Visual offset still being faded out.
     error: DVec3,
     started: bool,
+    /// Our hero sits in a taxi: the server moves it, nothing is predicted.
+    pub riding: bool,
 }
 
 impl Predictor {
@@ -39,6 +41,7 @@ impl Predictor {
             body: Body::default(),
             error: DVec3::ZERO,
             started: false,
+            riding: false,
         }
     }
 
@@ -52,7 +55,9 @@ impl Predictor {
         while self.pending.len() > 60 {
             self.pending.pop_front();
         }
-        step_hero(&mut self.body, input, &self.solids);
+        if !self.riding {
+            step_hero(&mut self.body, input, &self.solids);
+        }
     }
 
     /// Call when a snapshot arrives: `ack` is the last input the server
@@ -78,6 +83,12 @@ impl Predictor {
             .is_some_and(|(s, _)| s.wrapping_sub(ack) as i32 <= 0)
         {
             self.pending.pop_front();
+        }
+        if self.riding {
+            self.pending.clear();
+            self.body = server_body;
+            self.error = DVec3::ZERO;
+            return;
         }
         let shown = self.body.pos + self.error;
         self.body = server_body;

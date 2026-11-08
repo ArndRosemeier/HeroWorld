@@ -402,7 +402,7 @@ impl<'a> Placer<'a> {
                             rng.range_int(0, CAR_PAINTS as i64) as u8,
                         );
                         // Cars face the way their side of the road drives.
-                        self.put(kind, q, d * -sd, 1.0, 3.0);
+                        self.put(kind, q, d * sd, 1.0, 3.0);
                     }
                     s += rng.range(5.8, 7.6);
                 }

@@ -281,6 +281,7 @@ impl Host {
                     self.chat(player, &text);
                     out.push(HostEvent::Chat { player, name, text });
                 }
+                ToServer::Taxi { dest } => self.sim.hail_taxi(player, dest),
             }
         }
     }

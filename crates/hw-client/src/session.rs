@@ -194,6 +194,8 @@ impl Session {
                         *last_tick = tick;
                         if let (Some(p), Some(h)) = (predictor.as_mut(), hero) {
                             if let Some(me) = entities.iter().find(|e| e.id == h) {
+                                // In a taxi the server moves us: no guessing.
+                                p.riding = hw_sim::taxi::riding(me, &entities);
                                 p.reconcile(ack, me);
                             }
                         }
@@ -220,7 +222,7 @@ impl Session {
                 let hero = conn.hero();
                 let mut out = interp.sample(frame_dt);
                 if let (Some(p), Some(h)) = (predictor.as_mut(), hero) {
-                    if p.started() {
+                    if p.started() && !p.riding {
                         let pos = p.render_pos(frame_dt);
                         if let Some(e) = out.iter_mut().find(|e| e.id == h) {
                             e.pos = pos.to_array();
@@ -401,6 +403,23 @@ impl Session {
         match self {
             Session::Local { host, me, .. } => host.sim.hero_of(*me),
             Session::Remote { conn, .. } => conn.hero(),
+        }
+    }
+
+    /// Runs the world on by `ticks` at once (single player; screenshots).
+    pub fn fast_forward(&mut self, ticks: u32) {
+        if let Session::Local { host, .. } = self {
+            for _ in 0..ticks {
+                host.sim.step();
+            }
+        }
+    }
+
+    /// Hails a taxi to stand `dest` of the town's stands, or (255) gets out.
+    pub fn hail_taxi(&mut self, dest: u8) {
+        match self {
+            Session::Local { host, me, .. } => host.sim.hail_taxi(*me, dest),
+            Session::Remote { conn, .. } => conn.hail_taxi(dest),
         }
     }
 

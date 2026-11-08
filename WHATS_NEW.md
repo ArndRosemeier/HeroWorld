@@ -3,6 +3,17 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.025 (2026-11-08)
+
+- Traffic! Golden-age cars drive the streets, their spoked wheels turning, busier downtown and
+  on the main roads. Hover cars and yellow-checkered flying taxis cruise in lanes over the main
+  roads, at three heights, banking into the turns.
+- Press G to hail a taxi: pick where to go (the town centre, the Aether Spire, the lighthouse,
+  the waterfront, old villages, rooftop pads), and one drops out of the sky beside you. Walk up
+  to it to get in; it climbs above the roofs, crosses the town and lets you out there. G again
+  hops out on the way (you can fly, after all).
+- Parked cars now face the way their side of the street drives.
+
 ## 0.024 (2026-11-08)
 
 - The first fight: the mad scientist's minions wait down the street from where you start. Mutant

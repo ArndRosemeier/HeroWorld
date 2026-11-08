@@ -186,6 +186,11 @@ impl Connection {
         self.rel_out.push(ToServer::Chat { text: text.into() });
     }
 
+    /// Hails a taxi to stand `dest`, or (255) gets out of it.
+    pub fn hail_taxi(&mut self, dest: u8) {
+        self.rel_out.push(ToServer::Taxi { dest });
+    }
+
     /// Reliable news that arrived since the last call, in order.
     pub fn take_news(&mut self) -> Vec<ToClient> {
         std::mem::take(&mut self.news)

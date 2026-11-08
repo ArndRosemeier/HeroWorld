@@ -98,6 +98,8 @@ pub enum EntityKind {
     /// A drone that lifts the defeated away (police for villains, medical
     /// for heroes).
     Drone,
+    /// A flying taxi; its `owner` is the fare.
+    Taxi,
 }
 
 impl EntityKind {
@@ -108,6 +110,7 @@ impl EntityKind {
             EntityKind::Brute => 2,
             EntityKind::Technician => 3,
             EntityKind::Drone => 4,
+            EntityKind::Taxi => 5,
         }
     }
 
@@ -118,6 +121,7 @@ impl EntityKind {
             2 => Ok(EntityKind::Brute),
             3 => Ok(EntityKind::Technician),
             4 => Ok(EntityKind::Drone),
+            5 => Ok(EntityKind::Taxi),
             _ => Err(WireError),
         }
     }
@@ -483,7 +487,13 @@ pub enum ImpactKind {
 /// Reliable messages from a client.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ToServer {
-    Chat { text: String },
+    Chat {
+        text: String,
+    },
+    /// Hail a taxi to a stand (its index), or 255: get out.
+    Taxi {
+        dest: u8,
+    },
 }
 
 impl ToClient {
@@ -673,6 +683,7 @@ impl ToServer {
     pub fn wire_size(&self) -> usize {
         match self {
             ToServer::Chat { text } => 2 + text.len().min(255),
+            ToServer::Taxi { .. } => 2,
         }
     }
 
@@ -681,12 +692,16 @@ impl ToServer {
             ToServer::Chat { text } => {
                 w.u8(1).str(text);
             }
+            ToServer::Taxi { dest } => {
+                w.u8(2).u8(*dest);
+            }
         }
     }
 
     fn read(r: &mut Reader) -> Result<Self, WireError> {
         Ok(match r.u8()? {
             1 => ToServer::Chat { text: r.str()? },
+            2 => ToServer::Taxi { dest: r.u8()? },
             _ => return Err(WireError),
         })
     }

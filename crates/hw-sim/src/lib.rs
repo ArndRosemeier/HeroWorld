@@ -15,6 +15,8 @@ pub mod physics;
 pub mod predict;
 pub mod props;
 pub mod save;
+pub mod taxi;
+pub mod traffic;
 
 use bevy_ecs::prelude::*;
 use bubbles::Bubbles;
@@ -303,6 +305,8 @@ pub struct Sim {
     pub damage: Damage,
     /// Broken street props (see [`props`]).
     pub street: props::PropDamage,
+    /// Taxi stands and the taxis flying fares (see [`taxi`]).
+    pub taxis: taxi::Taxis,
     /// Every hero's level until heroes have their own (milestone 7): it sets
     /// how hard they hit, so what they can break.
     pub hero_level: u8,
@@ -327,6 +331,7 @@ impl Sim {
         sim.set_spawn(town.world.spawn_line());
         sim.town_population = town.population();
         sim.street = props::PropDamage::new(town.world.clone());
+        sim.taxis = taxi::Taxis::new(town.world.clone());
         sim
     }
 
@@ -357,6 +362,7 @@ impl Sim {
             bubbles: Bubbles::default(),
             damage: Damage::default(),
             street: props::PropDamage::default(),
+            taxis: taxi::Taxis::default(),
             hero_level: 1,
         }
     }
@@ -385,6 +391,8 @@ impl Sim {
     pub fn step(&mut self) {
         self.schedule.run(&mut self.world);
         combat::step(&mut self.world, self.tick);
+        let solids = self.solids();
+        taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
         let heroes: Vec<(PlayerId, NetId, DVec3)> = self
             .world
             .query::<(&Hero, &Net, &Motion)>()
@@ -772,6 +780,32 @@ impl Sim {
         self.body(id).map(|b| b.pos)
     }
 
+    /// `owner` hails a taxi to stand `dest` (see [`taxi::Taxis::stands`]),
+    /// or with [`taxi::HOP_OUT`] gets out of it.
+    pub fn hail_taxi(&mut self, owner: PlayerId, dest: u8) {
+        let Some(hero) = self
+            .world
+            .query::<(Entity, &Hero)>()
+            .iter(&self.world)
+            .find(|(_, h)| h.owner == owner)
+            .map(|(e, _)| e)
+        else {
+            return;
+        };
+        let id = self.world.resource_mut::<Ids>().0.allocate();
+        let solids = self.solids();
+        taxi::hail(
+            &mut self.world,
+            &mut self.taxis,
+            id,
+            &solids,
+            owner,
+            hero,
+            dest,
+            self.tick,
+        );
+    }
+
     /// Every replicated entity with the tick it last changed, sorted by ID.
     pub fn replicated(&mut self) -> Vec<(EntityState, u64)> {
         let mut out: Vec<(EntityState, u64)> = self
@@ -782,15 +816,17 @@ impl Sim {
                 Option<&Hero>,
                 Option<&Orientation>,
                 (Has<Prop>, Option<&Enemy>, Has<Drone>, Option<&CombatView>),
-                &LastChange,
+                (&LastChange, Option<&taxi::Fare>),
             )>()
             .iter(&self.world)
-            .map(|(n, m, h, o, (prop, enemy, drone, view), c)| {
+            .map(|(n, m, h, o, (prop, enemy, drone, view), (c, fare))| {
                 (
                     EntityState {
                         id: n.0,
                         kind: if prop {
                             EntityKind::Crate
+                        } else if fare.is_some() {
+                            EntityKind::Taxi
                         } else if let Some(e) = enemy {
                             e.kind.entity_kind()
                         } else if drone {
@@ -803,7 +839,7 @@ impl Sim {
                         vel: m.0.vel.as_vec3().to_array(),
                         rot: o.map_or(hw_net::protocol::NO_ROTATION, |o| o.0),
                         grounded: m.0.grounded,
-                        owner: h.map(|h| h.owner),
+                        owner: h.map(|h| h.owner).or(fare.map(|f| f.0)),
                     },
                     c.0,
                 )
@@ -819,9 +855,12 @@ impl Sim {
     }
 }
 
+/// Heroes that move by their own input (not riding a taxi).
+type WalkingHero = (With<Hero>, Without<taxi::Riding>);
+
 fn move_heroes(
     solids: Res<Solids>,
-    mut q: Query<(&Control, &mut Motion, Option<&Fighter>), With<Hero>>,
+    mut q: Query<(&Control, &mut Motion, Option<&Fighter>), WalkingHero>,
 ) {
     for (control, mut motion, fighter) in &mut q {
         let status = fighter.map_or(Status::Standing, |f| f.status);
