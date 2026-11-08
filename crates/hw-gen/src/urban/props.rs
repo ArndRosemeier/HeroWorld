@@ -12,12 +12,13 @@
 //! Everything is plain data, from the town's seed, made after the
 //! buildings: nothing stands in a building, on another road or in the water.
 
+use super::footprint::{block, disc, ring, Footprint};
 use super::growth::Era;
 use super::plots::region_of;
 use super::roadgrid::{key, keys_around, Key, RoadGrid};
 use super::roads::RoadClass;
 use super::streets::StreetStyle;
-use super::world::{TownWorld, WorldRoad, DECK};
+use super::world::{TownWorld, WorldRoad, CAR_HALF, DECK, PARKED_ROOM, WALKER_HALF};
 use crate::building::BuildingUse;
 use crate::style::Region;
 use crate::water::segment_distance;
@@ -135,6 +136,89 @@ pub struct Prop {
     pub scale: f64,
 }
 
+impl Prop {
+    /// Its solid parts, in the town's frame: what stops a body, what people
+    /// on foot step round and what cars keep clear of. Shrubs are soft.
+    /// The sizes follow the drawn models (`hw_client::propmesh`).
+    pub fn footprints(&self) -> Vec<Footprint> {
+        let s = self.scale;
+        let local: Vec<Footprint> = match self.kind {
+            PropKind::Lamp(style) => vec![disc(
+                0.16,
+                match style {
+                    LampStyle::Lantern => 4.8,
+                    LampStyle::Deco => 6.5,
+                    LampStyle::Atomic => 7.5,
+                },
+            )],
+            PropKind::TrafficLight => vec![disc(0.16, 4.1)],
+            PropKind::Tree(..) => vec![disc((0.32 * s).max(0.15), 3.0)],
+            PropKind::Shrub(_) => Vec::new(),
+            PropKind::Bench => vec![block(0.97, 0.36, 0.95)],
+            PropKind::Bin => vec![disc(0.31, 0.95)],
+            PropKind::Hydrant => vec![disc(0.2, 0.7)],
+            PropKind::Mailbox => vec![disc(0.36, 1.75)],
+            PropKind::Bollard => vec![disc(0.2, 0.75)],
+            PropKind::Kiosk => vec![disc(1.28, 3.6)],
+            PropKind::AdPillar => vec![disc(0.66, 3.5)],
+            PropKind::Statue(_) => vec![block(0.98, 0.98, 4.2)],
+            PropKind::Fountain => {
+                // The basin's rim, too high to step over, and the column.
+                let mut v = ring(3.3, 0.38, 0.66, 20);
+                v.push(disc(0.5, 2.8));
+                v
+            }
+            PropKind::Car(model, _) => {
+                let (hx, hz, h) = car_block(model);
+                vec![block(hx, hz, h)]
+            }
+            PropKind::Barricade(piece) => {
+                let (hx, hz, h) = piece.block();
+                vec![Footprint::Box {
+                    at: DVec2::ZERO,
+                    dir: DVec2::Y,
+                    half: DVec2::new(hx, hz),
+                    y0: -0.1,
+                    y1: h,
+                }]
+            }
+        };
+        let dir = self.dir.normalize_or(DVec2::Y);
+        local
+            .into_iter()
+            .map(|f| f.placed(self.pos, dir, self.y))
+            .collect()
+    }
+}
+
+/// Does a car parked at `q` facing `dir` stay in the parking strip along
+/// the kerb of `r`, every corner of it?
+fn at_the_kerb(r: &WorldRoad, q: DVec2, dir: DVec2, model: CarModel) -> bool {
+    let (hx, hz, _) = car_block(model);
+    let x = DVec2::new(dir.y, -dir.x);
+    [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+        .iter()
+        .all(|&(a, b)| {
+            let c = q + x * hx * a + dir * hz * b;
+            let d = r
+                .pts
+                .windows(2)
+                .map(|w| segment_distance(c, w[0], w[1]))
+                .fold(f64::MAX, f64::min);
+            d >= r.half - PARKED_ROOM - 0.05 && d <= r.half + 0.05
+        })
+}
+
+/// The box a parked car fills: half its width, half its length, its
+/// height (hover cars hang low enough that nobody passes under).
+pub fn car_block(model: CarModel) -> (f64, f64, f64) {
+    match model {
+        CarModel::Cruiser => (1.07, 2.86, 1.6),
+        CarModel::Bubble => (0.85, 1.78, 1.37),
+        CarModel::Hover => (1.2, 2.4, 1.85),
+    }
+}
+
 /// Keep props this far from the ends of a road (the junctions).
 const END_CLEAR: f64 = 12.0;
 
@@ -247,6 +331,8 @@ impl<'a> Walk<'a> {
 struct Placer<'a> {
     w: &'a TownWorld,
     roads: RoadGrid<'a>,
+    /// The street cars' lanes, segment by segment, by grid cell.
+    lanes: BTreeMap<Key, Vec<(DVec2, DVec2)>>,
     buildings: BTreeMap<Key, Vec<usize>>,
     taken: BTreeMap<Key, Vec<(DVec2, f64)>>,
     out: Vec<Prop>,
@@ -266,9 +352,21 @@ impl<'a> Placer<'a> {
                 }
             }
         }
+        let mut lanes: BTreeMap<Key, Vec<(DVec2, DVec2)>> = BTreeMap::new();
+        for l in super::lanes::street_lanes(w) {
+            for s in l.pts.windows(2) {
+                let (a, z) = (key(s[0].min(s[1])), key(s[0].max(s[1])));
+                for x in a.0..=z.0 {
+                    for y in a.1..=z.1 {
+                        lanes.entry((x, y)).or_default().push((s[0], s[1]));
+                    }
+                }
+            }
+        }
         Placer {
             w,
             roads: RoadGrid::new(w, 0.0),
+            lanes,
             buildings,
             taken: BTreeMap::new(),
             out: Vec::new(),
@@ -301,6 +399,31 @@ impl<'a> Placer<'a> {
         })
     }
 
+    /// Does `kind` standing at `q` on `r`'s pavement leave room to walk
+    /// past it, on the kerb side or the house side?
+    fn passable(&self, r: &WorldRoad, q: DVec2, kind: PropKind, dir: DVec2) -> bool {
+        let probe = Prop {
+            kind,
+            pos: q,
+            y: 0.0,
+            dir,
+            scale: 1.0,
+        };
+        let line = crate::geom::Polyline::new(&r.pts);
+        let (k, d) = line.sample(line.nearest(q).0);
+        let side = d.perp()
+            * if d.perp().dot(q - k) >= 0.0 {
+                1.0
+            } else {
+                -1.0
+            };
+        probe.footprints().iter().all(|f| {
+            let (lo, hi) = f.extent(k, side);
+            let room = (lo - r.half).max(r.half + r.pavement - hi);
+            room >= 2.0 * WALKER_HALF + 0.2
+        })
+    }
+
     fn crowded(&self, p: DVec2, r: f64) -> bool {
         keys_around(p, r + 6.0).any(|k| {
             self.taken
@@ -313,6 +436,27 @@ impl<'a> Placer<'a> {
         self.w.ground(p) > DECK + 0.2
     }
 
+    /// Does anything of `p` stand where a street car passes (round a
+    /// corner, say)?
+    fn in_a_lane(&self, p: &Prop) -> bool {
+        p.footprints().iter().any(|f| {
+            let reach = f.reach() + CAR_HALF + 0.1;
+            keys_around(f.at(), reach).any(|k| {
+                self.lanes.get(&k).is_some_and(|list| {
+                    list.iter().any(|&(a, b)| {
+                        segment_distance(f.at(), a, b) < reach && {
+                            // Exactly: the nearest point of the lane to it.
+                            let ab = b - a;
+                            let t = ((f.at() - a).dot(ab) / ab.length_squared().max(1e-9))
+                                .clamp(0.0, 1.0);
+                            f.distance(a + ab * t) < CAR_HALF + 0.1
+                        }
+                    })
+                })
+            })
+        })
+    }
+
     /// Places `kind` if the spot is free; true if it did.
     fn put(&mut self, kind: PropKind, pos: DVec2, dir: DVec2, scale: f64, r: f64) -> bool {
         // Bollards stand on the quay's paving, over the water's edge.
@@ -322,6 +466,16 @@ impl<'a> Placer<'a> {
             || self.crowded(pos, r)
             || self.w.landmarks.iter().any(|l| l.covers(pos, r))
         {
+            return false;
+        }
+        let probe = Prop {
+            kind,
+            pos,
+            y: 0.0,
+            dir,
+            scale,
+        };
+        if self.in_a_lane(&probe) {
             return false;
         }
         let lift = match kind {
@@ -387,7 +541,7 @@ impl<'a> Placer<'a> {
             let n = d.perp();
             let sides = if both { [1.0, -1.0] } else { [side, side] };
             for sd in &sides[..if both { 2 } else { 1 }] {
-                let q = p + n * *sd * (r.half + 0.45);
+                let q = p + n * *sd * (r.half + r.kerb_spot());
                 if !self.on_road(q, 0.5, Some(ri), true) {
                     self.put(PropKind::Lamp(lamp), q, -n * *sd, 1.0, 0.6);
                 }
@@ -413,7 +567,8 @@ impl<'a> Placer<'a> {
         if r.pavement >= 2.2 && rng.chance(trees) {
             let main_species = street_species(region, era, &mut rng);
             let tstep = rng.range(9.0, 13.0);
-            let off = r.half + r.pavement * 0.62;
+            // In pits by the kerb, clear of the people walking.
+            let off = r.half + r.kerb_spot().max(0.6);
             for sd in [1.0, -1.0] {
                 let mut s = END_CLEAR + rng.range(0.0, tstep);
                 while s < len - END_CLEAR {
@@ -441,9 +596,9 @@ impl<'a> Placer<'a> {
             (_, _, Some(StreetStyle::Garden)) => 0.3,
             _ => 0.45,
         };
-        if parking > 0.0 && r.half >= 3.0 {
-            let sides: &[f64] = if r.half >= 4.5 { &[1.0, -1.0] } else { &[1.0] };
-            for &sd in sides {
+        // Only where a lane each way stays free beside the parked cars.
+        if parking > 0.0 && r.parking_fits() {
+            for sd in [1.0, -1.0] {
                 let mut s = END_CLEAR + rng.range(0.0, 6.0);
                 while s < len - END_CLEAR {
                     let (p, d) = walk.point(s);
@@ -452,12 +607,14 @@ impl<'a> Placer<'a> {
                         && !self.on_road(q, 2.6, Some(ri), false)
                         && !self.on_road(q, 1.2, Some(ri), true)
                     {
-                        let kind = PropKind::Car(
-                            car_model(era, &mut rng),
-                            rng.range_int(0, CAR_PAINTS as i64) as u8,
-                        );
-                        // Cars face the way their side of the road drives.
-                        self.put(kind, q, d * sd, 1.0, 3.0);
+                        let model = car_model(era, &mut rng);
+                        let kind = PropKind::Car(model, rng.range_int(0, CAR_PAINTS as i64) as u8);
+                        // Cars face the way their side of the road drives,
+                        // and keep to the kerb (not on a bend, where they
+                        // would stick out into the lane).
+                        if at_the_kerb(r, q, d * sd, model) {
+                            self.put(kind, q, d * sd, 1.0, 3.0);
+                        }
                     }
                     s += rng.range(5.8, 7.6);
                 }
@@ -484,8 +641,7 @@ impl<'a> Placer<'a> {
                     continue;
                 }
                 let q = p + n * (r.half + r.pavement * 0.62);
-                let fits = r.pavement * 0.38 > rad * 0.6;
-                if fits && !self.on_road(q, rad * 0.5, Some(ri), false) {
+                if self.passable(r, q, kind, -n) && !self.on_road(q, rad * 0.5, Some(ri), false) {
                     self.put(kind, q, -n, 1.0, rad);
                 }
                 s += rng.range(110.0, 240.0);
@@ -515,7 +671,7 @@ impl<'a> Placer<'a> {
                 _ => (0.5, d),
             };
             let q = p + n * (r.half + off);
-            if !self.on_road(q, 0.6, Some(ri), true) {
+            if self.passable(r, q, kind, dir) && !self.on_road(q, 0.6, Some(ri), true) {
                 self.put(kind, q, dir, 1.0, 0.9);
             }
             s += rng.range(25.0, 65.0);

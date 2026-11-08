@@ -5,6 +5,7 @@
 //! Pure data from the town; the client draws it.
 
 use super::dystopia::Zone;
+use super::roadgrid::RoadGrid;
 use super::world::TownWorld;
 use glam::{DVec2, DVec3};
 
@@ -87,6 +88,7 @@ pub fn barricades(world: &TownWorld) -> Vec<Barricade> {
         return Vec::new();
     };
     let mut out: Vec<Barricade> = Vec::new();
+    let roads = RoadGrid::new(world, 0.0);
     for (ri, r) in world.roads.iter().enumerate() {
         for w in r.pts.windows(2) {
             let (a, b) = (w[0], w[1]);
@@ -105,8 +107,19 @@ pub fn barricades(world: &TownWorld) -> Vec<Barricade> {
                 }
             }
             let along = if ia { a - b } else { b - a }.normalize_or(DVec2::X);
-            // A few metres in, past the crossing street's mouth.
-            let at = in_p + along * 4.0;
+            // A few metres in, past the crossing street's mouth: clear of
+            // every other street, so nothing drives or walks through it.
+            let across = along.perp();
+            let reach = r.half + r.pavement;
+            let clear = |p: DVec2| {
+                (-2..=2).all(|k| !roads.touches(p + across * reach * k as f64 * 0.5, 2.0, Some(ri)))
+            };
+            let Some(at) = (0..14)
+                .map(|k| in_p + along * (4.0 + 2.0 * k as f64))
+                .find(|p| clear(*p))
+            else {
+                continue;
+            };
             if out.iter().any(|o| o.at.distance(at) < 15.0) {
                 continue;
             }

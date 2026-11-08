@@ -380,6 +380,13 @@ impl Polyline {
         self.pts[k].lerp(self.pts[k + 1], t)
     }
 
+    /// The point at distance `s` (clamped) and the line's direction there.
+    pub fn sample(&self, s: f64) -> (DVec2, DVec2) {
+        let (k, t) = self.locate(s);
+        let (a, b) = (self.pts[k], self.pts[k + 1]);
+        (a.lerp(b, t), (b - a).normalize_or(DVec2::X))
+    }
+
     /// Distance along the line of the point nearest `p`, and how far off.
     pub fn nearest(&self, p: DVec2) -> (f64, f64) {
         let mut best = (0.0, f64::MAX);

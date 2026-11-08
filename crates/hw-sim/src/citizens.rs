@@ -18,7 +18,7 @@ use hw_core::Seed;
 use hw_gen::building::BuildingUse;
 use hw_gen::geom::Polyline;
 use hw_gen::urban::underground::{molehaven_layout, Underground};
-use hw_gen::urban::world::{TownWorld, WorldRoad};
+use hw_gen::urban::world::{TownWorld, WorldRoad, WALKER_HALF};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -165,6 +165,9 @@ struct Walk {
     /// At each point, the way to its pavement and how far per metre of
     /// offset (the mitre).
     miters: Vec<DVec2>,
+    /// Where the walking line steps round something standing on the
+    /// pavement (a kiosk, a bench, a tree), by side (-1, then 1), in order.
+    bumps: [Vec<Bump>; 2],
     /// Walkers living on this street at its busiest hour.
     people: u32,
     /// How much of its draw is shops and offices (0 to 1): they are busy
@@ -185,7 +188,7 @@ impl Walk {
         let (k, t) = self.line.locate(s);
         let (a, b) = (self.line.pts[k], self.line.pts[k + 1]);
         let dir = (b - a).normalize_or_zero();
-        let o = self.offset * side;
+        let o = (self.offset + self.bump_at(s, side)) * side;
         let (ma, mb) = (self.miters[k], self.miters[k + 1]);
         ((a + ma * o).lerp(b + mb * o, t), dir)
     }
@@ -194,7 +197,38 @@ impl Walk {
     fn nearest(&self, p: DVec2) -> (f64, f64) {
         self.line.nearest(p)
     }
+
+    /// How far the walking line is moved out (+) or in (-) at `s`: the
+    /// biggest step round anything there, eased in and out.
+    fn bump_at(&self, s: f64, side: f64) -> f64 {
+        let mut out: f64 = 0.0;
+        for b in &self.bumps[side_index(side)] {
+            if b.s0 - EASE > s {
+                break;
+            }
+            let t = ((s - (b.s0 - EASE)) / EASE)
+                .min(((b.s1 + EASE) - s) / EASE)
+                .clamp(0.0, 1.0);
+            let d = b.by * t * t * (3.0 - 2.0 * t);
+            if d.abs() > out.abs() {
+                out = d;
+            }
+        }
+        out
+    }
 }
+
+/// A stretch of pavement where walking steps aside, `by` metres from the
+/// usual line (+ towards the houses).
+#[derive(Clone, Copy, Debug)]
+struct Bump {
+    s0: f64,
+    s1: f64,
+    by: f64,
+}
+
+/// Over how many metres walking eases out round something and back.
+const EASE: f64 = 1.5;
 
 /// The citizens of one town.
 pub struct Citizens {
@@ -248,9 +282,11 @@ impl Citizens {
                 grid.entry(c).or_default().push(i as u32);
             }
         }
+        step_round_props(&mut walks, &grid, &world);
         let met = streets_met(&walks, &grid, &world);
         let ways = Carriageways::new(&world);
-        let (ends, mouths) = pavement_runs(&walks, &ways, &world, &signals);
+        let (ends, mut mouths) = pavement_runs(&walks, &ways, &world, &signals);
+        stop_at_barricades(&walks, &grid, &world, &mut mouths);
         let joins = turns(&walks, &met, &ends, &ways, &world, &signals);
         people_from_buildings(&mut walks, &grid, &world, seed);
         let moles = plan_moles(&world.underground);
@@ -743,10 +779,6 @@ fn streets_met(walks: &[Walk], grid: &BTreeMap<(i64, i64), Vec<u32>>, world: &To
 }
 
 /// Whether a street carries cars (as [`crate::traffic`] plans them).
-fn has_traffic(r: &WorldRoad) -> bool {
-    r.half >= 2.5 && r.pts.len() >= 2
-}
-
 /// Distance from `p` to the segment `a`-`b`.
 fn segment_distance(p: DVec2, a: DVec2, b: DVec2) -> f64 {
     let ab = b - a;
@@ -801,7 +833,7 @@ impl Carriageways {
         for &(j, a, b) in self.segs.get(&Self::key(p)).into_iter().flatten() {
             let r = &world.roads[j as usize];
             if segment_distance(p, a, b) < r.half + margin(j) {
-                found = Some(found.unwrap_or(false) || has_traffic(r));
+                found = Some(found.unwrap_or(false) || r.has_traffic());
             }
         }
         found
@@ -1007,9 +1039,97 @@ fn walk_of(r: &WorldRoad) -> Walk {
     Walk {
         miters,
         line,
-        offset: r.half + r.pavement * 0.5,
+        offset: r.walk_offset(),
+        bumps: [Vec::new(), Vec::new()],
         people: 0,
         commerce: 0.0,
+    }
+}
+
+/// Moves each street's walking line round the props standing on its
+/// pavements: out towards the houses or in towards the kerb, whichever is
+/// nearer and leaves room to pass.
+fn step_round_props(walks: &mut [Walk], grid: &BTreeMap<(i64, i64), Vec<u32>>, world: &TownWorld) {
+    for p in &world.props {
+        let parts = p.footprints();
+        if parts.is_empty() {
+            continue;
+        }
+        let mut near: Vec<u32> = grid.get(&cell_of(p.pos)).cloned().unwrap_or_default();
+        near.sort_unstable();
+        near.dedup();
+        for i in near {
+            let r = &world.roads[i as usize];
+            let w = &mut walks[i as usize];
+            let (s, off) = w.nearest(p.pos);
+            if off > r.half + r.pavement + 1.0 {
+                continue;
+            }
+            let (c, d) = w.line.sample(s);
+            let n = d.perp();
+            let side = if n.dot(p.pos - c) >= 0.0 { 1.0 } else { -1.0 };
+            let (mut lo, mut hi, mut a, mut b) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+            for f in &parts {
+                let (l, h) = f.extent(c, n * side);
+                let (x, y) = f.extent(c, d);
+                (lo, hi, a, b) = (lo.min(l), hi.max(h), a.min(x), b.max(y));
+            }
+            let line = w.offset;
+            let clear = WALKER_HALF + 0.05;
+            if hi < line - clear || lo > line + clear || hi < r.half {
+                continue;
+            }
+            let (kerb, house) = (r.half + WALKER_HALF, r.half + r.pavement - WALKER_HALF);
+            let inner = lo - clear;
+            let outer = hi + clear;
+            let to = match (inner >= kerb, outer <= house) {
+                (true, true) if line - inner <= outer - line => inner,
+                (true, true) => outer,
+                (true, false) => inner,
+                (false, true) => outer,
+                // No room either side: squeeze past on the roomier one.
+                (false, false) if inner - kerb >= house - outer => inner.max(kerb),
+                (false, false) => outer.min(house),
+            };
+            w.bumps[side_index(side)].push(Bump {
+                s0: s + a - 0.2,
+                s1: s + b + 0.2,
+                by: to - line,
+            });
+        }
+    }
+    for w in walks.iter_mut() {
+        for list in &mut w.bumps {
+            list.sort_by(|x, y| x.s0.total_cmp(&y.s0));
+        }
+    }
+}
+
+/// Barricades close the pavements too: walking turns back before them.
+fn stop_at_barricades(
+    walks: &[Walk],
+    grid: &BTreeMap<(i64, i64), Vec<u32>>,
+    world: &TownWorld,
+    mouths: &mut [[Vec<Mouth>; 2]],
+) {
+    for b in hw_gen::urban::edge::barricades(world) {
+        let best = grid
+            .get(&cell_of(b.at))
+            .into_iter()
+            .flatten()
+            .map(|&i| (i, walks[i as usize].nearest(b.at)))
+            .filter(|(i, (_, d))| *d <= world.roads[*i as usize].half)
+            .min_by(|x, y| x.1 .1.total_cmp(&y.1 .1));
+        let Some((i, (s, _))) = best else { continue };
+        for list in &mut mouths[i as usize] {
+            list.push(Mouth {
+                s0: s - 2.5,
+                s1: s + 2.5,
+                light: None,
+                wall: true,
+            });
+            list.sort_by(|x, y| x.s0.total_cmp(&y.s0));
+        }
     }
 }
 
@@ -1149,7 +1269,18 @@ fn plan_moles(u: &Underground) -> (f64, DVec2, Vec<MoleWay>) {
                 // and the other houses.
                 let out = front - well;
                 let market = well + out.normalize_or(DVec2::X) * MARKET_RING;
-                if out.length() > MARKET_RING + 1.5 {
+                // Not if the way runs through a stall.
+                let blocked = (0..=20).any(|k| {
+                    let p = front.lerp(market, k as f64 / 20.0);
+                    l.stalls.iter().any(|&(at, d)| {
+                        let q = p - at;
+                        let (along, side) = (q.dot(d), q.dot(d.perp()).abs());
+                        side < 1.5 && along > -0.7 && along < 1.0
+                    })
+                });
+                if blocked {
+                    // A stall stands before the door: nobody waits there.
+                } else if out.length() > MARKET_RING + 1.5 {
                     ways.push(MoleWay::Errand(front, market));
                     ways.push(MoleWay::Errand(market, front));
                 } else {
@@ -1251,6 +1382,7 @@ mod tests {
     fn citizens_walk_on_pavements_and_move_smoothly() {
         let c = town();
         let p = c.world.spawn_line().0;
+        let p_ground = c.world.ground(p);
         let people = c.near(p, 200.0, 50.0, 300);
         assert!(
             people.len() > 20,
@@ -1263,7 +1395,8 @@ mod tests {
             // At most a walking step per tick (plus a corner crossing).
             assert!(step < 0.5, "citizen {} jumped {step} m", a.id);
             assert!(a.pos.is_finite());
-            assert!(a.look < LOOKS);
+            // Mole people (deep under the core) have their own looks.
+            assert!(a.look < LOOKS || a.pos.y < p_ground - 10.0);
         }
         // Over a few minutes, many are walking (the rest pause, chat or
         // wait at the kerb for the lights: about half the time in a town
@@ -1296,7 +1429,7 @@ mod tests {
                 let cell = cell_of(q);
                 let over = c.grid.get(&cell).into_iter().flatten().any(|&i| {
                     let r = &c.world.roads[i as usize];
-                    has_traffic(r) && c.walks[i as usize].nearest(q).1 < r.half - 0.6
+                    r.has_traffic() && c.walks[i as usize].nearest(q).1 < r.half - 0.6
                 });
                 if !over {
                     continue;

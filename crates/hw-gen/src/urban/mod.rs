@@ -20,6 +20,7 @@
 
 pub mod dystopia;
 pub mod edge;
+pub mod footprint;
 pub mod graph;
 pub mod growth;
 pub mod land;

@@ -50,7 +50,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven` or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven` or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -423,6 +423,30 @@ fn main() -> EngineResult<()> {
             });
             let p = c + DVec2::new(-30.0, 30.0);
             FlyCamera::new((p.x as f32, h as f32 + 32.0, p.y as f32), 135.0, -42.0)
+        }
+        "plinth" => {
+            // Close up at the spire's plaza: its edge, steps and base, from
+            // just outside, at eye height.
+            use hw_gen::urban::landmarks::LandmarkKind;
+            let l = hw_client::landmarkview::nearest(
+                &generated.world,
+                LandmarkKind::AetherSpire,
+                spawn,
+            );
+            let (target, p) = l.map_or((spawn, spawn + spawn_dir * 10.0), |l| {
+                let side = l.stairs.first().map_or(l.dir, |s| s.down);
+                (
+                    l.pos + side * (l.plaza * 0.5),
+                    l.pos + side * (l.plaza + 9.0) + side.perp() * 7.0,
+                )
+            });
+            let d = target - p;
+            let yaw = d.x.atan2(d.y).to_degrees() as f32;
+            let eye = ground(p) + 2.6;
+            let pitch = ((ground(target).max(l.map_or(0.0, |l| l.base)) + 1.5 - eye) / d.length())
+                .atan()
+                .to_degrees() as f32;
+            FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
         }
         "spire" | "lighthouse" | "tesla" => {
             // Looking up at a landmark from across its plaza.

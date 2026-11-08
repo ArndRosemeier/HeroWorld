@@ -20,7 +20,7 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
-use hw_gen::urban::lanes::{plan_lanes, LaneLoop};
+use hw_gen::urban::lanes::{plan_lanes, street_lanes, LaneLoop};
 use hw_gen::urban::props::{CarModel, CAR_PAINTS};
 use hw_gen::urban::world::TownWorld;
 use std::collections::BTreeMap;
@@ -384,16 +384,13 @@ impl Traffic {
             let t = (p.distance(core) / reach).clamp(0.0, 1.0);
             1.0 - t * t * (3.0 - 2.0 * t)
         };
-        // Cars keep to the right half of the carriageway; country lanes and
-        // the narrowest streets have no traffic.
-        let streets: Vec<usize> = (0..world.roads.len())
-            .filter(|&i| world.roads[i].half >= 2.5 && world.roads[i].pts.len() >= 2)
-            .collect();
-        let ground_loops = plan_lanes(&world, &streets, |r| r.half * 0.5, seed.child("ground"));
+        // Cars keep to their lane on the right, clear of parked cars; the
+        // narrowest streets have no traffic, and none passes a barricade.
+        let ground_loops = street_lanes(&world);
         let mains: Vec<usize> = (0..world.roads.len())
             .filter(|&i| world.roads[i].main)
             .collect();
-        let sky_loops = plan_lanes(&world, &mains, |r| r.half * 0.4, seed.child("sky"));
+        let sky_loops = plan_lanes(&world, &mains, |r| r.half * 0.4, &[], seed.child("sky"));
         let make = |path: LaneLoop, sky: bool, i: usize| -> Lane {
             let s = seed
                 .child(if sky { "sky lane" } else { "lane" })
@@ -1693,12 +1690,18 @@ mod tests {
             gap > CAR_LEN * 0.5 && gap < 15.0,
             "stopped {gap:.1} m short of them"
         );
-        // They step out of the way: it drives on.
-        for _ in 0..100 {
+        // They step out of the way: it drives on (once the lights ahead,
+        // if any, let it: within a light cycle and a half).
+        let mut moved = false;
+        for _ in 0..(CYCLE * 1.5 / STEP) as usize {
             t.set_blockers(&[], &[]);
             t.advance_to(t.time() + STEP);
+            if t.cars[li][k].v > 2.0 {
+                moved = true;
+                break;
+            }
         }
-        assert!(t.cars[li][k].v > 2.0, "the car drives on");
+        assert!(moved, "the car drives on");
         // Trouble ahead: nobody drives into it.
         let (c, _) = t.ground[li].path.sample(t.cars[li][k].s + 40.0);
         for _ in 0..200 {

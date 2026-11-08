@@ -55,6 +55,18 @@ pub fn side_reach(style: StreetStyle) -> f64 {
     }
 }
 
+/// Half width plus pavement of a main road at `p`: in an old town even a
+/// main road is narrow. The roads and the buildings along them both use
+/// this, so no building stands on a carriageway.
+pub fn road_reach_at(town: &Town, class: RoadClass, p: DVec2) -> f64 {
+    let reach = road_reach(class);
+    let g = &town.growth;
+    match g.time.cell_of(p) {
+        Some((i, j)) if g.built(i, j) && g.era(i, j) == Era::Old => reach.min(7.0),
+        _ => reach,
+    }
+}
+
 /// Half width plus pavement of a main road.
 pub fn road_reach(class: RoadClass) -> f64 {
     match class {
@@ -126,26 +138,74 @@ pub fn plan_buildings(
             &mut rng,
         )
     });
-    let mut main = main_roads(town, &piece.face);
-    if piece.era == Era::Old {
-        // Even the high street of an old town is narrow.
-        for m in &mut main {
-            m.1 = m.1.min(7.0);
-        }
-    }
+    let main = main_roads(town, &piece.face);
     let side = side_reach(streets.style);
+    // Every street of the piece, dead ends too: a dead end runs into a
+    // block without splitting it, and nothing may be built on it.
+    let all: Vec<(Vec<DVec2>, f64)> = streets.streets.iter().map(|s| (s.clone(), side)).collect();
+    // Every main road, segment by segment (narrower in an old town): not
+    // only those round the piece, as one may end inside it.
+    let mains: Vec<(DVec2, DVec2, f64)> = town
+        .network
+        .roads
+        .iter()
+        .flat_map(|r| {
+            r.pts.windows(2).map(move |w| {
+                let m = (w[0] + w[1]) * 0.5;
+                (w[0], w[1], road_reach_at(town, r.class, m))
+            })
+        })
+        .collect();
     let mut out = Vec::new();
     for (k, block) in streets.blocks.iter().enumerate() {
         let bseed = seed.child(k as u32);
         let held = quarter
             .zip(villains.as_ref())
             .filter(|(d, _)| inner_point(block).is_some_and(|c| d.contains(c)));
+        let near = streets_near(block, &all, &mains);
+        let room = Room {
+            town,
+            main: &main,
+            side,
+            streets: &near,
+        };
         match held {
-            Some((_, v)) => fill_block(block, &main, side, v, None, bseed, &mut out),
-            None => fill_block(block, &main, side, &prog, vernacular, bseed, &mut out),
+            Some((_, v)) => fill_block(block, &room, v, None, bseed, &mut out),
+            None => fill_block(block, &room, &prog, vernacular, bseed, &mut out),
         }
     }
     out
+}
+
+/// What a block's buildings keep clear of.
+struct Room<'a> {
+    town: &'a Town,
+    /// The main roads round the piece, with their class.
+    main: &'a [(Vec<DVec2>, Option<RoadClass>)],
+    /// Reach of the piece's side streets.
+    side: f64,
+    /// Every street segment near the block, with its reach.
+    streets: &'a [(DVec2, DVec2, f64)],
+}
+
+/// The street segments that come within reach of a block's bounding box.
+fn streets_near(
+    block: &[DVec2],
+    all: &[(Vec<DVec2>, f64)],
+    mains: &[(DVec2, DVec2, f64)],
+) -> Vec<(DVec2, DVec2, f64)> {
+    let lo = block.iter().fold(DVec2::MAX, |m, p| m.min(*p));
+    let hi = block.iter().fold(DVec2::MIN, |m, p| m.max(*p));
+    let segments = all
+        .iter()
+        .flat_map(|(pts, reach)| pts.windows(2).map(move |w| (w[0], w[1], *reach)))
+        .chain(mains.iter().copied());
+    segments
+        .filter(|&(p, q, reach)| {
+            let (a, b) = (p.min(q), p.max(q));
+            b.x + reach >= lo.x && a.x - reach <= hi.x && b.y + reach >= lo.y && a.y - reach <= hi.y
+        })
+        .collect()
 }
 
 /// How a town builds by tradition: one region per town, from its seed.
@@ -172,23 +232,21 @@ fn quarter_of(style: StreetStyle, prog: &Programme) -> Option<Quarter> {
     }
 }
 
-/// The main roads around a piece: (polyline, reach); the town's edge has no
-/// road and takes reach 0.
-fn main_roads(town: &Town, face: &Face) -> Vec<(Vec<DVec2>, f64)> {
+/// The main roads around a piece: (polyline, class); the town's edge has
+/// no road and no class.
+fn main_roads(town: &Town, face: &Face) -> Vec<(Vec<DVec2>, Option<RoadClass>)> {
     face.edges
         .iter()
         .map(|(e, _)| {
             let e = &town.graph.edges[*e];
-            let reach = match e.tag {
-                OUTLINE => 0.0,
-                t => road_reach(match t {
-                    0 => RoadClass::Country,
-                    1 => RoadClass::Boulevard,
-                    2 => RoadClass::Avenue,
-                    _ => RoadClass::Quay,
-                }),
+            let class = match e.tag {
+                OUTLINE => None,
+                0 => Some(RoadClass::Country),
+                1 => Some(RoadClass::Boulevard),
+                2 => Some(RoadClass::Avenue),
+                _ => Some(RoadClass::Quay),
             };
-            (e.pts.clone(), reach)
+            (e.pts.clone(), class)
         })
         .collect()
 }
@@ -346,8 +404,7 @@ struct Side {
 
 fn fill_block(
     block: &[DVec2],
-    main: &[(Vec<DVec2>, f64)],
-    side_reach: f64,
+    room: &Room,
     prog: &Programme,
     vernacular: Option<Vernacular>,
     seed: Seed,
@@ -366,10 +423,11 @@ fn fill_block(
             let (a, b) = (ring[k], ring[(k + 1) % n]);
             let m = (a + b) * 0.5;
             // On a main road (or the town's edge) if it lies along one.
-            let on_main = main
+            let on_main = room
+                .main
                 .iter()
                 .filter(|(pts, _)| polyline_distance(pts, m) < 3.0)
-                .map(|(_, r)| *r)
+                .map(|(_, c)| c.map_or(0.0, |c| road_reach_at(room.town, c, m)))
                 .fold(None, |acc: Option<f64>, r| {
                     Some(acc.map_or(r, |x| x.max(r)))
                 });
@@ -377,7 +435,7 @@ fn fill_block(
                 Some(r) if r > 0.0 => (r, 1.0 + r),
                 // The edge of town: keep a little back, but nothing fronts it.
                 Some(_) => (2.0, -1.0),
-                None => (side_reach, 1.0),
+                None => (room.side, 1.0),
             };
             Side { a, b, reach, rank }
         })
@@ -448,6 +506,7 @@ fn fill_block(
                     origin + inward * depth,
                 ];
                 if fits(&ring, &sides, &front, &corners)
+                    && clear_of_streets(room.streets, &corners)
                     && out[first..]
                         .iter()
                         .all(|o| apart(o, &corners, along, inward))
@@ -521,6 +580,15 @@ fn fits(ring: &[DVec2], sides: &[Side], own: &[usize], c: &[DVec2; 4]) -> bool {
             s.reach
         };
         (0..4).all(|i| segment_gap(c[i], c[(i + 1) % 4], s.a, s.b) >= need)
+    })
+}
+
+/// Does a footprint keep clear of every street near it (a metre's grace,
+/// as on a bend of its own street)?
+fn clear_of_streets(streets: &[(DVec2, DVec2, f64)], c: &[DVec2; 4]) -> bool {
+    streets.iter().all(|&(a, b, reach)| {
+        !super::contains(c, a)
+            && (0..4).all(|i| segment_gap(c[i], c[(i + 1) % 4], a, b) >= reach - 1.0)
     })
 }
 

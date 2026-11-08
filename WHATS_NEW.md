@@ -3,6 +3,16 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.065 (2026-11-08)
+
+- Solid means solid: the plazas under the Aether Spire, the lighthouse and the Tesla tower are
+  raised stone you climb by their new steps (the spire has steps up to its doors too), and
+  statues, fountains, kiosks, trees, lamp posts, benches and parked cars stop you instead of
+  letting you walk through them.
+- No more houses standing in the middle of a street: cars no longer drive through buildings,
+  parked cars or barricades, and turn round before the barricades of the villains' quarter.
+- People on the pavement step round kiosks, benches and trees, and turn back at barricades.
+
 ## 0.064 (2026-11-08)
 
 - Bring a building down and there are people in the rubble: the wrist radio calls it in, and

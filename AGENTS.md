@@ -43,6 +43,14 @@ file; when they change, re-export the snapshot here.
   planet centre; local frames give an up vector.
 - **Generic needs go to Engine.** If something belongs in a game engine (rendering, physics,
   streaming, destruction), propose it in ENGINE_REQUESTS.md rather than working around it.
+- **What is drawn is what collides.** Every new solid or moving thing (a prop, a landmark, a
+  vehicle, a robot, a building part) gets its solid shape from the same data it is drawn from
+  (`hw_gen::urban::footprint::Footprint`: `Prop::footprints`, `Landmark::footprints` and
+  `stairs`), so heroes, NPCs and cars cannot pass through it; raised ground (plinths, decks)
+  goes into `Obstacles::ground_at`. Cars drive only `street_lanes`, which keep clear of
+  buildings, parked cars and props; people on foot step round props (`citizens.rs`). Extend
+  the checks (`street_cars_keep_clear_of_buildings_and_props`, `no_building_stands_on_a_street`,
+  `visible_things_are_solid`) for anything new, and never loosen them.
 - Warnings are errors. Do not silence a lint or skip a test to get green.
 
 ## Visual quality bar

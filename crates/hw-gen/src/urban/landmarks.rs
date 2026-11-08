@@ -6,6 +6,7 @@
 //! road crosses. The plinth's top is level; where the ground falls away its
 //! side shows as a stone step.
 
+use super::footprint::{block, disc, Footprint};
 use super::growth::CentreKind;
 use super::land::Cover;
 use super::roadgrid::RoadGrid;
@@ -38,21 +39,221 @@ pub struct Landmark {
     pub height: f64,
     /// The way it faces (the spire's entrance, the lighthouse's door).
     pub dir: DVec2,
+    /// Flights of steps: up the plinth where its side stands higher than a
+    /// kerb, and up the spire's base to its doors.
+    pub stairs: Vec<Stair>,
 }
 
-impl Landmark {
-    /// Does a circle of radius `r` at `p` reach onto the plinth?
-    pub fn covers(&self, p: DVec2, r: f64) -> bool {
-        p.distance(self.pos) < self.plaza + r
+/// A straight flight of steps, as solid stone under every tread.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stair {
+    /// Middle of its top edge, and the way down (unit).
+    pub top: DVec2,
+    pub down: DVec2,
+    pub width: f64,
+    /// Height of the landing at the top, and of the ground at the foot.
+    pub from: f64,
+    pub to: f64,
+    /// Treads (the last one is the ground) and the depth of each.
+    pub steps: u32,
+    pub run: f64,
+}
+
+impl Stair {
+    /// The flight from `top` going `down`, stepping from `from` to `to` at
+    /// most [`RISE`] a step.
+    fn new(top: DVec2, down: DVec2, width: f64, from: f64, to: f64) -> Self {
+        Stair {
+            top,
+            down,
+            width,
+            from,
+            to,
+            steps: ((from - to) / RISE).ceil().max(1.0) as u32,
+            run: RUN,
+        }
     }
 
-    /// Does a building's footprint come within `margin` of the plinth?
+    /// How far it reaches out from its top edge.
+    pub fn length(&self) -> f64 {
+        (self.steps - 1) as f64 * self.run
+    }
+
+    /// One solid block per tread above the ground, each from the foot of
+    /// the flight up to the tread (and back to the top edge).
+    pub fn treads(&self) -> Vec<Footprint> {
+        let rise = (self.from - self.to) / self.steps as f64;
+        (1..self.steps)
+            .map(|k| {
+                let reach = k as f64 * self.run;
+                Footprint::Box {
+                    at: self.top + self.down * (reach * 0.5),
+                    dir: self.down,
+                    half: DVec2::new(self.width * 0.5, reach * 0.5),
+                    y0: self.to - 0.6,
+                    y1: self.from - k as f64 * rise,
+                }
+            })
+            .collect()
+    }
+}
+
+/// Steps in a landmark's stairs: rise and depth (m).
+const RISE: f64 = 0.17;
+const RUN: f64 = 0.32;
+/// The spire's base: its stepped octagonal tiers (radius to the corners,
+/// height), the shaft's radius, and its four flights up to the doors.
+pub const SPIRE_TIERS: [(f64, f64); 3] = [(5.6, 0.9), (4.7, 0.9), (3.9, 1.2)];
+pub const SPIRE_SHAFT: f64 = 3.0;
+const SPIRE_STEPS: u32 = 16;
+const SPIRE_RUN: f64 = 0.3;
+/// The middle of an octagon's side, per metre to its corners.
+const APOTHEM: f64 = 0.924;
+
+impl Landmark {
+    /// From the landmark's own frame (x right, z the way it faces) to the
+    /// town's plan.
+    pub fn to_plan(&self, l: DVec2) -> DVec2 {
+        let x = DVec2::new(self.dir.y, -self.dir.x);
+        self.pos + x * l.x + self.dir * l.y
+    }
+
+    /// Where the founding hero's statue stands on the spire's plaza, out
+    /// along its axis (local z), clear of the steps up to the doors.
+    pub fn statue_z(&self) -> f64 {
+        let foot = SPIRE_TIERS[2].0 * APOTHEM + (SPIRE_STEPS - 1) as f64 * SPIRE_RUN;
+        (self.plaza * 0.62).max(foot + 1.2).min(self.plaza - 1.1)
+    }
+
+    /// Its solid parts above the plinth, in the town's frame. The plinth
+    /// itself is raised ground (see [`Self::on_plinth`]); the stairs are
+    /// in [`Self::stairs`].
+    pub fn footprints(&self) -> Vec<Footprint> {
+        let local = match self.kind {
+            LandmarkKind::AetherSpire => {
+                let mut v = Vec::new();
+                let mut y = 0.0;
+                // Octagonal tiers: a disc a little inside the corners.
+                for (r, t) in SPIRE_TIERS {
+                    y += t;
+                    v.push(disc(r * 0.95, y));
+                }
+                v.push(Footprint::Disc {
+                    at: DVec2::ZERO,
+                    r: SPIRE_SHAFT,
+                    y0: 0.0,
+                    y1: self.height * 0.82,
+                });
+                v.push(Footprint::Box {
+                    at: DVec2::new(0.0, self.statue_z()),
+                    dir: DVec2::Y,
+                    half: DVec2::new(0.98, 0.98),
+                    y0: 0.0,
+                    y1: 4.2,
+                });
+                v
+            }
+            LandmarkKind::Lighthouse => vec![
+                disc(4.6, 3.7),
+                Footprint::Disc {
+                    at: DVec2::ZERO,
+                    r: 2.6,
+                    y0: 3.7,
+                    y1: self.height - 3.0,
+                },
+            ],
+            LandmarkKind::TeslaTower => vec![block(6.5, 6.5, 5.65)],
+        };
+        local
+            .into_iter()
+            .map(|f| f.placed(self.pos, self.dir, self.base))
+            .collect()
+    }
+
+    /// The plinth's top where `p` is on it.
+    pub fn on_plinth(&self, p: DVec2) -> Option<f64> {
+        (p.distance(self.pos) <= self.plaza).then_some(self.base)
+    }
+
+    /// Does a circle of radius `r` at `p` reach onto the plinth or its
+    /// stairs?
+    pub fn covers(&self, p: DVec2, r: f64) -> bool {
+        p.distance(self.pos) < self.plaza + r
+            || self
+                .stairs
+                .iter()
+                .flat_map(|s| s.treads())
+                .any(|t| t.distance(p) < r)
+    }
+
+    /// Does a building's footprint come within `margin` of the plinth or
+    /// its stairs?
     pub fn overlaps(&self, site: &BuildingSite, margin: f64) -> bool {
         let d = self.pos - site.origin;
         let (x, z) = (d.dot(site.along), d.dot(site.inward));
         let q = DVec2::new(x.clamp(0.0, site.size.x), z.clamp(0.0, site.size.y));
-        DVec2::new(x, z).distance(q) < self.plaza + margin
+        if DVec2::new(x, z).distance(q) < self.plaza + margin {
+            return true;
+        }
+        let b = Footprint::Box {
+            at: site.origin + site.along * site.size.x * 0.5 + site.inward * site.size.y * 0.5,
+            dir: site.inward,
+            half: site.size * 0.5,
+            y0: 0.0,
+            y1: 1.0,
+        };
+        self.stairs.iter().any(|s| {
+            let foot = s.top + s.down * s.length();
+            [s.top, foot, (s.top + foot) * 0.5]
+                .iter()
+                .any(|p| b.distance(*p) < s.width * 0.5 + margin)
+        })
     }
+}
+
+/// The landmark's stairs: up the plinth on each of its four sides where
+/// it stands higher than a step (unless the flight would run onto a
+/// street or into the water), and the spire's four flights to its doors.
+fn plan_stairs(w: &TownWorld, roads: &RoadGrid, l: &Landmark) -> Vec<Stair> {
+    let mut out = Vec::new();
+    let quarter = |k: usize| {
+        let d = hw_core::det::dir2(std::f64::consts::FRAC_PI_2 * k as f64);
+        l.to_plan(d) - l.pos
+    };
+    for k in 0..4 {
+        let d = quarter(k);
+        let top = l.pos + d * (l.plaza - 0.02);
+        if l.base - w.ground(top + d * 0.3) <= 0.4 {
+            continue;
+        }
+        // The foot lands lower down the slope: settle the flight's length.
+        let mut st = Stair::new(top, d, 4.0, l.base, w.ground(top + d * 0.3));
+        for _ in 0..3 {
+            let g = w.ground(top + d * (st.length() + 0.3));
+            st = Stair::new(top, d, 4.0, l.base, g);
+        }
+        let foot = top + d * st.length();
+        if roads.touches(foot, 0.3, None) || w.ground(foot) < WATER_LEVEL + 0.3 {
+            continue;
+        }
+        out.push(st);
+    }
+    if l.kind == LandmarkKind::AetherSpire {
+        let up = SPIRE_TIERS.iter().map(|t| t.1).sum::<f64>();
+        for k in 0..4 {
+            let d = quarter(k);
+            out.push(Stair {
+                top: l.pos + d * (SPIRE_TIERS[2].0 * APOTHEM),
+                down: d,
+                width: 2.4,
+                from: l.base + up,
+                to: l.base,
+                steps: SPIRE_STEPS,
+                run: SPIRE_RUN,
+            });
+        }
+    }
+    out
 }
 
 /// Picks the landmarks' places (buildings are cleared off them afterwards).
@@ -145,6 +346,9 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
             });
         }
     }
+    for l in &mut out {
+        l.stairs = plan_stairs(w, &roads, l);
+    }
     out
 }
 
@@ -158,6 +362,7 @@ fn landmark_at(w: &TownWorld, p: DVec2, plaza: f64) -> Landmark {
         low: lo,
         height: 0.0,
         dir: DVec2::Y,
+        stairs: Vec::new(),
     }
 }
 

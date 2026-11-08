@@ -9,6 +9,7 @@ use hw_gen::building::BuildingPlan;
 use hw_gen::building::BuildingSite;
 use hw_gen::city::CityPlan;
 use hw_gen::geom::Rect;
+use hw_gen::urban::footprint::Footprint;
 use hw_gen::urban::underground::Underground;
 use hw_gen::urban::world::{TownWorld, WATER_LEVEL};
 use std::collections::BTreeMap;
@@ -186,6 +187,8 @@ pub struct Obstacles {
     /// Things that move: the street cars near the heroes, set each tick
     /// (see [`Self::set_movers`]).
     movers: RwLock<Arc<[Solid]>>,
+    /// Landmarks, whose paved plinths are raised ground.
+    plinths: Vec<hw_gen::urban::landmarks::Landmark>,
 }
 
 /// Where the open ground is water, and the bridges over it.
@@ -298,24 +301,23 @@ impl Obstacles {
                 y1: br.deck,
             });
         }
-        // Barricades: a box for each piece while it stands.
+        // Street props, one collider each while it stands: lamp posts, tree
+        // trunks, benches, kiosks, statues, fountains, parked cars,
+        // barricades.
         for (i, p) in world.props.iter().enumerate() {
-            let hw_gen::urban::props::PropKind::Barricade(piece) = p.kind else {
-                continue;
-            };
-            let (hx, hz, h) = piece.block();
-            let inward = p.dir.normalize_or(DVec2::Y);
-            let along = DVec2::new(inward.y, -inward.x);
-            out.props.insert(i as u32, out.colliders.len());
-            out.add(Solid {
-                origin: p.pos - along * hx - inward * hz,
-                along,
-                inward,
-                min: DVec2::ZERO,
-                max: DVec2::new(hx * 2.0, hz * 2.0),
-                y0: p.y - 0.1,
-                y1: p.y + h,
-            });
+            let solids: Vec<Solid> = p.footprints().iter().flat_map(solids_of).collect();
+            if !solids.is_empty() {
+                out.props.insert(i as u32, out.colliders.len());
+                out.add_all(solids);
+            }
+        }
+        // Landmarks: the plinth is raised ground; the tower, its base, the
+        // statue and the stairs are solid.
+        for l in &world.landmarks {
+            out.plinths.push(l.clone());
+            let mut parts = l.footprints();
+            parts.extend(l.stairs.iter().flat_map(|s| s.treads()));
+            out.add_all(parts.iter().flat_map(solids_of).collect());
         }
         out
     }
@@ -329,14 +331,19 @@ impl Obstacles {
 
     /// Adds a free-standing box (tests, props).
     pub fn add(&mut self, solid: Solid) {
+        self.add_all(vec![solid]);
+    }
+
+    /// Adds boxes that stand and fall together as one collider.
+    pub fn add_all(&mut self, solids: Vec<Solid>) {
         let (mut lo, mut hi) = (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN));
-        for c in solid.corners() {
+        for c in solids.iter().flat_map(|s| s.corners()) {
             lo = lo.min(c);
             hi = hi.max(c);
         }
         let mut c = Collider::new(None, 0.0, lo, hi);
         c.plan = OnceLock::from(None);
-        c.solids = OnceLock::from(vec![solid]);
+        c.solids = OnceLock::from(solids);
         self.insert(c);
     }
 
@@ -567,6 +574,9 @@ impl Obstacles {
     /// Height of the open ground at `p`: the water surface over rivers and
     /// the sea (bridges excepted).
     pub fn ground_at(&self, p: DVec2) -> f64 {
+        if let Some(top) = self.plinths.iter().find_map(|l| l.on_plinth(p)) {
+            return top;
+        }
         if let Some(t) = &self.terrain {
             return (t.0)(p).max(self.ground);
         }
@@ -719,6 +729,48 @@ impl Obstacles {
             }
             body.pos = next;
         }
+    }
+}
+
+/// The boxes for one solid part: a box as it is, a disc as a few
+/// rectangles inside its circle (their union reaches 98% of the radius
+/// every way round).
+pub fn solids_of(f: &Footprint) -> Vec<Solid> {
+    match *f {
+        Footprint::Box {
+            at,
+            dir,
+            half,
+            y0,
+            y1,
+        } => {
+            let inward = dir;
+            let along = DVec2::new(dir.y, -dir.x);
+            vec![Solid {
+                origin: at - along * half.x - inward * half.y,
+                along,
+                inward,
+                min: DVec2::ZERO,
+                max: half * 2.0,
+                y0,
+                y1,
+            }]
+        }
+        Footprint::Disc { at, r, y0, y1 } => (0..4)
+            .map(|k| {
+                let a = (k as f64 + 0.5) * std::f64::consts::FRAC_PI_8;
+                let (hx, hz) = (r * hw_core::det::cos(a), r * hw_core::det::sin(a));
+                Solid {
+                    origin: at - DVec2::new(hx, hz),
+                    along: DVec2::X,
+                    inward: DVec2::Y,
+                    min: DVec2::ZERO,
+                    max: DVec2::new(hx, hz) * 2.0,
+                    y0,
+                    y1,
+                }
+            })
+            .collect(),
     }
 }
 
@@ -959,5 +1011,70 @@ mod tests {
         };
         o.move_body(&mut b, 1.0 / 30.0);
         assert!(b.pos.x < 0.0, "tunnelled to {}", b.pos);
+    }
+
+    /// What the town draws is what stops a body: every prop's solid parts,
+    /// the landmarks' towers and stairs, and the plinths as raised ground
+    /// that a runner from the low side cannot walk into.
+    #[test]
+    fn visible_things_are_solid() {
+        use hw_core::Seed;
+        use hw_gen::urban::world::TownWorld;
+        use hw_gen::urban::TownParams;
+        let w = Arc::new(TownWorld::generate(
+            Seed(1),
+            TownParams::sample(Seed(1), 20_000.0),
+        ));
+        let ground = w.clone();
+        let o = Obstacles::from_town(&w, Terrain(Arc::new(move |p| ground.ground(p))));
+        let mut solid = 0;
+        for p in &w.props {
+            for f in p.footprints() {
+                let c = f.at();
+                assert!(
+                    o.solid_at(DVec3::new(c.x, p.y + 0.3, c.y)),
+                    "{:?} at {:?} can be walked through",
+                    p.kind,
+                    c
+                );
+                solid += 1;
+            }
+        }
+        assert!(solid > 1000, "{solid} solid parts");
+        let l = w.landmarks.first().expect("a landmark");
+        for f in l.footprints() {
+            let c = f.at();
+            let (y0, _) = f.span();
+            assert!(o.solid_at(DVec3::new(c.x, y0 + 0.3, c.y)), "{:?}", l.kind);
+        }
+        // On the plinth the ground is its top.
+        let on = l.pos + l.dir * (l.plaza - 0.5);
+        assert_eq!(o.ground_at(on), l.base);
+        // A runner at the foot of its highest wall stays outside.
+        let (out, drop) = (0..32)
+            .map(|k| {
+                let d = hw_core::det::dir2(std::f64::consts::TAU * k as f64 / 32.0);
+                let p = l.pos + d * (l.plaza + 0.6);
+                (p, l.base - w.ground(p))
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap();
+        if drop > STEP + 0.1 {
+            let inward = (l.pos - out).normalize();
+            let mut b = Body {
+                pos: DVec3::new(out.x, w.ground(out), out.y),
+                vel: DVec3::new(inward.x, 0.0, inward.y) * 6.0,
+                grounded: true,
+            };
+            for _ in 0..30 {
+                o.move_body(&mut b, 1.0 / 30.0);
+            }
+            let p = DVec2::new(b.pos.x, b.pos.z);
+            assert!(
+                p.distance(l.pos) > l.plaza - 0.01 || b.pos.y >= l.base - 0.01,
+                "walked into the plinth's side: {:?}",
+                b.pos
+            );
+        }
     }
 }

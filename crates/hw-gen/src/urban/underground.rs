@@ -805,6 +805,12 @@ pub fn molehaven_layout(u: &Underground) -> Option<MolehavenLayout> {
             let d = DVec2::new(det::cos(a), det::sin(a));
             (c.centre + d * 9.0, d)
         })
+        // In a small hall a house may stand there: no stall in its way.
+        .filter(|&(at, _): &(DVec2, DVec2)| {
+            houses
+                .iter()
+                .all(|h| at.distance(h.at) > h.stem * 1.35 + 2.8)
+        })
         .collect();
     Some(MolehavenLayout {
         floor: c.floor,

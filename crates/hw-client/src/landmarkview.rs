@@ -52,13 +52,41 @@ pub fn model(l: &Landmark, near: bool) -> Vec<Mesh> {
             if near {
                 let mut s = MeshBuilder::new();
                 crate::propview::statue(&mut s, 0);
-                b.append(s, glam::Vec3::new(0.0, 0.0, (l.plaza * 0.62) as f32));
+                b.append(s, glam::Vec3::new(0.0, 0.0, l.statue_z() as f32));
             }
         }
         LandmarkKind::Lighthouse => lighthouse(&mut b, l.height, near),
         LandmarkKind::TeslaTower => tesla(&mut b, l, near),
     }
+    stairs(&mut b, l, near);
     b.finish_parts()
+}
+
+/// The flights of steps up the plinth and the spire's base: one stone
+/// block per tread, from the same numbers people climb them by.
+fn stairs(b: &mut MeshBuilder, l: &Landmark, near: bool) {
+    let right = DVec2::new(l.dir.y, -l.dir.x);
+    let local = |v: DVec2| (v.dot(right), v.dot(l.dir));
+    let stone = rgb(204, 196, 180);
+    b.tex = near.then_some(Layer::from(FacadeLayer::Limestone));
+    for st in &l.stairs {
+        let rise = (st.from - st.to) / st.steps as f64;
+        let across = DVec2::new(st.down.y, -st.down.x);
+        let (ux, uz) = local(across);
+        for k in 1..st.steps {
+            // This tread alone (no overlap with the next), down to the foot.
+            let mid = st.top + st.down * ((k as f64 - 0.5) * st.run);
+            let (x, z) = local(mid - l.pos);
+            let (y0, y1) = (st.to - 0.6 - l.base, st.from - k as f64 * rise - l.base);
+            b.oriented_box(
+                DVec3::new(x, (y0 + y1) * 0.5, z),
+                DVec3::new(ux, 0.0, uz),
+                DVec3::new(st.width * 0.5, (y1 - y0) * 0.5, st.run * 0.5),
+                stone,
+            );
+        }
+    }
+    b.tex = None;
 }
 
 fn c3(t: (u8, u8, u8)) -> Color {
@@ -580,6 +608,7 @@ mod tests {
                 low: 1.0,
                 height: 60.0,
                 dir: DVec2::Y,
+                stairs: Vec::new(),
             };
             for near in [true, false] {
                 let parts = model(&l, near);

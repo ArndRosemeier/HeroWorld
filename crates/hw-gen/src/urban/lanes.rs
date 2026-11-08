@@ -26,6 +26,9 @@ use std::collections::BTreeMap;
 const JOIN: f64 = 4.0;
 /// Junction points closer than this are one junction.
 const MERGE: f64 = 6.0;
+/// A stop cuts its road this far before and after it (m): more than half
+/// of [`MERGE`], so the two sides stay apart.
+const STOP_CUT: f64 = 4.0;
 /// Edges shorter than this between the same junction are dropped.
 const MIN_LOOP_EDGE: f64 = 15.0;
 /// Grid cell for finding roads near a point.
@@ -95,11 +98,14 @@ struct Edge {
 }
 
 /// Plans the lane loops on the roads `roads` (indices into `world.roads`),
-/// a lane each way, `offset(road)` metres right of the centre line.
+/// a lane each way, `offset(road)` metres right of the centre line. No
+/// lane passes a point of `stops` (a barricade across the road): cars
+/// turn round before it, on either side.
 pub fn plan_lanes(
     world: &TownWorld,
     roads: &[usize],
     offset: impl Fn(&WorldRoad) -> f64,
+    stops: &[DVec2],
     seed: Seed,
 ) -> Vec<LaneLoop> {
     let lines: Vec<Polyline> = roads
@@ -169,6 +175,34 @@ pub fn plan_lanes(
             }
         }
     }
+    // Each stop cuts its road twice, a little before and after it; the
+    // piece between is left out below, so both sides end there.
+    let mut cut_joints: Vec<(usize, usize, usize)> = Vec::new();
+    for &p in stops {
+        let c = cell(p);
+        let mut best: Option<(usize, f64, f64)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for &i in grid.get(&(c.0 + dx, c.1 + dy)).into_iter().flatten() {
+                    let (s, d) = lines[i].nearest(p);
+                    if d <= half(i) && best.is_none_or(|b| d < b.2) {
+                        best = Some((i, s, d));
+                    }
+                }
+            }
+        }
+        let Some((i, s, _)) = best else { continue };
+        let mut pair = [0; 2];
+        for (k, at) in [(s - STOP_CUT).max(0.0), (s + STOP_CUT).min(lines[i].len())]
+            .into_iter()
+            .enumerate()
+        {
+            pair[k] = joints.len();
+            joints.push((i, at, lines[i].point(at)));
+            parent.push(pair[k]);
+        }
+        cut_joints.push((i, pair[0], pair[1]));
+    }
     // Points close together are one junction.
     let mut jgrid: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
     let jcell = |p: DVec2| ((p.x / MERGE).floor() as i64, (p.y / MERGE).floor() as i64);
@@ -210,6 +244,10 @@ pub fn plan_lanes(
         node_sum[n].1 += 1.0;
     }
     let nodes: Vec<DVec2> = node_sum.iter().map(|(s, n)| *s / *n).collect();
+    let cut: Vec<(usize, usize, usize)> = cut_joints
+        .iter()
+        .map(|&(i, a, b)| (i, joint_node[a], joint_node[b]))
+        .collect();
     // Edges: each road cut at its junction points.
     let mut per_road: Vec<Vec<(f64, usize)>> = vec![Vec::new(); lines.len()];
     for (k, j) in joints.iter().enumerate() {
@@ -243,6 +281,13 @@ pub fn plan_lanes(
             let (s1, b) = w[1];
             let l = s1 - s0;
             if l < 1.0 || (a == b && l < MIN_LOOP_EDGE) {
+                continue;
+            }
+            // The stretch across a barricade.
+            if cut
+                .iter()
+                .any(|&(r, x, y)| r == i && ((a, b) == (x, y) || (a, b) == (y, x)))
+            {
                 continue;
             }
             edges.push(Edge {
@@ -419,6 +464,22 @@ pub fn plan_lanes(
     loops
 }
 
+/// The lanes street cars drive: on every road with room for a lane each
+/// way, clear of the parked cars, turning round before the barricades.
+/// The same for the traffic and for the street furniture, which keeps out
+/// of their way.
+pub fn street_lanes(world: &TownWorld) -> Vec<LaneLoop> {
+    let seed = world.seed.child("traffic").child("ground");
+    let streets: Vec<usize> = (0..world.roads.len())
+        .filter(|&i| world.roads[i].has_traffic())
+        .collect();
+    let stops: Vec<DVec2> = super::edge::barricades(world)
+        .iter()
+        .map(|b| b.at)
+        .collect();
+    plan_lanes(world, &streets, WorldRoad::lane_offset, &stops, seed)
+}
+
 /// A polyline moved `d` metres to its right (x, y plan; right is `perp`).
 fn offset_line(pts: &[DVec2], d: f64) -> Vec<DVec2> {
     let n = pts.len();
@@ -459,11 +520,81 @@ mod tests {
         TownWorld::generate(Seed(1), TownParams::sample(Seed(1), 20_000.0))
     }
 
+    /// A car driving the street lanes never passes through a building, a
+    /// parked car, a lamp, a tree, a kiosk or a barricade: what cars drive
+    /// through must be open road. (Before 0.065 one sample in eight hit a
+    /// house or a parked car.)
+    #[test]
+    fn street_cars_keep_clear_of_buildings_and_props() {
+        use crate::urban::world::CAR_HALF;
+        use std::collections::BTreeMap;
+        for s in [1u64, 3] {
+            let w = TownWorld::generate(Seed(s), TownParams::sample(Seed(s), 40_000.0));
+            let key = |p: DVec2| ((p.x / 16.0).floor() as i64, (p.y / 16.0).floor() as i64);
+            let mut solids: BTreeMap<(i64, i64), Vec<crate::urban::footprint::Footprint>> =
+                BTreeMap::new();
+            for p in &w.props {
+                for f in p.footprints() {
+                    solids.entry(key(f.at())).or_default().push(f);
+                }
+            }
+            for b in &w.buildings {
+                let st = &b.site;
+                let f = crate::urban::footprint::Footprint::Box {
+                    at: st.origin + st.along * st.size.x * 0.5 + st.inward * st.size.y * 0.5,
+                    dir: st.inward,
+                    half: st.size * 0.5,
+                    y0: 0.0,
+                    y1: 1.0,
+                };
+                // Filed in every cell it covers.
+                let r = (f.reach() / 16.0).ceil() as i64;
+                let k = key(f.at());
+                for dx in -r..=r {
+                    for dy in -r..=r {
+                        solids.entry((k.0 + dx, k.1 + dy)).or_default().push(f);
+                    }
+                }
+            }
+            let (mut samples, mut hits) = (0usize, Vec::new());
+            for l in street_lanes(&w) {
+                let mut at = 0.0;
+                while at < l.len() {
+                    let (p, d) = l.sample(at);
+                    samples += 1;
+                    // The car as three discs along its length.
+                    let hit = [p - d * 1.3, p, p + d * 1.3].iter().any(|&c| {
+                        let k = key(c);
+                        (-1..=1).any(|dx| {
+                            (-1..=1).any(|dy| {
+                                solids
+                                    .get(&(k.0 + dx, k.1 + dy))
+                                    .into_iter()
+                                    .flatten()
+                                    .any(|f| f.distance(c) < CAR_HALF - 0.2)
+                            })
+                        })
+                    });
+                    if hit {
+                        hits.push(p);
+                    }
+                    at += 2.0;
+                }
+            }
+            assert!(
+                hits.len() * 2000 <= samples,
+                "seed {s}: {} of {samples} lane samples run into something, e.g. {:?}",
+                hits.len(),
+                &hits[..hits.len().min(5)]
+            );
+        }
+    }
+
     #[test]
     fn every_lane_is_on_a_loop_and_loops_are_smooth() {
         let w = town();
         let all: Vec<usize> = (0..w.roads.len()).collect();
-        let loops = plan_lanes(&w, &all, |r| r.half * 0.5, Seed(5));
+        let loops = plan_lanes(&w, &all, |r| r.half * 0.5, &[], Seed(5));
         assert!(loops.len() > 10, "{} loops", loops.len());
         let total: f64 = loops.iter().map(|l| l.len()).sum();
         let roads: f64 = w
@@ -503,8 +634,8 @@ mod tests {
     fn same_seed_same_lanes() {
         let (a, b) = (town(), town());
         let main_a: Vec<usize> = (0..a.roads.len()).filter(|&i| a.roads[i].main).collect();
-        let x = plan_lanes(&a, &main_a, |_| 2.0, Seed(2));
-        let y = plan_lanes(&b, &main_a, |_| 2.0, Seed(2));
+        let x = plan_lanes(&a, &main_a, |_| 2.0, &[], Seed(2));
+        let y = plan_lanes(&b, &main_a, |_| 2.0, &[], Seed(2));
         assert_eq!(x.len(), y.len());
         for (p, q) in x.iter().zip(&y) {
             assert_eq!(p.pts, q.pts);

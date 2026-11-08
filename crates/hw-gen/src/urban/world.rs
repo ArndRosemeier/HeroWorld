@@ -7,11 +7,12 @@
 //! [`WATER_LEVEL`]; the land rises from it.
 
 use super::graph::signed_area;
-use super::growth::{CentreKind, Era};
+use super::growth::CentreKind;
 use super::land::{distance_to, Grid};
 use super::landmarks::{plan_landmarks, Landmark};
-use super::plots::{plan_buildings, road_reach, side_reach};
+use super::plots::{plan_buildings, road_reach_at, side_reach};
 use super::props::{plan_props, Prop};
+use super::roadgrid::RoadGrid;
 use super::roads::RoadClass;
 use super::streets::{plan_piece, PieceStreets, StreetStyle};
 use super::underground::{plan_underground, Underground};
@@ -41,6 +42,55 @@ pub struct WorldRoad {
     pub class: Option<RoadClass>,
     /// A side street's style.
     pub style: Option<StreetStyle>,
+}
+
+/// Half the width of a moving car, with its mirrors (m).
+pub const CAR_HALF: f64 = 1.1;
+/// How far in from the kerb parked cars reach (m): the widest parked
+/// car, from its place 1.15 m in, with a hand's breadth to spare.
+pub const PARKED_ROOM: f64 = 2.4;
+/// Between a moving car and anything beside it (m).
+const CAR_SPARE: f64 = 0.15;
+/// Half the room a person walking takes (m).
+pub const WALKER_HALF: f64 = 0.3;
+
+impl WorldRoad {
+    /// Whether cars drive here: a lane each way, each wide enough for a car.
+    pub fn has_traffic(&self) -> bool {
+        self.pts.len() >= 2 && self.half >= 2.0 * (CAR_HALF + CAR_SPARE) + 0.2
+    }
+
+    /// Whether cars may park along both kerbs and still leave a lane each
+    /// way beside them.
+    pub fn parking_fits(&self) -> bool {
+        self.half - PARKED_ROOM - CAR_SPARE >= 2.0 * CAR_HALF + 2.0 * CAR_SPARE
+    }
+
+    /// The middle of the lane each way, right of the centre line (m): half
+    /// way to the kerb, or clear of the parked cars where there are any.
+    pub fn lane_offset(&self) -> f64 {
+        let free = if self.parking_fits() {
+            self.half - PARKED_ROOM - CAR_SPARE
+        } else {
+            self.half
+        };
+        (self.half * 0.5)
+            .min(free - CAR_HALF - CAR_SPARE)
+            .max(CAR_HALF + CAR_SPARE)
+    }
+
+    /// The line people walk along the pavement, from the centre line (m):
+    /// a little nearer the houses than the kerb, where the street lamps,
+    /// trees and hydrants stand.
+    pub fn walk_offset(&self) -> f64 {
+        self.half + self.pavement * 0.55
+    }
+
+    /// Where along the kerb lamps, hydrants and tree pits stand, from the
+    /// kerb (m).
+    pub fn kerb_spot(&self) -> f64 {
+        (self.pavement * 0.2).min(0.45)
+    }
 }
 
 /// A building on the ground.
@@ -124,8 +174,14 @@ impl TownWorld {
         out.landmarks = plan_landmarks(&out);
         (out.quays, out.water_steps) = plan_waterfront(&out);
         let mut buildings = Vec::new();
+        let roads = RoadGrid::new(&out, 0.0);
         for (i, (pc, streets)) in out.town.pieces.iter().zip(&out.pieces).enumerate() {
             for site in plan_buildings(seed, &out.town, i, pc, streets) {
+                // Never on a street, not even a neighbouring piece's (a
+                // metre's grace on its pavement, as round a bend).
+                if on_a_street(&roads, &site) {
+                    continue;
+                }
                 let corners = site.corners();
                 let hs: Vec<f64> = corners.iter().map(|c| out.ground(*c)).collect();
                 let hi = hs.iter().copied().fold(f64::MIN, f64::max);
@@ -199,16 +255,11 @@ impl TownWorld {
     }
 
     fn make_roads(&self) -> Vec<WorldRoad> {
-        let g = &self.town.growth;
         let mut out = Vec::new();
         for r in &self.town.network.roads {
-            let reach = road_reach(r.class);
             // In an old town even a main road is narrow: split the road into
             // runs of one width.
-            let reach_at = |p: DVec2| match g.time.cell_of(p) {
-                Some((i, j)) if g.built(i, j) && g.era(i, j) == Era::Old => reach.min(7.0),
-                _ => reach,
-            };
+            let reach_at = |p: DVec2| road_reach_at(&self.town, r.class, p);
             let mut run: Vec<DVec2> = vec![r.pts[0]];
             let mut cur = reach_at(r.pts[0]);
             for w in r.pts.windows(2) {
@@ -280,6 +331,17 @@ impl TownWorld {
     }
 }
 
+/// Does a building's outline come onto any street's carriageway or more
+/// than a metre into its pavement?
+fn on_a_street(roads: &RoadGrid, site: &BuildingSite) -> bool {
+    let c = site.corners();
+    (0..4).any(|k| {
+        let (a, b) = (c[k], c[(k + 1) % 4]);
+        let n = (a.distance(b) / 0.8).ceil().max(1.0) as usize;
+        (0..n).any(|j| roads.touches(a.lerp(b, j as f64 / n as f64), -1.0, None))
+    })
+}
+
 fn road(
     pts: Vec<DVec2>,
     reach: f64,
@@ -321,5 +383,42 @@ mod tests {
         }
         let (p, _) = w.spawn_line();
         assert!(w.ground(p) > WATER_LEVEL);
+    }
+
+    /// No building stands on a carriageway, dead ends and other pieces'
+    /// streets included (a fifth of them did before 0.065, and cars drove
+    /// through them), checked against the drawn width of every road.
+    #[test]
+    fn no_building_stands_on_a_street() {
+        let w = TownWorld::generate(Seed(1), TownParams::sample(Seed(1), 40_000.0));
+        let boxes: Vec<(DVec2, DVec2)> = w
+            .roads
+            .iter()
+            .map(|r| {
+                let lo = r.pts.iter().fold(DVec2::MAX, |m, p| m.min(*p));
+                let hi = r.pts.iter().fold(DVec2::MIN, |m, p| m.max(*p));
+                (lo - DVec2::splat(r.half), hi + DVec2::splat(r.half))
+            })
+            .collect();
+        for b in &w.buildings {
+            let c = b.site.corners();
+            for k in 0..4 {
+                for j in 0..=10 {
+                    let q = c[k].lerp(c[(k + 1) % 4], j as f64 / 10.0);
+                    let near = |i: &usize| {
+                        let (lo, hi) = boxes[*i];
+                        q.x >= lo.x && q.y >= lo.y && q.x <= hi.x && q.y <= hi.y
+                    };
+                    for r in (0..w.roads.len()).filter(near).map(|i| &w.roads[i]) {
+                        let d = r
+                            .pts
+                            .windows(2)
+                            .map(|s| crate::water::segment_distance(q, s[0], s[1]))
+                            .fold(f64::MAX, f64::min);
+                        assert!(d >= r.half, "a building on a street at {q:?}");
+                    }
+                }
+            }
+        }
     }
 }

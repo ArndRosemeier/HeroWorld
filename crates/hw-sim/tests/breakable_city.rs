@@ -87,7 +87,11 @@ fn small_building(t: &GeneratedTown) -> usize {
     (0..t.world.buildings.len())
         .filter(|&i| {
             let (_, plan, _) = centre(t, i);
-            plan.floors.len() <= 3 && destruction::material_factor(&plan) <= 1.1
+            // On level ground, so a hero in front stands at its floor.
+            let b = &t.world.buildings[i];
+            plan.floors.len() <= 3
+                && destruction::material_factor(&plan) <= 1.1
+                && b.base - b.low < 0.3
         })
         .min_by(|&a, &b| {
             let d = |i| DVec2::new(centre(t, i).0.x, centre(t, i).0.z).distance(spawn);
