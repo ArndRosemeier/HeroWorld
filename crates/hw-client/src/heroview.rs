@@ -73,6 +73,16 @@ fn angle_delta(from: f32, to: f32) -> f32 {
 }
 
 impl HeroAnim {
+    /// Turns the body towards `yaw` (degrees), quickly: to face a foe.
+    pub fn face(&mut self, yaw: f32, dt: f32) {
+        self.yaw = ease(self.yaw, self.yaw + angle_delta(self.yaw, yaw), 16.0, dt);
+    }
+
+    /// The way the body faces now (degrees).
+    pub fn yaw(&self) -> f32 {
+        self.yaw
+    }
+
     /// One frame. `flying`: known for our own hero; `None` for others,
     /// then it is told from the motion (in the air without falling).
     pub fn step(&mut self, vel: Vec3, grounded: bool, flying: Option<bool>, dt: f32) -> Drive {

@@ -1,0 +1,1456 @@
+//! The fight as the player sees and plays it: Tab targeting nearest the
+//! crosshair, the power keys, the target frame with its con colour, health
+//! and energy bars, floating numbers, and the feel of every blow (sparks,
+//! beams, scorch marks, sounds, camera shake, hit-stop). Knockback and
+//! defeat turn characters into Engine ragdolls; defeated villains lie in
+//! glowing energy cuffs until the police drone takes them away.
+//!
+//! The server decides everything; this only shows the entity states and
+//! fight events it sends, and turns keys into input.
+
+use engine::prelude::*;
+use engine::ui::egui;
+use glam::{Mat4, Vec3};
+use hw_core::NetId;
+use hw_net::{EntityKind, EntityState, Fx, FxKind, Power, Status};
+use hw_sim::combat::{power_spec, EnemyKind};
+use std::collections::BTreeMap;
+
+/// Villains further than this cannot be picked with Tab.
+pub const TARGET_RANGE: f32 = 60.0;
+/// Only villains within this angle of the crosshair are picked (degrees).
+pub const TARGET_CONE: f32 = 55.0;
+/// Fight events older than this (seconds) are not shown any more.
+const LATE: f64 = 0.6;
+
+/// The name and rank shown in the target frame.
+pub fn enemy_name(kind: EntityKind) -> (&'static str, &'static str) {
+    match EnemyKind::from_entity(kind) {
+        Some(k) => {
+            let s = hw_sim::combat::enemy_spec(k);
+            (s.name, s.rank)
+        }
+        None => ("", ""),
+    }
+}
+
+/// City of Heroes' con colours: an enemy's level against yours.
+pub fn con_colour(theirs: u8, mine: u8) -> egui::Color32 {
+    let d = theirs as i32 - mine as i32;
+    match d {
+        i32::MIN..=-4 => egui::Color32::from_rgb(150, 150, 150), // grey
+        -3 | -2 => egui::Color32::from_rgb(90, 200, 90),         // green
+        -1 => egui::Color32::from_rgb(90, 150, 255),             // blue
+        0 => egui::Color32::from_rgb(240, 240, 240),             // white
+        1 => egui::Color32::from_rgb(250, 220, 60),              // yellow
+        2 => egui::Color32::from_rgb(250, 150, 40),              // orange
+        3 => egui::Color32::from_rgb(235, 60, 50),               // red
+        _ => egui::Color32::from_rgb(180, 80, 230),              // purple
+    }
+}
+
+fn engine_colour(c: egui::Color32) -> Color {
+    rgb(c.r(), c.g(), c.b())
+}
+
+/// A number rising from a blow.
+struct Floater {
+    at: Vec3,
+    text: String,
+    colour: egui::Color32,
+    age: f32,
+    big: bool,
+}
+
+/// The fight's sounds, made here from sine waves and noise.
+struct Sounds {
+    punch: Sound,
+    bolt: Sound,
+    ray: Sound,
+    charge: Sound,
+    whoosh: Sound,
+    chime: Sound,
+    hum: Sound,
+}
+
+/// What the player pressed this tick, for the server.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FightInput {
+    pub power: u8,
+    pub target: Option<NetId>,
+    pub revive: bool,
+    pub hospital: bool,
+}
+
+pub struct FightView {
+    /// The villain picked with Tab.
+    pub target: Option<NetId>,
+    sounds: Option<Sounds>,
+    floaters: Vec<Floater>,
+    /// Camera shake strength (decays).
+    shake: f32,
+    /// A red edge when our hero is hit.
+    hurt: f32,
+    /// Characters frozen for a moment by a heavy blow.
+    hitstop: BTreeMap<NetId, f32>,
+    /// A clip shown instead of walking for a while: (clip, seconds left, once).
+    actions: BTreeMap<NetId, (&'static str, f32)>,
+    /// Status last seen per fighter.
+    statuses: BTreeMap<NetId, Status>,
+    /// Energy-cuff rings on the ground under defeated villains.
+    cuffs: BTreeMap<NetId, DecalId>,
+    /// The ring under the target: decal and where it is.
+    marker: Option<(DecalId, Vec3, NetId)>,
+    /// Seconds until each power is ready (our estimate; the server decides).
+    cooldown: [f32; 2],
+    /// A short line in the middle of the screen ("Out of range").
+    note: Option<(String, f32)>,
+    /// Drone hums, following each drone.
+    hums: BTreeMap<NetId, SoundId>,
+    /// Ray guns in technicians' hands: character entity -> gun.
+    guns: std::collections::HashMap<EntityId, EntityId>,
+    /// Next punch from our hero is a cross (alternating with the jab).
+    cross: bool,
+    clock: f32,
+}
+
+impl Default for FightView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FightView {
+    pub fn new() -> Self {
+        Self {
+            target: None,
+            sounds: None,
+            floaters: Vec::new(),
+            shake: 0.0,
+            hurt: 0.0,
+            hitstop: BTreeMap::new(),
+            actions: BTreeMap::new(),
+            statuses: BTreeMap::new(),
+            cuffs: BTreeMap::new(),
+            marker: None,
+            cooldown: [0.0; 2],
+            note: None,
+            hums: BTreeMap::new(),
+            guns: std::collections::HashMap::new(),
+            cross: false,
+            clock: 0.0,
+        }
+    }
+
+    /// Keys: Tab picks the villain nearest the crosshair (again: the next
+    /// one), 1 or left mouse strikes, 2 or Q fires an energy bolt, E held revives a downed
+    /// teammate, H calls the medical drone when you are down.
+    pub fn input(
+        &mut self,
+        input: &engine::input::Input,
+        me: Option<&EntityState>,
+        all: &[EntityState],
+        eye: Vec3,
+        look: Vec3,
+    ) -> FightInput {
+        let mut out = FightInput::default();
+        // A target that fell or left is dropped.
+        if let Some(t) = self.target {
+            let ok = all.iter().any(|e| e.id == t && targetable(e));
+            if !ok {
+                self.target = None;
+            }
+        }
+        if input.pressed(Key::Tab) {
+            self.target = pick_target(all, eye, look, self.target);
+            if self.target.is_none() {
+                self.say("No villain in sight");
+            }
+        }
+        let down = me
+            .and_then(|m| m.combat)
+            .is_some_and(|c| matches!(c.status, Status::Down | Status::Carried));
+        for (key, power) in [(Key::Digit1, Power::Strike), (Key::Digit2, Power::Bolt)] {
+            let alt = match power {
+                Power::Strike => input.mouse_clicked(MouseButton::Left),
+                Power::Bolt => input.pressed(Key::Q),
+            };
+            if !(input.pressed(key) || alt) || down {
+                continue;
+            }
+            // No target yet: take the one nearest the crosshair.
+            if self.target.is_none() {
+                self.target = pick_target(all, eye, look, None);
+            }
+            let spec = power_spec(power);
+            if let (Some(m), Some(t)) =
+                (me, self.target.and_then(|t| all.iter().find(|e| e.id == t)))
+            {
+                let d = pos(m).distance(pos(t));
+                if d > spec.range as f32 {
+                    self.say(if power == Power::Strike {
+                        "Too far to punch"
+                    } else {
+                        "Out of range"
+                    });
+                }
+                let energy = m.combat.map_or(0.0, |c| c.energy as f32 / 255.0 * 100.0);
+                if energy + 0.5 < spec.cost {
+                    self.say("Not enough energy");
+                }
+            }
+            out.power = power.code();
+        }
+        out.target = self.target;
+        out.revive = input.down(Key::E) && !down;
+        out.hospital = input.pressed(Key::H) && down;
+        out
+    }
+
+    fn say(&mut self, text: &str) {
+        self.note = Some((text.to_string(), 1.4));
+    }
+
+    /// The clip to show for `id` instead of its walk, if any.
+    pub fn action(&self, id: NetId) -> Option<&'static str> {
+        self.actions.get(&id).map(|a| a.0)
+    }
+
+    /// Is `id` frozen by a heavy blow right now?
+    pub fn frozen(&self, id: NetId) -> bool {
+        self.hitstop.contains_key(&id)
+    }
+
+    /// Camera shake to add to the eye this frame.
+    pub fn shake(&self) -> Vec3 {
+        if self.shake <= 0.001 {
+            return Vec3::ZERO;
+        }
+        let t = self.clock * 60.0;
+        Vec3::new(t.sin() * 0.9, (t * 1.37).cos(), (t * 0.71).sin() * 0.6) * self.shake * 0.12
+    }
+
+    /// Shows what happened in fights since the last frame. `ents` finds the
+    /// drawn entity of a fighter.
+    pub fn on_fx(
+        &mut self,
+        world: &mut World,
+        events: &[Fx],
+        now_tick: f64,
+        me: Option<NetId>,
+        ents: &BTreeMap<NetId, (EntityId, bool)>,
+        all: &[EntityState],
+    ) {
+        if self.sounds.is_none() {
+            self.sounds = Some(make_sounds());
+        }
+        for e in events {
+            if (now_tick - e.tick as f64) * hw_sim::DT > LATE {
+                continue;
+            }
+            let at = Vec3::from(e.at);
+            let mine = me == Some(e.from);
+            let on_me = me == Some(e.to);
+            let from_ent = ents.get(&e.from).map(|x| x.0);
+            let origin = hand(world, from_ent).unwrap_or_else(|| {
+                all.iter()
+                    .find(|s| s.id == e.from)
+                    .map_or(at, |s| pos(s) + Vec3::Y * 1.3)
+            });
+            match e.kind {
+                FxKind::Strike => {
+                    let clip = if self.cross {
+                        "punch cross"
+                    } else {
+                        "punch jab"
+                    };
+                    self.cross = !self.cross;
+                    self.act(e.from, clip, 0.75);
+                    sparks(
+                        world,
+                        at,
+                        (at - origin).normalize_or_zero(),
+                        26,
+                        rgb(255, 236, 170),
+                    );
+                    self.play(world, |s| &s.punch, at, 1.0, 1.0);
+                    self.blow(e, at, mine, on_me, egui::Color32::from_rgb(255, 240, 140));
+                    if mine {
+                        self.cooldown[0] = power_spec(Power::Strike).recharge as f32;
+                    }
+                }
+                FxKind::Bolt => {
+                    self.act(e.from, "spell cast", 0.55);
+                    beam(world, origin, at, rgb(120, 220, 255), rgb(40, 120, 255));
+                    impact(world, at, rgb(140, 230, 255), 1.2);
+                    scorch(world, at, all, e.to);
+                    self.play(world, |s| &s.bolt, origin, 1.0, 1.0);
+                    self.blow(e, at, mine, on_me, egui::Color32::from_rgb(120, 220, 255));
+                    if mine {
+                        self.cooldown[1] = power_spec(Power::Bolt).recharge as f32;
+                    }
+                }
+                FxKind::PunchWindup => {
+                    // The telegraph: a wide hook you can see coming.
+                    self.act(e.from, "hook", 0.95);
+                }
+                FxKind::Punch => {
+                    if e.amount > 0 {
+                        sparks(
+                            world,
+                            at,
+                            (at - origin).normalize_or_zero(),
+                            14,
+                            rgb(255, 200, 150),
+                        );
+                        self.play(world, |s| &s.punch, at, 0.9, 0.8);
+                        self.blow(e, at, false, on_me, egui::Color32::from_rgb(255, 90, 70));
+                    } else {
+                        self.play(world, |s| &s.whoosh, at, 0.4, 1.6);
+                    }
+                }
+                FxKind::RayWindup => {
+                    self.act(e.from, "pistol aim", 0.75);
+                    glow_at(world, origin, rgb(150, 255, 120), 0.25);
+                    self.play(world, |s| &s.charge, origin, 0.6, 1.0);
+                }
+                FxKind::Ray => {
+                    self.act(e.from, "pistol shoot", 0.65);
+                    let to = if e.amount > 0 {
+                        at
+                    } else {
+                        // A miss sails past.
+                        at + (at - origin).normalize_or_zero() * 6.0 + Vec3::Y * 0.6
+                    };
+                    beam(world, origin, to, rgb(170, 255, 110), rgb(60, 200, 40));
+                    if e.amount > 0 {
+                        impact(world, at, rgb(170, 255, 120), 0.7);
+                        self.blow(e, at, false, on_me, egui::Color32::from_rgb(255, 90, 70));
+                    }
+                    self.play(world, |s| &s.ray, origin, 0.8, 1.0);
+                }
+                FxKind::Revived => {
+                    rise(world, at, rgb(255, 220, 120));
+                    self.play(world, |s| &s.chime, at, 1.0, 1.0);
+                    self.float(
+                        at + Vec3::Y,
+                        "Revived!".into(),
+                        egui::Color32::from_rgb(255, 220, 120),
+                        true,
+                    );
+                }
+                FxKind::Lifted => {
+                    self.play(world, |s| &s.whoosh, at, 0.8, 1.0);
+                }
+                FxKind::Healed => {
+                    rise(world, at, rgb(140, 255, 170));
+                    self.play(world, |s| &s.chime, at, 1.0, 1.25);
+                    if on_me || mine {
+                        self.say("Patched up at the hospital");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A blow landed: numbers, shake, hit-stop, the hit reaction.
+    fn blow(&mut self, e: &Fx, at: Vec3, mine: bool, on_me: bool, colour: egui::Color32) {
+        if e.amount > 0 {
+            self.float(
+                at + Vec3::Y * 0.4,
+                format!("{}", e.amount),
+                colour,
+                e.defeat,
+            );
+        }
+        if e.defeat && mine {
+            self.float(
+                at + Vec3::Y * 1.0,
+                "Defeated!".into(),
+                egui::Color32::from_rgb(255, 210, 80),
+                true,
+            );
+        }
+        if mine {
+            self.shake = self.shake.max(if e.knock { 0.55 } else { 0.3 });
+        }
+        if on_me {
+            self.shake = self.shake.max(0.5);
+            self.hurt = 1.0;
+        }
+        // Hit-stop: the struck and the striker freeze for a heartbeat.
+        let stop = if e.knock || e.defeat { 0.09 } else { 0.06 };
+        self.hitstop.insert(e.to, stop);
+        self.hitstop.insert(e.from, stop);
+        if !e.knock && !e.defeat && !self.actions.contains_key(&e.to) {
+            self.act(e.to, "hit to chest", 0.4);
+        }
+    }
+
+    fn act(&mut self, id: NetId, clip: &'static str, seconds: f32) {
+        self.actions.insert(id, (clip, seconds));
+    }
+
+    fn float(&mut self, at: Vec3, text: String, colour: egui::Color32, big: bool) {
+        self.floaters.push(Floater {
+            at,
+            text,
+            colour,
+            age: 0.0,
+            big,
+        });
+    }
+
+    fn play(
+        &mut self,
+        world: &mut World,
+        which: impl Fn(&Sounds) -> &Sound,
+        at: Vec3,
+        volume: f32,
+        pitch: f32,
+    ) {
+        if let Some(s) = &self.sounds {
+            world.play_sound(
+                which(s),
+                PlaySound::at(at)
+                    .volume(volume)
+                    .pitch(pitch)
+                    .range(4.0, 90.0),
+            );
+        }
+    }
+
+    /// Knocks, defeats, revivals and lifts: ragdolls and cuffs follow the
+    /// fighters' status. Call after the characters are drawn.
+    pub fn statuses(
+        &mut self,
+        world: &mut World,
+        all: &[EntityState],
+        ents: &mut BTreeMap<NetId, (EntityId, bool)>,
+    ) {
+        let mut seen = Vec::new();
+        for s in all {
+            let Some(c) = s.combat else { continue };
+            seen.push(s.id);
+            let was = self
+                .statuses
+                .insert(s.id, c.status)
+                .unwrap_or(Status::Standing);
+            let Some(&(e, animated)) = ents.get(&s.id) else {
+                continue;
+            };
+            if was == c.status {
+                continue;
+            }
+            let vel = Vec3::from(s.vel);
+            let villain = s.kind.is_enemy();
+            match (was, c.status) {
+                (_, Status::Knocked) if animated => {
+                    let knock = engine::ragdoll::Knock::new(Vec3::ZERO)
+                        .velocity(vel)
+                        .stay_down(true);
+                    let _ = world.knock_down(e, knock);
+                    self.actions.remove(&s.id);
+                }
+                (Status::Knocked, Status::Standing) if animated => {
+                    let _ = world.set_stay_down(e, false);
+                    let _ = world.get_up(e);
+                }
+                (Status::Down | Status::Knocked, Status::Standing) if animated => {
+                    // Revived (or back from hospital): up again.
+                    let _ = world.set_stay_down(e, false);
+                    let _ = world.get_up(e);
+                }
+                (_, Status::Down) => {
+                    if animated {
+                        if world.ragdoll_state(e).is_some() {
+                            let _ = world.set_stay_down(e, true);
+                        } else {
+                            let v = if vel.length() > 0.5 {
+                                vel
+                            } else {
+                                Vec3::Y * 0.5
+                            };
+                            let knock = engine::ragdoll::Knock::new(Vec3::ZERO)
+                                .velocity(v)
+                                .stay_down(true);
+                            let _ = world.knock_down(e, knock);
+                        }
+                    }
+                    self.actions.remove(&s.id);
+                    if villain {
+                        // Energy cuffs: a glowing ring where they lie.
+                        let p = pos(s) + Vec3::Y * 0.3;
+                        let ring = Decal::new(DecalKind::Power, p, Vec3::Y, 2.2)
+                            .tint(rgb(90, 220, 255))
+                            .emission(3.0)
+                            .depth(1.5)
+                            .fade(0.3, 0.3);
+                        if let Ok(id) = world.spawn_decal(ring) {
+                            self.cuffs.insert(s.id, id);
+                        }
+                        self.float(
+                            p + Vec3::Y * 1.2,
+                            "Cuffed".into(),
+                            egui::Color32::from_rgb(120, 220, 255),
+                            false,
+                        );
+                    }
+                }
+                (_, Status::Carried) => {
+                    // Off the ground: a fresh character hangs from the drone.
+                    if let Some(d) = self.cuffs.remove(&s.id) {
+                        world.remove_decal(d);
+                    }
+                    if let Some((e, _)) = ents.remove(&s.id) {
+                        self.drop_gun(world, e);
+                        world.despawn(e);
+                    }
+                    self.act(s.id, if villain { "cuffed" } else { "hover" }, 1.0e6);
+                }
+                _ => {}
+            }
+        }
+        // Forget the gone.
+        let gone: Vec<NetId> = self
+            .statuses
+            .keys()
+            .filter(|id| !seen.contains(id))
+            .copied()
+            .collect();
+        for id in gone {
+            self.statuses.remove(&id);
+            self.actions.remove(&id);
+            if let Some(d) = self.cuffs.remove(&id) {
+                world.remove_decal(d);
+            }
+        }
+        // Drone hums follow the drones.
+        let drones: Vec<&EntityState> =
+            all.iter().filter(|e| e.kind == EntityKind::Drone).collect();
+        for d in &drones {
+            if !self.hums.contains_key(&d.id) {
+                if self.sounds.is_none() {
+                    self.sounds = Some(make_sounds());
+                }
+                if let (Some(s), Some(&(e, _))) = (&self.sounds, ents.get(&d.id)) {
+                    let id = world.play_sound(
+                        &s.hum,
+                        PlaySound::following(e)
+                            .looped()
+                            .volume(0.5)
+                            .range(3.0, 70.0)
+                            .fade_in(0.5),
+                    );
+                    self.hums.insert(d.id, id);
+                }
+            }
+        }
+        let quiet: Vec<NetId> = self
+            .hums
+            .keys()
+            .filter(|id| !drones.iter().any(|d| d.id == **id))
+            .copied()
+            .collect();
+        for id in quiet {
+            if let Some(s) = self.hums.remove(&id) {
+                world.stop_sound(s, 0.4);
+            }
+        }
+    }
+
+    /// Puts a ray gun in a technician's right hand (once per character).
+    pub fn arm(&mut self, world: &mut World, e: EntityId) {
+        if self.guns.contains_key(&e) {
+            return;
+        }
+        if let Ok(gun) = world.place(ray_gun(), Place::new(0.0, 0.0, 0.0)) {
+            // The grip in the palm, the barrel along the fingers.
+            let local = Place::new(0.0, 0.08, 0.03).with_pitch_deg(-90.0);
+            if world.attach_to_bone(gun, e, "hand_r", local).is_ok() {
+                self.guns.insert(e, gun);
+            } else {
+                world.despawn(gun);
+            }
+        }
+    }
+
+    /// Takes a ray gun away with its technician.
+    pub fn drop_gun(&mut self, world: &mut World, e: EntityId) {
+        if let Some(g) = self.guns.remove(&e) {
+            world.despawn(g);
+        }
+    }
+
+    /// Time passes: numbers rise, shakes and freezes fade, the ring under
+    /// the target follows it.
+    pub fn update(
+        &mut self,
+        world: &mut World,
+        dt: f32,
+        all: &[EntityState],
+        me: Option<&EntityState>,
+    ) {
+        self.clock += dt;
+        self.shake = (self.shake - dt * 2.2).max(0.0);
+        self.hurt = (self.hurt - dt * 2.0).max(0.0);
+        for c in &mut self.cooldown {
+            *c = (*c - dt).max(0.0);
+        }
+        self.hitstop.retain(|_, t| {
+            *t -= dt;
+            *t > 0.0
+        });
+        self.actions.retain(|_, a| {
+            a.1 -= dt;
+            a.1 > 0.0
+        });
+        for f in &mut self.floaters {
+            f.age += dt;
+            f.at.y += dt * 0.9;
+        }
+        self.floaters.retain(|f| f.age < 1.3);
+        if let Some(n) = &mut self.note {
+            n.1 -= dt;
+            if n.1 <= 0.0 {
+                self.note = None;
+            }
+        }
+        // The target ring, in the target's con colour.
+        let want = self.target.and_then(|t| all.iter().find(|e| e.id == t));
+        let mine = me.and_then(|m| m.combat).map_or(1, |c| c.level);
+        match want {
+            Some(t) => {
+                let p = pos(t) + Vec3::Y * 0.2;
+                let moved = self
+                    .marker
+                    .is_none_or(|(_, at, id)| id != t.id || at.distance(p) > 0.08);
+                if moved {
+                    if let Some((d, _, _)) = self.marker.take() {
+                        world.remove_decal(d);
+                    }
+                    let colour = engine_colour(con_colour(t.combat.map_or(1, |c| c.level), mine));
+                    let ring = Decal::new(DecalKind::Power, p, Vec3::Y, 1.6)
+                        .tint(colour)
+                        .emission(2.0)
+                        .depth(1.2);
+                    if let Ok(d) = world.spawn_decal(ring) {
+                        self.marker = Some((d, p, t.id));
+                    }
+                }
+            }
+            None => {
+                if let Some((d, _, _)) = self.marker.take() {
+                    world.remove_decal(d);
+                }
+            }
+        }
+    }
+
+    /// The fight's screen: bars and power tray, the target frame, floating
+    /// numbers and names over villains, and what to do when someone is down.
+    pub fn hud(
+        &self,
+        ctx: &egui::Context,
+        view_proj: Mat4,
+        me: Option<&EntityState>,
+        all: &[EntityState],
+        names: &dyn Fn(&EntityState) -> String,
+    ) {
+        let screen = ctx.screen_rect();
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::new("fight hud"),
+        ));
+        let project = |p: Vec3| -> Option<egui::Pos2> {
+            let c = view_proj * p.extend(1.0);
+            if c.w <= 0.05 {
+                return None;
+            }
+            let n = c.truncate() / c.w;
+            if n.x.abs() > 1.2 || n.y.abs() > 1.2 {
+                return None;
+            }
+            Some(egui::pos2(
+                screen.left() + (n.x * 0.5 + 0.5) * screen.width(),
+                screen.top() + (0.5 - n.y * 0.5) * screen.height(),
+            ))
+        };
+        let mine = me.and_then(|m| m.combat).map_or(1, |c| c.level);
+        let font = |s: f32| egui::FontId::proportional(s);
+        let dark = egui::Color32::from_black_alpha(170);
+
+        // Over villains: a slim health bar once hurt, the name when targeted.
+        for e in all.iter().filter(|e| e.kind.is_enemy()) {
+            let Some(c) = e.combat else { continue };
+            if !matches!(c.status, Status::Standing | Status::Knocked) {
+                continue;
+            }
+            let targeted = self.target == Some(e.id);
+            if c.health == 255 && !targeted {
+                continue;
+            }
+            let Some(p) = project(pos(e) + Vec3::Y * 2.15) else {
+                continue;
+            };
+            let w = 46.0;
+            let r = egui::Rect::from_min_size(p - egui::vec2(w * 0.5, 0.0), egui::vec2(w, 5.0));
+            painter.rect_filled(r.expand(1.0), 1.0, dark);
+            let f = c.health as f32 / 255.0;
+            painter.rect_filled(
+                egui::Rect::from_min_size(r.min, egui::vec2(w * f, 5.0)),
+                1.0,
+                egui::Color32::from_rgb(220, 60, 50),
+            );
+            if targeted {
+                let col = con_colour(c.level, mine);
+                // A con-coloured arrow over the target's head.
+                let tip = p - egui::vec2(0.0, 5.0);
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        tip,
+                        tip + egui::vec2(8.0, -12.0),
+                        tip + egui::vec2(-8.0, -12.0),
+                    ],
+                    col,
+                    egui::Stroke::new(1.0_f32, egui::Color32::BLACK),
+                ));
+            }
+        }
+
+        // Floating numbers.
+        for f in &self.floaters {
+            let Some(p) = project(f.at) else { continue };
+            let a = (1.0 - (f.age / 1.3).powi(2)).clamp(0.0, 1.0);
+            let size =
+                if f.big { 26.0 } else { 20.0 } * (1.0 + 0.4 * (1.0 - (f.age * 6.0).min(1.0)));
+            let col = f.colour.gamma_multiply(a);
+            painter.text(
+                p + egui::vec2(2.0, 2.0),
+                egui::Align2::CENTER_CENTER,
+                &f.text,
+                font(size),
+                egui::Color32::from_black_alpha((a * 200.0) as u8),
+            );
+            painter.text(p, egui::Align2::CENTER_CENTER, &f.text, font(size), col);
+        }
+
+        // A red edge when hurt.
+        if self.hurt > 0.0 {
+            let a = (self.hurt * 90.0) as u8;
+            let red = egui::Color32::from_rgba_unmultiplied(200, 20, 20, a);
+            let t = 26.0;
+            for r in [
+                egui::Rect::from_min_max(screen.min, egui::pos2(screen.max.x, screen.min.y + t)),
+                egui::Rect::from_min_max(egui::pos2(screen.min.x, screen.max.y - t), screen.max),
+                egui::Rect::from_min_max(screen.min, egui::pos2(screen.min.x + t, screen.max.y)),
+                egui::Rect::from_min_max(egui::pos2(screen.max.x - t, screen.min.y), screen.max),
+            ] {
+                painter.rect_filled(r, 0.0, red);
+            }
+        }
+
+        // The target frame, top centre.
+        if let Some(t) = self.target.and_then(|t| all.iter().find(|e| e.id == t)) {
+            if let Some(c) = t.combat {
+                let (name, rank) = enemy_name(t.kind);
+                let col = con_colour(c.level, mine);
+                let w = 300.0;
+                let r = egui::Rect::from_min_size(
+                    egui::pos2(screen.center().x - w * 0.5, screen.top() + 14.0),
+                    egui::vec2(w, 58.0),
+                );
+                painter.rect_filled(r, 6.0, dark);
+                painter.rect_stroke(
+                    r,
+                    6.0,
+                    egui::Stroke::new(2.0_f32, col),
+                    egui::StrokeKind::Inside,
+                );
+                painter.text(
+                    r.min + egui::vec2(12.0, 8.0),
+                    egui::Align2::LEFT_TOP,
+                    name,
+                    font(18.0),
+                    col,
+                );
+                painter.text(
+                    egui::pos2(r.max.x - 12.0, r.min.y + 10.0),
+                    egui::Align2::RIGHT_TOP,
+                    format!("{rank} · level {}", c.level),
+                    font(13.0),
+                    egui::Color32::from_gray(210),
+                );
+                bar(
+                    &painter,
+                    egui::Rect::from_min_size(
+                        r.min + egui::vec2(12.0, 36.0),
+                        egui::vec2(w - 24.0, 12.0),
+                    ),
+                    c.health,
+                    egui::Color32::from_rgb(214, 58, 48),
+                );
+            }
+        }
+
+        // Our hero: health, energy and the power tray, bottom centre.
+        if let Some(c) = me.and_then(|m| m.combat) {
+            let w = 340.0;
+            let base = egui::pos2(screen.center().x - w * 0.5, screen.bottom() - 112.0);
+            let panel = egui::Rect::from_min_size(base, egui::vec2(w, 98.0));
+            painter.rect_filled(panel, 8.0, dark);
+            let label = |y: f32, t: &str| {
+                painter.text(
+                    base + egui::vec2(12.0, y),
+                    egui::Align2::LEFT_CENTER,
+                    t,
+                    font(12.0),
+                    egui::Color32::from_gray(220),
+                );
+            };
+            label(16.0, "Health");
+            bar(
+                &painter,
+                egui::Rect::from_min_size(
+                    base + egui::vec2(66.0, 10.0),
+                    egui::vec2(w - 78.0, 12.0),
+                ),
+                c.health,
+                egui::Color32::from_rgb(60, 200, 80),
+            );
+            label(34.0, "Energy");
+            bar(
+                &painter,
+                egui::Rect::from_min_size(
+                    base + egui::vec2(66.0, 28.0),
+                    egui::vec2(w - 78.0, 12.0),
+                ),
+                c.energy,
+                egui::Color32::from_rgb(70, 140, 255),
+            );
+            let energy = c.energy as f32 / 255.0 * 100.0;
+            for (k, power) in Power::ALL.iter().enumerate() {
+                let spec = power_spec(*power);
+                let slot = egui::Rect::from_min_size(
+                    base + egui::vec2(12.0 + k as f32 * 160.0, 48.0),
+                    egui::vec2(152.0, 40.0),
+                );
+                let ready = self.cooldown[k] <= 0.0 && energy + 0.5 >= spec.cost;
+                let fill = if ready {
+                    egui::Color32::from_rgb(52, 60, 92)
+                } else {
+                    egui::Color32::from_rgb(40, 40, 46)
+                };
+                painter.rect_filled(slot, 5.0, fill);
+                if self.cooldown[k] > 0.0 {
+                    let f = self.cooldown[k] / spec.recharge as f32;
+                    let cover = egui::Rect::from_min_max(
+                        egui::pos2(slot.min.x, slot.max.y - slot.height() * f),
+                        slot.max,
+                    );
+                    painter.rect_filled(cover, 5.0, egui::Color32::from_black_alpha(140));
+                }
+                painter.rect_stroke(
+                    slot,
+                    5.0,
+                    egui::Stroke::new(
+                        1.5_f32,
+                        if ready {
+                            egui::Color32::from_rgb(255, 214, 90)
+                        } else {
+                            egui::Color32::from_gray(90)
+                        },
+                    ),
+                    egui::StrokeKind::Inside,
+                );
+                painter.text(
+                    slot.min + egui::vec2(8.0, 6.0),
+                    egui::Align2::LEFT_TOP,
+                    format!("{}", k + 1),
+                    font(13.0),
+                    egui::Color32::from_rgb(255, 214, 90),
+                );
+                painter.text(
+                    slot.min + egui::vec2(24.0, 6.0),
+                    egui::Align2::LEFT_TOP,
+                    spec.name,
+                    font(15.0),
+                    egui::Color32::WHITE,
+                );
+                let cost = if spec.cost > 0.0 {
+                    format!("{:.0} energy", spec.cost)
+                } else {
+                    "free".into()
+                };
+                painter.text(
+                    slot.min + egui::vec2(24.0, 24.0),
+                    egui::Align2::LEFT_TOP,
+                    cost,
+                    font(11.0),
+                    egui::Color32::from_gray(180),
+                );
+            }
+            painter.text(
+                egui::pos2(screen.center().x, base.y - 8.0),
+                egui::Align2::CENTER_BOTTOM,
+                "Tab: target   Left mouse / 1: Strike   Q / 2: Energy Bolt",
+                font(12.0),
+                egui::Color32::from_white_alpha(150),
+            );
+
+            // Down: what now.
+            if c.status == Status::Down {
+                let p = screen.center() - egui::vec2(0.0, 60.0);
+                painter.text(
+                    p,
+                    egui::Align2::CENTER_CENTER,
+                    "You are down!",
+                    font(34.0),
+                    egui::Color32::from_rgb(255, 90, 70),
+                );
+                painter.text(
+                    p + egui::vec2(0.0, 34.0),
+                    egui::Align2::CENTER_CENTER,
+                    "A teammate can revive you (hold E next to you)",
+                    font(16.0),
+                    egui::Color32::WHITE,
+                );
+                painter.text(
+                    p + egui::vec2(0.0, 56.0),
+                    egui::Align2::CENTER_CENTER,
+                    "H: call the medical drone to fly you to hospital",
+                    font(16.0),
+                    egui::Color32::from_gray(220),
+                );
+            }
+        }
+
+        // A teammate down nearby.
+        if let Some(m) = me.filter(|m| m.combat.is_some_and(|c| c.status == Status::Standing)) {
+            for e in all {
+                let down = e.kind == EntityKind::Hero
+                    && e.id != m.id
+                    && e.combat.is_some_and(|c| c.status == Status::Down);
+                if !down {
+                    continue;
+                }
+                let d = pos(e).distance(pos(m));
+                if let Some(p) = project(pos(e) + Vec3::Y * 0.9) {
+                    let text = if d <= hw_sim::combat::REVIVE_REACH as f32 {
+                        format!("Hold E to revive {}", names(e))
+                    } else {
+                        format!("{} is down", names(e))
+                    };
+                    painter.text(
+                        p,
+                        egui::Align2::CENTER_BOTTOM,
+                        text,
+                        font(16.0),
+                        egui::Color32::from_rgb(255, 220, 120),
+                    );
+                }
+            }
+        }
+
+        if let Some((text, left)) = &self.note {
+            let a = left.min(1.0);
+            painter.text(
+                screen.center() + egui::vec2(0.0, 80.0),
+                egui::Align2::CENTER_CENTER,
+                text,
+                font(18.0),
+                egui::Color32::from_rgb(255, 230, 150).gamma_multiply(a),
+            );
+        }
+    }
+}
+
+fn bar(painter: &egui::Painter, r: egui::Rect, v: u8, colour: egui::Color32) {
+    painter.rect_filled(r, 3.0, egui::Color32::from_gray(30));
+    let f = v as f32 / 255.0;
+    painter.rect_filled(
+        egui::Rect::from_min_size(r.min, egui::vec2(r.width() * f, r.height())),
+        3.0,
+        colour,
+    );
+}
+
+fn pos(e: &EntityState) -> Vec3 {
+    Vec3::new(e.pos[0] as f32, e.pos[1] as f32, e.pos[2] as f32)
+}
+
+/// Can this entity be picked with Tab?
+pub fn targetable(e: &EntityState) -> bool {
+    e.kind.is_enemy()
+        && e.combat
+            .is_some_and(|c| matches!(c.status, Status::Standing | Status::Knocked))
+}
+
+/// The villain nearest the crosshair (the line from `eye` along `look`),
+/// within range and in view; with `current` set, the next one after it.
+pub fn pick_target(
+    all: &[EntityState],
+    eye: Vec3,
+    look: Vec3,
+    current: Option<NetId>,
+) -> Option<NetId> {
+    let look = look.normalize_or_zero();
+    let mut list: Vec<(f32, NetId)> = all
+        .iter()
+        .filter(|e| targetable(e))
+        .filter_map(|e| {
+            let to = pos(e) + Vec3::Y * 1.1 - eye;
+            let d = to.length();
+            if !(1e-3..=TARGET_RANGE).contains(&d) {
+                return None;
+            }
+            let angle = look.dot(to / d).clamp(-1.0, 1.0).acos().to_degrees();
+            // Near ones count as nearer the crosshair: a brute in your face
+            // comes before one far off in the middle of the screen.
+            (angle <= TARGET_CONE).then_some((angle + d * 0.15, e.id))
+        })
+        .collect();
+    list.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    match current.and_then(|c| list.iter().position(|(_, id)| *id == c)) {
+        Some(i) if list.len() > 1 => Some(list[(i + 1) % list.len()].1),
+        _ => list.first().map(|x| x.1),
+    }
+}
+
+/// Where a character's right hand is now, if drawn as one.
+fn hand(world: &World, e: Option<EntityId>) -> Option<Vec3> {
+    let m = world.bone_transform(e?, "hand_r").ok()?;
+    Some(m.w_axis.truncate())
+}
+
+fn sparks(world: &mut World, at: Vec3, dir: Vec3, count: u32, colour: Color) {
+    let p = world.particles_mut();
+    let _ = p.burst(
+        ParticleEmitter::sparks(at, dir.normalize_or(Vec3::Y), count)
+            .with_color(colour)
+            .with_emissive_intensity(4.0),
+    );
+    let _ = p.burst(
+        ParticleEmitter::new(at)
+            .with_mode(ParticleMode::Burst)
+            .with_burst_count(1)
+            .with_size(0.55)
+            .with_lifetime(0.12)
+            .with_spread(Vec3::ZERO)
+            .with_color(colour)
+            .with_size_over_life(SizeOverLife::Shrink)
+            .with_emissive_intensity(6.0),
+    );
+}
+
+fn impact(world: &mut World, at: Vec3, colour: Color, size: f32) {
+    let p = world.particles_mut();
+    let _ = p.burst(
+        ParticleEmitter::new(at)
+            .with_mode(ParticleMode::Burst)
+            .with_shape(ParticleShape::Sphere)
+            .with_burst_count(40)
+            .with_size(0.12 * size)
+            .with_lifetime(0.45)
+            .with_spread(Vec3::splat(0.15))
+            .with_velocity_jitter(Vec3::splat(4.5 * size))
+            .with_drag(3.0)
+            .with_color(colour)
+            .with_secondary_color(rgb(255, 255, 255))
+            .with_silhouette(ParticleSilhouette::SparkStreak)
+            .with_velocity_stretch(0.06)
+            .with_emissive_intensity(6.0),
+    );
+    let _ = p.burst(
+        ParticleEmitter::new(at)
+            .with_mode(ParticleMode::Burst)
+            .with_burst_count(1)
+            .with_size(1.1 * size)
+            .with_lifetime(0.2)
+            .with_spread(Vec3::ZERO)
+            .with_color(colour)
+            .with_size_over_life(SizeOverLife::GrowThenFade)
+            .with_emissive_intensity(5.0),
+    );
+}
+
+/// A beam of light from `a` to `b`: a line of glowing motes that flare and
+/// fade within a fifth of a second.
+fn beam(world: &mut World, a: Vec3, b: Vec3, core: Color, edge: Color) {
+    let len = a.distance(b);
+    if !len.is_finite() || len < 0.05 {
+        return;
+    }
+    let n = ((len / 0.22) as usize).clamp(2, 260);
+    let p = world.particles_mut();
+    for i in 0..=n {
+        let at = a.lerp(b, i as f32 / n as f32);
+        let _ = p.burst(
+            ParticleEmitter::new(at)
+                .with_mode(ParticleMode::Burst)
+                .with_burst_count(2)
+                .with_size(0.16)
+                .with_size_variation(0.4)
+                .with_lifetime(0.22)
+                .with_spread(Vec3::splat(0.03))
+                .with_velocity_jitter(Vec3::splat(0.25))
+                .with_color(core)
+                .with_secondary_color(edge)
+                .with_size_over_life(SizeOverLife::Shrink)
+                .with_seed(i as u32)
+                .with_emissive_intensity(7.0),
+        );
+    }
+}
+
+fn glow_at(world: &mut World, at: Vec3, colour: Color, size: f32) {
+    let _ = world.particles_mut().burst(
+        ParticleEmitter::new(at)
+            .with_mode(ParticleMode::Burst)
+            .with_burst_count(12)
+            .with_shape(ParticleShape::Sphere)
+            .with_size(0.1 * size / 0.25)
+            .with_lifetime(0.6)
+            .with_spread(Vec3::splat(size))
+            .with_force(ParticleForce::Radial {
+                center: at,
+                strength: -4.0,
+            })
+            .with_color(colour)
+            .with_emissive_intensity(5.0),
+    );
+}
+
+/// Golden motes rising round someone getting up.
+fn rise(world: &mut World, at: Vec3, colour: Color) {
+    let _ = world.particles_mut().burst(
+        ParticleEmitter::new(at - Vec3::Y * 0.8)
+            .with_mode(ParticleMode::Burst)
+            .with_shape(ParticleShape::Ring)
+            .with_burst_count(60)
+            .with_size(0.09)
+            .with_lifetime(1.4)
+            .with_spread(Vec3::new(0.7, 0.1, 0.7))
+            .with_velocity(Vec3::Y * 1.8)
+            .with_velocity_jitter(Vec3::new(0.2, 0.6, 0.2))
+            .with_color(colour)
+            .with_silhouette(ParticleSilhouette::RuneMote)
+            .with_emissive_intensity(4.0),
+    );
+}
+
+/// A scorch mark on the ground where a bolt knocked someone down.
+fn scorch(world: &mut World, at: Vec3, all: &[EntityState], to: NetId) {
+    let feet = all
+        .iter()
+        .find(|e| e.id == to)
+        .map_or(at - Vec3::Y * 1.1, pos);
+    let d = Decal::new(DecalKind::Scorch, feet + Vec3::Y * 0.2, Vec3::Y, 1.3)
+        .angle((at.x * 7.0 + at.z * 3.0).sin() * 3.0)
+        .depth(1.0)
+        .opacity(0.8)
+        .lifetime(25.0)
+        .fade(0.0, 4.0);
+    let _ = world.spawn_decal(d);
+}
+
+/// A golden-age ray gun: a chrome bulb, fins and a glowing green tip, the
+/// grip along -Y and the barrel along +Z.
+fn ray_gun() -> Mesh {
+    use crate::citymesh::{MeshBuilder, Surf};
+    use glam::DVec3;
+    let mut b = MeshBuilder::new();
+    let red = rgb(190, 40, 36);
+    b.surf = Surf::Metal;
+    b.oriented_box(
+        DVec3::new(0.0, 0.0, 0.06),
+        DVec3::X,
+        DVec3::new(0.025, 0.03, 0.09),
+        rgb(200, 204, 214),
+    );
+    b.oriented_box(
+        DVec3::new(0.0, 0.0, 0.0),
+        DVec3::X,
+        DVec3::new(0.04, 0.04, 0.045),
+        rgb(200, 204, 214),
+    );
+    b.surf = Surf::Plain;
+    b.oriented_box(
+        DVec3::new(0.0, -0.07, -0.01),
+        DVec3::X,
+        DVec3::new(0.018, 0.05, 0.022),
+        red,
+    );
+    for k in [-1.0, 1.0] {
+        b.oriented_box(
+            DVec3::new(0.04 * k, 0.0, 0.07),
+            DVec3::X,
+            DVec3::new(0.006, 0.035, 0.03),
+            red,
+        );
+    }
+    b.surf = Surf::Glow;
+    b.oriented_box(
+        DVec3::new(0.0, 0.0, 0.16),
+        DVec3::X,
+        DVec3::new(0.018, 0.018, 0.018),
+        rgb(150, 255, 110),
+    );
+    b.surf = Surf::Plain;
+    b.finish()
+}
+
+/// A police drone: a navy saucer with a red-and-blue light bar, four
+/// rotor rings and a claw underneath (the medical one is white with a red
+/// cross).
+pub fn drone_mesh(medical: bool) -> Mesh {
+    use crate::citymesh::{MeshBuilder, Surf};
+    use glam::DVec3;
+    let mut b = MeshBuilder::new();
+    let (body, trim) = if medical {
+        (rgb(236, 236, 228), rgb(200, 40, 40))
+    } else {
+        (rgb(30, 44, 92), rgb(220, 196, 90))
+    };
+    b.cylinder(
+        DVec3::new(0.0, -0.12, 0.0),
+        (0.55, 0.75),
+        0.18,
+        20,
+        true,
+        body,
+    );
+    b.cylinder(
+        DVec3::new(0.0, 0.06, 0.0),
+        (0.75, 0.4),
+        0.16,
+        20,
+        true,
+        body,
+    );
+    b.dome(DVec3::new(0.0, 0.22, 0.0), 0.32, 14, 5, trim);
+    b.surf = Surf::Metal;
+    for k in 0..4 {
+        let a = std::f64::consts::TAU * (k as f64 / 4.0 + 0.125);
+        let u = DVec3::new(a.cos(), 0.0, a.sin());
+        b.oriented_box(
+            u * 0.85,
+            u,
+            DVec3::new(0.22, 0.03, 0.05),
+            rgb(150, 154, 166),
+        );
+        b.cylinder(
+            u * 1.12 + DVec3::Y * 0.02,
+            (0.26, 0.26),
+            0.05,
+            14,
+            false,
+            rgb(150, 154, 166),
+        );
+    }
+    // The claw that holds the cuffs.
+    b.cylinder(
+        DVec3::new(0.0, -0.45, 0.0),
+        (0.05, 0.05),
+        0.35,
+        8,
+        true,
+        rgb(120, 124, 134),
+    );
+    b.surf = Surf::Glow;
+    if medical {
+        b.oriented_box(
+            DVec3::new(0.0, 0.22, 0.33),
+            DVec3::X,
+            DVec3::new(0.14, 0.04, 0.012),
+            trim,
+        );
+        b.oriented_box(
+            DVec3::new(0.0, 0.22, 0.33),
+            DVec3::X,
+            DVec3::new(0.04, 0.14, 0.012),
+            trim,
+        );
+    } else {
+        b.oriented_box(
+            DVec3::new(-0.16, 0.5, 0.0),
+            DVec3::X,
+            DVec3::new(0.14, 0.05, 0.08),
+            rgb(255, 40, 40),
+        );
+        b.oriented_box(
+            DVec3::new(0.16, 0.5, 0.0),
+            DVec3::X,
+            DVec3::new(0.14, 0.05, 0.08),
+            rgb(60, 110, 255),
+        );
+    }
+    b.cylinder(
+        DVec3::new(0.0, -0.2, 0.0),
+        (0.6, 0.6),
+        0.04,
+        20,
+        false,
+        rgb(120, 220, 255),
+    );
+    b.surf = Surf::Plain;
+    b.finish()
+}
+
+/// A stand-in for a villain until its character is built.
+pub fn villain_placeholder(kind: EntityKind) -> Mesh {
+    let (body, head) = match kind {
+        EntityKind::Brute => (rgb(90, 80, 60), rgb(110, 160, 80)),
+        _ => (rgb(236, 234, 226), rgb(224, 186, 150)),
+    };
+    let mut m = Mesh::new();
+    let _ = m.add_box((0.0, 0.45, 0.0), (0.36, 0.9, 0.3), rgb(50, 50, 56));
+    let _ = m.add_box((0.0, 1.2, 0.0), (0.6, 0.62, 0.34), body);
+    let _ = m.add_box((0.0, 1.66, 0.0), (0.26, 0.28, 0.26), head);
+    m
+}
+
+fn make_sounds() -> Sounds {
+    const RATE: u32 = 44_100;
+    let mut noise_state = 0x2545_F491u32;
+    let mut noise = move || {
+        noise_state ^= noise_state << 13;
+        noise_state ^= noise_state >> 17;
+        noise_state ^= noise_state << 5;
+        (noise_state as f32 / u32::MAX as f32) * 2.0 - 1.0
+    };
+    let make = |seconds: f32, f: &mut dyn FnMut(f32) -> f32| -> Sound {
+        let n = (seconds * RATE as f32) as usize;
+        let samples: Vec<f32> = (0..n)
+            .map(|i| f(i as f32 / RATE as f32).clamp(-1.0, 1.0))
+            .collect();
+        Sound::from_mono(samples, RATE).expect("a sound")
+    };
+    use std::f32::consts::TAU;
+    // A meaty thump: a falling low sine with a noise crack on top.
+    let mut ph = 0.0f32;
+    let punch = make(0.28, &mut |t| {
+        let f = 140.0 * (-t * 14.0).exp() + 48.0;
+        ph += TAU * f / RATE as f32;
+        let body = ph.sin() * (-t * 16.0).exp();
+        let crack = noise() * (-t * 70.0).exp() * 0.7;
+        (body * 0.9 + crack) * 0.9
+    });
+    // The energy bolt: a bright falling sweep with a buzz.
+    let mut ph = 0.0f32;
+    let bolt = make(0.42, &mut |t| {
+        let f = 1500.0 * (-t * 7.0).exp() + 180.0;
+        ph += TAU * f / RATE as f32;
+        let tone = ph.sin() + 0.35 * (ph * 2.0).sin().signum() * 0.5;
+        let env = (t * 120.0).min(1.0) * (-t * 7.5).exp();
+        (tone * 0.6 + noise() * 0.12 * (-t * 20.0).exp()) * env
+    });
+    // The ray gun: a wobbling square-ish warble.
+    let mut ph = 0.0f32;
+    let ray = make(0.5, &mut |t| {
+        let f = 520.0 + 260.0 * (t * 38.0).sin() - 300.0 * t;
+        ph += TAU * f / RATE as f32;
+        let tone = (ph.sin() * 3.0).tanh();
+        tone * 0.35 * (t * 80.0).min(1.0) * (-t * 4.5).exp()
+    });
+    // Charging: a rising whine.
+    let mut ph = 0.0f32;
+    let charge = make(0.6, &mut |t| {
+        let f = 300.0 + 1400.0 * t;
+        ph += TAU * f / RATE as f32;
+        ph.sin() * 0.18 * (t / 0.6) * (1.0 - (t / 0.6).powi(6))
+    });
+    // A whoosh: noise swelling and fading, smoothed.
+    let mut lp = 0.0f32;
+    let whoosh = make(0.7, &mut |t| {
+        lp += (noise() - lp) * (0.04 + 0.2 * (t / 0.7));
+        let env = (std::f32::consts::PI * t / 0.7).sin();
+        lp * env * 1.6
+    });
+    // A chime: two bell partials.
+    let chime = make(1.1, &mut |t| {
+        let e = (-t * 3.5).exp() * (t * 200.0).min(1.0);
+        ((TAU * 880.0 * t).sin() * 0.5
+            + (TAU * 1320.0 * t).sin() * 0.3
+            + (TAU * 1760.0 * t).sin() * 0.15)
+            * e
+            * 0.5
+    });
+    // A drone's hum, made to loop (whole cycles in one second).
+    let hum = make(1.0, &mut |t| {
+        let wob = 1.0 + 0.15 * (TAU * 6.0 * t).sin();
+        ((TAU * 110.0 * t).sin() * 0.5
+            + (TAU * 220.0 * t).sin() * 0.25
+            + (TAU * 330.0 * t).sin() * 0.12)
+            * 0.25
+            * wob
+    });
+    Sounds {
+        punch,
+        bolt,
+        ray,
+        charge,
+        whoosh,
+        chime,
+        hum,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hw_net::CombatState;
+
+    fn villain(id: u32, at: [f64; 3]) -> EntityState {
+        EntityState {
+            id: NetId(id),
+            kind: EntityKind::Brute,
+            pos: at,
+            combat: Some(CombatState {
+                health: 255,
+                level: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tab_picks_nearest_the_crosshair_then_cycles() {
+        let all = vec![
+            villain(1, [10.0, 0.0, 3.0]),
+            villain(2, [10.0, 0.0, 0.0]),
+            villain(3, [-10.0, 0.0, 0.0]),
+        ];
+        let eye = Vec3::new(0.0, 1.1, 0.0);
+        let look = Vec3::X;
+        let first = pick_target(&all, eye, look, None);
+        assert_eq!(first, Some(NetId(2)), "dead ahead first");
+        let next = pick_target(&all, eye, look, first);
+        assert_eq!(next, Some(NetId(1)));
+        // Behind the camera is never picked; the cycle wraps.
+        assert_eq!(pick_target(&all, eye, look, next), Some(NetId(2)));
+    }
+
+    #[test]
+    fn the_beaten_cannot_be_targeted() {
+        let mut v = villain(1, [5.0, 0.0, 0.0]);
+        v.combat.as_mut().unwrap().status = Status::Down;
+        assert_eq!(pick_target(&[v], Vec3::ZERO, Vec3::X, None), None);
+    }
+
+    #[test]
+    fn con_colours_follow_the_level_gap() {
+        assert_eq!(con_colour(1, 1), egui::Color32::from_rgb(240, 240, 240));
+        assert_eq!(con_colour(2, 1), egui::Color32::from_rgb(250, 220, 60));
+        assert_eq!(con_colour(1, 5), egui::Color32::from_rgb(150, 150, 150));
+    }
+
+    #[test]
+    fn the_fight_sounds_are_made() {
+        let _ = make_sounds();
+        let _ = drone_mesh(true);
+        let _ = drone_mesh(false);
+        let _ = ray_gun();
+    }
+}

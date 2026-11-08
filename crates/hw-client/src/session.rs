@@ -20,11 +20,15 @@ pub enum Session {
     },
     Remote {
         conn: Box<Connection>,
-        predictor: Option<Predictor>,
+        predictor: Option<Box<Predictor>>,
         interp: Interpolator,
         last_tick: u64,
         /// World news (damage, impacts) not yet taken.
         news: Vec<ToClient>,
+        /// Fight events received and not yet shown.
+        fx: Vec<hw_net::Fx>,
+        /// Everyone's names, from the join news.
+        names: std::collections::BTreeMap<PlayerId, String>,
     },
 }
 
@@ -53,6 +57,7 @@ impl Session {
         {
             host.sim.hero_level = level.clamp(1, 20);
         }
+        host.sim.place_first_fight();
         if open {
             let addr = host.listen(("0.0.0.0", hw_net::DEFAULT_PORT))?;
             println!("Hosting on {addr}");
@@ -120,6 +125,8 @@ impl Session {
                             interp: Interpolator::new(),
                             last_tick: 0,
                             news: Vec::new(),
+                            fx: Vec::new(),
+                            names: Default::default(),
                         },
                         seed,
                         people,
@@ -142,7 +149,7 @@ impl Session {
     /// For a joined session: start predicting with the generated town.
     pub fn attach_town(&mut self, town: &GeneratedTown) {
         if let Session::Remote { predictor, .. } = self {
-            *predictor = Some(Predictor::new(town.obstacles.clone()));
+            *predictor = Some(Box::new(Predictor::new(town.obstacles.clone())));
         }
     }
 
@@ -161,13 +168,20 @@ impl Session {
                 interp,
                 last_tick,
                 news,
+                fx,
+                names,
             } => {
                 let was_on = matches!(conn.state, ConnState::Connected { .. });
                 let seq = conn.update(input);
                 for m in conn.take_news() {
-                    if is_world_news(&m) {
+                    if let ToClient::Fx(e) = m {
+                        fx.push(e);
+                    } else if is_world_news(&m) {
                         news.push(m);
                     } else {
+                        if let ToClient::Joined { player, name } = &m {
+                            names.insert(*player, name.clone());
+                        }
                         println!("{m:?}");
                     }
                 }
@@ -215,6 +229,23 @@ impl Session {
                 }
                 out
             }
+        }
+    }
+
+    /// Fight events since the last call, with the server tick they are
+    /// drawn at now (to drop ones that come too late to show).
+    pub fn take_fx(&mut self) -> (Vec<hw_net::Fx>, f64) {
+        match self {
+            Session::Local { host, .. } => (host.take_fx(), host.sim.tick as f64),
+            Session::Remote { fx, interp, .. } => (std::mem::take(fx), interp.render_tick()),
+        }
+    }
+
+    /// A player's name.
+    pub fn player_name(&self, p: PlayerId) -> Option<String> {
+        match self {
+            Session::Local { host, .. } => host.players().get(&p).map(|i| i.name.clone()),
+            Session::Remote { names, .. } => names.get(&p).cloned(),
         }
     }
 

@@ -28,6 +28,28 @@ pub const HERO_CLIPS: &[&str] = &[
     "jump start",
     "jump",
     "jump land",
+    "punch jab",
+    "punch cross",
+    "spell cast",
+    "fight stance",
+    "hit to chest",
+];
+/// Villains walk, run, brawl and shoot; "cuffed" (hanging from a police
+/// drone) is made here.
+pub const VILLAIN_CLIPS: &[&str] = &[
+    "idle",
+    "walk",
+    "jog",
+    "sprint",
+    "jump start",
+    "jump",
+    "jump land",
+    "fight stance",
+    "hook",
+    "pistol idle",
+    "pistol aim",
+    "pistol shoot",
+    "hit to chest",
 ];
 /// Citizens walk and stand; a few walk the formal walk.
 pub const CITIZEN_CLIPS: &[&str] = &["idle", "walk", "walk formal"];
@@ -45,6 +67,21 @@ pub enum Who {
     Hero(String),
     /// One of the citizens' looks.
     Citizen(u32),
+    /// One of the mad scientist's villains: its kind and one of
+    /// [`VILLAIN_LOOKS`] looks.
+    Villain(VillainKind, u32),
+}
+
+/// Looks per kind of villain.
+pub const VILLAIN_LOOKS: u32 = 3;
+
+/// The villains drawn as Actors characters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum VillainKind {
+    /// Mutant brute: huge, green-skinned, glowing eyes, in work clothes.
+    Brute,
+    /// Ray-gun technician: lab coat, tinted goggles, gloves.
+    Technician,
 }
 
 /// A built character.
@@ -141,6 +178,11 @@ impl People {
                     let i = queue
                         .iter()
                         .position(|(w, _)| matches!(w, Who::Hero(_)))
+                        .or_else(|| {
+                            queue
+                                .iter()
+                                .position(|(w, _)| matches!(w, Who::Villain(..)))
+                        })
                         .unwrap_or(0);
                     let (who, seed) = queue.remove(i);
                     let t = std::time::Instant::now();
@@ -330,6 +372,73 @@ pub fn golden_age(
     config
 }
 
+/// A villain of the mad scientist: a person of the town changed by his
+/// experiments (the brute) or one of his staff (the technician).
+pub fn villain(
+    builder: &CharacterBuilder,
+    kind: VillainKind,
+    look: u32,
+) -> actors_generator::CharacterConfig {
+    let seed = name_seed(&format!("villain {kind:?} {look}"));
+    let mut c = golden_age(builder, seed, false);
+    let mut rng = hw_core::Seed(seed as u64).child("villain").rng();
+    let catalog = builder.catalog();
+    let has = |id: &str| catalog.garments.iter().any(|g| g.id == id);
+    let keep = |list: &[&str]| -> Vec<String> {
+        list.iter()
+            .filter(|g| has(g))
+            .map(|g| g.to_string())
+            .collect()
+    };
+    let colour = |c: &mut actors_generator::CharacterConfig, g: &str, hex: &str| {
+        c.garment_colors.insert(g.to_string(), hex.to_string());
+    };
+    c.hair_color = None;
+    match kind {
+        VillainKind::Brute => {
+            let b = &mut c.body;
+            b.gender = 1.0;
+            b.age_years = rng.range(28.0, 45.0);
+            b.muscle = 1.0;
+            b.weight = rng.range(0.62, 0.8);
+            b.height = rng.range(0.85, 1.0);
+            b.proportions = 0.35;
+            // The serum: green skin, glowing yellow eyes, small tusks.
+            c.skin = actors_generator::SkinKind::Procedural;
+            let greens = ["#6f9a4c", "#7aa356", "#5f8c49"];
+            c.skin_color = Some(greens[(look as usize) % greens.len()].to_string());
+            c.eye_color = Some("#e8ff5a".into());
+            c.eye_glow = 0.7;
+            c.tusks = 0.25;
+            c.beard = "none".into();
+            c.outfit = keep(&["tank-top", "cargo-pants", "work-boots"]);
+            colour(&mut c, "tank-top", "#c9c2a6");
+            colour(
+                &mut c,
+                "cargo-pants",
+                ["#4d4a36", "#3e4a5a", "#5a3e30"][(look as usize) % 3],
+            );
+        }
+        VillainKind::Technician => {
+            let b = &mut c.body;
+            b.age_years = rng.range(24.0, 55.0);
+            b.muscle = rng.range(0.3, 0.5);
+            b.weight = rng.range(0.35, 0.55);
+            c.outfit = keep(&[
+                "worksuit",
+                "open-coat",
+                "gloves-short",
+                "tinted-glasses",
+                "black-shoes",
+            ]);
+            colour(&mut c, "open-coat", "#ecebe2");
+            colour(&mut c, "worksuit", "#3a3f48");
+            colour(&mut c, "gloves-short", "#2a2a2a");
+        }
+    }
+    c
+}
+
 /// Builds one character (on the worker).
 pub fn build(builder: &mut CharacterBuilder, who: &Who, seed: u64) -> Result<Built, String> {
     let (hero, rseed) = match who {
@@ -338,10 +447,18 @@ pub fn build(builder: &mut CharacterBuilder, who: &Who, seed: u64) -> Result<Bui
             false,
             (hw_core::Seed(seed).child("look").child(*look as u64).0 >> 32) as u32,
         ),
+        Who::Villain(..) => (false, 0),
     };
     builder.allow(&allow(hero));
-    let config = golden_age(builder, rseed, hero);
-    let clips: &[&str] = if hero { HERO_CLIPS } else { CITIZEN_CLIPS };
+    let config = match who {
+        Who::Villain(kind, look) => villain(builder, *kind, *look),
+        _ => golden_age(builder, rseed, hero),
+    };
+    let clips: &[&str] = match who {
+        Who::Hero(_) => HERO_CLIPS,
+        Who::Villain(..) => VILLAIN_CLIPS,
+        Who::Citizen(_) => CITIZEN_CLIPS,
+    };
     let options = BuildOptions {
         clips: clips.iter().map(|s| s.to_string()).collect(),
         // Citizens are many and mostly far: fewer skin layers build faster.
@@ -358,6 +475,9 @@ pub fn build(builder: &mut CharacterBuilder, who: &Who, seed: u64) -> Result<Bui
     };
     if hero {
         poses::add_flight_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+    }
+    if matches!(who, Who::Villain(..)) {
+        poses::add_cuffed_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
     Ok(Built {
         who: who.clone(),

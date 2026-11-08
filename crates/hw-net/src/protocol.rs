@@ -47,6 +47,40 @@ pub struct InputState {
     /// Where the hero aims (unit vector in the local frame): the camera's
     /// direction. Punches and blasts go this way.
     pub aim: [f32; 3],
+    /// The enemy the player has picked (Tab), if any.
+    pub target: Option<NetId>,
+    /// Holding the revive key next to a downed teammate.
+    pub revive: bool,
+    /// A downed hero calls the medical drone now instead of waiting.
+    pub hospital: bool,
+}
+
+/// The powers a hero has in the first fight.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Power {
+    /// A punch: free, weak, close.
+    Strike,
+    /// An energy bolt: costs energy, reaches far, knocks back.
+    Bolt,
+}
+
+impl Power {
+    pub const ALL: [Power; 2] = [Power::Strike, Power::Bolt];
+
+    pub fn code(self) -> u8 {
+        match self {
+            Power::Strike => 1,
+            Power::Bolt => 2,
+        }
+    }
+
+    pub fn from_code(c: u8) -> Option<Self> {
+        match c {
+            1 => Some(Power::Strike),
+            2 => Some(Power::Bolt),
+            _ => None,
+        }
+    }
 }
 
 /// What an entity is, so the client knows how to draw it.
@@ -57,6 +91,13 @@ pub enum EntityKind {
     Hero,
     /// A loose crate: a physics body anyone can shove around.
     Crate,
+    /// The mad scientist's mutant brute: a melee rusher.
+    Brute,
+    /// The mad scientist's ray-gun technician: shoots from a distance.
+    Technician,
+    /// A drone that lifts the defeated away (police for villains, medical
+    /// for heroes).
+    Drone,
 }
 
 impl EntityKind {
@@ -64,6 +105,9 @@ impl EntityKind {
         match self {
             EntityKind::Hero => 0,
             EntityKind::Crate => 1,
+            EntityKind::Brute => 2,
+            EntityKind::Technician => 3,
+            EntityKind::Drone => 4,
         }
     }
 
@@ -71,10 +115,71 @@ impl EntityKind {
         match c {
             0 => Ok(EntityKind::Hero),
             1 => Ok(EntityKind::Crate),
+            2 => Ok(EntityKind::Brute),
+            3 => Ok(EntityKind::Technician),
+            4 => Ok(EntityKind::Drone),
             _ => Err(WireError),
         }
     }
 }
+
+impl EntityKind {
+    /// Villains a hero fights.
+    pub fn is_enemy(self) -> bool {
+        matches!(self, EntityKind::Brute | EntityKind::Technician)
+    }
+}
+
+/// Where a fighter is in a fight.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Status {
+    /// On its feet.
+    #[default]
+    Standing,
+    /// Knocked back: tumbling as a ragdoll, then getting up.
+    Knocked,
+    /// Defeated: a villain lies cuffed in energy bonds, a hero waits for a
+    /// teammate or the medical drone.
+    Down,
+    /// Lifted away by a drone.
+    Carried,
+}
+
+impl Status {
+    fn code(self) -> u8 {
+        match self {
+            Status::Standing => 0,
+            Status::Knocked => 1,
+            Status::Down => 2,
+            Status::Carried => 3,
+        }
+    }
+
+    fn from_code(c: u8) -> Result<Self, WireError> {
+        Ok(match c {
+            0 => Status::Standing,
+            1 => Status::Knocked,
+            2 => Status::Down,
+            3 => Status::Carried,
+            _ => return Err(WireError),
+        })
+    }
+}
+
+/// A fighter's state as clients see it: bars in 0..=255, so small changes
+/// (regeneration) cost nothing until they show.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CombatState {
+    pub health: u8,
+    pub energy: u8,
+    pub status: Status,
+    pub level: u8,
+    /// Who it fights (an enemy's foe, a hero's picked target).
+    pub target: Option<NetId>,
+}
+
+/// Bytes a [`CombatState`] takes.
+const COMBAT_BYTES: usize = 8;
 
 /// No rotation.
 pub const NO_ROTATION: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -93,6 +198,8 @@ pub struct EntityState {
     pub grounded: bool,
     /// The player who controls it, if it is a hero.
     pub owner: Option<PlayerId>,
+    /// Health, energy and status, for anything that fights.
+    pub combat: Option<CombatState>,
 }
 
 impl Default for EntityState {
@@ -105,6 +212,7 @@ impl Default for EntityState {
             rot: NO_ROTATION,
             grounded: false,
             owner: None,
+            combat: None,
         }
     }
 }
@@ -113,6 +221,7 @@ const F_GROUNDED: u8 = 1;
 const F_OWNER: u8 = 2;
 const F_VEL: u8 = 4;
 const F_ROT: u8 = 8;
+const F_COMBAT: u8 = 16;
 
 impl EntityState {
     fn flags(&self) -> u8 {
@@ -129,6 +238,9 @@ impl EntityState {
         if self.rot != NO_ROTATION {
             f |= F_ROT;
         }
+        if self.combat.is_some() {
+            f |= F_COMBAT;
+        }
         f
     }
 
@@ -141,6 +253,7 @@ impl EntityState {
             + if f & F_VEL != 0 { 12 } else { 0 }
             + if f & F_ROT != 0 { 16 } else { 0 }
             + if f & F_OWNER != 0 { 2 } else { 0 }
+            + if f & F_COMBAT != 0 { COMBAT_BYTES } else { 0 }
     }
 
     fn write(&self, w: &mut Writer) {
@@ -162,13 +275,20 @@ impl EntityState {
         if let Some(p) = self.owner {
             w.u16(p.0);
         }
+        if let Some(c) = self.combat {
+            w.u8(c.health)
+                .u8(c.energy)
+                .u8(c.status.code())
+                .u8(c.level)
+                .u32(c.target.map_or(0, |t| t.0));
+        }
     }
 
     fn read(r: &mut Reader) -> Result<Self, WireError> {
         let id = NetId(r.u32()?);
         let kind = EntityKind::from_code(r.u8()?)?;
         let f = r.u8()?;
-        if f >> 4 != 0 {
+        if f >> 5 != 0 {
             return Err(WireError);
         }
         let pos = [r.f64()?, r.f64()?, r.f64()?];
@@ -190,6 +310,20 @@ impl EntityState {
         } else {
             None
         };
+        let combat = if f & F_COMBAT != 0 {
+            Some(CombatState {
+                health: r.u8()?,
+                energy: r.u8()?,
+                status: Status::from_code(r.u8()?)?,
+                level: r.u8()?,
+                target: match r.u32()? {
+                    0 => None,
+                    t => Some(NetId(t)),
+                },
+            })
+        } else {
+            None
+        };
         Ok(Self {
             id,
             kind,
@@ -198,9 +332,88 @@ impl EntityState {
             rot,
             grounded: f & F_GROUNDED != 0,
             owner,
+            combat,
         })
     }
 }
+
+/// Something that happened in a fight, for clients to show (sparks, beams,
+/// sounds, shakes, the floating numbers). The server decides; this only
+/// tells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum FxKind {
+    /// A hero's punch landed.
+    Strike,
+    /// A hero's energy bolt hit.
+    Bolt,
+    /// A brute winds up a punch (the telegraph).
+    PunchWindup,
+    /// A brute's punch landed.
+    Punch,
+    /// A technician aims its ray gun (the telegraph).
+    RayWindup,
+    /// A technician's ray hit.
+    Ray,
+    /// A downed hero is back on their feet (a teammate revived them).
+    Revived,
+    /// A drone has picked someone up.
+    Lifted,
+    /// A hero came back from hospital.
+    Healed,
+}
+
+impl FxKind {
+    fn code(self) -> u8 {
+        match self {
+            FxKind::Strike => 1,
+            FxKind::Bolt => 2,
+            FxKind::PunchWindup => 3,
+            FxKind::Punch => 4,
+            FxKind::RayWindup => 5,
+            FxKind::Ray => 6,
+            FxKind::Revived => 7,
+            FxKind::Lifted => 8,
+            FxKind::Healed => 9,
+        }
+    }
+
+    fn from_code(c: u8) -> Result<Self, WireError> {
+        Ok(match c {
+            1 => FxKind::Strike,
+            2 => FxKind::Bolt,
+            3 => FxKind::PunchWindup,
+            4 => FxKind::Punch,
+            5 => FxKind::RayWindup,
+            6 => FxKind::Ray,
+            7 => FxKind::Revived,
+            8 => FxKind::Lifted,
+            9 => FxKind::Healed,
+            _ => return Err(WireError),
+        })
+    }
+}
+
+/// One fight event.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fx {
+    /// The server tick it happened on (clients drop effects that arrive late).
+    pub tick: u64,
+    pub kind: FxKind,
+    /// Who did it, and to whom (the same for events about one fighter).
+    pub from: NetId,
+    pub to: NetId,
+    /// Where it happened (the point hit).
+    pub at: [f32; 3],
+    /// Damage dealt.
+    pub amount: u16,
+    /// The blow knocked the target back.
+    pub knock: bool,
+    /// The blow defeated the target.
+    pub defeat: bool,
+}
+
+/// Bytes an [`Fx`] takes after its message type.
+const FX_BYTES: usize = 8 + 1 + 4 + 4 + 12 + 2 + 1;
 
 /// Reliable news from the server: repeated until the client confirms it,
 /// delivered in order, exactly once.
@@ -252,6 +465,8 @@ pub enum ToClient {
     PropsRepaired {
         props: Vec<u32>,
     },
+    /// Something happened in a fight nearby.
+    Fx(Fx),
 }
 
 /// Most broken elements in one [`ToClient::Damage`] (it must fit a packet
@@ -283,6 +498,7 @@ impl ToClient {
             ToClient::Impact { .. } => 12 + 6 + 1 + 1,
             ToClient::PropsBroken { props, .. } => 1 + 1 + 5 * props.len().min(255),
             ToClient::PropsRepaired { props } => 1 + 4 * props.len().min(255),
+            ToClient::Fx(_) => FX_BYTES,
         }
     }
 
@@ -343,6 +559,17 @@ impl ToClient {
                 for i in &props[..n] {
                     w.u32(*i);
                 }
+            }
+            ToClient::Fx(fx) => {
+                w.u8(10)
+                    .u64(fx.tick)
+                    .u8(fx.kind.code())
+                    .u32(fx.from.0)
+                    .u32(fx.to.0);
+                for v in fx.at {
+                    w.f32(v);
+                }
+                w.u16(fx.amount).u8(fx.knock as u8 | (fx.defeat as u8) << 1);
             }
         }
     }
@@ -414,6 +641,28 @@ impl ToClient {
                     props.push(r.u32()?);
                 }
                 ToClient::PropsRepaired { props }
+            }
+            10 => {
+                let tick = r.u64()?;
+                let kind = FxKind::from_code(r.u8()?)?;
+                let from = NetId(r.u32()?);
+                let to = NetId(r.u32()?);
+                let at = [r.f32()?, r.f32()?, r.f32()?];
+                let amount = r.u16()?;
+                let bits = r.u8()?;
+                if bits >> 2 != 0 {
+                    return Err(WireError);
+                }
+                ToClient::Fx(Fx {
+                    tick,
+                    kind,
+                    from,
+                    to,
+                    at,
+                    amount,
+                    knock: bits & 1 != 0,
+                    defeat: bits & 2 != 0,
+                })
             }
             _ => return Err(WireError),
         })
@@ -521,10 +770,13 @@ fn write_input(w: &mut Writer, input: &InputState) {
             | (input.fly as u8) << 2
             | (input.boost as u8) << 3
             | (input.smash as u8) << 4
-            | (input.blast as u8) << 5);
+            | (input.blast as u8) << 5
+            | (input.revive as u8) << 6
+            | (input.hospital as u8) << 7);
     for a in input.aim {
         w.u16(((a.clamp(-1.0, 1.0) * 32767.0).round() as i16) as u16);
     }
+    w.u32(input.target.map_or(0, |t| t.0));
 }
 
 fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
@@ -532,13 +784,14 @@ fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
     let len = (x * x + y * y + z * z).sqrt();
     let k = if len > 1.0 { 1.0 / len } else { 1.0 };
     let bits = r.u8()?;
-    if bits >> 6 != 0 {
-        return Err(WireError);
-    }
     let mut aim = [0.0f32; 3];
     for a in aim.iter_mut() {
         *a = r.u16()? as i16 as f32 / 32767.0;
     }
+    let target = match r.u32()? {
+        0 => None,
+        t => Some(NetId(t)),
+    };
     Ok(InputState {
         move_x: x * k,
         move_y: y * k,
@@ -550,6 +803,9 @@ fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
         smash: bits & 16 != 0,
         blast: bits & 32 != 0,
         aim,
+        revive: bits & 64 != 0,
+        hospital: bits & 128 != 0,
+        target,
     })
 }
 
@@ -801,6 +1057,9 @@ mod tests {
                         smash: true,
                         blast: false,
                         aim: [0.0, -1.0, 0.0],
+                        target: Some(NetId(17)),
+                        revive: true,
+                        hospital: false,
                     },
                 ],
                 ack_tick: 1234,
@@ -865,6 +1124,19 @@ mod tests {
                         broke: true,
                     },
                 ),
+                (
+                    5,
+                    ToClient::Fx(Fx {
+                        tick: 76,
+                        kind: FxKind::Bolt,
+                        from: NetId(3),
+                        to: NetId(12),
+                        at: [1.0, 2.0, 3.5],
+                        amount: 36,
+                        knock: true,
+                        defeat: false,
+                    }),
+                ),
             ],
             entities: vec![
                 hero(3),
@@ -873,6 +1145,18 @@ mod tests {
                     kind: EntityKind::Crate,
                     pos: [100.25, 0.0, 9.0],
                     rot: [0.0, 0.6, 0.0, 0.8],
+                    ..Default::default()
+                },
+                EntityState {
+                    id: NetId(12),
+                    kind: EntityKind::Brute,
+                    combat: Some(CombatState {
+                        health: 128,
+                        energy: 255,
+                        status: Status::Knocked,
+                        level: 1,
+                        target: Some(NetId(3)),
+                    }),
                     ..Default::default()
                 },
             ],
@@ -935,7 +1219,12 @@ mod tests {
             rot: [0.0, 0.0, 0.6, 0.8],
             ..hero(2)
         };
-        for e in [hero(1), crate_box, EntityState::default()] {
+        let brute = EntityState {
+            kind: EntityKind::Brute,
+            combat: Some(CombatState::default()),
+            ..hero(5)
+        };
+        for e in [hero(1), crate_box, brute, EntityState::default()] {
             let one = ServerMsg::Update {
                 tick: 0,
                 ack: 0,

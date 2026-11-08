@@ -13,10 +13,17 @@
 //! over (a test of ragdolls; they get up again).
 //! Buildings are open: walk in through a door, and in the lift (the core in
 //! the middle) hold Space to rise and Ctrl to sink; step out at any floor.
-//! Left mouse punches, Q fires an energy blast where you look: glass, plaster
-//! and brick break at level 1 (`HW_LEVEL` sets the hero level for now).
-//! Tab switches to a free-flying camera and back. C cuts buildings open
+//! Left mouse (or 1) punches, Q (or 2) fires an energy bolt: at the villain
+//! you have picked with Tab, else where you look, breaking glass, plaster
+//! and brick at level 1 (`HW_LEVEL` sets the hero level for now).
+//! O switches to a free-flying camera and back. C cuts buildings open
 //! around where you look (F moves the cut there), Z/X pick the floor.
+//!
+//! Fighting (see `fightview.rs`): Tab picks the villain nearest the
+//! crosshair (again for the next one), 1 strikes, 2 fires an energy bolt.
+//! Hold E next to a downed teammate to revive them; H calls the medical
+//! drone when you are down. The mad scientist's minions wait a short run
+//! down the street from where you start.
 //!
 //! By default the server runs inside the game (single player). `HW_HOST=1`
 //! also opens it to friends: on UDP port 7777, and listed on GameHub with a
@@ -37,6 +44,8 @@
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
+//! `HW_VIEW=fight` starts in front of the minions, `HW_AUTOFIGHT=1`
+//! fights them on its own (both for screenshots);
 //! `HW_WAIT_PEOPLE=1` waits at the start until every character is built
 //! (for screenshots); `HW_PACKS` points at the Actors packs (default
 //! `assets/packs`, fetched by `scripts/fetch-packs`);
@@ -51,8 +60,9 @@ use glam::{DVec2, Vec3};
 use hw_client::citymesh;
 use hw_client::crowdview::CrowdView;
 use hw_client::damageview::DamageView;
+use hw_client::fightview::{self, FightView};
 use hw_client::heroview::{tipped_origin, HeroAnim};
-use hw_client::people::{self, People, Who};
+use hw_client::people::{self, People, VillainKind, Who};
 use hw_client::profile::Profile;
 use hw_client::title::{self, Choice, Title};
 use hw_client::townmesh::{TownGround, TownView};
@@ -153,6 +163,7 @@ fn main() -> EngineResult<()> {
                 && std::env::var_os("HW_HOST").is_none()));
     let mut name = std::env::var("HW_NAME").unwrap_or_else(|_| profile.name.clone());
     let auto_walk = std::env::var_os("HW_WALK").is_some();
+    let auto_fight = std::env::var_os("HW_AUTOFIGHT").is_some();
     let io = |e: std::io::Error| EngineError::InvalidValue(e.to_string());
 
     // A joining player learns the world seed from the host first.
@@ -191,6 +202,11 @@ fn main() -> EngineResult<()> {
                 // Our own hero first (the local player is player 1).
                 p.request(Who::Hero("player 1".into()), 0);
             }
+            for kind in [VillainKind::Brute, VillainKind::Technician] {
+                for look in 0..people::VILLAIN_LOOKS {
+                    p.request(Who::Villain(kind, look), 0);
+                }
+            }
             for look in 0..hw_sim::citizens::LOOKS {
                 p.request(Who::Citizen(look), generated.world.seed.0);
             }
@@ -205,6 +221,20 @@ fn main() -> EngineResult<()> {
     };
     let mut models: BTreeMap<Who, std::sync::Arc<AnimatedModel>> = BTreeMap::new();
     let mut asked: BTreeSet<Who> = [Who::Hero("player 1".into())].into();
+    for kind in [VillainKind::Brute, VillainKind::Technician] {
+        for look in 0..people::VILLAIN_LOOKS {
+            asked.insert(Who::Villain(kind, look));
+        }
+    }
+    // The fight: targets, effects, the screen.
+    let mut fight = FightView::new();
+    // What was drawn last frame (for targeting), and a power key pressed
+    // but not yet sent with a tick.
+    let mut drawn: Vec<hw_net::EntityState> = Vec::new();
+    let mut pending_power = 0u8;
+    // Characters a ragdoll moved, and how far from where the server has
+    // them when they got up (faded out).
+    let mut settle: BTreeMap<hw_core::NetId, (Vec3, bool)> = BTreeMap::new();
     let mut crowd = CrowdView::new();
     let mut anims: BTreeMap<hw_core::NetId, HeroAnim> = BTreeMap::new();
     let mut town = TownView::new(generated.world.clone());
@@ -364,7 +394,7 @@ fn main() -> EngineResult<()> {
     }
     .with_speed(40.0);
     fly.fast = 8.0;
-    let mut flying = !matches!(view.as_str(), "hero" | "inside" | "sky" | "title");
+    let mut flying = !matches!(view.as_str(), "hero" | "inside" | "sky" | "title" | "fight");
     if view == "inside" {
         // Start in the lobby of the tallest building near the start.
         let tower = town.tallest_near(spawn, 400.0);
@@ -389,6 +419,15 @@ fn main() -> EngineResult<()> {
                 hero_cam_yaw = along.x.atan2(along.y).to_degrees() as f32;
             }
         }
+    }
+    if view == "fight" {
+        // Down the street, facing the mad scientist's minions.
+        let p = spawn - spawn_dir * 19.0;
+        if let Some(s) = session.as_mut() {
+            s.teleport(glam::DVec3::new(p.x, ground(p) + 0.3, p.y));
+        }
+        let ahead = -spawn_dir;
+        hero_cam_yaw = ahead.x.atan2(ahead.y).to_degrees() as f32 + 18.0;
     }
     if view == "sky" {
         // Hovering above the town centre (with HW_FLY or V held on).
@@ -595,7 +634,7 @@ fn main() -> EngineResult<()> {
                 }
             }
             let input = &frame.input;
-            if input.pressed(Key::Tab) {
+            if input.pressed(Key::O) {
                 flying = !flying;
                 if flying {
                     // Start the free camera where the hero camera was.
@@ -665,6 +704,53 @@ fn main() -> EngineResult<()> {
                 hero_input.smash = input.mouse_down(MouseButton::Left);
                 hero_input.blast = input.down(Key::Q);
                 hero_input.aim = Camera::direction(hero_cam.yaw, hero_cam.pitch + 10.0).to_array();
+                // Fighting: keys, target, revive.
+                let me_state = session
+                    .my_hero()
+                    .and_then(|id| drawn.iter().find(|e| e.id == id));
+                let cam = world.camera();
+                let look = (cam.target() - cam.eye()).normalize_or_zero();
+                let f = fight.input(input, me_state, &drawn, cam.eye(), look);
+                if f.power != 0 {
+                    pending_power = f.power;
+                }
+                // HW_AUTOFIGHT=1 fights on its own (for screenshots): bolts
+                // while there is energy, punches up close.
+                if auto_fight
+                    && (frame.time / 0.75).floor() != ((frame.time - frame.dt) / 0.75).floor()
+                {
+                    if fight.target.is_none() {
+                        fight.target = fightview::pick_target(&drawn, cam.eye(), look, None);
+                    }
+                    let close = me_state
+                        .zip(fight.target.and_then(|t| drawn.iter().find(|e| e.id == t)))
+                        .is_some_and(|(m, t)| {
+                            glam::DVec3::from_array(m.pos).distance(glam::DVec3::from_array(t.pos))
+                                < 2.6
+                        });
+                    pending_power = if close { 1 } else { 2 };
+                }
+                let f = fightview::FightInput {
+                    target: fight.target,
+                    ..f
+                };
+                hero_input.target = f.target;
+                hero_input.revive = f.revive;
+                hero_input.hospital = f.hospital;
+                let down = me_state
+                    .and_then(|m| m.combat)
+                    .is_some_and(|c| c.status != hw_net::Status::Standing);
+                if down {
+                    // Down or carried: no running about (the server agrees).
+                    hero_input.move_x = 0.0;
+                    hero_input.move_y = 0.0;
+                    hero_input.move_z = 0.0;
+                    hero_input.jump = false;
+                }
+                if down {
+                    hero_input.smash = false;
+                    hero_input.blast = false;
+                }
             }
 
             // Fixed ticks for the game, however fast frames come.
@@ -673,7 +759,15 @@ fn main() -> EngineResult<()> {
             while tick_clock >= hw_sim::DT && ticks < 5 {
                 tick_clock -= hw_sim::DT;
                 ticks += 1;
-                session.tick(hero_input);
+                // A power key goes out once, with the next tick.
+                // (a click shorter than a tick still punches).
+                let mut i = hero_input;
+                match std::mem::take(&mut pending_power) {
+                    1 => i.smash = true,
+                    2 => i.blast = true,
+                    _ => {}
+                }
+                session.tick(i);
             }
             if ticks == 5 {
                 tick_clock = 0.0;
@@ -719,7 +813,8 @@ fn main() -> EngineResult<()> {
             if let Some(p) = &actors {
                 let mut done = p.finished();
                 if frame.first && std::env::var_os("HW_WAIT_PEOPLE").is_some() {
-                    let all = hw_sim::citizens::LOOKS as usize + 1;
+                    let all =
+                        hw_sim::citizens::LOOKS as usize + 1 + 2 * people::VILLAIN_LOOKS as usize;
                     let more = p.wait(all.saturating_sub(done.len()));
                     done.extend(more);
                 }
@@ -742,33 +837,92 @@ fn main() -> EngineResult<()> {
                 keep
             });
             let mine = session.my_hero();
+            // Where everyone the server sends is, for the fight's lookups.
+            let at_of = |id: hw_core::NetId| {
+                heroes
+                    .iter()
+                    .find(|e| e.id == id)
+                    .map(|e| Vec3::new(e.pos[0] as f32, e.pos[1] as f32, e.pos[2] as f32))
+            };
             for h in &heroes {
                 let vel = Vec3::from_array(h.vel);
-                if h.kind == hw_net::EntityKind::Crate {
+                if matches!(
+                    h.kind,
+                    hw_net::EntityKind::Crate | hw_net::EntityKind::Drone
+                ) {
                     // Physics bodies turn every way; Place turns yaw, pitch, roll in that order.
                     let (y, x, z) = glam::Quat::from_array(h.rot).to_euler(glam::EulerRot::YXZ);
-                    let place = Place::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32)
+                    let mut place = Place::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32)
                         .with_yaw_deg(y.to_degrees())
                         .with_pitch_deg(x.to_degrees())
                         .with_roll_deg(z.to_degrees());
+                    if h.kind == hw_net::EntityKind::Drone {
+                        // A drone turns slowly as it flies, bobbing a little.
+                        let t = frame.time + h.id.0 as f32;
+                        place = Place::new(
+                            h.pos[0] as f32,
+                            h.pos[1] as f32 + (t * 2.3).sin() * 0.06,
+                            h.pos[2] as f32,
+                        )
+                        .with_yaw_deg(t * 40.0);
+                    }
                     match hero_entities.get(&h.id) {
                         Some(&(e, _)) => world.set_place(e, place)?,
                         None => {
-                            let e = world.place(citymesh::crate_mesh(), place)?;
+                            let mesh = if h.kind == hw_net::EntityKind::Drone {
+                                // A medical drone fetches heroes, police ones villains.
+                                let medical = heroes.iter().any(|o| {
+                                    o.kind == hw_net::EntityKind::Hero
+                                        && at_of(o.id).unwrap_or(Vec3::ZERO).distance(Vec3::new(
+                                            h.pos[0] as f32,
+                                            h.pos[1] as f32,
+                                            h.pos[2] as f32,
+                                        )) < 3.0
+                                });
+                                fightview::drone_mesh(medical)
+                            } else {
+                                citymesh::crate_mesh()
+                            };
+                            let e = world.place(mesh, place)?;
                             hero_entities.insert(h.id, (e, false));
                         }
                     }
                     continue;
                 }
                 let feet = Vec3::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32);
+                let villain = h.kind.is_enemy();
                 // Our own flight we know; others' is told from their motion.
                 let flying = (mine == Some(h.id))
                     .then(|| hero_flies || solids.in_lift(glam::DVec3::from_array(h.pos)));
                 let anim = anims.entry(h.id).or_default();
-                let d = anim.step(vel, h.grounded, flying, frame.dt);
-                // Until the hero creator: a look per player, the same on
-                // every machine.
-                let who = Who::Hero(format!("player {}", h.owner.map_or(0, |o| o.0)));
+                let mut d = anim.step(
+                    vel,
+                    h.grounded,
+                    if villain { Some(false) } else { flying },
+                    frame.dt,
+                );
+                // Fighters face their foe while they stand and fight.
+                let action = fight.action(h.id);
+                let foe = h.combat.and_then(|c| c.target).and_then(at_of);
+                let slow = Vec3::new(vel.x, 0.0, vel.z).length() < 0.6;
+                if let (Some(f), true) = (foe, action.is_some() || (villain && slow)) {
+                    let to = f - feet;
+                    if to.length() > 0.2 {
+                        anim.face(to.x.atan2(to.z).to_degrees(), frame.dt);
+                        d.yaw = anim.yaw();
+                    }
+                }
+                // A look per player until the hero creator, the same on
+                // every machine; villains by kind, a few looks each.
+                let who = match h.kind {
+                    hw_net::EntityKind::Brute => {
+                        Who::Villain(VillainKind::Brute, h.id.0 % people::VILLAIN_LOOKS)
+                    }
+                    hw_net::EntityKind::Technician => {
+                        Who::Villain(VillainKind::Technician, h.id.0 % people::VILLAIN_LOOKS)
+                    }
+                    _ => Who::Hero(format!("player {}", h.owner.map_or(0, |o| o.0))),
+                };
                 let model = models.get(&who).cloned();
                 if model.is_none() && !asked.contains(&who) {
                     if let Some(p) = &actors {
@@ -778,18 +932,25 @@ fn main() -> EngineResult<()> {
                 }
                 let animated = model.is_some();
                 let place = Place::new(feet.x, feet.y, feet.z).with_yaw_deg(d.yaw);
-                let (e, was_animated) = match hero_entities.get(&h.id) {
+                let (e, _) = match hero_entities.get(&h.id) {
                     Some(&(e, a)) if a == animated => (e, a),
                     old => {
                         if let Some(&(e, _)) = old {
+                            fight.drop_gun(world, e);
                             world.despawn(e);
                         }
                         let e = match &model {
                             Some(m) => {
                                 let e = world.spawn_animated_shared(m.clone(), place)?;
-                                world.set_animation_blend(e, 0.25)?;
+                                world.set_animation_blend(e, 0.2)?;
                                 anim.shown = "";
+                                if h.kind == hw_net::EntityKind::Technician {
+                                    fight.arm(world, e);
+                                }
                                 e
+                            }
+                            None if villain => {
+                                world.place(fightview::villain_placeholder(h.kind), place)?
                             }
                             None => world.place(citymesh::hero_mesh(mine == Some(h.id)), place)?,
                         };
@@ -797,33 +958,91 @@ fn main() -> EngineResult<()> {
                         (e, false)
                     }
                 };
-                let _ = was_animated;
-                if animated {
-                    let o = tipped_origin(feet, &d);
-                    world.set_place(
-                        e,
-                        Place::new(o.x, o.y, o.z)
-                            .with_yaw_deg(d.yaw)
-                            .with_pitch_deg(d.pitch)
-                            .with_roll_deg(d.roll),
-                    )?;
-                    if anim.shown != d.clip {
-                        if d.once {
-                            world.play_animation_once(e, d.clip)?;
-                        } else {
-                            world.play_animation(e, d.clip)?;
-                        }
-                        // Feet find the ground when standing on it.
-                        let on_ground =
-                            matches!(d.clip, "idle" | "walk" | "jog" | "sprint" | "jump land");
-                        let _ = world.set_foot_ik(e, on_ground.then(FootIk::default));
-                        anim.shown = d.clip;
-                    }
-                    world.set_animation_speed(e, d.rate)?;
-                } else {
+                if !animated {
                     world.set_place(e, place)?;
+                    continue;
                 }
+                // A ragdoll moves the body itself; afterwards the drawn body
+                // eases back to where the server has it.
+                if world.ragdoll_state(e).is_some() {
+                    let at = world
+                        .world_transform(e)
+                        .map(|m| m.w_axis.truncate())
+                        .unwrap_or(feet);
+                    settle.insert(h.id, (at - feet, true));
+                    continue;
+                }
+                let mut offset = Vec3::ZERO;
+                if let Some((o, _)) = settle.get_mut(&h.id) {
+                    *o *= (-frame.dt * 4.0).exp();
+                    offset = *o;
+                    if o.length() < 0.02 {
+                        settle.remove(&h.id);
+                    }
+                }
+                let o = tipped_origin(feet + offset, &d);
+                world.set_place(
+                    e,
+                    Place::new(o.x, o.y, o.z)
+                        .with_yaw_deg(d.yaw)
+                        .with_pitch_deg(d.pitch)
+                        .with_roll_deg(d.roll),
+                )?;
+                // Fighting clips over walking; a stance while squaring up.
+                let in_fight = h.combat.is_some_and(|c| c.target.is_some()) && slow && villain;
+                let (clip, once) = match action {
+                    Some(a) => (a, a != "cuffed" && a != "hover"),
+                    None if in_fight
+                        && h.kind == hw_net::EntityKind::Technician
+                        && d.clip == "idle" =>
+                    {
+                        ("pistol idle", false)
+                    }
+                    None if in_fight && d.clip == "idle" => ("fight stance", false),
+                    None => (d.clip, d.once),
+                };
+                if anim.shown != clip {
+                    // A clip a character lacks is skipped, not fatal.
+                    let played = if once {
+                        world.play_animation_once(e, clip)
+                    } else {
+                        world.play_animation(e, clip)
+                    };
+                    if let Err(err) = played {
+                        eprintln!("{who:?}: {err}");
+                    }
+                    // Feet find the ground when standing on it.
+                    let on_ground = action.is_none()
+                        && matches!(
+                            clip,
+                            "idle"
+                                | "walk"
+                                | "jog"
+                                | "sprint"
+                                | "jump land"
+                                | "fight stance"
+                                | "pistol idle"
+                        );
+                    let _ = world.set_foot_ik(e, on_ground.then(FootIk::default));
+                    anim.shown = clip;
+                }
+                let rate = if fight.frozen(h.id) {
+                    0.0
+                } else if action.is_some() {
+                    1.0
+                } else {
+                    d.rate
+                };
+                world.set_animation_speed(e, rate)?;
             }
+            settle.retain(|id, _| heroes.iter().any(|h| h.id == *id));
+            // Knocks, defeats, cuffs and drones follow the fighters' status;
+            // then what happened in fights this frame.
+            fight.statuses(world, &heroes, &mut hero_entities);
+            let (events, now) = session.take_fx();
+            fight.on_fx(world, &events, now, mine, &hero_entities, &heroes);
+            let me_state = mine.and_then(|id| heroes.iter().find(|e| e.id == id));
+            fight.update(world, frame.dt, &heroes, me_state);
 
             // Citizens around the camera, at the game's time.
             let eye = world.camera().eye();
@@ -860,7 +1079,14 @@ fn main() -> EngineResult<()> {
                 Some(base + f.elevation + 2.6)
             });
             match (flying, me) {
-                (false, Some(p)) => hero_cam.update(world, frame, p.as_vec3(), &solids, open_above),
+                (false, Some(p)) => {
+                    hero_cam.update(world, frame, p.as_vec3(), &solids, open_above);
+                    let shake = fight.shake();
+                    if shake != Vec3::ZERO {
+                        let cam = world.camera();
+                        world.look_first_person(cam.eye() + shake, hero_cam.yaw, hero_cam.pitch);
+                    }
+                }
                 _ => {
                     fly.update(world, frame);
                     let q = DVec2::new(fly.position.x as f64, fly.position.z as f64);
@@ -893,6 +1119,19 @@ fn main() -> EngineResult<()> {
                     swoop = None;
                 }
             }
+            // The fight's screen over everything.
+            {
+                let view_proj = world.camera().view_projection(frame.aspect);
+                let me_state = mine.and_then(|id| heroes.iter().find(|e| e.id == id));
+                let names = |e: &hw_net::EntityState| {
+                    e.owner
+                        .and_then(|o| session.player_name(o))
+                        .unwrap_or_else(|| "Your teammate".into())
+                };
+                fight.hud(frame.ui.ctx(), view_proj, me_state, &heroes, &names);
+            }
+            drawn = heroes;
+
             // Roads and buildings around the camera, full detail close by.
             let eye = world.camera().eye();
             town.update(

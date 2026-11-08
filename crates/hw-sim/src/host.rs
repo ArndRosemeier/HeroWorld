@@ -90,6 +90,8 @@ pub struct Host {
     next_player: u16,
     /// World news (damage, impacts) for the player at this machine.
     local_news: Vec<ToClient>,
+    /// Fight events since the local player last took them.
+    fx: Vec<hw_net::Fx>,
 }
 
 impl Host {
@@ -107,6 +109,7 @@ impl Host {
             remotes: BTreeMap::new(),
             next_player: 1,
             local_news: Vec::new(),
+            fx: Vec::new(),
         }
     }
 
@@ -329,6 +332,7 @@ impl Host {
         for m in news {
             self.tell_all(m);
         }
+        self.share_fx();
         self.send_updates();
         out
     }
@@ -337,6 +341,38 @@ impl Host {
     /// since the last call.
     pub fn take_local_news(&mut self) -> Vec<ToClient> {
         std::mem::take(&mut self.local_news)
+    }
+
+    /// Fight events since the last call (for the player at this machine).
+    pub fn take_fx(&mut self) -> Vec<hw_net::Fx> {
+        std::mem::take(&mut self.fx)
+    }
+
+    /// This tick's fight events: kept for the local player, and sent
+    /// (reliably) to each remote player near enough to see them.
+    fn share_fx(&mut self) {
+        let events = self.sim.fx().to_vec();
+        if events.is_empty() {
+            return;
+        }
+        // Nobody reads them in a dedicated server; keep only the newest.
+        if self.fx.len() > 256 {
+            self.fx.clear();
+        }
+        self.fx.extend(events.iter().copied());
+        let players: Vec<PlayerId> = self.remotes.keys().copied().collect();
+        for p in players {
+            let Some(at) = self.sim.hero_of(p).and_then(|h| self.sim.position(h)) else {
+                continue;
+            };
+            let r = self.remotes.get_mut(&p).expect("remote");
+            for e in &events {
+                let d = DVec3::new(e.at[0] as f64, e.at[1] as f64, e.at[2] as f64).distance(at);
+                if d <= INTEREST_RADIUS {
+                    r.rel_out.push(ToClient::Fx(*e));
+                }
+            }
+        }
     }
 
     fn send_updates(&mut self) {

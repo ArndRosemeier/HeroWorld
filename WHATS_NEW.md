@@ -3,6 +3,20 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.024 (2026-11-08)
+
+- The first fight: the mad scientist's minions wait down the street from where you start. Mutant
+  brutes (green, huge, glowing eyes) rush you with big hooks you can see coming; ray-gun
+  technicians in lab coats keep their distance and shoot.
+- Tab picks the villain nearest your crosshair (again for the next one). Left mouse or 1
+  punches, Q or 2 fires an energy bolt that costs energy and knocks villains flying. A target
+  frame shows name, rank and level in its con colour; health and energy bars sit at the bottom.
+- Blows land with sparks, beams, scorch marks, numbers, a jolt of the camera and a moment of
+  hit-stop. Knocked villains tumble as ragdolls and get back up.
+- Nobody dies: beaten villains lie in glowing energy cuffs until a police drone lifts them away.
+  If you go down, a friend can revive you (hold E next to you), or press H and a medical drone
+  flies you to hospital. Beaten groups come back after a while, bigger when friends play along.
+
 ## 0.023 (2026-11-08)
 
 - Street props break too: punch a lamp post or a tree and it falls over the way you hit it, cars

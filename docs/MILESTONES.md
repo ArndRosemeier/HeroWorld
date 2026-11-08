@@ -221,6 +221,13 @@ City of Heroes-style combat at its smallest: one hero against the mad scientist'
 **Done when:** a group of five minions is fun to beat alone and with a friend, and a test
 fight runs headless with the same result every time.
 
+**Status (0.024):** built. Server side in `hw-sim/src/combat.rs` (fighters, powers, brute and
+technician AI, knockback, cuffs, police and medical drones, revive, respawning groups that grow
+with the team); `tests/first_fight.rs` plays it headless (alone and in pairs, same result every
+run). Client in `hw-client/src/fightview.rs`. Not yet: AI walks straight at its foe with
+collision instead of on Engine navigation (needs nav meshes per cell, see M10), sounds are
+synthesized placeholders, and hospitals are the spawn street until the town has them.
+
 ### M7. Karma, levels and powers
 
 The progression from the design: karma, levels 1 to 5, affinities, tiers.

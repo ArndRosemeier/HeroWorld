@@ -81,6 +81,34 @@ pub fn add_flight_clips(model: &mut AnimatedModel) -> Result<(), String> {
     Ok(())
 }
 
+/// Adds "cuffed": hands bound behind the back in energy cuffs, legs
+/// dangling, a slow sway, for a villain hanging from a police drone.
+pub fn add_cuffed_clip(model: &mut AnimatedModel) -> Result<(), String> {
+    let cuffed = make_clip(model, "cuffed", 3.0, |t| {
+        let w = (t * std::f32::consts::TAU).sin();
+        Pose {
+            aims: vec![
+                aim("upperarm_l", "lowerarm_l", 0.18, -0.85, -0.45),
+                aim("lowerarm_l", "hand_l", -0.6, -0.3, -0.5),
+                aim("upperarm_r", "lowerarm_r", -0.18, -0.85, -0.45),
+                aim("lowerarm_r", "hand_r", 0.6, -0.3, -0.5),
+                aim("thigh_l", "calf_l", 0.05, -1.0, 0.1 + 0.08 * w),
+                aim("calf_l", "foot_l", 0.03, -1.0, -0.2 + 0.05 * w),
+                aim("thigh_r", "calf_r", -0.05, -1.0, 0.05 - 0.08 * w),
+                aim("calf_r", "foot_r", -0.03, -1.0, -0.25 - 0.05 * w),
+                aim("foot_l", "ball_l", 0.0, -1.0, 0.5),
+                aim("foot_r", "ball_r", 0.0, -1.0, 0.5),
+            ],
+            // Head hung low.
+            turns: vec![("head", Vec3::X, 0.35)],
+            lift: 0.0,
+        }
+    })?;
+    model.clips.retain(|c| c.name != "cuffed");
+    model.clips.push(cuffed);
+    Ok(())
+}
+
 /// A pose at one moment: aims, then turns of whole joints (axis in model
 /// space, radians), then a lift of the hips.
 struct Pose {

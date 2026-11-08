@@ -8,6 +8,7 @@
 pub mod bubbles;
 pub mod citizens;
 pub mod collision;
+pub mod combat;
 pub mod destruction;
 pub mod host;
 pub mod physics;
@@ -18,6 +19,7 @@ pub mod save;
 use bevy_ecs::prelude::*;
 use bubbles::Bubbles;
 use collision::{Body, Obstacles, BODY_HEIGHT};
+use combat::{CombatView, Drone, Enemy, Fighter, Fights, Spot};
 use destruction::Damage;
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, NetIdAllocator, Seed};
@@ -25,7 +27,7 @@ use hw_gen::building::BuildingPlan;
 use hw_gen::city::{CityParams, CityPlan};
 use hw_gen::urban::world::TownWorld;
 use hw_gen::urban::TownParams;
-use hw_net::{EntityKind, EntityState, ImpactKind, InputState, PlayerId, ToClient};
+use hw_net::{EntityKind, EntityState, Fx, ImpactKind, InputState, PlayerId, Status, ToClient};
 use physics::{Physics, PropState, CRATE_HALF};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -107,6 +109,18 @@ pub struct LastChange(pub u64);
 
 #[derive(Resource)]
 struct Ids(NetIdAllocator);
+
+/// The street where heroes appear (its middle and direction); the hospital
+/// sends heroes back here for now.
+#[derive(Resource, Clone, Copy)]
+struct SpawnLine(DVec2, DVec2);
+
+impl SpawnLine {
+    fn hospital(&self, solids: &Obstacles) -> DVec3 {
+        let p = self.0 - self.1 * 4.0;
+        DVec3::new(p.x, solids.ground_at(p).max(GROUND_Y) + 0.5, p.y)
+    }
+}
 
 #[derive(Resource)]
 struct Now(u64);
@@ -303,14 +317,14 @@ impl Sim {
     /// A simulation of a city already generated (the client shares its copy).
     pub fn for_city(seed: Seed, city: &GeneratedCity) -> Self {
         let mut sim = Self::with_solids(seed, city.obstacles.clone());
-        sim.spawn = city.spawn_line();
+        sim.set_spawn(city.spawn_line());
         sim
     }
 
     /// A simulation of a town already generated (the client shares its copy).
     pub fn for_town(seed: Seed, town: &GeneratedTown) -> Self {
         let mut sim = Self::with_solids(seed, town.obstacles.clone());
-        sim.spawn = town.world.spawn_line();
+        sim.set_spawn(town.world.spawn_line());
         sim.town_population = town.population();
         sim.street = props::PropDamage::new(town.world.clone());
         sim
@@ -322,6 +336,11 @@ impl Sim {
         world.insert_resource(Ids(NetIdAllocator::new()));
         world.insert_resource(Solids(solids.clone()));
         world.insert_resource(Now(0));
+        world.insert_resource(SpawnLine(DVec2::ZERO, DVec2::X));
+        world.insert_resource(Fights {
+            seed: seed.0,
+            ..Default::default()
+        });
         let mut schedule = Schedule::default();
         schedule.add_systems(move_heroes);
         let mut track = Schedule::default();
@@ -342,6 +361,12 @@ impl Sim {
         }
     }
 
+    /// Sets the street heroes appear on.
+    pub fn set_spawn(&mut self, line: (DVec2, DVec2)) {
+        self.spawn = line;
+        self.world.insert_resource(SpawnLine(line.0, line.1));
+    }
+
     pub fn solids(&self) -> Arc<Obstacles> {
         self.world.resource::<Solids>().0.clone()
     }
@@ -359,6 +384,7 @@ impl Sim {
     /// regroup, physics steps inside the bubbles, changes are stamped.
     pub fn step(&mut self) {
         self.schedule.run(&mut self.world);
+        combat::step(&mut self.world, self.tick);
         let heroes: Vec<(PlayerId, NetId, DVec3)> = self
             .world
             .query::<(&Hero, &Net, &Motion)>()
@@ -384,13 +410,18 @@ impl Sim {
     fn strike(&mut self) {
         let tick = self.tick;
         let mut blows = Vec::new();
-        for (hero, control, motion, mut strike) in self
+        for (hero, control, motion, mut strike, fighter) in self
             .world
-            .query::<(&Hero, &Control, &Motion, &mut Strike)>()
+            .query::<(&Hero, &Control, &Motion, &mut Strike, Option<&Fighter>)>()
             .iter_mut(&mut self.world)
         {
             let input = control.0;
             if tick < strike.ready_at || !(input.smash || input.blast) {
+                continue;
+            }
+            // A blow at a villain is the fight's (see `combat`); the downed
+            // break nothing.
+            if fighter.is_some_and(|f| f.engaged || !f.standing()) {
                 continue;
             }
             let aim = DVec3::new(
@@ -458,10 +489,19 @@ impl Sim {
     }
 
     fn step_physics(&mut self, heroes: &[(PlayerId, NetId, DVec3)]) {
-        let keep: BTreeSet<NetId> = heroes.iter().map(|(_, id, _)| *id).collect();
+        // Heroes and standing villains shove crates about.
+        let mut people: Vec<(NetId, DVec3)> = heroes.iter().map(|(_, id, at)| (*id, *at)).collect();
+        people.extend(
+            self.world
+                .query_filtered::<(&Net, &Motion, &Fighter), With<Enemy>>()
+                .iter(&self.world)
+                .filter(|(_, _, f)| f.standing())
+                .map(|(n, m, _)| (n.0, m.0.pos)),
+        );
+        let keep: BTreeSet<NetId> = people.iter().map(|(id, _)| *id).collect();
         self.physics.keep_heroes(&keep);
-        for (_, id, at) in heroes {
-            self.physics.place_hero(*id, *at);
+        for (id, at) in people {
+            self.physics.place_hero(id, at);
         }
         // Props inside a bubble are simulated, nearest the bubble's centre
         // first, up to its budget; the rest hold still where they are.
@@ -583,6 +623,7 @@ impl Sim {
     /// Spawns a hero for `owner` at `at` and returns its ID.
     pub fn spawn_hero(&mut self, owner: PlayerId, at: DVec3) -> NetId {
         let id = self.world.resource_mut::<Ids>().0.allocate();
+        let fighter = Fighter::hero();
         self.world.spawn((
             Net(id),
             Motion(Body {
@@ -593,9 +634,84 @@ impl Sim {
             Hero { owner },
             Control::default(),
             Strike::default(),
+            fighter,
+            CombatView(fighter.view()),
             LastChange(self.tick),
         ));
         id
+    }
+
+    /// A street corner where the mad scientist's minions hang about, `at`
+    /// facing `facing`; the first group stands there at once. Returns the
+    /// spot's index.
+    pub fn add_fight_spot(&mut self, at: DVec3, facing: DVec2) -> usize {
+        let i = {
+            let mut f = self.world.resource_mut::<Fights>();
+            f.spots.push(Spot {
+                center: at,
+                facing: facing.normalize_or(DVec2::X),
+                groups: 0,
+                members: 0,
+                respawn_at: None,
+            });
+            f.spots.len() - 1
+        };
+        let heroes = self.world.query::<&Hero>().iter(&self.world).count();
+        combat::spawn_group(&mut self.world, self.tick, i, heroes.max(1));
+        i
+    }
+
+    /// The first fight: a group of minions on the street, the other way
+    /// from the crates, a short run from where heroes appear.
+    pub fn place_first_fight(&mut self) -> usize {
+        let (mid, dir) = self.spawn;
+        let p = mid - dir * 32.0;
+        let ground = self.world.resource::<Solids>().0.ground_at(p).max(GROUND_Y);
+        self.add_fight_spot(DVec3::new(p.x, ground, p.y), dir)
+    }
+
+    /// The encounter spots and what happened in the last tick.
+    pub fn fights(&self) -> &Fights {
+        self.world.resource::<Fights>()
+    }
+
+    /// What happened in fights during the last tick.
+    pub fn fx(&self) -> &[Fx] {
+        &self.world.resource::<Fights>().events
+    }
+
+    /// A fighter's state (health, energy, status, powers).
+    pub fn fighter(&mut self, id: NetId) -> Option<Fighter> {
+        self.world
+            .query::<(&Net, &Fighter)>()
+            .iter(&self.world)
+            .find(|(n, _)| n.0 == id)
+            .map(|(_, f)| *f)
+    }
+
+    /// Changes a fighter (tests, cheats).
+    pub fn set_fighter(&mut self, id: NetId, fighter: Fighter) {
+        for (n, mut f) in self
+            .world
+            .query::<(&Net, &mut Fighter)>()
+            .iter_mut(&mut self.world)
+        {
+            if n.0 == id {
+                *f = fighter;
+            }
+        }
+    }
+
+    /// Villains (and drones) in the world, by ID: (id, kind, position, fighter).
+    pub fn enemies(&mut self) -> Vec<(NetId, combat::EnemyKind, DVec3, Fighter)> {
+        let mut v: Vec<_> = self
+            .world
+            .query::<(&Net, &Motion, &Enemy, &Fighter)>()
+            .iter(&self.world)
+            .map(|(n, m, e, f)| (n.0, e.kind, m.0.pos, *f))
+            .collect();
+        v.sort_by_key(|x| x.0);
+        v
     }
 
     pub fn remove_hero(&mut self, owner: PlayerId) {
@@ -665,19 +781,24 @@ impl Sim {
                 &Motion,
                 Option<&Hero>,
                 Option<&Orientation>,
-                Has<Prop>,
+                (Has<Prop>, Option<&Enemy>, Has<Drone>, Option<&CombatView>),
                 &LastChange,
             )>()
             .iter(&self.world)
-            .map(|(n, m, h, o, prop, c)| {
+            .map(|(n, m, h, o, (prop, enemy, drone, view), c)| {
                 (
                     EntityState {
                         id: n.0,
                         kind: if prop {
                             EntityKind::Crate
+                        } else if let Some(e) = enemy {
+                            e.kind.entity_kind()
+                        } else if drone {
+                            EntityKind::Drone
                         } else {
                             EntityKind::Hero
                         },
+                        combat: view.map(|v| v.0),
                         pos: m.0.pos.to_array(),
                         vel: m.0.vel.as_vec3().to_array(),
                         rot: o.map_or(hw_net::protocol::NO_ROTATION, |o| o.0),
@@ -698,17 +819,27 @@ impl Sim {
     }
 }
 
-fn move_heroes(solids: Res<Solids>, mut q: Query<(&Control, &mut Motion), With<Hero>>) {
-    for (control, mut motion) in &mut q {
+fn move_heroes(
+    solids: Res<Solids>,
+    mut q: Query<(&Control, &mut Motion, Option<&Fighter>), With<Hero>>,
+) {
+    for (control, mut motion, fighter) in &mut q {
+        let status = fighter.map_or(Status::Standing, |f| f.status);
+        let input = match status {
+            // A drone holds the carried; the downed only fall.
+            Status::Carried => continue,
+            Status::Down => InputState::default(),
+            _ => control.0,
+        };
         let mut body = motion.0;
-        step_hero(&mut body, control.0, &solids.0);
+        step_hero(&mut body, input, &solids.0);
         // Only a real change counts, so heroes standing still cost no traffic.
         motion.set_if_neq(Motion(body));
     }
 }
 
 /// Entities whose replicated state changed since the last tick.
-type Moved = Or<(Changed<Motion>, Changed<Orientation>)>;
+type Moved = Or<(Changed<Motion>, Changed<Orientation>, Changed<CombatView>)>;
 
 fn track_changes(now: Res<Now>, mut q: Query<&mut LastChange, Moved>) {
     for mut c in &mut q {
