@@ -63,6 +63,10 @@ struct Floater {
     colour: egui::Color32,
     age: f32,
     big: bool,
+    /// Seconds it shows (words said stay longer than numbers).
+    life: f32,
+    /// Metres a second it rises.
+    rise: f32,
 }
 
 /// The fight's sounds, made here from sine waves and noise.
@@ -472,6 +476,27 @@ impl FightView {
                     self.play(world, |s| &s.punch, at, 1.0, 0.7);
                     self.blow(e, at, mine, on_me, theme_ui_colour(Power::Lift, e.theme));
                 }
+                FxKind::Warn => {
+                    // A gang warns a hero off its turf: everyone near hears it.
+                    let lines = hw_sim::combat::EnemyKind::from_entity(
+                        all.iter()
+                            .find(|x| x.id == e.from)
+                            .map_or(EntityKind::Hero, |x| x.kind),
+                    )
+                    .map_or(&["Go away!"][..], |k| {
+                        hw_sim::factions::warnings(hw_sim::factions::of_enemy(k))
+                    });
+                    let line = lines[(e.from.0 as usize + e.tick as usize / 7) % lines.len()];
+                    let head = all.iter().find(|x| x.id == e.from).map_or(at, pos);
+                    self.speak(
+                        head + Vec3::Y * 2.3,
+                        line.to_string(),
+                        egui::Color32::from_rgb(255, 120, 90),
+                    );
+                    if on_me {
+                        self.note = Some(("You're on their turf: back off, or fight.".into(), 3.0));
+                    }
+                }
                 FxKind::Karma => {
                     if on_me {
                         self.float(
@@ -629,6 +654,21 @@ impl FightView {
             colour,
             age: 0.0,
             big,
+            life: 1.3,
+            rise: 0.9,
+        });
+    }
+
+    /// Words someone says, over their head for a few seconds.
+    fn speak(&mut self, at: Vec3, text: String, colour: egui::Color32) {
+        self.floaters.push(Floater {
+            at,
+            text,
+            colour,
+            age: 0.0,
+            big: false,
+            life: 3.2,
+            rise: 0.15,
         });
     }
 
@@ -838,9 +878,9 @@ impl FightView {
         });
         for f in &mut self.floaters {
             f.age += dt;
-            f.at.y += dt * 0.9;
+            f.at.y += dt * f.rise;
         }
-        self.floaters.retain(|f| f.age < 1.3);
+        self.floaters.retain(|f| f.age < f.life);
         if let Some(n) = &mut self.note {
             n.1 -= dt;
             if n.1 <= 0.0 {
@@ -996,7 +1036,7 @@ impl FightView {
         // Floating numbers.
         for f in &self.floaters {
             let Some(p) = project(f.at) else { continue };
-            let a = (1.0 - (f.age / 1.3).powi(2)).clamp(0.0, 1.0);
+            let a = (1.0 - (f.age / f.life).powi(2)).clamp(0.0, 1.0);
             let size =
                 if f.big { 26.0 } else { 20.0 } * (1.0 + 0.4 * (1.0 - (f.age * 6.0).min(1.0)));
             let col = f.colour.gamma_multiply(a);
@@ -1728,6 +1768,8 @@ pub fn drone_mesh(medical: bool) -> Mesh {
 pub fn villain_placeholder(kind: EntityKind) -> Mesh {
     let (body, head) = match kind {
         EntityKind::Brute => (rgb(90, 80, 60), rgb(110, 160, 80)),
+        EntityKind::Greaser => (rgb(28, 28, 32), rgb(224, 186, 150)),
+        EntityKind::Gunsel => (rgb(60, 32, 58), rgb(224, 186, 150)),
         _ => (rgb(236, 234, 226), rgb(224, 186, 150)),
     };
     let mut m = Mesh::new();

@@ -142,6 +142,34 @@ pub fn add_cuffed_clip(model: &mut AnimatedModel) -> Result<(), String> {
     Ok(())
 }
 
+/// Adds "hands up": someone being robbed, hands raised beside the head,
+/// shoulders hunched, leaning away, trembling a little.
+pub fn add_hands_up_clip(model: &mut AnimatedModel) -> Result<(), String> {
+    let up = make_clip(model, "hands up", 1.6, |t| {
+        let w = (t * std::f32::consts::TAU * 3.0).sin() * 0.03;
+        Pose {
+            aims: vec![
+                // Upper arms out and up, forearms straight up, palms out.
+                aim("upperarm_l", "lowerarm_l", 0.95, 0.1 + w, 0.2),
+                aim("lowerarm_l", "hand_l", 0.1, 1.0, 0.15 + w),
+                aim("upperarm_r", "lowerarm_r", -0.95, 0.1 - w, 0.2),
+                aim("lowerarm_r", "hand_r", -0.1, 1.0, 0.15 - w),
+                // Knees a little bent, one foot back.
+                aim("thigh_l", "calf_l", 0.08, -1.0, 0.08),
+                aim("calf_l", "foot_l", 0.06, -1.0, -0.1),
+                aim("thigh_r", "calf_r", -0.08, -1.0, -0.12),
+                aim("calf_r", "foot_r", -0.06, -1.0, -0.2),
+            ],
+            // Leaning back from the muggers, head turned half away.
+            turns: vec![("spine_03", Vec3::X, -0.12), ("head", Vec3::Y, 0.35)],
+            lift: -0.04,
+        }
+    })?;
+    model.clips.retain(|c| c.name != "hands up");
+    model.clips.push(up);
+    Ok(())
+}
+
 /// A pose at one moment: aims, then turns of whole joints (axis in model
 /// space, radians), then a lift of the hips.
 struct Pose {

@@ -131,8 +131,8 @@ impl IncidentKind {
     /// The group: how many, which kind only, levels above the team.
     fn group(self) -> (u32, Option<EnemyKind>, u8) {
         match self {
-            IncidentKind::Mugging => (2, Some(EnemyKind::Brute), 0),
-            IncidentKind::Robbery => (4, None, 1),
+            IncidentKind::Mugging => (2, Some(EnemyKind::Greaser), 0),
+            IncidentKind::Robbery => (4, Some(EnemyKind::Gunsel), 1),
             IncidentKind::Rampage => (3, Some(EnemyKind::Brute), 2),
             IncidentKind::Breakout => (5, Some(EnemyKind::Technician), 2),
             IncidentKind::Colossus => (1, Some(EnemyKind::Colossus), 3),
@@ -151,6 +151,21 @@ impl IncidentKind {
             IncidentKind::CarCrash => 3.0,
             IncidentKind::Fire => 2.5,
             IncidentKind::Colossus => 1.5,
+        }
+    }
+
+    /// A hero this near has stepped in, and the crooks turn on them (m).
+    /// Further off they get on with the crime, unless they would fight the
+    /// hero anyway (see [`crate::factions`]).
+    pub fn reach(self) -> f64 {
+        match self {
+            IncidentKind::Mugging => 9.0,
+            IncidentKind::Robbery => 12.0,
+            IncidentKind::Rampage => 16.0,
+            IncidentKind::Breakout => 18.0,
+            // The walking tank fights whoever comes.
+            IncidentKind::Colossus => f64::INFINITY,
+            IncidentKind::CarCrash | IncidentKind::Fire => 0.0,
         }
     }
 
@@ -284,6 +299,101 @@ pub fn victims(kind: IncidentKind, at: DVec3, facing: DVec2, left: u8) -> Vec<DV
         .collect()
 }
 
+/// A townsperson caught up in a crime (the one being mugged): they cower
+/// while it lasts, then walk off. Not a fighter: heroes cannot target
+/// townsfolk.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct Bystander {
+    pub incident: u32,
+    /// Walking off: the way, and the tick they are gone.
+    pub leaving: Option<(DVec2, u64)>,
+}
+
+/// Seconds a bystander walks off before they are gone.
+pub const LEAVE_SECONDS: f64 = 12.0;
+/// Their walking pace (m/s).
+pub const LEAVE_SPEED: f64 = 1.4;
+
+/// Where the one being mugged stands: in front of the muggers (who stand
+/// 1.5 m ahead of the spot, facing this way).
+pub fn mugged(at: DVec3, facing: DVec2) -> DVec3 {
+    at + DVec3::new(facing.x, 0.0, facing.y) * 3.4
+}
+
+fn yaw_quat(dir: DVec2) -> [f32; 4] {
+    glam::Quat::from_rotation_y(dir.x.atan2(dir.y) as f32).to_array()
+}
+
+fn spawn_bystander(world: &mut World, tick: u64, incident: u32, at: DVec3, facing: DVec2) {
+    let id = world.resource_mut::<crate::Ids>().0.allocate();
+    world.spawn((
+        Net(id),
+        Motion(crate::collision::Body {
+            pos: at,
+            vel: DVec3::ZERO,
+            grounded: true,
+        }),
+        crate::Orientation(yaw_quat(facing)),
+        Bystander {
+            incident,
+            leaving: None,
+        },
+        crate::LastChange(tick),
+    ));
+}
+
+/// The crime is over: its bystanders walk off, away from where it was.
+fn release_bystanders(world: &mut World, tick: u64, incident: u32) {
+    for (mut b, o) in world
+        .query::<(&mut Bystander, &crate::Orientation)>()
+        .iter_mut(world)
+    {
+        if b.incident == incident && b.leaving.is_none() {
+            // Turn aside from the muggers and go.
+            let q = glam::Quat::from_array(o.0);
+            let f = q * glam::Vec3::Z;
+            let away = DVec2::new(f.z as f64, -f.x as f64).normalize_or(DVec2::X);
+            b.leaving = Some((away, tick + ticks(LEAVE_SECONDS)));
+        }
+    }
+}
+
+/// Bystanders walking off, and gone once out of sight.
+fn walk_bystanders(world: &mut World, tick: u64) {
+    let solids = world.resource::<Solids>().0.clone();
+    let mut gone = Vec::new();
+    for (e, b, mut m, mut o) in world
+        .query::<(Entity, &Bystander, &mut Motion, &mut crate::Orientation)>()
+        .iter_mut(world)
+    {
+        let Some((dir, until)) = b.leaving else {
+            continue;
+        };
+        if tick >= until {
+            gone.push(e);
+            continue;
+        }
+        let step = dir * LEAVE_SPEED * DT;
+        let mut body = m.0;
+        let next = DVec2::new(body.pos.x + step.x, body.pos.z + step.y);
+        let y = solids.ground_at(next).max(GROUND_Y);
+        if (y - body.pos.y).abs() < 0.6 {
+            body.pos = DVec3::new(next.x, y, next.y);
+            body.vel = DVec3::new(dir.x, 0.0, dir.y) * LEAVE_SPEED;
+        } else {
+            body.vel = DVec3::ZERO;
+        }
+        m.0 = body;
+        let q = yaw_quat(dir);
+        if o.0 != q {
+            o.0 = q;
+        }
+    }
+    for e in gone {
+        world.despawn(e);
+    }
+}
+
 /// The town's incidents.
 #[derive(Default)]
 pub struct Incidents {
@@ -332,6 +442,7 @@ impl Incidents {
             return;
         }
         self.rescue(world);
+        walk_bystanders(world, tick);
         if !tick.is_multiple_of(TICK_HZ as u64) {
             return;
         }
@@ -505,6 +616,7 @@ impl Incidents {
         }
         for k in ended.into_iter().rev() {
             let inc = self.open.remove(k);
+            release_bystanders(world, tick, inc.id);
             if let Some(spot) = inc.spot {
                 match inc.state {
                     State::Resolved => self.reward(world, &inc, heroes),
@@ -733,6 +845,7 @@ impl Incidents {
             only,
             once: true,
             lead: kind.lead(),
+            provoke: Some(kind.reach()),
             ..Spot::corner(at, facing)
         };
         let index = {
@@ -774,6 +887,9 @@ impl Incidents {
         };
         if kind == IncidentKind::Colossus {
             self.last_colossus = Some(tick);
+        }
+        if kind == IncidentKind::Mugging {
+            spawn_bystander(world, tick, inc.id, mugged(at, facing), -facing);
         }
         self.news.push(inc.news());
         self.open.push(inc);

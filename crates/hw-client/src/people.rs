@@ -54,7 +54,8 @@ pub const VILLAIN_CLIPS: &[&str] = &[
     "pistol shoot",
     "hit to chest",
 ];
-/// Citizens walk and stand; a few walk the formal walk.
+/// Citizens walk and stand; a few walk the formal walk. "hands up" (a
+/// mugging's victim) is made here.
 pub const CITIZEN_CLIPS: &[&str] = &["idle", "walk", "walk formal"];
 
 /// How fast each locomotion clip travels, in m/s (measured from the clips
@@ -88,6 +89,20 @@ pub enum VillainKind {
     Brute,
     /// Ray-gun technician: lab coat, tinted goggles, gloves.
     Technician,
+    /// A Chrome Jacket: a greaser in a black leather jacket, jeans and
+    /// biker boots, slicked hair, shades.
+    Greaser,
+    /// A Velvet Syndicate gunsel: a pinstripe suit and a tilted fedora.
+    Gunsel,
+}
+
+impl VillainKind {
+    pub const ALL: [VillainKind; 4] = [
+        VillainKind::Brute,
+        VillainKind::Technician,
+        VillainKind::Greaser,
+        VillainKind::Gunsel,
+    ];
 }
 
 /// A built character.
@@ -677,6 +692,39 @@ pub fn villain(
             colour(&mut c, "worksuit", "#3a3f48");
             colour(&mut c, "gloves-short", "#2a2a2a");
         }
+        VillainKind::Greaser => {
+            let b = &mut c.body;
+            b.gender = 1.0;
+            b.age_years = rng.range(18.0, 30.0);
+            b.muscle = rng.range(0.55, 0.8);
+            b.weight = rng.range(0.4, 0.55);
+            c.beard = "none".into();
+            c.hair_color = Some(["#1d1a18", "#2b2018", "#3a2a1c"][(look as usize) % 3].into());
+            c.outfit = keep(&["jacket-jeans", "biker-boots"]);
+            if look.is_multiple_of(2) {
+                c.outfit.extend(keep(&["sunglasses"]));
+            }
+            // Black leather with a chrome-blue denim.
+            colour(&mut c, "jacket-jeans", "#1b1b1f");
+            colour(&mut c, "biker-boots", "#141414");
+        }
+        VillainKind::Gunsel => {
+            let b = &mut c.body;
+            b.gender = 1.0;
+            b.age_years = rng.range(26.0, 50.0);
+            b.muscle = rng.range(0.45, 0.65);
+            b.weight = rng.range(0.45, 0.6);
+            let suit = ["suit-double", "suit-3", "suit-tie"][(look as usize) % 3];
+            c.outfit = keep(&[suit, "fedora-tilted", "black-shoes", "gloves-short"]);
+            // Deep plum velvet: the Syndicate's colour.
+            colour(
+                &mut c,
+                suit,
+                ["#3b1f3a", "#2c2233", "#46243f"][(look as usize) % 3],
+            );
+            colour(&mut c, "fedora-tilted", "#1e1a1e");
+            colour(&mut c, "gloves-short", "#141214");
+        }
     }
     c
 }
@@ -768,6 +816,9 @@ pub fn build(
     }
     if matches!(who, Who::Villain(..)) {
         poses::add_cuffed_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+    }
+    if matches!(who, Who::Citizen(_)) {
+        poses::add_hands_up_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
     Ok(Built {
         who: who.clone(),

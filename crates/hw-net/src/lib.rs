@@ -17,16 +17,16 @@ pub mod wire;
 
 pub use connection::{ConnState, Connection};
 pub use protocol::{
-    ClientMsg, CombatState, EntityKind, EntityState, Fx, FxKind, ImpactKind, InputState,
+    ClientMsg, CombatState, EntityKind, EntityState, Faction, Fx, FxKind, ImpactKind, InputState,
     OwnedPower, PlayerId, Power, ServerMsg, Sheet, Status, ToClient, ToServer, EFFECT_ARMOURED,
     EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_ENRAGED, EFFECT_HELD, EFFECT_KNEELING, EFFECT_SHIELD,
-    EFFECT_SUPER_JUMP,
+    EFFECT_SUPER_JUMP, FACTIONS,
 };
 pub use replication::{Candidate, ClientView};
 pub use transport::{ClientSocket, Link, PeerAddr, ServerEvent, ServerLink, ServerSocket, Traffic};
 
 /// Protocol version. Server and client must match exactly to play together.
-pub const PROTOCOL_VERSION: u32 = 19;
+pub const PROTOCOL_VERSION: u32 = 20;
 
 /// Most players in one world.
 pub const MAX_PLAYERS: usize = 10;

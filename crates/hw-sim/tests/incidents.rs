@@ -200,3 +200,74 @@ fn heroes_get_people_out_of_a_fire_one_by_one() {
     );
     assert!(sim.sheet(me).unwrap().karma > karma + 30, "no karma for it");
 }
+
+#[test]
+fn a_mugging_has_a_victim_and_the_crooks_turn_on_a_hero_who_steps_in() {
+    use hw_net::EntityKind;
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    let me = PlayerId(1);
+    let hero = sim.spawn_hero(me, sim.spawn_point(1));
+    sim.incidents.first_after = 0.0;
+    sim.incidents.next_kind = Some(incidents::IncidentKind::Mugging);
+    let mut news = Vec::new();
+    run(&mut sim, 1.5, &mut news);
+    let inc = sim.incidents.open[0].clone();
+    assert_eq!(inc.kind, incidents::IncidentKind::Mugging);
+    let victim = |sim: &mut Sim| {
+        sim.snapshot()
+            .into_iter()
+            .find(|e| e.kind == EntityKind::Bystander)
+    };
+    let v = victim(&mut sim).expect("someone is being mugged");
+    let at = DVec3::from_array(v.pos);
+    assert!(at.distance(inc.at) < 5.0);
+    // A hero watching from across the street is not their business.
+    let face = DVec3::new(inc.facing.x, 0.0, inc.facing.y);
+    let stand = |sim: &mut Sim, d: f64| {
+        sim.set_body(
+            hero,
+            Body {
+                pos: inc.at + face * d + DVec3::Y * 0.1,
+                vel: DVec3::ZERO,
+                grounded: true,
+            },
+        );
+    };
+    for _ in 0..TICK_HZ * 3 {
+        stand(&mut sim, 14.0);
+        sim.step();
+    }
+    assert!(
+        sim.enemies().iter().all(|e| e.3.target.is_none()),
+        "the muggers leave a passer-by alone"
+    );
+    // Stepping in starts the fight.
+    for _ in 0..TICK_HZ {
+        stand(&mut sim, 5.5);
+        sim.step();
+    }
+    assert!(sim.enemies().iter().any(|e| e.3.target == Some(hero)));
+    // Beaten (a cheat): the victim walks off and is gone a while later.
+    for (id, _, _, mut f) in sim.enemies() {
+        f.health = 0.0;
+        f.status = Status::Down;
+        sim.set_fighter(id, f);
+    }
+    // The police drones take them away; then it is over.
+    for _ in 0..20 {
+        if sim.incidents.open.iter().all(|i| i.id != inc.id) {
+            break;
+        }
+        run(&mut sim, 1.0, &mut news);
+    }
+    assert!(sim.incidents.open.iter().all(|i| i.id != inc.id));
+    run(&mut sim, 4.0, &mut news);
+    let leaving = victim(&mut sim).expect("still walking off");
+    assert!(
+        DVec3::from_array(leaving.pos).distance(at) > 3.0,
+        "walking off"
+    );
+    run(&mut sim, incidents::LEAVE_SECONDS + 1.0, &mut news);
+    assert!(victim(&mut sim).is_none());
+}

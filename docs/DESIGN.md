@@ -1,6 +1,6 @@
 # HeroWorld design
 
-As of 2026-11-07. The living copy is the [HeroWorld design](https://claude.ai/artifact/ErRuq4DwAK66B4BRJcZojv) doc; this file is a snapshot of it.
+As of 2026-11-08. The living copy is the [HeroWorld design](https://claude.ai/artifact/ErRuq4DwAK66B4BRJcZojv) doc; this file is a snapshot of it.
 
 ## Vision
 
@@ -172,6 +172,30 @@ Factions are goofy early SF, and not all of them are evil, but some are evil eno
 
 Villains come in tiers: thugs, then lieutenants, then supervillains with lairs in the dystopian regions.
 
+### Standing: who fights whom
+
+Arnd's direction (2026-11-08): this is a world that goes on without the heroes, not an action game where everything attacks the player. A new hero is a nobody.
+
+- **Every faction has a standing toward every other**, from -100 to 100: hostile (-60 or less), unfriendly (-20 or less), neutral, friendly (20 or more) and allied (60 or more). Townsfolk are a faction too.
+- **A hero starts with exactly the townsfolk's standings.** Each faction regards a new hero the way it regards any passer-by. The hero's sheet keeps only how their deeds have moved that (per hero, saved with the hero).
+- **Behaviour follows standing.** Hostile attacks on sight. Unfriendly warns a hero off its own turf ("Beat it, cape!") and attacks one who comes within about 9 m or stays 6 s; off its turf it leaves people alone. Neutral and better leave the hero alone.
+- **Provoked, any group fights back:** hit one of them and the whole group turns on you. A crime's crooks turn on a hero who steps in (comes within the crime's reach: 9 m for a mugging, 12 m for a robbery, 16 m for a rampage).
+- **Deeds move standing:** each of a faction's people beaten lowers its regard by 2 and raises by 1 every faction that dislikes it (townsfolk and the Patrol included). About fifteen Chrome Jackets beaten and the Jackets attack on sight.
+- **Co-op:** each hero keeps their own standing; a group reacts to the least liked hero near it.
+- **Townsfolk can't be targeted** by heroes (for now).
+- **Turf is fixed in 1.0:** borders don't change hands.
+
+| Faction | Who | Turf | Toward a new hero |
+| --- | --- | --- | --- |
+| Townsfolk | ordinary people | | friendly |
+| City Patrol | officers, police drones | | friendly |
+| The Doctor's Lab | mutant brutes, ray-gun technicians, robo-sentries, the colossus | the dystopian quarter | unfriendly (warns, then fights) |
+| Chrome Jackets | greasers in leather and denim: muggings, street crime | later: the edge band | unfriendly |
+| Velvet Syndicate | pinstriped gunsels with ray pistols: robberies, rackets | | neutral |
+| Molehaven | the mole people | the underground | neutral |
+
+The world reacts to trouble too: pedestrians back away, run or gawk, and cars brake and queue round a mugging, a fight or a collapse (the crowd and traffic "alarm" system).
+
 Robots need more than Actors offers today (its robots are human skeletons in robot dress). Non-human robots, from tracked tanks to spider walkers to giant mechs, come from AssetGenerator rigs with breakable parts as Engine prefabs, plus procedural gaits.
 
 ## Combat
@@ -233,10 +257,10 @@ Two sources of trouble: **incidents** that spawn near heroes and are called in, 
 
 | Incident | Where | Level band | Scaling with team |
 | --- | --- | --- | --- |
-| Mugging, purse snatch | utopian core | low | more thieves |
+| Mugging, purse snatch (Chrome Jackets rob a pedestrian) | utopian core | low | more thieves |
 | Car crash with people trapped | anywhere | low | more cars |
 | Building fire with people inside | anywhere | low to mid | bigger building |
-| Robbery (shop, bank) | core, edges | low to mid | more robbers, a lieutenant |
+| Robbery (shop, bank; the Velvet Syndicate) | core, edges | low to mid | more robbers, a lieutenant |
 | Robot malfunction | core | low to mid | more robots |
 | Mutant rampage | edges, dystopia | mid | more mutants |
 | Collapse with people trapped | after fights | mid | more victims |

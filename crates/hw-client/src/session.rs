@@ -73,7 +73,11 @@ impl Session {
     ) -> std::io::Result<Self> {
         let mut host = Host::with_sim(Sim::for_town(seed, town));
         host.sim.place_starter_crates();
-        host.sim.place_first_fight();
+        // No villains wait where a new hero appears: trouble is found in
+        // the world. The old test group stays for the fight screenshot.
+        if std::env::var("HW_VIEW").as_deref() == Ok("fight") {
+            host.sim.place_first_fight();
+        }
         // Screenshots: `HW_INCIDENT=1` starts the first incident at once
         // (`fire`, `crash`, `breakout`...: of that kind).
         if let Ok(v) = std::env::var("HW_INCIDENT") {

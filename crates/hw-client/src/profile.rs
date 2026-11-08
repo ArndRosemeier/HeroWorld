@@ -164,6 +164,7 @@ fn sheet_to_json(s: &Sheet) -> Value {
         "karma": s.karma,
         "affinity": s.affinity,
         "origin": s.origin,
+        "regard": s.regard,
         "powers": s.powers.iter().map(|p| json!({
             "power": p.power.code(),
             "theme": p.theme,
@@ -184,6 +185,12 @@ fn sheet_from_json(v: &Value) -> Option<Sheet> {
     if let Some(a) = o.get("affinity").and_then(|a| a.as_array()) {
         for (slot, x) in affinity.iter_mut().zip(a) {
             *slot = x.as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
+        }
+    }
+    let mut regard = [0i8; hw_net::FACTIONS];
+    if let Some(a) = o.get("regard").and_then(|a| a.as_array()) {
+        for (slot, x) in regard.iter_mut().zip(a) {
+            *slot = x.as_i64().unwrap_or(0).clamp(-128, 127) as i8;
         }
     }
     let powers = o
@@ -207,6 +214,7 @@ fn sheet_from_json(v: &Value) -> Option<Sheet> {
         affinity,
         origin: num("origin").min(255) as u8,
         powers,
+        regard,
     }))
 }
 

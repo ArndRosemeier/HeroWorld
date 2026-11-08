@@ -257,7 +257,7 @@ fn main() -> EngineResult<()> {
                 Some(l) => p.request_look(looks::key(l), l.clone(), false),
                 None => p.request(Who::Hero(name.clone()), 0),
             }
-            for kind in [VillainKind::Brute, VillainKind::Technician] {
+            for kind in VillainKind::ALL {
                 for look in 0..people::VILLAIN_LOOKS {
                     p.request(Who::Villain(kind, look), 0);
                 }
@@ -289,7 +289,7 @@ fn main() -> EngineResult<()> {
     let mut hero_who: BTreeMap<hw_core::NetId, Who> = BTreeMap::new();
     // Characters built while the title showed, for when the game starts.
     let mut held: Vec<people::Built> = Vec::new();
-    for kind in [VillainKind::Brute, VillainKind::Technician] {
+    for kind in VillainKind::ALL {
         for look in 0..people::VILLAIN_LOOKS {
             asked.insert(Who::Villain(kind, look));
         }
@@ -1291,8 +1291,24 @@ fn main() -> EngineResult<()> {
                     if view == "incident" && radio.calls.len() == 1 && radio.calls.contains_key(id)
                     {
                         let c = Vec3::from_array(*at);
-                        // From its front, close by.
-                        let a = hw_sim::props::byte_to_yaw(*yaw) as f32;
+                        // From its front, close by, or the nearest way round
+                        // that no wall blocks.
+                        let a0 = hw_sim::props::byte_to_yaw(*yaw) as f32;
+                        let clear = |a: f32| {
+                            (1..=20).all(|k| {
+                                let q = c
+                                    + Vec3::new(a.sin(), 0.0, a.cos()) * (k as f32 * 0.5)
+                                    + Vec3::Y * 1.6;
+                                !solids.solid_at(q.as_dvec3())
+                            })
+                        };
+                        let a = (0..16)
+                            .map(|k| {
+                                let s = if k % 2 == 0 { 1.0 } else { -1.0 };
+                                a0 + s * ((k + 1) / 2) as f32 * std::f32::consts::TAU / 16.0
+                            })
+                            .find(|&a| clear(a))
+                            .unwrap_or(a0);
                         let p = c + Vec3::new(a.sin(), 0.0, a.cos()) * 9.0 + Vec3::Y * 3.5;
                         let d = c - p;
                         let yaw = d.x.atan2(d.z).to_degrees();
@@ -1571,6 +1587,7 @@ fn main() -> EngineResult<()> {
                 }
                 let feet = Vec3::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32);
                 let villain = h.kind.is_enemy();
+                let bystander = h.kind == hw_net::EntityKind::Bystander;
                 // The mutant alpha is a brute a head and a half taller.
                 let size = if h.kind == hw_net::EntityKind::Alpha {
                     1.35
@@ -1584,7 +1601,11 @@ fn main() -> EngineResult<()> {
                 let mut d = anim.step(
                     vel,
                     h.grounded,
-                    if villain { Some(false) } else { flying },
+                    if villain || bystander {
+                        Some(false)
+                    } else {
+                        flying
+                    },
                     frame.dt,
                 );
                 // Fighters face their foe while they stand and fight.
@@ -1598,6 +1619,13 @@ fn main() -> EngineResult<()> {
                         d.yaw = anim.yaw();
                     }
                 }
+                // A bystander standing still faces the way the server turned
+                // them (towards the muggers).
+                if bystander && slow {
+                    let (y, _, _) = glam::Quat::from_array(h.rot).to_euler(glam::EulerRot::YXZ);
+                    anim.face(y.to_degrees(), frame.dt);
+                    d.yaw = anim.yaw();
+                }
                 // A look per player until the hero creator, the same on
                 // every machine; villains by kind, a few looks each.
                 let who = match h.kind {
@@ -1607,6 +1635,14 @@ fn main() -> EngineResult<()> {
                     hw_net::EntityKind::Technician => {
                         Who::Villain(VillainKind::Technician, h.id.0 % people::VILLAIN_LOOKS)
                     }
+                    hw_net::EntityKind::Greaser => {
+                        Who::Villain(VillainKind::Greaser, h.id.0 % people::VILLAIN_LOOKS)
+                    }
+                    hw_net::EntityKind::Gunsel => {
+                        Who::Villain(VillainKind::Gunsel, h.id.0 % people::VILLAIN_LOOKS)
+                    }
+                    // A townsperson in a crime: one of the citizens' looks.
+                    hw_net::EntityKind::Bystander => Who::Citizen(h.id.0 % hw_sim::citizens::LOOKS),
                     // A hero in their looks, once they arrived (ours we
                     // know); until then a stand-in, the same on every machine.
                     _ => {
@@ -1660,7 +1696,7 @@ fn main() -> EngineResult<()> {
                                 let e = world.spawn_animated_shared(m.clone(), place)?;
                                 world.set_animation_blend(e, 0.2)?;
                                 anim.shown = "";
-                                if h.kind == hw_net::EntityKind::Technician {
+                                if h.kind.is_ranged() {
                                     fight.arm(world, e);
                                 }
                                 e
@@ -1710,13 +1746,12 @@ fn main() -> EngineResult<()> {
                 let in_fight = h.combat.is_some_and(|c| c.target.is_some()) && slow && villain;
                 let (clip, once) = match action {
                     Some(a) => (a, a != "cuffed" && a != "hover"),
-                    None if in_fight
-                        && h.kind == hw_net::EntityKind::Technician
-                        && d.clip == "idle" =>
-                    {
+                    None if in_fight && h.kind.is_ranged() && d.clip == "idle" => {
                         ("pistol idle", false)
                     }
                     None if in_fight && d.clip == "idle" => ("fight stance", false),
+                    // The one being mugged cowers until it is over.
+                    None if bystander && d.clip == "idle" => ("hands up", false),
                     None => (d.clip, d.once),
                 };
                 if anim.shown != clip {

@@ -3,6 +3,20 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.057 (2026-11-08)
+
+- Nobody jumps a brand-new hero any more. Villains have their own business, and to them you're just
+  another passer-by until your deeds say otherwise.
+- Factions: townsfolk, the City Patrol, the Doctor's Lab, the Chrome Jackets (greasers) and the
+  Velvet Syndicate (pinstriped gunsels). Each one's standing toward you starts like it is toward
+  ordinary townsfolk and changes with what you do. Beat up enough Jackets and they'll come for you
+  on sight, while their rivals start to like you.
+- Gangs guard their turf: in the Doctor's quarter they shout a warning first, and fight if you walk
+  right up or stay.
+- Muggings have a victim: a pedestrian with their hands up, held up by two Chrome Jackets. The
+  crooks leave you alone unless you step in, and the victim walks off once you've dealt with them.
+- Robberies are the Velvet Syndicate's work now.
+
 ## 0.056 (2026-11-08)
 
 - The robots got a full-quality makeover: smoother curves, finer rivets, brass and chrome, and

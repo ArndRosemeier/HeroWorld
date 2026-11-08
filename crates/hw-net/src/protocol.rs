@@ -110,6 +110,55 @@ impl Power {
     }
 }
 
+/// The world's factions: townsfolk and the people who keep or break the
+/// peace. A hero belongs to none; each faction regards a hero the way it
+/// regards townsfolk until the hero's deeds change that (see
+/// `hw_sim::factions`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Faction {
+    /// Ordinary people of the town.
+    Townsfolk,
+    /// The City Patrol: officers and police drones.
+    Patrol,
+    /// The mad scientist's lab: mutants, technicians, robots.
+    Lab,
+    /// The Chrome Jackets, a hot-rod street gang.
+    Jackets,
+    /// The Velvet Syndicate, pinstriped racketeers.
+    Syndicate,
+    /// Molehaven's people, under the city.
+    Moles,
+}
+
+/// How many factions there are.
+pub const FACTIONS: usize = 6;
+
+impl Faction {
+    pub const ALL: [Faction; FACTIONS] = [
+        Faction::Townsfolk,
+        Faction::Patrol,
+        Faction::Lab,
+        Faction::Jackets,
+        Faction::Syndicate,
+        Faction::Moles,
+    ];
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Faction::Townsfolk => "Townsfolk",
+            Faction::Patrol => "City Patrol",
+            Faction::Lab => "The Doctor's Lab",
+            Faction::Jackets => "Chrome Jackets",
+            Faction::Syndicate => "Velvet Syndicate",
+            Faction::Moles => "Molehaven",
+        }
+    }
+}
+
 /// What an entity is, so the client knows how to draw it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum EntityKind {
@@ -137,6 +186,14 @@ pub enum EntityKind {
     /// A weak point on a robot (a knee, a cannon, a shield dish); its
     /// `mount` says which robot and which part.
     WeakPoint,
+    /// A Chrome Jacket: a street-gang greaser who fights with fists and a
+    /// tyre iron.
+    Greaser,
+    /// A Velvet Syndicate gunsel: pinstripes, fedora and a ray pistol.
+    Gunsel,
+    /// A townsperson caught up in a crime (being mugged): drawn as a
+    /// citizen; heroes cannot target them.
+    Bystander,
 }
 
 impl EntityKind {
@@ -152,6 +209,9 @@ impl EntityKind {
             EntityKind::Alpha => 7,
             EntityKind::Colossus => 8,
             EntityKind::WeakPoint => 9,
+            EntityKind::Greaser => 10,
+            EntityKind::Gunsel => 11,
+            EntityKind::Bystander => 12,
         }
     }
 
@@ -167,6 +227,9 @@ impl EntityKind {
             7 => Ok(EntityKind::Alpha),
             8 => Ok(EntityKind::Colossus),
             9 => Ok(EntityKind::WeakPoint),
+            10 => Ok(EntityKind::Greaser),
+            11 => Ok(EntityKind::Gunsel),
+            12 => Ok(EntityKind::Bystander),
             _ => Err(WireError),
         }
     }
@@ -183,7 +246,14 @@ impl EntityKind {
                 | EntityKind::Alpha
                 | EntityKind::Colossus
                 | EntityKind::WeakPoint
+                | EntityKind::Greaser
+                | EntityKind::Gunsel
         )
+    }
+
+    /// Shoots from a distance (draws a ray gun).
+    pub fn is_ranged(self) -> bool {
+        matches!(self, EntityKind::Technician | EntityKind::Gunsel)
     }
 
     /// Drawn as a machine (prefab parts), not as a person.
@@ -254,6 +324,9 @@ pub struct Sheet {
     pub origin: u8,
     /// Powers bought, in order (Strike is everyone's and not listed).
     pub powers: Vec<OwnedPower>,
+    /// How each faction's regard for the hero has moved from what it has
+    /// for townsfolk (by [`Faction::index`]): the hero's deeds.
+    pub regard: [i8; FACTIONS],
 }
 
 /// Most powers a sheet carries over the wire.
@@ -261,7 +334,7 @@ pub const MAX_POWERS: usize = 32;
 
 impl Sheet {
     pub fn wire_size(&self) -> usize {
-        4 + 4 + 20 + 1 + 1 + 6 * self.powers.len().min(MAX_POWERS)
+        4 + 4 + 20 + 1 + FACTIONS + 1 + 6 * self.powers.len().min(MAX_POWERS)
     }
 
     pub fn write(&self, w: &mut Writer) {
@@ -270,6 +343,9 @@ impl Sheet {
             w.u32(a);
         }
         w.u8(self.origin);
+        for g in self.regard {
+            w.u8(g as u8);
+        }
         let n = self.powers.len().min(MAX_POWERS);
         w.u8(n as u8);
         for p in &self.powers[..n] {
@@ -285,6 +361,10 @@ impl Sheet {
             *a = r.u32()?;
         }
         let origin = r.u8()?;
+        let mut regard = [0i8; FACTIONS];
+        for g in regard.iter_mut() {
+            *g = r.u8()? as i8;
+        }
         let n = r.u8()? as usize;
         if n > MAX_POWERS {
             return Err(WireError);
@@ -304,6 +384,7 @@ impl Sheet {
             affinity,
             origin,
             powers,
+            regard,
         })
     }
 
@@ -590,6 +671,8 @@ pub enum FxKind {
     /// The colossus stands up again (its second wind) or goes down.
     Rise,
     Kneel,
+    /// A villain warns a hero off its turf (`from` warns `to`).
+    Warn,
 }
 
 impl FxKind {
@@ -623,6 +706,7 @@ impl FxKind {
             FxKind::PartBroken => 26,
             FxKind::Rise => 27,
             FxKind::Kneel => 28,
+            FxKind::Warn => 29,
         }
     }
 
@@ -656,6 +740,7 @@ impl FxKind {
             26 => FxKind::PartBroken,
             27 => FxKind::Rise,
             28 => FxKind::Kneel,
+            29 => FxKind::Warn,
             _ => return Err(WireError),
         })
     }
@@ -1581,6 +1666,7 @@ mod tests {
                     paid: 300,
                 },
             ],
+            regard: [0, 5, -40, -100, 12, 127],
         }
     }
 

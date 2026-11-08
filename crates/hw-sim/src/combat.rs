@@ -11,11 +11,12 @@
 //! ([`CombatState`]) and what happened goes out as [`Fx`] events.
 
 use crate::collision::{Body, Obstacles, BODY_HEIGHT};
+use crate::factions;
 use crate::progress::{is_movement, themes, Affinity};
 use crate::robots::{self, Colossus, Mount};
 use crate::{
-    nav, step_hero, Control, Hero, Ids, LastChange, Motion, Net, Orientation, Prop, Solids, DT,
-    GROUND_Y, TICK_HZ,
+    nav, step_hero, Control, Hero, Ids, LastChange, Motion, Net, Orientation, Progress, Prop,
+    Solids, DT, GROUND_Y, TICK_HZ,
 };
 use bevy_ecs::prelude::*;
 use glam::{DVec2, DVec3};
@@ -227,6 +228,10 @@ pub enum EnemyKind {
     Colossus,
     /// A breakable part of a robot (see [`Mount`]).
     WeakPoint,
+    /// A Chrome Jacket: a street-gang greaser, a melee rusher.
+    Greaser,
+    /// A Velvet Syndicate gunsel: ranged, with a ray pistol.
+    Gunsel,
 }
 
 /// How a kind of villain fights.
@@ -323,6 +328,30 @@ pub fn enemy_spec(k: EnemyKind) -> EnemySpec {
             aggro: 0.0,
             karma: 25.0,
         },
+        EnemyKind::Greaser => EnemySpec {
+            name: "Chrome Jacket",
+            rank: "Minion",
+            health: 44.0,
+            damage: 6.0,
+            attack_every: 1.8,
+            windup: 0.45,
+            reach: 2.2,
+            speed: 0.9,
+            aggro: 15.0,
+            karma: 6.0,
+        },
+        EnemyKind::Gunsel => EnemySpec {
+            name: "Syndicate Gunsel",
+            rank: "Minion",
+            health: 36.0,
+            damage: 6.5,
+            attack_every: 2.4,
+            windup: 0.6,
+            reach: 24.0,
+            speed: 0.65,
+            aggro: 18.0,
+            karma: 6.0,
+        },
     }
 }
 
@@ -335,12 +364,25 @@ impl EnemyKind {
             EnemyKind::Alpha => EntityKind::Alpha,
             EnemyKind::Colossus => EntityKind::Colossus,
             EnemyKind::WeakPoint => EntityKind::WeakPoint,
+            EnemyKind::Greaser => EntityKind::Greaser,
+            EnemyKind::Gunsel => EntityKind::Gunsel,
         }
     }
 
     /// Machines and bosses: no knockback, no police drone for the machines.
     pub fn heavy(self) -> bool {
-        !matches!(self, EnemyKind::Brute | EnemyKind::Technician)
+        !matches!(
+            self,
+            EnemyKind::Brute | EnemyKind::Technician | EnemyKind::Greaser | EnemyKind::Gunsel
+        )
+    }
+
+    /// Shoots from a distance.
+    pub fn ranged(self) -> bool {
+        matches!(
+            self,
+            EnemyKind::Technician | EnemyKind::Sentry | EnemyKind::Gunsel
+        )
     }
 
     /// Lifted away by a police drone when beaten (people and sentries).
@@ -356,6 +398,8 @@ impl EnemyKind {
             EntityKind::Alpha => Some(EnemyKind::Alpha),
             EntityKind::Colossus => Some(EnemyKind::Colossus),
             EntityKind::WeakPoint => Some(EnemyKind::WeakPoint),
+            EntityKind::Greaser => Some(EnemyKind::Greaser),
+            EntityKind::Gunsel => Some(EnemyKind::Gunsel),
             _ => None,
         }
     }
@@ -532,6 +576,13 @@ pub struct Enemy {
     pub next_trick: u64,
     /// The alpha in the air: (took off, lands, from, to).
     pub leap: Option<(u64, u64, DVec3, DVec3)>,
+    /// Its group's turf: it warns heroes off (see [`crate::factions`]).
+    pub turf: bool,
+    /// A hero this near provokes it (stepping into its crime, or a fight
+    /// that is on).
+    pub provoke: Option<f64>,
+    /// The hero its group warned off, and when.
+    pub warned: Option<(NetId, u64)>,
 }
 
 /// A perched villain notices and reaches this much farther.
@@ -590,6 +641,10 @@ pub struct Spot {
     pub perch: bool,
     /// A lieutenant or boss in front of the group.
     pub lead: Option<EnemyKind>,
+    /// A hero this near provokes the group: a crime's reach (stepping in),
+    /// or unbounded for a fight that is on. Without it, the group acts on
+    /// its faction's regard for the hero (see [`crate::factions`]).
+    pub provoke: Option<f64>,
 }
 
 impl Spot {
@@ -608,6 +663,15 @@ impl Spot {
             once: false,
             perch: false,
             lead: None,
+            provoke: None,
+        }
+    }
+
+    /// A group that fights any hero it notices (tests, the balance runs).
+    pub fn fight(center: DVec3, facing: DVec2) -> Self {
+        Self {
+            provoke: Some(f64::INFINITY),
+            ..Self::corner(center, facing)
         }
     }
 }
@@ -621,6 +685,14 @@ pub struct Reward {
     pub deed: Option<Affinity>,
     /// Extra leaning for deeds that pay no karma (a revive).
     pub lean: u32,
+}
+
+/// A hero was there when one of a faction's people was beaten: the
+/// faction's regard for them moves (see [`crate::factions::beat`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Deed {
+    pub hero: NetId,
+    pub beaten: hw_net::Faction,
 }
 
 /// Something thrown, on its way.
@@ -653,6 +725,8 @@ pub struct Fights {
     pub team_level: u8,
     /// Karma earned in the last tick (the simulation pays it out).
     pub rewards: Vec<Reward>,
+    /// Villains beaten in the last tick, by hero (moves factions' regard).
+    pub deeds: Vec<Deed>,
     /// Throws in the air.
     pub throws: Vec<Throw>,
     /// Villains' paths round walls.
@@ -674,6 +748,7 @@ impl Default for Fights {
             seed: 0,
             team_level: 1,
             rewards: Vec::new(),
+            deeds: Vec::new(),
             throws: Vec::new(),
             paths: BTreeMap::new(),
             city: Vec::new(),
@@ -697,6 +772,8 @@ pub(crate) struct Actor {
     pub(crate) mount: Option<Mount>,
     /// The walking tank's own state.
     pub(crate) colossus: Option<Colossus>,
+    /// A hero's deeds as factions see them (the sheet's offsets).
+    pub(crate) regard: [i8; hw_net::FACTIONS],
 }
 
 impl Actor {
@@ -783,7 +860,7 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
     for (k, (kind, level)) in group.into_iter().enumerate() {
         // Brutes in a loose front row, shooters a few metres behind.
         let row = match kind {
-            EnemyKind::Technician | EnemyKind::Sentry => -3.5,
+            k if k.ranged() => -3.5,
             EnemyKind::Colossus => 0.0,
             _ => 1.5,
         };
@@ -836,6 +913,11 @@ pub(crate) fn spawn_enemy(
     heroes: usize,
 ) -> NetId {
     let id = world.resource_mut::<Ids>().0.allocate();
+    let (spot_turf, spot_provoke) = world
+        .resource::<Fights>()
+        .spots
+        .get(spot)
+        .map_or((false, None), |s| (s.wake.is_some(), s.provoke));
     let mut fighter = Fighter::enemy(kind, level);
     // The colossus and its parts take a team: tougher for more heroes.
     if matches!(kind, EnemyKind::Colossus | EnemyKind::WeakPoint) {
@@ -865,6 +947,9 @@ pub(crate) fn spawn_enemy(
                 .is_some_and(|s| s.perch),
             next_trick: tick + ticks(4.0),
             leap: None,
+            turf: spot_turf,
+            provoke: spot_provoke,
+            warned: None,
         },
         LastChange(tick),
     ));
@@ -885,12 +970,14 @@ struct Out {
     /// New throws in the air.
     throws: Vec<Throw>,
     rewards: Vec<Reward>,
+    deeds: Vec<Deed>,
 }
 
 /// One tick of every fight in `world` (after heroes moved).
 pub(crate) fn step(world: &mut World, tick: u64) {
     world.resource_mut::<Fights>().events.clear();
     world.resource_mut::<Fights>().rewards.clear();
+    world.resource_mut::<Fights>().deeds.clear();
     let solids = world.resource::<Solids>().0.clone();
     let mut actors: Vec<Actor> = world
         .query::<(
@@ -900,10 +987,10 @@ pub(crate) fn step(world: &mut World, tick: u64) {
             &Fighter,
             Option<&Enemy>,
             Option<(&Hero, &Control)>,
-            (Option<&Mount>, Option<&Colossus>),
+            (Option<&Mount>, Option<&Colossus>, Option<&Progress>),
         )>()
         .iter(world)
-        .map(|(e, n, m, f, en, h, (mount, colossus))| Actor {
+        .map(|(e, n, m, f, en, h, (mount, colossus, progress))| Actor {
             e,
             id: n.0,
             body: m.0,
@@ -913,6 +1000,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
             beaten_by: None,
             mount: mount.copied(),
             colossus: colossus.copied(),
+            regard: progress.map_or([0; hw_net::FACTIONS], |p| p.sheet.regard),
         })
         .collect();
     actors.sort_by_key(|a| a.id);
@@ -1284,6 +1372,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     let mut f = world.resource_mut::<Fights>();
     f.events = fx;
     f.rewards = out.rewards;
+    f.deeds = out.deeds;
     f.city = city;
 }
 
@@ -1675,6 +1764,13 @@ fn pay_out(actors: &[Actor], out: &mut Out) {
                 deed,
                 lean: 0,
             });
+            // Parts of a machine are not people of the faction.
+            if en.kind != EnemyKind::WeakPoint {
+                out.deeds.push(Deed {
+                    hero: h.id,
+                    beaten: crate::factions::of_enemy(en.kind),
+                });
+            }
         }
     }
 }
@@ -1754,7 +1850,7 @@ fn enemies_act(
             spec.aggro *= PERCH_RANGE;
             spec.reach *= PERCH_RANGE;
         }
-        let ranged = matches!(en.kind, EnemyKind::Technician | EnemyKind::Sentry);
+        let ranged = en.kind.ranged();
         let mut input = InputState::default();
         let getting_up = tick < actors[i].f.busy_until;
         let held = actors[i].f.held(tick);
@@ -1770,7 +1866,7 @@ fn enemies_act(
                 .filter(|&j| foe_ok(&actors[j]) && actors[j].body.pos.distance(en.home) < leash);
             if foe.is_none() {
                 let me = actors[i].chest();
-                foe = heroes
+                let mut noticed: Vec<(usize, f64)> = heroes
                     .iter()
                     .copied()
                     .filter(|&j| foe_ok(&actors[j]))
@@ -1779,8 +1875,48 @@ fn enemies_act(
                         // A lookout hears the street below without seeing it.
                         *d < spec.aggro && (en.perch || clear_line(solids, me, actors[*j].chest()))
                     })
-                    .min_by(|x, y| x.1.total_cmp(&y.1))
-                    .map(|(j, _)| j);
+                    .collect();
+                noticed.sort_by(|x, y| x.1.total_cmp(&y.1));
+                // What it does about each depends on how its faction regards
+                // that hero: the nearest it would fight, else a warning.
+                let faction = factions::of_enemy(en.kind);
+                let mut warn = None;
+                for (j, d) in noticed {
+                    let hero = &actors[j];
+                    let reaction = factions::react(factions::Encounter {
+                        attitude: factions::Attitude::of(factions::toward_hero(
+                            faction,
+                            &hero.regard,
+                        )),
+                        distance: d,
+                        turf: en.turf,
+                        crime: en.provoke,
+                        trespass: factions::TRESPASS * if en.perch { PERCH_RANGE } else { 1.0 },
+                        warned: en
+                            .warned
+                            .filter(|(h, _)| *h == hero.id)
+                            .map(|(_, t)| tick.saturating_sub(t) as f64 * DT),
+                    });
+                    match reaction {
+                        factions::Reaction::Attack => {
+                            foe = Some(j);
+                            break;
+                        }
+                        factions::Reaction::Warn if warn.is_none() => warn = Some(j),
+                        _ => {}
+                    }
+                }
+                if let (None, Some(j)) = (foe, warn) {
+                    // One shout for the whole group.
+                    let (spot, hero_id) = (en.spot, actors[j].id);
+                    en.warned = Some((hero_id, tick));
+                    for a in actors.iter_mut() {
+                        if let Some(e) = a.enemy.as_mut().filter(|e| e.spot == spot) {
+                            e.warned = Some((hero_id, tick));
+                        }
+                    }
+                    fx.push(event(tick, FxKind::Warn, actors[i].id, hero_id, me));
+                }
                 if let Some(j) = foe {
                     // Friends close by come along.
                     let (spot, foe_id) = (en.spot, actors[j].id);

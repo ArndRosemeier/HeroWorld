@@ -11,6 +11,7 @@ pub mod citizens;
 pub mod collision;
 pub mod combat;
 pub mod destruction;
+pub mod factions;
 pub mod host;
 pub mod incidents;
 pub mod nav;
@@ -476,7 +477,7 @@ impl Sim {
                 size: Some(1),
                 only: Some(combat::EnemyKind::Colossus),
                 once: true,
-                ..Spot::corner(at, facing)
+                ..Spot::fight(at, facing)
             });
             f.spots.len() - 1
         };
@@ -877,13 +878,13 @@ impl Sim {
         id
     }
 
-    /// A street corner where the mad scientist's minions hang about, `at`
-    /// facing `facing`; the first group stands there at once. Returns the
-    /// spot's index.
+    /// A group of the mad scientist's minions `at`, facing `facing`, that
+    /// fights any hero it notices (tests, the balance runs); it stands
+    /// there at once and comes back. Returns the spot's index.
     pub fn add_fight_spot(&mut self, at: DVec3, facing: DVec2) -> usize {
         let i = {
             let mut f = self.world.resource_mut::<Fights>();
-            f.spots.push(Spot::corner(at, facing));
+            f.spots.push(Spot::fight(at, facing));
             f.spots.len() - 1
         };
         let heroes = self.world.query::<&Hero>().iter(&self.world).count();
@@ -921,8 +922,9 @@ impl Sim {
         i
     }
 
-    /// The first fight: a group of minions on the street, the other way
-    /// from the crates, a short run from where heroes appear.
+    /// A test fight: a group of minions on the street, the other way from
+    /// the crates, a short run from where heroes appear (tests and the
+    /// fight screenshot; the game starts without it).
     pub fn place_first_fight(&mut self) -> usize {
         let (mid, dir) = self.spawn;
         let p = mid - dir * 32.0;
@@ -1059,6 +1061,20 @@ impl Sim {
     /// Pays out the karma fights earned this tick; a hero going up a level
     /// is healed and told.
     fn pay_karma(&mut self) {
+        // Factions hear who beat their people.
+        let deeds = self.world.resource::<Fights>().deeds.clone();
+        for d in deeds {
+            for (n, mut p) in self
+                .world
+                .query::<(&Net, &mut Progress)>()
+                .iter_mut(&mut self.world)
+            {
+                if n.0 == d.hero {
+                    factions::beat(&mut p.sheet.regard, d.beaten);
+                    p.changed = true;
+                }
+            }
+        }
         let rewards = self.world.resource::<Fights>().rewards.clone();
         if rewards.is_empty() {
             return;
@@ -1232,11 +1248,16 @@ impl Sim {
                 Option<&Hero>,
                 Option<&Orientation>,
                 (Has<Prop>, Option<&Enemy>, Has<Drone>, Option<&CombatView>),
-                (&LastChange, Option<&taxi::Fare>, Option<&robots::Mount>),
+                (
+                    &LastChange,
+                    Option<&taxi::Fare>,
+                    Option<&robots::Mount>,
+                    Has<incidents::Bystander>,
+                ),
             )>()
             .iter(&self.world)
             .map(
-                |(n, m, h, o, (prop, enemy, drone, view), (c, fare, mount))| {
+                |(n, m, h, o, (prop, enemy, drone, view), (c, fare, mount, bystander))| {
                     (
                         EntityState {
                             id: n.0,
@@ -1248,6 +1269,8 @@ impl Sim {
                                 e.kind.entity_kind()
                             } else if drone {
                                 EntityKind::Drone
+                            } else if bystander {
+                                EntityKind::Bystander
                             } else {
                                 EntityKind::Hero
                             },
