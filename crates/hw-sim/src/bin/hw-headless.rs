@@ -1,10 +1,15 @@
 //! Runs a world without a window, for dedicated hosting, bots and tests.
 //!
-//! Environment: `HW_SEED` (default 1), `HW_PORT` (default 7777),
+//! It hosts the same town the game hosts, so players who join see the world
+//! the server simulates.
+//!
+//! Environment: `HW_SEED` (default 1), `HW_POP` (the town's people, default
+//! [`hw_sim::DEFAULT_POPULATION`]), `HW_PORT` (default 7777),
 //! `HW_TICKS` (stop after this many ticks; default: run forever),
 //! `HW_SAVE` (world save file: loaded at start if it exists, written every
 //! minute and at the end), `HW_ONLINE=1` (also list the world on GameHub;
-//! friends join with the room code it prints), `HW_NAME` (the room's name).
+//! friends join with the room code it prints), `HW_NAME` (the room's name),
+//! `HW_NO_UPNP=1` (don't ask the router to forward the port).
 //!
 //! Type into the console: `quit` ends the session cleanly (players are told
 //! and the world is saved), `save` saves now, anything else is chat.
@@ -25,16 +30,25 @@ fn main() -> std::io::Result<()> {
     let port = env("HW_PORT").unwrap_or(hw_net::DEFAULT_PORT);
     let ticks: Option<u64> = env("HW_TICKS");
     let save: Option<PathBuf> = std::env::var_os("HW_SAVE").map(PathBuf::from);
-    let mut host = Host::new(Seed(seed));
+    let people = env("HW_POP").unwrap_or(hw_sim::DEFAULT_POPULATION);
+    let town = hw_sim::GeneratedTown::generate(Seed(seed), people);
+    let mut host = Host::with_sim(hw_sim::Sim::for_town(Seed(seed), &town));
     match &save {
         Some(path) if path.exists() => {
             host.load_world(path)?;
             println!("hw-headless: loaded {}", path.display());
         }
-        _ => host.sim.place_starter_crates(),
+        _ => {
+            host.sim.place_starter_crates();
+            host.sim.place_first_fight();
+        }
     }
     let addr = host.listen(("0.0.0.0", port))?;
     println!("hw-headless: world {seed} listening on {addr}");
+    // Ask the router to forward the port (a home PC); `HW_NO_UPNP` skips it.
+    let upnp = (std::env::var_os("HW_NO_UPNP").is_none())
+        .then(|| hw_net::upnp::map_udp_in_background(addr.port(), "HeroWorld server"));
+    let mut mapping = None;
     if std::env::var_os("HW_ONLINE").is_some() {
         let name = std::env::var("HW_NAME").unwrap_or_else(|_| "A HeroWorld".into());
         let meta = serde_json::json!({
@@ -63,6 +77,22 @@ fn main() -> std::io::Result<()> {
     let mut last_save = Instant::now();
     let host_player = hw_net::PlayerId(0);
     loop {
+        if mapping.is_none() {
+            match upnp.as_ref().map(|rx| rx.try_recv()) {
+                Some(Ok(Ok(m))) => {
+                    match m.address() {
+                        Some(a) => println!("hw-headless: the router forwards it: join at {a}"),
+                        None => println!("hw-headless: the router forwards port {}", m.port),
+                    }
+                    mapping = Some(Some(m));
+                }
+                Some(Ok(Err(e))) => {
+                    println!("hw-headless: no automatic port forwarding ({e})");
+                    mapping = Some(None);
+                }
+                _ => {}
+            }
+        }
         for e in host.tick() {
             match e {
                 HostEvent::Joined { player, name } => {

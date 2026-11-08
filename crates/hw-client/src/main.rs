@@ -1007,7 +1007,13 @@ fn main() -> EngineResult<()> {
             let Some(session) = session.as_mut() else {
                 return Ok(());
             };
-            version_corner(&frame.ui, &mut whats_new, session.room_code());
+            let open_at = session.open_address();
+            version_corner(
+                &frame.ui,
+                &mut whats_new,
+                session.room_code(),
+                open_at.as_deref(),
+            );
             if crash_noted != Some(world_seed) {
                 crash_noted = Some(world_seed);
                 hw_client::crash::note("world seed", world_seed);
@@ -1297,6 +1303,13 @@ fn main() -> EngineResult<()> {
                     other => i.power = other,
                 }
                 session.tick(i);
+                // The host left and GameHub made us the new one.
+                if session.wants_take_over()
+                    && session.take_over(Seed(world_seed), &generated, &name)
+                {
+                    sheet_sent = false;
+                    look_sent = false;
+                }
             }
             if ticks == 5 {
                 tick_clock = 0.0;
@@ -2239,7 +2252,12 @@ fn taxi_status(ui: &engine::ui::UiFrame, cab: bool, riding: bool, to: Option<&st
 }
 
 /// The version at the top right, with a "What's new" button and its list.
-fn version_corner(ui: &engine::ui::UiFrame, open: &mut bool, room: Option<&str>) {
+fn version_corner(
+    ui: &engine::ui::UiFrame,
+    open: &mut bool,
+    room: Option<&str>,
+    address: Option<&str>,
+) {
     use engine::ui::egui;
     egui::Area::new(egui::Id::new("version"))
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
@@ -2252,9 +2270,14 @@ fn version_corner(ui: &engine::ui::UiFrame, open: &mut bool, room: Option<&str>)
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         if let Some(code) = room {
-                            // What friends type to join this world.
+                            // What friends type to join this world (or its
+                            // address, when the router forwards our port).
+                            let text = match address {
+                                Some(a) => format!("Room {code} · {a}"),
+                                None => format!("Room {code}"),
+                            };
                             ui.label(
-                                egui::RichText::new(format!("Room {code}"))
+                                egui::RichText::new(text)
                                     .color(egui::Color32::from_rgb(255, 214, 90))
                                     .strong(),
                             );

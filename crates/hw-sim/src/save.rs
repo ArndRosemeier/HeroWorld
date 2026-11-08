@@ -25,6 +25,9 @@ pub struct WorldSave {
     pub damage: Vec<(usize, Vec<u32>)>,
     /// Broken street props: index and which way each fell (a yaw byte).
     pub props: Vec<(u32, u8)>,
+    /// Where each player's hero was, by name (a host taking over, or a
+    /// world loaded again, puts them back there).
+    pub heroes: Vec<(String, glam::DVec3)>,
 }
 
 impl WorldSave {
@@ -49,6 +52,11 @@ impl WorldSave {
         for (i, fell) in &self.props {
             out += &format!("prop {i} {fell}\n");
         }
+        for (name, p) in &self.heroes {
+            // The name last: it may have spaces.
+            let name = name.replace(['\n', '\r'], " ");
+            out += &format!("hero {:?} {:?} {:?} {name}\n", p.x, p.y, p.z);
+        }
         out
     }
 
@@ -68,6 +76,7 @@ impl WorldSave {
         let mut crates = Vec::new();
         let mut damage = Vec::new();
         let mut props = Vec::new();
+        let mut heroes = Vec::new();
         for (n, line) in lines.enumerate() {
             let bad = || format!("line {}: {line}", n + 2);
             let mut words = line.split_whitespace();
@@ -100,6 +109,14 @@ impl WorldSave {
                     let fell = rest.get(1).and_then(|v| v.parse().ok()).ok_or_else(bad)?;
                     props.push((i, fell));
                 }
+                "hero" => {
+                    let v: Vec<f64> = rest.iter().take(3).filter_map(|w| w.parse().ok()).collect();
+                    if v.len() != 3 || v.iter().any(|x| !x.is_finite()) || rest.len() < 4 {
+                        return Err(bad());
+                    }
+                    let name = line.splitn(5, ' ').nth(4).unwrap_or_default().to_string();
+                    heroes.push((name, glam::DVec3::new(v[0], v[1], v[2])));
+                }
                 _ => {}
             }
         }
@@ -110,6 +127,7 @@ impl WorldSave {
             crates,
             damage,
             props,
+            heroes,
         })
     }
 
@@ -157,6 +175,7 @@ impl Sim {
                 .iter()
                 .map(|(i, b)| (*i, b.fell))
                 .collect(),
+            heroes: Vec::new(),
         }
     }
 
@@ -204,6 +223,15 @@ mod tests {
         }
         let save = sim.save();
         assert_eq!(save.crates.len(), 2);
+        let mut with_heroes = save.clone();
+        with_heroes.heroes = vec![
+            ("Captain Comet".into(), glam::DVec3::new(1.0, 2.5, -3.25)),
+            ("x".into(), glam::DVec3::ZERO),
+        ];
+        assert_eq!(
+            WorldSave::from_text(&with_heroes.to_text()).unwrap(),
+            with_heroes
+        );
         assert_eq!(WorldSave::from_text(&save.to_text()).unwrap(), save);
 
         let dir = std::env::temp_dir().join(format!("hw-save-test-{}", std::process::id()));

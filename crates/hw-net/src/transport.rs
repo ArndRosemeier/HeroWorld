@@ -38,12 +38,40 @@ pub trait ServerLink: Send {
     fn recv(&mut self) -> Vec<(PeerAddr, Vec<u8>)>;
     /// Called once per tick after all sends (a relay batches them).
     fn flush(&mut self) {}
+    /// The world's save, for a player to take over from if the host
+    /// leaves (the relay keeps it in the room).
+    fn publish(&mut self, _state: &str) {}
+}
+
+/// The host left and another took over (see [`Link::handover`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Handover {
+    /// We are the host now: start a server from [`Link::world_state`].
+    ToUs,
+    /// Another player is: say hello to it.
+    ToOther,
 }
 
 /// Something that moves a client's packets to and from its server.
 pub trait Link: Send {
     fn send(&mut self, bytes: &[u8]);
     fn recv(&mut self) -> Vec<Vec<u8>>;
+    /// Whether another player can take over when the host leaves.
+    fn can_hand_over(&self) -> bool {
+        false
+    }
+    /// A change of host since the last call.
+    fn handover(&mut self) -> Option<Handover> {
+        None
+    }
+    /// The newest world save the host published.
+    fn world_state(&self) -> Option<&str> {
+        None
+    }
+    /// The GameHub connection, for a player taking over as host.
+    fn take_hub(&mut self) -> Option<crate::gamehub::Hub> {
+        None
+    }
 }
 
 /// Something that happened on the server's socket.
@@ -179,6 +207,18 @@ impl ServerSocket {
             let addr = p.addr;
             self.send_bytes(addr, &bytes);
         }
+    }
+
+    /// Gives the world's save to the links that keep it (the relay).
+    pub fn publish(&mut self, state: &str) {
+        for l in &mut self.links {
+            l.publish(state);
+        }
+    }
+
+    /// Whether any link keeps a published state (the relay).
+    pub fn has_links(&self) -> bool {
+        !self.links.is_empty()
     }
 
     /// Hands batched packets to the relay; call once per tick after sending.

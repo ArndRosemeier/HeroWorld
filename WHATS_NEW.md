@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.060 (2026-11-08)
+
+- If the host leaves a world opened online, the game goes on: another player takes over, and
+  everyone comes back where they were.
+- Hosting asks your router to let friends in by address too, and shows it beside the room code.
+- A dedicated server (hw-headless) runs the same town as the game.
+- Villains far from home no longer slow the world down on their way back.
+
 ## 0.059 (2026-11-08)
 
 - The Chrome Jackets hang out on corners in the run-down streets round the Doctor's quarter. Like

@@ -45,6 +45,9 @@ const RELIABLE_BYTES: usize = 360;
 const RELIABLE_RESERVE: usize = 120;
 /// Ticks before an unconfirmed reliable message goes out again.
 const RESEND_TICKS: u64 = 6;
+/// How often the world's save goes to the relay, for a player to take over
+/// from if the host leaves.
+pub const PUBLISH_TICKS: u64 = 10 * TICK_HZ as u64;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlayerInfo {
@@ -99,6 +102,9 @@ pub struct Host {
     fx: Vec<hw_net::Fx>,
     /// The local player's hero file, when it changed.
     local_sheet: Option<hw_net::Sheet>,
+    /// Where heroes were in a loaded save, by name: a player of that name
+    /// starts there.
+    arrivals: BTreeMap<String, DVec3>,
 }
 
 impl Host {
@@ -118,7 +124,47 @@ impl Host {
             local_news: Vec::new(),
             fx: Vec::new(),
             local_sheet: None,
+            arrivals: BTreeMap::new(),
         }
+    }
+
+    /// A host that takes over a world whose host left: the same town,
+    /// restored from the save the old host published (`state`, if any).
+    /// Players start where their heroes were.
+    pub fn taking_over(sim: Sim, state: Option<&str>) -> Self {
+        let mut host = Self::with_sim(sim);
+        match state.map(WorldSave::from_text) {
+            Some(Ok(save)) => {
+                if let Err(e) = host.restore(&save) {
+                    println!("Could not take the world over as it was: {e}");
+                }
+            }
+            Some(Err(e)) => println!("The world's save did not read: {e}"),
+            None => host.sim.place_starter_crates(),
+        }
+        host
+    }
+
+    fn restore(&mut self, save: &WorldSave) -> Result<(), String> {
+        self.sim.restore(save)?;
+        self.arrivals = save.heroes.iter().cloned().collect();
+        Ok(())
+    }
+
+    /// The world's save, with where every player's hero is.
+    pub fn world_save(&mut self) -> WorldSave {
+        let mut save = self.sim.save();
+        let players: Vec<(PlayerId, String)> = self
+            .players
+            .iter()
+            .map(|(p, i)| (*p, i.name.clone()))
+            .collect();
+        for (p, name) in players {
+            if let Some(at) = self.sim.hero_of(p).and_then(|h| self.sim.position(h)) {
+                save.heroes.push((name, at));
+            }
+        }
+        save
     }
 
     /// Opens the world to remote players on `addr` (port 0 picks a free one).
@@ -212,8 +258,13 @@ impl Host {
                 remote,
             },
         );
-        // Simple spawn rule for now: a row along the central street.
-        let at = self.sim.spawn_point(id.0 as u32);
+        // Where they were before the host changed, else in a row along
+        // the central street.
+        let at = self
+            .arrivals
+            .remove(name)
+            .map(|p| p + DVec3::Y * 0.2)
+            .unwrap_or_else(|| self.sim.spawn_point(id.0 as u32));
         self.sim.spawn_hero(id, at);
         Some(id)
     }
@@ -407,6 +458,14 @@ impl Host {
             }
         }
         self.send_updates();
+        if self.sim.tick.is_multiple_of(PUBLISH_TICKS)
+            && self.socket.as_ref().is_some_and(|s| s.has_links())
+        {
+            let text = self.world_save().to_text();
+            if let Some(s) = self.socket.as_mut() {
+                s.publish(&text);
+            }
+        }
         out
     }
 
@@ -542,13 +601,13 @@ impl Host {
 
     /// Saves the world to `path`.
     pub fn save_world(&mut self, path: &Path) -> std::io::Result<()> {
-        self.sim.save().write(path)
+        self.world_save().write(path)
     }
 
     /// Loads a save into this host's world (same seed).
     pub fn load_world(&mut self, path: &Path) -> std::io::Result<()> {
         let save = WorldSave::read(path)?;
-        self.sim.restore(&save).map_err(std::io::Error::other)
+        self.restore(&save).map_err(std::io::Error::other)
     }
 }
 

@@ -48,6 +48,11 @@ impl Predictor {
         }
     }
 
+    /// Forgets everything (a new host: sequence numbers start again).
+    pub fn reset(&mut self) {
+        *self = Self::new(self.solids.clone());
+    }
+
     /// Call each tick after sending `input` with sequence number `seq`.
     pub fn input(&mut self, seq: u32, input: InputState) {
         if !self.started {

@@ -2,6 +2,8 @@
 //! it by its code and play, their packets travelling as WebSocket frames.
 //! A small stand-in for GameHub runs on this machine, speaking the same
 //! protocol (the real one is not reachable from test machines).
+//! When the host leaves, another player takes over the world in the same
+//! room.
 
 use hw_core::Seed;
 use hw_net::gamehub::{Hub, HubClientLink, HubServerLink};
@@ -19,6 +21,8 @@ struct Room {
     code: String,
     host: u32,
     members: Vec<u32>,
+    /// The host's newest state.
+    state: Option<Value>,
 }
 
 #[derive(Default)]
@@ -54,7 +58,7 @@ impl FakeHub {
         Message::text(
             json!({"t": "joined", "room": self.room_json(), "you": you, "host": r.host,
                    "players": players,
-                   "state": {"seq": 0, "snapshotSeq": 0, "snapshot": null, "deltas": [], "complete": true}})
+                   "state": {"seq": 0, "snapshotSeq": 0, "snapshot": r.state, "deltas": [], "complete": true}})
             .to_string(),
         )
     }
@@ -93,6 +97,7 @@ fn serve(stream: TcpStream, hub: Arc<Mutex<FakeHub>>) {
                             code: "K7Q2ZP".into(),
                             host: me,
                             members: vec![me],
+                            state: None,
                         });
                         let j = h.joined(me);
                         h.send(me, j);
@@ -121,6 +126,18 @@ fn serve(stream: TcpStream, hub: Arc<Mutex<FakeHub>>) {
                                         .to_string(),
                                 ),
                             );
+                        }
+                    }
+                    "state" => {
+                        let Some(r) = h.room.as_mut().filter(|r| r.host == me) else {
+                            continue;
+                        };
+                        r.state = Some(m["data"].clone());
+                        let others: Vec<u32> =
+                            r.members.iter().copied().filter(|o| *o != me).collect();
+                        let msg = json!({"t":"state","seq":1,"data":m["data"]}).to_string();
+                        for o in others {
+                            h.send(o, Message::text(msg.clone()));
                         }
                     }
                     "lobby" => {
@@ -167,9 +184,19 @@ fn serve(stream: TcpStream, hub: Arc<Mutex<FakeHub>>) {
     h.players.retain(|p| p.0 != me);
     if let Some(r) = h.room.as_mut() {
         r.members.retain(|m| *m != me);
+        // The host left: the player with the lowest id takes over.
+        let new_host = (r.host == me)
+            .then(|| r.members.iter().min().copied())
+            .flatten();
+        if let Some(n) = new_host {
+            r.host = n;
+        }
         let others = r.members.clone();
         for o in others {
             h.send(o, Message::text(json!({"t":"player-","id":me}).to_string()));
+            if let Some(n) = new_host {
+                h.send(o, Message::text(json!({"t":"host","id":n}).to_string()));
+            }
         }
     }
 }
@@ -268,4 +295,87 @@ fn a_wrong_code_says_so() {
     let err = hub.join_room("NOPE00").unwrap_err();
     assert!(err.to_string().contains("NOPE00"), "{err}");
     assert!(hub.rooms().unwrap().is_empty());
+}
+
+#[test]
+fn when_the_host_leaves_a_friend_takes_the_world_over() {
+    use hw_sim::host::PUBLISH_TICKS;
+    use hw_sim::Sim;
+    let url = fake_hub();
+    let mut host = Host::new(Seed(5));
+    host.join_local("Host");
+    let mut hub = Hub::connect(&url, "Host").expect("hub");
+    let code = hub
+        .host_room("Host's world", json!({ "seed": 5 }))
+        .expect("room");
+    host.add_link(Box::new(HubServerLink::new(hub)));
+    let join = |name: &str| {
+        let mut hub = Hub::connect(&url, name).expect("hub");
+        hub.join_room(&code).expect("join");
+        Connection::over(Box::new(HubClientLink::new(hub)), name)
+    };
+    let mut a = join("Alice");
+    let mut b = join("Bob");
+    // Bob runs east a while, then stands; the host publishes the world.
+    let east = InputState {
+        move_x: 1.0,
+        ..Default::default()
+    };
+    run(&mut host, &mut [&mut a, &mut b], InputState::default(), 30);
+    for _ in 0..40 {
+        a.update(InputState::default());
+        b.update(east);
+        std::thread::sleep(Duration::from_millis(8));
+        host.tick();
+    }
+    let ticks = PUBLISH_TICKS - host.sim.tick % PUBLISH_TICKS + 20;
+    run(
+        &mut host,
+        &mut [&mut a, &mut b],
+        InputState::default(),
+        ticks as u32,
+    );
+    let bob_was = host.sim.position(b.hero().unwrap()).unwrap();
+    let tick_was = host.sim.tick;
+    assert!(b.world_state().is_some_and(|s| s.contains("hero")));
+
+    // The host closes the game (as the game does on quitting).
+    host.end_session("the host closed the game", Duration::from_millis(300));
+    drop(host);
+
+    // Alice joined first: GameHub makes her the host.
+    let mut new_host = None;
+    for _ in 0..300 {
+        a.update(InputState::default());
+        b.update(InputState::default());
+        if new_host.is_none() && a.state == ConnState::TakingOver {
+            let state = a.world_state().map(str::to_string);
+            let hub = a.take_hub().expect("the hub");
+            let mut h = Host::taking_over(Sim::new(Seed(5)), state.as_deref());
+            h.add_link(Box::new(HubServerLink::new(hub)));
+            h.join_local("Alice");
+            new_host = Some(h);
+        }
+        if let Some(h) = new_host.as_mut() {
+            h.tick();
+        }
+        std::thread::sleep(Duration::from_millis(8));
+        if b.handovers == 1 && matches!(b.state, ConnState::Connected { .. }) && b.world().is_some()
+        {
+            break;
+        }
+    }
+    let mut h =
+        new_host.unwrap_or_else(|| panic!("nobody took over: {:?} / {:?}", a.state, b.state));
+    assert!(
+        matches!(b.state, ConnState::Connected { world_seed: 5, .. }),
+        "{:?}",
+        b.state
+    );
+    assert_eq!(b.handovers, 1);
+    // Bob is back where he was, in the world as it was.
+    let bob = h.sim.position(b.hero().unwrap()).unwrap();
+    assert!(bob.distance(bob_was) < 1.0, "{bob_was} -> {bob}");
+    assert!(h.sim.tick >= tick_was - PUBLISH_TICKS);
+    assert_eq!(h.players().len(), 2);
 }

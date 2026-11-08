@@ -13,6 +13,7 @@ pub mod protocol;
 pub mod reliable;
 pub mod replication;
 pub mod transport;
+pub mod upnp;
 pub mod wire;
 
 pub use connection::{ConnState, Connection};
@@ -23,7 +24,9 @@ pub use protocol::{
     EFFECT_SUPER_JUMP, FACTIONS,
 };
 pub use replication::{Candidate, ClientView};
-pub use transport::{ClientSocket, Link, PeerAddr, ServerEvent, ServerLink, ServerSocket, Traffic};
+pub use transport::{
+    ClientSocket, Handover, Link, PeerAddr, ServerEvent, ServerLink, ServerSocket, Traffic,
+};
 
 /// Protocol version. Server and client must match exactly to play together.
 pub const PROTOCOL_VERSION: u32 = 21;

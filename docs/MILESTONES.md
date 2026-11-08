@@ -500,6 +500,26 @@ and view, the message, where, and the stack. The next start says on the title wh
 Panics on worker threads are written as `panic-<ms>.txt` without the notice. `HW_CRASH_TEST=1`
 crashes at once to try it; `HW_CRASH_DIR` moves the folder.
 
+**Status (0.060):** host migration, port mapping and a soak test.
+- Host migration over GameHub (`hw-net` gamehub/connection, `Host::taking_over`): the host
+  publishes the world's save (damage, props, crates, where every hero is) as the room's state
+  every 10 s. When the host quits or crashes, GameHub makes the next player host: that game
+  starts a server from the save in the same room (same code); the others say hello to it again,
+  resend their hero file and looks, and come back where they were. Friends who joined by UDP
+  address still see the session end. `hw-sim/tests/relay.rs` plays it against a stand-in GameHub.
+- Automatic port mapping (`hw-net/src/upnp.rs`, std only): hosting asks the router (SSDP, then
+  SOAP) to forward UDP 7777, shows the internet address beside the room code, and frees the port
+  on quitting. `HW_NO_UPNP=1` skips it. Tested against a stand-in router; needs a real router.
+- `hw-headless` now hosts the same town the game hosts (`HW_POP`), not the old city.
+- Soak test (`hw-sim/tests/soak.rs`): ten bots over UDP answer incidents (fights, fires, crashes,
+  carrying the hurt), ride taxis, wander, chat; one leaves and comes back. Every game second the
+  world is checked (no NaN, no pile-up); every ten minutes the host must keep up; at the end
+  every copy agrees and nobody went over the bandwidth budget. Six minutes in the checks; an
+  hour of the game's own town (`HW_SOAK_MINUTES=60 HW_SOAK_PEOPLE=40000`) ran at 3.1 ms a tick,
+  at most 236 entities, 38 incidents. It found villains flung far from home walking back
+  checking kilometre-long lines every tick (the host slowed to 13 ms a tick after 40 minutes):
+  they now look 40 m ahead.
+
 ## Sound, music and pictures
 
 OpenRouter is available for images, sound effects and music (Arnd's model preferences are in

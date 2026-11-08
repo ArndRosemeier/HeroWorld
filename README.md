@@ -21,7 +21,8 @@ On Windows, double-click `start.bat` (needs [Rust](https://rustup.rs)); `start.b
 cargo run -p hw-client     # the game (single player, server built in)
 HW_HOST=1 cargo run -p hw-client                   # host for friends on UDP 7777
 HW_JOIN=192.168.1.20:7777 cargo run -p hw-client   # join a friend
-cargo run -p hw-sim --bin hw-headless
+HW_NO_UPNP=1 HW_HOST=1 cargo run -p hw-client       # host without asking the router to forward the port
+cargo run -p hw-sim --bin hw-headless              # a dedicated server: the game's town (HW_SEED, HW_POP)
 scripts/check.sh           # what must pass before a push
 cargo run --release -p hw-client --bin zfight -- 1 --svg screenshots/zfight.svg   # find z-fighting in a city
 ENGINE_ZFIGHT=1 cargo run -p hw-client             # ...or see it in the game as magenta posts

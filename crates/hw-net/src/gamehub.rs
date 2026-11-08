@@ -12,8 +12,15 @@
 //! JSON text frames for the lobby, binary frames prefixed with the sender's
 //! player ID for everything else. The WebSocket runs on a thread of its own;
 //! the game polls it once per tick like the UDP socket.
+//!
+//! Host migration: the host publishes the world's save as the room's state
+//! every few seconds ([`ServerLink::publish`]); GameHub keeps it and passes
+//! it to everyone in the room. When the host leaves, GameHub makes the
+//! player with the lowest id host: that player starts a server from the
+//! latest state, in the same room, and the others say hello to it
+//! ([`Link::handover`]).
 
-use crate::transport::{Link, PeerAddr, ServerLink};
+use crate::transport::{Handover, Link, PeerAddr, ServerLink};
 use serde_json::{json, Value};
 use std::io::ErrorKind;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -67,15 +74,33 @@ impl RoomInfo {
 /// Something GameHub told us.
 #[derive(Clone, Debug, PartialEq)]
 pub enum HubEvent {
-    Welcome { you: u32 },
-    Joined { room: RoomInfo, you: u32, host: u32 },
-    PlayerJoined { id: u32, name: String },
-    PlayerLeft { id: u32 },
-    Host { id: u32 },
+    Welcome {
+        you: u32,
+    },
+    Joined {
+        room: RoomInfo,
+        you: u32,
+        host: u32,
+    },
+    PlayerJoined {
+        id: u32,
+        name: String,
+    },
+    PlayerLeft {
+        id: u32,
+    },
+    Host {
+        id: u32,
+    },
     Rooms(Vec<RoomInfo>),
     RoomAdded(RoomInfo),
     RoomRemoved(String),
-    Binary { from: u32, bytes: Vec<u8> },
+    Binary {
+        from: u32,
+        bytes: Vec<u8>,
+    },
+    /// The room's state (the host's world save), as the host last set it.
+    State(String),
     Error(String),
     Closed(String),
 }
@@ -85,6 +110,7 @@ fn parse(text: &str) -> Option<HubEvent> {
     let id = |k: &str| m.get(k).and_then(Value::as_u64).map(|v| v as u32);
     Some(match m.get("t")?.as_str()? {
         "welcome" => HubEvent::Welcome { you: id("you")? },
+        "state" => HubEvent::State(state_text(m.get("data")?)),
         "joined" => HubEvent::Joined {
             room: RoomInfo::from_json(m.get("room")?)?,
             you: id("you")?,
@@ -113,6 +139,22 @@ fn parse(text: &str) -> Option<HubEvent> {
     })
 }
 
+/// A state's data as text (the host sends a string; anything else is kept
+/// as its JSON).
+fn state_text(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// The room's state in a `joined` message, if it has one.
+fn joined_state(text: &str) -> Option<String> {
+    let m: Value = serde_json::from_str(text).ok()?;
+    let snap = m.get("state")?.get("snapshot")?;
+    (!snap.is_null()).then(|| state_text(snap))
+}
+
 enum Out {
     Text(String),
     Binary(Vec<u8>),
@@ -127,6 +169,8 @@ pub struct Hub {
     pub host: Option<u32>,
     pub room: Option<RoomInfo>,
     pub closed: Option<String>,
+    /// The room's newest state (the host's world save).
+    pub state: Option<String>,
     /// Events read by [`Self::wait_for`] that the caller has not taken yet.
     held: Vec<HubEvent>,
 }
@@ -182,6 +226,7 @@ impl Hub {
             host: None,
             room: None,
             closed: None,
+            state: None,
             held: Vec::new(),
         };
         hub.text(json!({ "t": "hello", "name": name }));
@@ -208,6 +253,11 @@ impl Hub {
     /// Starts (or stops) the live list of public rooms.
     pub fn watch_lobby(&self, on: bool) {
         self.text(json!({ "t": "lobby", "on": on }));
+    }
+
+    /// Sets the room's state (host only): GameHub keeps it and passes it on.
+    pub fn set_state(&self, data: &str) {
+        self.text(json!({ "t": "state", "data": data }));
     }
 
     /// Sends bytes to everyone else in the room.
@@ -239,6 +289,7 @@ impl Hub {
                     self.room = Some(room.clone());
                 }
                 HubEvent::Host { id } => self.host = Some(*id),
+                HubEvent::State(s) => self.state = Some(s.clone()),
                 HubEvent::Closed(why) => self.closed = Some(why.clone()),
                 _ => {}
             }
@@ -338,8 +389,13 @@ fn run(
         match ws.read() {
             Ok(Message::Text(t)) => {
                 if let Some(e) = parse(t.as_str()) {
+                    let joined = matches!(e, HubEvent::Joined { .. });
                     if events.send(e).is_err() {
                         return;
+                    }
+                    // A late joiner gets the room's state with its welcome.
+                    if let Some(state) = joined.then(|| joined_state(t.as_str())).flatten() {
+                        let _ = events.send(HubEvent::State(state));
                     }
                 }
             }
@@ -432,6 +488,10 @@ impl ServerLink for HubServerLink {
         self.hub.send_binary(frame);
     }
 
+    fn publish(&mut self, state: &str) {
+        self.hub.set_state(state);
+    }
+
     fn recv(&mut self) -> Vec<(PeerAddr, Vec<u8>)> {
         let mut out = Vec::new();
         for e in self.hub.poll() {
@@ -452,30 +512,67 @@ impl ServerLink for HubServerLink {
 
 /// A player's side of the relay: packets to and from the room's host.
 pub struct HubClientLink {
-    hub: Hub,
+    hub: Option<Hub>,
+    /// The host we talk to.
+    host: Option<u32>,
+    handover: Option<Handover>,
 }
 
 impl HubClientLink {
     /// Over a hub that has joined a room.
     pub fn new(hub: Hub) -> Self {
-        Self { hub }
+        Self {
+            host: hub.host,
+            hub: Some(hub),
+            handover: None,
+        }
     }
 }
 
 impl Link for HubClientLink {
     fn send(&mut self, bytes: &[u8]) {
+        let Some(hub) = &self.hub else { return };
         let mut frame = Vec::with_capacity(bytes.len() + 1);
         frame.push(TO_HOST);
         frame.extend_from_slice(bytes);
-        self.hub.send_binary(frame);
+        hub.send_binary(frame);
+    }
+
+    fn can_hand_over(&self) -> bool {
+        true
+    }
+
+    fn handover(&mut self) -> Option<Handover> {
+        self.handover.take()
+    }
+
+    fn world_state(&self) -> Option<&str> {
+        self.hub.as_ref()?.state.as_deref()
+    }
+
+    fn take_hub(&mut self) -> Option<Hub> {
+        self.hub.take()
     }
 
     fn recv(&mut self) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
-        let events = self.hub.poll();
-        let (Some(me), host) = (self.hub.you, self.hub.host) else {
+        let Some(hub) = self.hub.as_mut() else {
             return out;
         };
+        let events = hub.poll();
+        let (Some(me), host) = (hub.you, hub.host) else {
+            return out;
+        };
+        if host != self.host {
+            // The host left and GameHub picked another: us, or someone
+            // to say hello to.
+            self.host = host;
+            self.handover = Some(if host == Some(me) {
+                Handover::ToUs
+            } else {
+                Handover::ToOther
+            });
+        }
         for e in events {
             let HubEvent::Binary { from, bytes } = e else {
                 continue;

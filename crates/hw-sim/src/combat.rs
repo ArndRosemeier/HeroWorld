@@ -1775,6 +1775,9 @@ fn pay_out(actors: &[Actor], out: &mut Out) {
     }
 }
 
+/// How far ahead a villain looks for its way (m).
+const LOOK_AHEAD: f64 = 40.0;
+
 /// Which way a villain at `here` walks to reach `goal`: straight when the
 /// way is clear, else along a path round the walls (found again now and
 /// then, as the goal moves).
@@ -1788,6 +1791,15 @@ fn heading(
 ) -> DVec2 {
     let flat = |a: DVec3, b: DVec3| DVec2::new(b.x - a.x, b.z - a.z);
     let direct = flat(here, goal).normalize_or_zero();
+    // Far away (a villain flung across town walking home): find the way
+    // over the next stretch only, so a long walk costs no more each tick
+    // than a short one.
+    let far = flat(here, goal).length();
+    let goal = if far > LOOK_AHEAD {
+        here + (goal - here) * (LOOK_AHEAD / far)
+    } else {
+        goal
+    };
     if nav::walkable_line(solids, here, goal) {
         paths.remove(&id);
         return direct;

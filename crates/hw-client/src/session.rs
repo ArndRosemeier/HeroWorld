@@ -5,6 +5,7 @@
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
 use hw_net::gamehub::{Hub, HubClientLink, HubServerLink};
+use hw_net::upnp::PortMapping;
 use hw_net::{
     ConnState, Connection, EntityState, InputState, PlayerId, Power, Sheet, ToClient, ToServer,
 };
@@ -19,6 +20,8 @@ pub enum Session {
         me: PlayerId,
         /// The GameHub room code friends join with, when hosting online.
         room: Option<String>,
+        /// The port the router forwards to us (UPnP), when open to friends.
+        ports: Box<Ports>,
     },
     Remote {
         conn: Box<Connection>,
@@ -36,6 +39,46 @@ pub enum Session {
         /// Everyone's looks.
         looks: Box<Looks>,
     },
+}
+
+/// The game's UDP port forwarded by the router (UPnP): asked for in the
+/// background when the world opens, given back when the session ends.
+#[derive(Default)]
+pub struct Ports {
+    asking: Option<std::sync::mpsc::Receiver<Result<PortMapping, String>>>,
+    mapping: Option<PortMapping>,
+}
+
+impl Ports {
+    fn ask(port: u16) -> Self {
+        Self {
+            asking: Some(hw_net::upnp::map_udp_in_background(port, "HeroWorld")),
+            mapping: None,
+        }
+    }
+
+    fn poll(&mut self) {
+        let Some(rx) = &self.asking else { return };
+        match rx.try_recv() {
+            Ok(Ok(m)) => {
+                println!(
+                    "The router forwards port {} to this PC{}",
+                    m.port,
+                    m.address()
+                        .map(|a| format!(": friends can join at {a}"))
+                        .unwrap_or_default()
+                );
+                self.mapping = Some(m);
+                self.asking = None;
+            }
+            Ok(Err(e)) => {
+                println!("No automatic port forwarding ({e}); the room code still works");
+                self.asking = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.asking = None,
+        }
+    }
 }
 
 /// Everyone's looks (see `hw_net::look`), and pieces of them still on
@@ -96,9 +139,14 @@ impl Session {
         }
         // `HW_CARRY=1`: that rescue starts with the hurt one in our arms.
         host.sim.incidents.carried_start = std::env::var_os("HW_CARRY").is_some();
+        let mut ports = Ports::default();
         if open {
             let addr = host.listen(("0.0.0.0", hw_net::DEFAULT_PORT))?;
             println!("Hosting on {addr}");
+            // Ask the router to let friends in by address too.
+            if std::env::var_os("HW_NO_UPNP").is_none() {
+                ports = Ports::ask(addr.port());
+            }
         }
         let mut room = None;
         if open {
@@ -130,6 +178,7 @@ impl Session {
             host: Box::new(host),
             me,
             room,
+            ports: Box::new(ports),
         })
     }
 
@@ -181,9 +230,48 @@ impl Session {
                     return Err(std::io::Error::other(format!("the host left: {reason}")))
                 }
                 ConnState::Connecting => std::thread::sleep(Duration::from_millis(20)),
+                ConnState::TakingOver => {
+                    return Err(std::io::Error::other("the host left as we joined"))
+                }
             }
         }
         Err(std::io::Error::other("no answer from the host"))
+    }
+
+    /// The host left and GameHub made us the new one (see
+    /// [`Self::take_over`]).
+    pub fn wants_take_over(&self) -> bool {
+        matches!(self, Session::Remote { conn, .. } if conn.state == ConnState::TakingOver)
+    }
+
+    /// Becomes the host of a world whose host left: a server of `town`
+    /// from the save the old host published, in the same GameHub room, with
+    /// us as its local player. The others find it on their own. Our hero
+    /// file and looks still have to be sent ([`Self::send_sheet`]).
+    pub fn take_over(&mut self, seed: Seed, town: &GeneratedTown, name: &str) -> bool {
+        let Session::Remote { conn, .. } = self else {
+            return false;
+        };
+        let state = conn.world_state().map(str::to_string);
+        let Some(hub) = conn.take_hub() else {
+            return false;
+        };
+        let mut host = Host::taking_over(Sim::for_town(seed, town), state.as_deref());
+        let link = HubServerLink::new(hub);
+        let room = link.code().map(str::to_string);
+        host.add_link(Box::new(link));
+        let me = host.join_local(name);
+        println!(
+            "The host left: this game hosts the world now (room {})",
+            room.as_deref().unwrap_or("?")
+        );
+        *self = Session::Local {
+            host: Box::new(host),
+            me,
+            room,
+            ports: Box::default(),
+        };
+        true
     }
 
     /// For a joined session: start predicting with the generated town.
@@ -196,7 +284,10 @@ impl Session {
     /// One game tick with this frame's input.
     pub fn tick(&mut self, input: InputState) {
         match self {
-            Session::Local { host, me, .. } => {
+            Session::Local {
+                host, me, ports, ..
+            } => {
+                ports.poll();
                 host.sim.set_input(*me, input);
                 for e in host.tick() {
                     println!("{e:?}");
@@ -222,7 +313,17 @@ impl Session {
                 looks,
             } => {
                 let was_on = matches!(conn.state, ConnState::Connected { .. });
+                let handovers = conn.handovers;
                 let seq = conn.update(input);
+                if conn.handovers != handovers {
+                    // A new host: new IDs, a fresh start for what we draw.
+                    *interp = Interpolator::new();
+                    *last_tick = 0;
+                    if let Some(p) = predictor.as_mut() {
+                        p.reset();
+                    }
+                    println!("The host left; another player hosts the world now");
+                }
                 for m in conn.take_news() {
                     if let ToClient::Fx(e) = m {
                         fx.push(e);
@@ -543,6 +644,15 @@ impl Session {
                     },
                 );
             }
+        }
+    }
+
+    /// Where friends on the internet reach a world we host, when the router
+    /// forwards our port (UPnP).
+    pub fn open_address(&self) -> Option<String> {
+        match self {
+            Session::Local { ports, .. } => ports.mapping.as_ref()?.address(),
+            Session::Remote { .. } => None,
         }
     }
 

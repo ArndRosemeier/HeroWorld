@@ -1,18 +1,26 @@
 //! A client's connection to a server: says hello until welcomed, then sends
 //! its inputs every tick, mirrors the world from the server's updates, and
 //! keeps a reliable channel both ways (joins, chat, the end of a session).
+//!
+//! Over the GameHub relay the session outlives its host: when the host
+//! leaves, the connection says hello to the player who took over (and
+//! sends our hero file and looks again), or, if that is us, stops in
+//! [`ConnState::TakingOver`] for the game to start a server from the
+//! room's world save.
 
 use crate::protocol::{
     ClientMsg, EntityState, InputState, PlayerId, ServerMsg, ToClient, ToServer, INPUT_REDUNDANCY,
 };
 use crate::reliable::{ReliableReceiver, ReliableSender};
 use crate::replication::{AckWindow, Mirror};
-use crate::transport::{ClientSocket, Link, TIMEOUT};
+use crate::transport::{ClientSocket, Handover, Link, TIMEOUT};
 use hw_core::NetId;
 use std::collections::VecDeque;
 use std::net::ToSocketAddrs;
 use std::time::{Duration, Instant};
 
+/// How long to wait for another player to take over after the host left.
+const HANDOVER_WAIT: Duration = Duration::from_secs(12);
 /// How often an unanswered hello is repeated.
 const HELLO_EVERY: Duration = Duration::from_millis(250);
 /// Ticks before an unconfirmed reliable message goes out again.
@@ -31,6 +39,9 @@ pub enum ConnState {
     Rejected(String),
     /// The host closed the world, or stopped answering.
     Ended(String),
+    /// The host left and we are the new one: the game starts a server from
+    /// [`Connection::world_state`] over [`Connection::take_hub`].
+    TakingOver,
 }
 
 pub struct Connection {
@@ -52,6 +63,13 @@ pub struct Connection {
     /// Bytes received from the server so far.
     pub bytes_in: u64,
     ticks: u64,
+    /// The host said goodbye; waiting (since then) for another to take over.
+    host_gone: Option<Instant>,
+    /// How many times the host changed (a new host means new IDs).
+    pub handovers: u32,
+    /// Our hero file and looks, to send again to a new host.
+    sheet: Option<ToServer>,
+    looks: Vec<ToServer>,
 }
 
 impl Connection {
@@ -78,6 +96,29 @@ impl Connection {
             news: Vec::new(),
             bytes_in: 0,
             ticks: 0,
+            host_gone: None,
+            handovers: 0,
+            sheet: None,
+            looks: Vec::new(),
+        }
+    }
+
+    /// Starts over with a new host: hello, then our hero file and looks.
+    fn rejoin(&mut self) {
+        self.state = ConnState::Connecting;
+        self.last_hello = None;
+        self.last_heard = Instant::now();
+        self.recent.clear();
+        self.acks = AckWindow::default();
+        self.mirror = Mirror::new();
+        self.latest = None;
+        self.rel_in = ReliableReceiver::new();
+        self.rel_out = ReliableSender::new();
+        self.host_gone = None;
+        self.handovers += 1;
+        let again: Vec<ToServer> = self.sheet.iter().chain(&self.looks).cloned().collect();
+        for m in again {
+            self.rel_out.push(m);
         }
     }
 
@@ -134,13 +175,35 @@ impl Connection {
                     for (id, m) in reliable {
                         for m in self.rel_in.receive(id, m) {
                             if let ToClient::SessionEnd { reason } = &m {
-                                self.state = ConnState::Ended(reason.clone());
+                                if self.link.can_hand_over() {
+                                    // Someone else takes over (or nobody
+                                    // does, and it ends after all).
+                                    self.host_gone.get_or_insert_with(Instant::now);
+                                } else {
+                                    self.state = ConnState::Ended(reason.clone());
+                                }
+                            }
+                            if let ToClient::Sheet(s) = &m {
+                                self.sheet = Some(ToServer::Sheet(s.clone()));
                             }
                             self.news.push(m);
                         }
                     }
                 }
             }
+        }
+        match self.link.handover() {
+            Some(Handover::ToOther) if self.state != ConnState::TakingOver => self.rejoin(),
+            Some(Handover::ToUs) => {
+                self.state = ConnState::TakingOver;
+                self.handovers += 1;
+                return None;
+            }
+            _ => {}
+        }
+        if self.host_gone.is_some_and(|t| t.elapsed() > HANDOVER_WAIT) {
+            self.state = ConnState::Ended("the host left and nobody took over".into());
+            self.host_gone = None;
         }
         match self.state {
             ConnState::Connecting => {
@@ -156,7 +219,7 @@ impl Connection {
                 }
             }
             ConnState::Connected { .. } => {
-                if self.last_heard.elapsed() > TIMEOUT {
+                if self.host_gone.is_none() && self.last_heard.elapsed() > TIMEOUT {
                     self.state = ConnState::Ended("the host stopped answering".into());
                     return None;
                 }
@@ -176,7 +239,7 @@ impl Connection {
                 self.link.send(&msg.encode());
                 return Some(self.seq);
             }
-            ConnState::Rejected(_) | ConnState::Ended(_) => {}
+            ConnState::Rejected(_) | ConnState::Ended(_) | ConnState::TakingOver => {}
         }
         None
     }
@@ -188,7 +251,23 @@ impl Connection {
 
     /// Sends a reliable message (a hero file, a power bought).
     pub fn send(&mut self, msg: ToServer) {
+        match &msg {
+            ToServer::Sheet(_) => self.sheet = Some(msg.clone()),
+            ToServer::Look { part: 0, .. } => self.looks = vec![msg.clone()],
+            ToServer::Look { .. } => self.looks.push(msg.clone()),
+            _ => {}
+        }
         self.rel_out.push(msg);
+    }
+
+    /// The newest world save the host published (to take over from).
+    pub fn world_state(&self) -> Option<&str> {
+        self.link.world_state()
+    }
+
+    /// The GameHub connection, once we are [`ConnState::TakingOver`].
+    pub fn take_hub(&mut self) -> Option<crate::gamehub::Hub> {
+        self.link.take_hub()
     }
 
     /// Hails a taxi to stand `dest`, or (255) gets out of it.
