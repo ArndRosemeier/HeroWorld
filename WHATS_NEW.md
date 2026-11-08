@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.055 (2026-11-08)
+
+- If HeroWorld ever crashes it leaves a report, and the title tells you where it is next time:
+  send it to Arnd and it gets fixed.
+
 ## 0.054 (2026-11-08)
 
 - Cars are lighter to draw: the same curves with fewer triangles, so busy streets cost less

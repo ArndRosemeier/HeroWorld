@@ -5,6 +5,7 @@
 pub mod buildingmesh;
 pub mod carmesh;
 pub mod citymesh;
+pub mod crash;
 pub mod creator;
 pub mod crowdview;
 pub mod damageview;

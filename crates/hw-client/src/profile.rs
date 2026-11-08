@@ -76,6 +76,11 @@ impl Profile {
         Some(base.join("profile.json"))
     }
 
+    /// The folder the profile lives in (crash reports go beside it).
+    pub fn dir() -> Option<PathBuf> {
+        Self::path().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    }
+
     pub fn load() -> Self {
         Self::path()
             .and_then(|p| std::fs::read_to_string(p).ok())

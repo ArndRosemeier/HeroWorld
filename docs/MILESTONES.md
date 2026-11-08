@@ -490,6 +490,12 @@ title's Settings card, with the controls, and in the game behind Escape (back, s
 controls, quit; Escape frees a locked mouse first). `HW_MENU=main|settings|controls` opens it for
 screenshots.
 
+**Status (0.055):** a crash reporter (`hw-client/src/crash.rs`). A panic, or Engine stopping with an
+error, writes `crashes/crash-<ms>.txt` beside the profile: version, system, the world seed, room
+and view, the message, where, and the stack. The next start says on the title where it is, once.
+Panics on worker threads are written as `panic-<ms>.txt` without the notice. `HW_CRASH_TEST=1`
+crashes at once to try it; `HW_CRASH_DIR` moves the folder.
+
 ## Sound, music and pictures
 
 OpenRouter is available for images, sound effects and music (Arnd's model preferences are in

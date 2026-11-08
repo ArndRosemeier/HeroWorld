@@ -185,6 +185,8 @@ fn save_hero(hero: Option<hw_net::Sheet>) {
 }
 
 fn main() -> EngineResult<()> {
+    // A crash leaves a report beside the profile (see `crash.rs`).
+    hw_client::crash::install();
     // Lit windows are baked into the buildings: decide before any is built.
     hw_client::buildingmesh::NIGHT.store(
         hw_client::nightlights::dark_at(game_hour()),
@@ -725,6 +727,8 @@ fn main() -> EngineResult<()> {
         hero_cam_yaw = 135.0;
     }
     let mut menu = hw_client::settings::GameMenu::new(&profile);
+    // The world the crash reporter last noted.
+    let mut crash_noted: Option<u64> = None;
     let mut hero_cam = HeroCamera {
         look: menu.look,
         yaw: hero_cam_yaw,
@@ -751,6 +755,18 @@ fn main() -> EngineResult<()> {
     // The title screen, while it shows; a town being generated for another
     // world (a new hero's, or a friend's); a joined session waiting for it.
     let mut title_screen = title_mode.then(|| Title::new(profile.clone()));
+    // Closed unexpectedly last time: say where the report is.
+    if let Some(report) = hw_client::crash::take_unseen() {
+        let line = format!(
+            "HeroWorld closed unexpectedly last time. A report is in {}: please send it to Arnd.",
+            report.display()
+        );
+        eprintln!("{line}");
+        if let Some(t) = title_screen.as_mut() {
+            t.status = Some((line, true));
+        }
+    }
+    hw_client::crash::note("view", &view);
     let mut switching: Option<std::sync::mpsc::Receiver<(u64, f64, GeneratedTown)>> = None;
     let mut waiting: Option<Waiting> = None;
     // Props and landmarks of the current town.
@@ -761,7 +777,7 @@ fn main() -> EngineResult<()> {
     // Broken buildings, once a game is on.
     let mut damage: Option<DamageView> = None;
     let shooting = std::env::var_os("ENGINE_SCREENSHOT").is_some();
-    Engine::run(
+    let run = Engine::run(
         format!("HeroWorld {}", hw_core::version()),
         move |world, frame| {
             if frame.first {
@@ -771,6 +787,10 @@ fn main() -> EngineResult<()> {
                 p.smooth &= !shooting;
                 hw_client::settings::apply(world, &p);
                 hw_client::settings::apply_volumes(world, &p);
+                // `HW_CRASH_TEST=1`: crash at once (tries the crash reporter).
+                if std::env::var_os("HW_CRASH_TEST").is_some() {
+                    panic!("HW_CRASH_TEST asked for a crash");
+                }
                 world.set_physical_sky(Some(PhysicalSky::at_hour(game_hour())));
                 world.set_moons(moons())?;
                 if let Some(t) = title_screen.as_mut() {
@@ -967,6 +987,12 @@ fn main() -> EngineResult<()> {
                 return Ok(());
             };
             version_corner(&frame.ui, &mut whats_new, session.room_code());
+            if crash_noted != Some(world_seed) {
+                crash_noted = Some(world_seed);
+                hw_client::crash::note("world seed", world_seed);
+                hw_client::crash::note("people", world_people);
+                hw_client::crash::note("room", session.room_code().unwrap_or("none"));
+            }
             // Escape: the menu (settings, controls, quit).
             if menu.show(&frame.ui, world) {
                 world.request_exit();
@@ -1931,7 +1957,11 @@ fn main() -> EngineResult<()> {
             );
             Ok(())
         },
-    )
+    );
+    if let Err(e) = &run {
+        hw_client::crash::engine_error(e);
+    }
+    run
 }
 
 /// Someone waiting on the title for another world's town to be generated.
