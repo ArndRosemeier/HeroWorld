@@ -13,6 +13,8 @@
 //! over (a test of ragdolls; they get up again).
 //! Buildings are open: walk in through a door, and in the lift (the core in
 //! the middle) hold Space to rise and Ctrl to sink; step out at any floor.
+//! Left mouse punches, Q fires an energy blast where you look: glass, plaster
+//! and brick break at level 1 (`HW_LEVEL` sets the hero level for now).
 //! Tab switches to a free-flying camera and back. C cuts buildings open
 //! around where you look (F moves the cut there), Z/X pick the floor.
 //!
@@ -31,7 +33,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay` or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay`, `wrecked` or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -48,6 +50,7 @@ use engine::stream::{StreamSettings, WorldStream};
 use glam::{DVec2, Vec3};
 use hw_client::citymesh;
 use hw_client::crowdview::CrowdView;
+use hw_client::damageview::DamageView;
 use hw_client::heroview::{tipped_origin, HeroAnim};
 use hw_client::people::{self, People, Who};
 use hw_client::profile::Profile;
@@ -312,6 +315,20 @@ fn main() -> EngineResult<()> {
             let yaw = d.x.atan2(d.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, top as f32 + 4.0, p.y as f32), yaw, -14.0)
         }
+        "wrecked" => {
+            // Two buildings near the start broken for the camera.
+            let (eye, at) = session
+                .as_mut()
+                .and_then(|s| s.wreck_demo(&generated))
+                .unwrap_or((
+                    glam::DVec3::new(spawn.x, ground(spawn) + 10.0, spawn.y),
+                    glam::DVec3::new(spawn.x + 20.0, ground(spawn), spawn.y),
+                ));
+            let d = at - eye;
+            let yaw = d.x.atan2(d.z).to_degrees() as f32;
+            let pitch = (d.y / DVec2::new(d.x, d.z).length()).atan().to_degrees() as f32;
+            FlyCamera::new((eye.x as f32, eye.y as f32, eye.z as f32), yaw, pitch)
+        }
         "cutaway" => {
             let f = town.cut_focus;
             let h = ground(f) as f32;
@@ -411,6 +428,8 @@ fn main() -> EngineResult<()> {
     // From the title down to the hero: (start, eye, yaw, pitch).
     let mut swoop: Option<(f32, Vec3, f32, f32)> = None;
     let mut music_fade_at: Option<f32> = None;
+    // Broken buildings, once a game is on.
+    let mut damage: Option<DamageView> = None;
     let shooting = std::env::var_os("ENGINE_SCREENSHOT").is_some();
     Engine::run(
         format!("HeroWorld {}", hw_core::version()),
@@ -641,6 +660,11 @@ fn main() -> EngineResult<()> {
                 hero_input.descend = input.down(Key::Ctrl);
                 hero_input.fly = hero_flies;
                 hero_input.boost = input.down(Key::Shift);
+                // Left mouse punches, Q fires an energy blast, both where the
+                // camera looks (levelled a little, as it looks down at the hero).
+                hero_input.smash = input.mouse_down(MouseButton::Left);
+                hero_input.blast = input.down(Key::Q);
+                hero_input.aim = Camera::direction(hero_cam.yaw, hero_cam.pitch + 10.0).to_array();
             }
 
             // Fixed ticks for the game, however fast frames come.
@@ -654,6 +678,12 @@ fn main() -> EngineResult<()> {
             if ticks == 5 {
                 tick_clock = 0.0;
             }
+            // Damage: broken buildings, repairs, impacts.
+            let joined = session.joined();
+            let news = session.take_news();
+            damage
+                .get_or_insert_with(|| DamageView::new(joined))
+                .news(world, &mut town, &solids, news);
 
             // People finished on the worker thread (HW_WAIT_PEOPLE=1 waits
             // for all of them at the start, for screenshots).

@@ -11,7 +11,8 @@ use hw_gen::city::CityPlan;
 use hw_gen::geom::Rect;
 use hw_gen::urban::world::{TownWorld, WATER_LEVEL};
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, RwLock};
 
 /// Ground grid cell for lookups (m).
 const CELL: f64 = 32.0;
@@ -63,9 +64,73 @@ struct Collider {
     lo: DVec2,
     hi: DVec2,
     solids: OnceLock<Vec<Solid>>,
+    /// A damaged building's solids instead of the plan's (see
+    /// [`crate::destruction`]).
+    damage: RwLock<Option<Damaged>>,
+    /// Goes up whenever the damage changes, so copies (physics) know to rebuild.
+    version: AtomicU64,
+}
+
+/// What is left of a damaged building, for collision.
+#[derive(Clone, Debug)]
+struct Damaged {
+    solids: Arc<[Solid]>,
+    /// The lift still works (the building has not collapsed).
+    lift: bool,
+}
+
+/// The solids of one collider: its own, or a damaged building's shared copy.
+pub enum SolidSet<'a> {
+    Plain(&'a [Solid]),
+    Shared(Arc<[Solid]>),
+}
+
+impl std::ops::Deref for SolidSet<'_> {
+    type Target = [Solid];
+    fn deref(&self) -> &[Solid] {
+        match self {
+            SolidSet::Plain(s) => s,
+            SolidSet::Shared(s) => s,
+        }
+    }
 }
 
 impl Collider {
+    fn new(site: Option<BuildingSite>, base: f64, lo: DVec2, hi: DVec2) -> Self {
+        Self {
+            plan: OnceLock::new(),
+            site,
+            base,
+            plinth: None,
+            lo,
+            hi,
+            solids: OnceLock::new(),
+            damage: RwLock::new(None),
+            version: AtomicU64::new(0),
+        }
+    }
+
+    fn set(&self) -> SolidSet<'_> {
+        match self.damage.read().expect("damage lock").as_ref() {
+            Some(d) => SolidSet::Shared(d.solids.clone()),
+            None => SolidSet::Plain(self.solids()),
+        }
+    }
+
+    fn plinth_solid(&self) -> Option<Solid> {
+        let y0 = self.plinth?;
+        let s = &self.plan()?.site;
+        Some(Solid {
+            origin: s.origin,
+            along: s.along,
+            inward: s.inward,
+            min: DVec2::ZERO,
+            max: s.size,
+            y0,
+            y1: self.base,
+        })
+    }
+
     fn plan(&self) -> Option<&Arc<BuildingPlan>> {
         self.plan
             .get_or_init(|| {
@@ -80,18 +145,7 @@ impl Collider {
         self.solids.get_or_init(|| match self.plan() {
             Some(p) => {
                 let mut out = building_solids(p, self.base);
-                if let Some(y0) = self.plinth {
-                    let s = &p.site;
-                    out.push(Solid {
-                        origin: s.origin,
-                        along: s.along,
-                        inward: s.inward,
-                        min: DVec2::ZERO,
-                        max: s.size,
-                        y0,
-                        y1: self.base,
-                    });
-                }
+                out.extend(self.plinth_solid());
                 out
             }
             None => Vec::new(),
@@ -190,19 +244,9 @@ impl Obstacles {
         }));
         for (_, p) in city.buildings.iter().zip(plans) {
             let corners = p.site.corners();
-            out.insert(Collider {
-                plan: OnceLock::from(Some(Arc::new(p.clone()))),
-                site: None,
-                base,
-                plinth: None,
-                lo: corners
-                    .iter()
-                    .fold(DVec2::splat(f64::MAX), |a, c| a.min(*c)),
-                hi: corners
-                    .iter()
-                    .fold(DVec2::splat(f64::MIN), |a, c| a.max(*c)),
-                solids: OnceLock::new(),
-            });
+            let mut c = Collider::new(None, base, lo_of(&corners), hi_of(&corners));
+            c.plan = OnceLock::from(Some(Arc::new(p.clone())));
+            out.insert(c);
         }
         out
     }
@@ -215,19 +259,14 @@ impl Obstacles {
         out.terrain = Some(terrain);
         for b in &world.buildings {
             let corners = b.site.corners();
-            out.insert(Collider {
-                plan: OnceLock::new(),
-                site: Some(b.site.clone()),
-                base: b.base,
-                plinth: (b.base - b.low > 0.05).then_some(b.low - 1.0),
-                lo: corners
-                    .iter()
-                    .fold(DVec2::splat(f64::MAX), |a, c| a.min(*c)),
-                hi: corners
-                    .iter()
-                    .fold(DVec2::splat(f64::MIN), |a, c| a.max(*c)),
-                solids: OnceLock::new(),
-            });
+            let mut c = Collider::new(
+                Some(b.site.clone()),
+                b.base,
+                lo_of(&corners),
+                hi_of(&corners),
+            );
+            c.plinth = (b.base - b.low > 0.05).then_some(b.low - 1.0);
+            out.insert(c);
         }
         for br in &world.bridges {
             let d = br.b - br.a;
@@ -257,17 +296,10 @@ impl Obstacles {
             lo = lo.min(c);
             hi = hi.max(c);
         }
-        let cell = OnceLock::new();
-        let _ = cell.set(vec![solid]);
-        self.insert(Collider {
-            plan: OnceLock::from(None),
-            site: None,
-            base: 0.0,
-            plinth: None,
-            lo,
-            hi,
-            solids: cell,
-        });
+        let mut c = Collider::new(None, 0.0, lo, hi);
+        c.plan = OnceLock::from(None);
+        c.solids = OnceLock::from(vec![solid]);
+        self.insert(c);
     }
 
     fn insert(&mut self, c: Collider) {
@@ -317,20 +349,66 @@ impl Obstacles {
         out
     }
 
-    /// Every solid near a point (builds colliders on first touch).
-    fn near(&self, p: DVec2, r: f64) -> impl Iterator<Item = &Solid> {
+    /// The solids near a point, a set per collider (builds colliders on
+    /// first touch).
+    fn near(&self, p: DVec2, r: f64) -> Vec<SolidSet<'_>> {
         self.near_colliders(p, r)
             .into_iter()
-            .flat_map(move |i| self.colliders[i as usize].solids().iter())
+            .map(|i| self.colliders[i as usize].set())
+            .collect()
     }
 
     /// The solids of every collider within `r` of `p`, by collider index
     /// (building colliders are made on first touch). For the physics world.
-    pub fn solids_near(&self, p: DVec2, r: f64) -> Vec<(u32, &[Solid])> {
+    pub fn solids_near(&self, p: DVec2, r: f64) -> Vec<(u32, SolidSet<'_>)> {
         self.near_colliders(p, r)
             .into_iter()
-            .map(|i| (i, self.colliders[i as usize].solids()))
+            .map(|i| (i, self.colliders[i as usize].set()))
             .collect()
+    }
+
+    /// Buildings (by index, as [`Inside::building`] counts) whose ground
+    /// boxes come within `r` of `p`.
+    pub fn buildings_near(&self, p: DVec2, r: f64) -> Vec<usize> {
+        self.near_colliders(p, r)
+            .into_iter()
+            .filter(|&i| {
+                let c = &self.colliders[i as usize];
+                c.site.is_some() || c.plan.get().is_some_and(|p| p.is_some())
+            })
+            .map(|i| i as usize)
+            .collect()
+    }
+
+    /// Replaces building `i`'s solids with what is left of it after damage
+    /// (`None`: whole again). `lift`: its lift still works. Its plinth stays.
+    pub fn set_damage(&self, i: usize, solids: Option<Vec<Solid>>, lift: bool) {
+        let Some(c) = self.colliders.get(i) else {
+            return;
+        };
+        let d = solids.map(|mut s| {
+            s.extend(c.plinth_solid());
+            Damaged {
+                solids: s.into(),
+                lift,
+            }
+        });
+        *c.damage.write().expect("damage lock") = d;
+        c.version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Is building `i` damaged?
+    pub fn is_damaged(&self, i: usize) -> bool {
+        self.colliders
+            .get(i)
+            .is_some_and(|c| c.damage.read().expect("damage lock").is_some())
+    }
+
+    /// Changes whenever collider `i`'s solids change.
+    pub fn version(&self, i: u32) -> u64 {
+        self.colliders
+            .get(i as usize)
+            .map_or(0, |c| c.version.load(Ordering::Relaxed))
     }
 
     /// Does open ground follow terrain or water (not one flat height)?
@@ -340,7 +418,8 @@ impl Obstacles {
 
     /// Is `p` inside any solid?
     pub fn solid_at(&self, p: DVec3) -> bool {
-        self.near(DVec2::new(p.x, p.z), 0.0).any(|s| {
+        let sets = self.near(DVec2::new(p.x, p.z), 0.0);
+        let found = sets.iter().flat_map(|x| x.iter()).any(|s| {
             let l = s.to_local(DVec2::new(p.x, p.z));
             p.y > s.y0
                 && p.y < s.y1
@@ -348,7 +427,8 @@ impl Obstacles {
                 && l.x < s.max.x
                 && l.y > s.min.y
                 && l.y < s.max.y
-        })
+        });
+        found
     }
 
     /// The building and floor a point is in, if any.
@@ -398,6 +478,14 @@ impl Obstacles {
             let c = &self.colliders[i as usize];
             let Some(plan) = c.plan() else { return false };
             let Some(core) = plan.core else { return false };
+            if c.damage
+                .read()
+                .expect("damage lock")
+                .as_ref()
+                .is_some_and(|d| !d.lift)
+            {
+                return false;
+            }
             let s = &plan.site;
             let d = q - s.origin;
             let l = DVec2::new(d.dot(s.along), d.dot(s.inward));
@@ -426,7 +514,7 @@ impl Obstacles {
     /// Height of whatever is under `p` (x, z) no higher than `max_y`.
     pub fn floor_under(&self, p: DVec2, max_y: f64) -> f64 {
         let mut best = self.ground_at(p);
-        for s in self.near(p, 0.0) {
+        for s in self.near(p, 0.0).iter().flat_map(|x| x.iter()) {
             let l = s.to_local(p);
             if l.x >= s.min.x && l.x <= s.max.x && l.y >= s.min.y && l.y <= s.max.y && s.y1 <= max_y
             {
@@ -443,7 +531,8 @@ impl Obstacles {
         // A few passes settle corners between neighbouring boxes.
         for _ in 0..3 {
             let mut moved = false;
-            for s in self.near(DVec2::new(pos.x, pos.z), BODY_RADIUS) {
+            let sets = self.near(DVec2::new(pos.x, pos.z), BODY_RADIUS);
+            for s in sets.iter().flat_map(|x| x.iter()) {
                 // Only walls: the body overlaps the box vertically, is not
                 // standing on top of it (or stepping up onto it), and it is not a
                 // ceiling just above the head (handled in move_body).
@@ -521,7 +610,7 @@ impl Obstacles {
             if body.vel.y > 0.0 {
                 let head = next.y + BODY_HEIGHT;
                 let q = DVec2::new(next.x, next.z);
-                for s in self.near(q, 0.0) {
+                for s in self.near(q, 0.0).iter().flat_map(|x| x.iter()) {
                     let l = s.to_local(q);
                     let over = l.x >= s.min.x && l.x <= s.max.x && l.y >= s.min.y && l.y <= s.max.y;
                     if over && s.y0 >= body.pos.y + BODY_HEIGHT - 0.6 && head > s.y0 {
@@ -540,6 +629,14 @@ impl Obstacles {
             body.pos = next;
         }
     }
+}
+
+fn lo_of(c: &[DVec2]) -> DVec2 {
+    c.iter().fold(DVec2::splat(f64::MAX), |a, c| a.min(*c))
+}
+
+fn hi_of(c: &[DVec2]) -> DVec2 {
+    c.iter().fold(DVec2::splat(f64::MIN), |a, c| a.max(*c))
 }
 
 /// The solids of one building, from its plan.

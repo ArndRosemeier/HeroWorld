@@ -239,6 +239,21 @@ and two friends of different levels fight together at one level.
 
 ### M8. A breakable city
 
+**Status (2026-11-08, 0.021):** buildings break. Every building becomes Engine's breakable
+plan when it is first hit (`hw-sim/src/destruction.rs`): a wall panel per bay and floor (split
+round doors, lintels over them), slab and roof tiles, inner walls in pieces, columns where a hall
+needs them; strength from material and height. Heroes punch (left mouse) and blast (Q); power
+grows 18% a level (`HW_LEVEL` until M7): level 1 breaks glass, plaster and brick, concrete takes
+about level 6. The server keeps the broken bits, Engine derives falls, pancake/topple collapses
+and rubble; damage goes to clients as reliable deltas (late joiners get it all), collision
+follows (walk through the hole, stand on the rubble), saves keep it, and a building nobody has
+been within 300 m (plus four times its height) of for 10 minutes is repaired. Clients swap a
+damaged building out of its town cell for an Engine breakable building that carries the
+town's own facade, cut up by element, so it looks the same until it breaks; sparks, dust,
+explosions and scorch/impact decals at every hit. A collateral tally per player waits for
+incidents (M9). Still open: props, cars and trees that bend and break; frost and crack decals
+from powers (M7); the frame rate during a big tower's collapse on the target PC.
+
 - `hw-gen` building plans become Engine `BuildingPlan`s: wall panels per bay and floor, slabs,
   columns, roof pieces, interior walls, each with its material strength.
 - The server owns the element bits and collapses (pancake and topple), sends them as deltas and

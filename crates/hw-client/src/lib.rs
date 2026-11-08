@@ -5,6 +5,7 @@
 pub mod buildingmesh;
 pub mod citymesh;
 pub mod crowdview;
+pub mod damageview;
 pub mod heroview;
 pub mod landmarkview;
 pub mod nightlights;

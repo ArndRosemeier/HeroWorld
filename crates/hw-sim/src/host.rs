@@ -37,6 +37,11 @@ pub const UPDATE_BUDGET: usize =
 /// Inputs a remote player may have waiting; more means they run ahead, and
 /// the oldest are dropped.
 const INPUT_QUEUE: usize = 6;
+/// Most bytes of reliable news in one update (damage after a big hit, or
+/// the whole city's damage for a joining player, spreads over a few ticks).
+const RELIABLE_BYTES: usize = 360;
+/// What [`UPDATE_BUDGET`] leaves for reliable news.
+const RELIABLE_RESERVE: usize = 120;
 /// Ticks before an unconfirmed reliable message goes out again.
 const RESEND_TICKS: u64 = 6;
 
@@ -83,6 +88,8 @@ pub struct Host {
     players: BTreeMap<PlayerId, PlayerInfo>,
     remotes: BTreeMap<PlayerId, Remote>,
     next_player: u16,
+    /// World news (damage, impacts) for the player at this machine.
+    local_news: Vec<ToClient>,
 }
 
 impl Host {
@@ -99,6 +106,7 @@ impl Host {
             players: BTreeMap::new(),
             remotes: BTreeMap::new(),
             next_player: 1,
+            local_news: Vec::new(),
         }
     }
 
@@ -160,6 +168,10 @@ impl Host {
                 player: id,
                 name: name.to_string(),
             });
+            // The damage done so far, so a late joiner sees the same city.
+            for m in self.sim.damage.snapshot() {
+                r.rel_out.push(m);
+            }
             self.remotes.insert(id, r);
         }
         self.players.insert(
@@ -307,8 +319,21 @@ impl Host {
             }
         }
         self.sim.step();
+        let news = self.sim.take_news();
+        if self.players.values().any(|p| !p.remote) {
+            self.local_news.extend(news.iter().cloned());
+        }
+        for m in news {
+            self.tell_all(m);
+        }
         self.send_updates();
         out
+    }
+
+    /// World news (damage, repairs, impacts) for the player at this machine
+    /// since the last call.
+    pub fn take_local_news(&mut self) -> Vec<ToClient> {
+        std::mem::take(&mut self.local_news)
     }
 
     fn send_updates(&mut self) {
@@ -339,7 +364,23 @@ impl Host {
                     })
                 })
                 .collect();
-            let (entities, removed) = r.view.build(tick, &candidates, UPDATE_BUDGET);
+            // Reliable news first, at most RELIABLE_BYTES a packet (the rest
+            // goes out again soon); entities fill what is left.
+            let mut reliable = r.rel_out.due(tick, RESEND_TICKS);
+            let mut used = 0;
+            let fit = reliable
+                .iter()
+                .take_while(|(_, m)| {
+                    used += 4 + m.wire_size();
+                    used <= RELIABLE_BYTES
+                })
+                .count();
+            reliable.truncate(fit.max(1).min(reliable.len()));
+            let rel_bytes: usize = reliable.iter().map(|(_, m)| 4 + m.wire_size()).sum();
+            let budget = (UPDATE_BUDGET + RELIABLE_RESERVE)
+                .saturating_sub(rel_bytes)
+                .max(200);
+            let (entities, removed) = r.view.build(tick, &candidates, budget);
             let ack = self.players.get(p).map_or(0, |i| i.ack);
             socket.send(
                 *p,
@@ -347,7 +388,7 @@ impl Host {
                     tick,
                     ack,
                     rel_ack: r.rel_in.ack(),
-                    reliable: r.rel_out.due(tick, RESEND_TICKS),
+                    reliable,
                     entities,
                     removed,
                 },

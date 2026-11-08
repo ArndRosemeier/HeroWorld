@@ -8,6 +8,7 @@
 pub mod bubbles;
 pub mod citizens;
 pub mod collision;
+pub mod destruction;
 pub mod host;
 pub mod physics;
 pub mod predict;
@@ -15,14 +16,15 @@ pub mod save;
 
 use bevy_ecs::prelude::*;
 use bubbles::Bubbles;
-use collision::{Body, Obstacles};
+use collision::{Body, Obstacles, BODY_HEIGHT};
+use destruction::Damage;
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, NetIdAllocator, Seed};
 use hw_gen::building::BuildingPlan;
 use hw_gen::city::{CityParams, CityPlan};
 use hw_gen::urban::world::TownWorld;
 use hw_gen::urban::TownParams;
-use hw_net::{EntityKind, EntityState, InputState, PlayerId};
+use hw_net::{EntityKind, EntityState, ImpactKind, InputState, PlayerId, ToClient};
 use physics::{Physics, PropState, CRATE_HALF};
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -75,6 +77,18 @@ pub struct Hero {
 /// The newest input from the hero's player.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Default)]
 pub struct Control(pub InputState);
+
+/// When a hero may punch or blast again (a tick).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Strike {
+    pub ready_at: u64,
+}
+
+/// Ticks between punches, and between blasts.
+pub const PUNCH_TICKS: u64 = 10;
+pub const BLAST_TICKS: u64 = 18;
+/// How far an energy blast reaches (m).
+pub const BLAST_RANGE: f64 = 90.0;
 
 /// A loose physics body (a crate); its [`Motion`] position is its centre.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,6 +284,11 @@ pub struct Sim {
     pub physics: Physics,
     /// The simulated areas around the players.
     pub bubbles: Bubbles,
+    /// Broken buildings (see [`destruction`]).
+    pub damage: Damage,
+    /// Every hero's level until heroes have their own (milestone 7): it sets
+    /// how hard they hit, so what they can break.
+    pub hero_level: u8,
 }
 
 impl Sim {
@@ -313,6 +332,8 @@ impl Sim {
             track,
             physics: Physics::new(solids),
             bubbles: Bubbles::default(),
+            damage: Damage::default(),
+            hero_level: 1,
         }
     }
 
@@ -341,10 +362,82 @@ impl Sim {
             .collect();
         let players: Vec<(PlayerId, DVec3)> = heroes.iter().map(|(p, _, at)| (*p, *at)).collect();
         self.bubbles.update(&players);
+        self.strike();
+        if self.tick.is_multiple_of(TICK_HZ as u64) {
+            let solids = self.solids();
+            let at: Vec<DVec3> = heroes.iter().map(|h| h.2).collect();
+            self.damage.repair_unseen(&solids, &at, self.tick, TICK_HZ);
+        }
         self.step_physics(&heroes);
         self.tick += 1;
         self.world.resource_mut::<Now>().0 = self.tick;
         self.track.run(&mut self.world);
+    }
+
+    /// Heroes punch and blast what is in front of them.
+    fn strike(&mut self) {
+        let tick = self.tick;
+        let mut blows = Vec::new();
+        for (hero, control, motion, mut strike) in self
+            .world
+            .query::<(&Hero, &Control, &Motion, &mut Strike)>()
+            .iter_mut(&mut self.world)
+        {
+            let input = control.0;
+            if tick < strike.ready_at || !(input.smash || input.blast) {
+                continue;
+            }
+            let aim = DVec3::new(
+                input.aim[0] as f64,
+                input.aim[1] as f64,
+                input.aim[2] as f64,
+            )
+            .normalize_or(DVec3::Z);
+            let chest = motion.0.pos + DVec3::Y * (BODY_HEIGHT * 0.7);
+            if input.blast {
+                strike.ready_at = tick + BLAST_TICKS;
+                blows.push((hero.owner, ImpactKind::Blast, chest, aim));
+            } else {
+                strike.ready_at = tick + PUNCH_TICKS;
+                blows.push((hero.owner, ImpactKind::Punch, chest, aim));
+            }
+        }
+        if blows.is_empty() {
+            return;
+        }
+        let solids = self.solids();
+        let power = destruction::hero_power(self.hero_level);
+        for (owner, kind, chest, aim) in blows {
+            let (at, radius, strength) = match kind {
+                ImpactKind::Punch => (chest + aim * 0.9, power.punch_radius, power.punch),
+                ImpactKind::Blast => {
+                    let Some(p) = destruction::raycast(&solids, chest, aim, BLAST_RANGE) else {
+                        continue;
+                    };
+                    (p, power.blast_radius, power.blast)
+                }
+            };
+            // A punch at thin air hits nothing.
+            if kind == ImpactKind::Punch && !solids.solid_at(at) && !solids.solid_at(at + aim * 0.4)
+            {
+                continue;
+            }
+            let r = self
+                .damage
+                .hit(&solids, at, radius, strength, Some(owner), tick);
+            self.damage.tell(ToClient::Impact {
+                at: at.as_vec3().to_array(),
+                dir: aim.as_vec3().to_array(),
+                kind,
+                broke: r.broken > 0,
+            });
+        }
+    }
+
+    /// Reliable news for every client since the last call: damage, repairs,
+    /// impacts.
+    pub fn take_news(&mut self) -> Vec<ToClient> {
+        self.damage.take_news()
     }
 
     fn step_physics(&mut self, heroes: &[(PlayerId, NetId, DVec3)]) {
@@ -482,6 +575,7 @@ impl Sim {
             }),
             Hero { owner },
             Control::default(),
+            Strike::default(),
             LastChange(self.tick),
         ));
         id

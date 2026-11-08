@@ -10,7 +10,7 @@
 //! client replays to predict its hero exactly. In the physics world each hero
 //! is a kinematic capsule that follows the hero and shoves bodies aside.
 
-use crate::collision::{Obstacles, Solid, BODY_HEIGHT, BODY_RADIUS};
+use crate::collision::{Obstacles, Solid, SolidSet, BODY_HEIGHT, BODY_RADIUS};
 use crate::TICK_HZ;
 use engine::glam::{Mat3, Mat4, Quat, Vec3};
 use engine::physics::{
@@ -37,7 +37,8 @@ pub struct PropState {
 pub struct Physics {
     world: PhysicsWorld,
     solids: Arc<Obstacles>,
-    statics: BTreeMap<u32, Vec<BodyId>>,
+    /// Building colliders present, with the version of their solids.
+    statics: BTreeMap<u32, (u64, Vec<BodyId>)>,
     heroes: BTreeMap<NetId, BodyId>,
     props: BTreeMap<NetId, BodyId>,
 }
@@ -175,7 +176,7 @@ impl Physics {
     }
 
     fn stream_statics(&mut self) {
-        let mut wanted: BTreeMap<u32, &[Solid]> = BTreeMap::new();
+        let mut wanted: BTreeMap<u32, SolidSet<'_>> = BTreeMap::new();
         for b in self.props.values() {
             let Some(p) = self.world.pose(*b).map(|(p, _)| p) else {
                 continue;
@@ -187,14 +188,15 @@ impl Physics {
                 wanted.insert(i, solids);
             }
         }
+        // Gone out of range, or changed (a building took damage or was repaired).
         let gone: Vec<u32> = self
             .statics
-            .keys()
-            .filter(|i| !wanted.contains_key(i))
-            .copied()
+            .iter()
+            .filter(|(i, (v, _))| !wanted.contains_key(i) || *v != self.solids.version(**i))
+            .map(|(i, _)| *i)
             .collect();
         for i in gone {
-            for b in self.statics.remove(&i).unwrap_or_default() {
+            for b in self.statics.remove(&i).map(|s| s.1).unwrap_or_default() {
                 self.world.remove(b);
             }
         }
@@ -203,14 +205,14 @@ impl Physics {
                 continue;
             }
             let mut bodies = Vec::with_capacity(solids.len());
-            for s in solids {
+            for s in solids.iter() {
                 let (c, r, h) = solid_box(s);
                 let body = PhysicsBody::fixed().shape(BodyShape::Box(h));
                 if let Ok(b) = self.world.add(&body, Mat4::from_rotation_translation(r, c)) {
                     bodies.push(b);
                 }
             }
-            self.statics.insert(i, bodies);
+            self.statics.insert(i, (self.solids.version(i), bodies));
         }
     }
 

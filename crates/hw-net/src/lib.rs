@@ -16,13 +16,14 @@ pub mod wire;
 
 pub use connection::{ConnState, Connection};
 pub use protocol::{
-    ClientMsg, EntityKind, EntityState, InputState, PlayerId, ServerMsg, ToClient, ToServer,
+    ClientMsg, EntityKind, EntityState, ImpactKind, InputState, PlayerId, ServerMsg, ToClient,
+    ToServer,
 };
 pub use replication::{Candidate, ClientView};
 pub use transport::{ClientSocket, Link, PeerAddr, ServerEvent, ServerLink, ServerSocket, Traffic};
 
 /// Protocol version. Server and client must match exactly to play together.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Most players in one world.
 pub const MAX_PLAYERS: usize = 10;

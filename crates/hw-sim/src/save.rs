@@ -1,6 +1,7 @@
 //! The host's world save: what has changed in the world it generates from its
-//! seed. Today that is the clock and where the loose props lie; damage and
-//! incidents join it with the milestones that add them. Heroes are not in
+//! seed: the clock, where the loose props lie, and the broken elements of
+//! every damaged building (incidents join it with the milestone that adds
+//! them). Heroes are not in
 //! it: each player keeps their own hero on their own PC.
 //!
 //! A plain text file, one fact per line, so it is easy to look at and stays
@@ -12,7 +13,7 @@ use bevy_ecs::prelude::*;
 use std::path::Path;
 
 /// Format version written in the first line.
-pub const SAVE_VERSION: u32 = 1;
+pub const SAVE_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorldSave {
@@ -20,6 +21,8 @@ pub struct WorldSave {
     pub town_population: f64,
     pub tick: u64,
     pub crates: Vec<PropState>,
+    /// Damaged buildings: index and broken elements.
+    pub damage: Vec<(usize, Vec<u32>)>,
 }
 
 impl WorldSave {
@@ -33,6 +36,13 @@ impl WorldSave {
                 "crate {:?} {:?} {:?} {:?} {:?} {:?} {:?}\n",
                 c.pos.x, c.pos.y, c.pos.z, c.rot[0], c.rot[1], c.rot[2], c.rot[3]
             );
+        }
+        for (i, ids) in &self.damage {
+            out += &format!("damage {i}");
+            for id in ids {
+                out += &format!(" {id}");
+            }
+            out += "\n";
         }
         out
     }
@@ -51,6 +61,7 @@ impl WorldSave {
         }
         let (mut seed, mut population, mut tick) = (None, None, 0);
         let mut crates = Vec::new();
+        let mut damage = Vec::new();
         for (n, line) in lines.enumerate() {
             let bad = || format!("line {}: {line}", n + 2);
             let mut words = line.split_whitespace();
@@ -73,6 +84,11 @@ impl WorldSave {
                         vel: [0.0; 3],
                     });
                 }
+                "damage" => {
+                    let v: Option<Vec<u32>> = rest.iter().map(|w| w.parse().ok()).collect();
+                    let v = v.filter(|v| !v.is_empty()).ok_or_else(bad)?;
+                    damage.push((v[0] as usize, v[1..].to_vec()));
+                }
                 _ => {}
             }
         }
@@ -81,6 +97,7 @@ impl WorldSave {
             town_population: population.ok_or("the save has no population")?,
             tick,
             crates,
+            damage,
         })
     }
 
@@ -121,6 +138,7 @@ impl Sim {
             town_population: self.town_population,
             tick: self.tick,
             crates: crates.into_iter().map(|(_, c)| c).collect(),
+            damage: self.damage.broken(),
         }
     }
 
@@ -136,6 +154,11 @@ impl Sim {
         self.tick = self.tick.max(save.tick);
         for c in &save.crates {
             self.spawn_crate(c.pos, c.rot);
+        }
+        let solids = self.solids();
+        self.damage.clear(&solids);
+        for (i, ids) in &save.damage {
+            self.damage.apply(&solids, *i, ids, self.tick);
         }
         Ok(())
     }

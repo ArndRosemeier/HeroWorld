@@ -88,6 +88,9 @@ pub struct TownView {
     pub cut_level: u32,
     /// The building and floor our hero is in: drawn open at that floor.
     pub inside: Option<Inside>,
+    /// Damaged buildings: Engine draws them breakable instead (see
+    /// `damageview`), so the cells leave them out.
+    hidden: BTreeSet<usize>,
 }
 
 impl TownView {
@@ -130,6 +133,7 @@ impl TownView {
             cut_focus: DVec2::ZERO,
             cut_level: 1,
             inside: None,
+            hidden: BTreeSet::new(),
         };
         v.cut_focus = v
             .tallest_near(v.world.spawn_line().0, 300.0)
@@ -196,6 +200,20 @@ impl TownView {
 
     pub fn cell_of_building(&self, i: usize) -> CellKey {
         cell_of(self.centre_of(i))
+    }
+
+    /// Leaves building `i` out of its cell (`true`) or draws it again, and
+    /// redraws the cell.
+    pub fn set_hidden(&mut self, world: &mut World, i: usize, hidden: bool) {
+        let changed = if hidden {
+            self.hidden.insert(i)
+        } else {
+            self.hidden.remove(&i)
+        };
+        if changed {
+            let k = self.cell_of_building(i);
+            self.rebuild(world, [k]);
+        }
     }
 
     /// Redraws the given cells if they are built.
@@ -308,10 +326,12 @@ impl TownView {
         for i in list {
             let plan = self.plan(i);
             let wb = &self.world.buildings[i];
-            let mut one = MeshBuilder::new();
-            add_building(&mut one, &plan, wb.site.district, self.look_of(i), detail);
-            let lift = Vec3::new(0.0, (wb.base - BLOCK_TOP) as f32, 0.0);
-            b.append(one, lift);
+            if !self.hidden.contains(&i) {
+                let mut one = MeshBuilder::new();
+                add_building(&mut one, &plan, wb.site.district, self.look_of(i), detail);
+                let lift = Vec3::new(0.0, (wb.base - BLOCK_TOP) as f32, 0.0);
+                b.append(one, lift);
+            }
             if wb.base - wb.low > 0.05 {
                 b.prism(
                     &wb.site.corners(),

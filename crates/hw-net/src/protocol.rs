@@ -40,6 +40,13 @@ pub struct InputState {
     pub fly: bool,
     /// Faster flight.
     pub boost: bool,
+    /// Punch what is in front of the hero (held: again and again).
+    pub smash: bool,
+    /// Fire an energy blast where the hero aims.
+    pub blast: bool,
+    /// Where the hero aims (unit vector in the local frame): the camera's
+    /// direction. Punches and blasts go this way.
+    pub aim: [f32; 3],
 }
 
 /// What an entity is, so the client knows how to draw it.
@@ -215,6 +222,37 @@ pub enum ToClient {
     SessionEnd {
         reason: String,
     },
+    /// Elements of a building broke (indices into its breakable plan, see
+    /// `hw_sim::destruction`). `live`: it happened just now, so play it;
+    /// otherwise it is old damage a joining player catches up on.
+    Damage {
+        building: u32,
+        broken: Vec<u32>,
+        live: bool,
+    },
+    /// A building was repaired: it stands whole again.
+    Repaired {
+        building: u32,
+    },
+    /// Something was hit (for sparks, dust, marks and sound): where, the
+    /// way the blow went, what hit it and whether anything broke.
+    Impact {
+        at: [f32; 3],
+        dir: [f32; 3],
+        kind: ImpactKind,
+        broke: bool,
+    },
+}
+
+/// Most broken elements in one [`ToClient::Damage`] (it must fit a packet
+/// next to everything else).
+pub const MAX_DAMAGE_IDS: usize = 24;
+
+/// What hit something.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ImpactKind {
+    Punch,
+    Blast,
 }
 
 /// Reliable messages from a client.
@@ -230,6 +268,9 @@ impl ToClient {
             ToClient::Joined { name, .. } | ToClient::Left { name, .. } => 2 + s(name),
             ToClient::Chat { text, .. } => 2 + s(text),
             ToClient::SessionEnd { reason } => s(reason),
+            ToClient::Damage { broken, .. } => 4 + 1 + 1 + 4 * broken.len().min(255),
+            ToClient::Repaired { .. } => 4,
+            ToClient::Impact { .. } => 12 + 6 + 1 + 1,
         }
     }
 
@@ -246,6 +287,36 @@ impl ToClient {
             }
             ToClient::SessionEnd { reason } => {
                 w.u8(4).str(reason);
+            }
+            ToClient::Damage {
+                building,
+                broken,
+                live,
+            } => {
+                let n = broken.len().min(255);
+                w.u8(5).u32(*building).bool(*live).u8(n as u8);
+                for id in &broken[..n] {
+                    w.u32(*id);
+                }
+            }
+            ToClient::Repaired { building } => {
+                w.u8(6).u32(*building);
+            }
+            ToClient::Impact {
+                at,
+                dir,
+                kind,
+                broke,
+            } => {
+                w.u8(7).f32(at[0]).f32(at[1]).f32(at[2]);
+                for d in dir {
+                    w.u16(((d.clamp(-1.0, 1.0) * 32767.0).round() as i16) as u16);
+                }
+                w.u8(match kind {
+                    ImpactKind::Punch => 0,
+                    ImpactKind::Blast => 1,
+                })
+                .bool(*broke);
             }
         }
     }
@@ -265,6 +336,42 @@ impl ToClient {
                 text: r.str()?,
             },
             4 => ToClient::SessionEnd { reason: r.str()? },
+            5 => {
+                let building = r.u32()?;
+                let live = r.bool()?;
+                let n = r.u8()? as usize;
+                let mut broken = Vec::with_capacity(n);
+                for _ in 0..n {
+                    broken.push(r.u32()?);
+                }
+                ToClient::Damage {
+                    building,
+                    broken,
+                    live,
+                }
+            }
+            6 => ToClient::Repaired { building: r.u32()? },
+            7 => {
+                let at = [r.f32()?, r.f32()?, r.f32()?];
+                if at.iter().any(|v| !v.is_finite()) {
+                    return Err(WireError);
+                }
+                let mut dir = [0.0f32; 3];
+                for d in dir.iter_mut() {
+                    *d = r.u16()? as i16 as f32 / 32767.0;
+                }
+                let kind = match r.u8()? {
+                    0 => ImpactKind::Punch,
+                    1 => ImpactKind::Blast,
+                    _ => return Err(WireError),
+                };
+                ToClient::Impact {
+                    at,
+                    dir,
+                    kind,
+                    broke: r.bool()?,
+                }
+            }
             _ => return Err(WireError),
         })
     }
@@ -369,7 +476,12 @@ fn write_input(w: &mut Writer, input: &InputState) {
         .u8(input.jump as u8
             | (input.descend as u8) << 1
             | (input.fly as u8) << 2
-            | (input.boost as u8) << 3);
+            | (input.boost as u8) << 3
+            | (input.smash as u8) << 4
+            | (input.blast as u8) << 5);
+    for a in input.aim {
+        w.u16(((a.clamp(-1.0, 1.0) * 32767.0).round() as i16) as u16);
+    }
 }
 
 fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
@@ -377,8 +489,12 @@ fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
     let len = (x * x + y * y + z * z).sqrt();
     let k = if len > 1.0 { 1.0 / len } else { 1.0 };
     let bits = r.u8()?;
-    if bits >> 4 != 0 {
+    if bits >> 6 != 0 {
         return Err(WireError);
+    }
+    let mut aim = [0.0f32; 3];
+    for a in aim.iter_mut() {
+        *a = r.u16()? as i16 as f32 / 32767.0;
     }
     Ok(InputState {
         move_x: x * k,
@@ -388,6 +504,9 @@ fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
         descend: bits & 2 != 0,
         fly: bits & 4 != 0,
         boost: bits & 8 != 0,
+        smash: bits & 16 != 0,
+        blast: bits & 32 != 0,
+        aim,
     })
 }
 
@@ -636,6 +755,9 @@ mod tests {
                         descend: false,
                         fly: true,
                         boost: false,
+                        smash: true,
+                        blast: false,
+                        aim: [0.0, -1.0, 0.0],
                     },
                 ],
                 ack_tick: 1234,
@@ -672,6 +794,24 @@ mod tests {
                     1,
                     ToClient::SessionEnd {
                         reason: "host left".into(),
+                    },
+                ),
+                (
+                    2,
+                    ToClient::Damage {
+                        building: 812,
+                        broken: vec![0, 7, 4093],
+                        live: true,
+                    },
+                ),
+                (3, ToClient::Repaired { building: 5 }),
+                (
+                    4,
+                    ToClient::Impact {
+                        at: [12.5, 3.25, -40.0],
+                        dir: [0.0, 0.0, -1.0],
+                        kind: ImpactKind::Blast,
+                        broke: true,
                     },
                 ),
             ],
@@ -723,6 +863,7 @@ mod tests {
                 descend: true,
                 fly: false,
                 boost: true,
+                ..Default::default()
             }],
             ack_tick: 0,
             ack_bits: 0,

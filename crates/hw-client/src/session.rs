@@ -2,10 +2,10 @@
 //! player, optionally open to friends) or a connection to someone else's,
 //! smoothed by prediction (our hero) and interpolation (everyone else).
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
 use hw_net::gamehub::{Hub, HubClientLink, HubServerLink};
-use hw_net::{ConnState, Connection, EntityState, InputState, PlayerId};
+use hw_net::{ConnState, Connection, EntityState, InputState, PlayerId, ToClient};
 use hw_sim::host::Host;
 use hw_sim::predict::{Interpolator, Predictor};
 use hw_sim::{GeneratedTown, Sim};
@@ -23,7 +23,17 @@ pub enum Session {
         predictor: Option<Predictor>,
         interp: Interpolator,
         last_tick: u64,
+        /// World news (damage, impacts) not yet taken.
+        news: Vec<ToClient>,
     },
+}
+
+/// News the world shows rather than prints.
+fn is_world_news(m: &ToClient) -> bool {
+    matches!(
+        m,
+        ToClient::Damage { .. } | ToClient::Repaired { .. } | ToClient::Impact { .. }
+    )
 }
 
 impl Session {
@@ -36,6 +46,13 @@ impl Session {
     ) -> std::io::Result<Self> {
         let mut host = Host::with_sim(Sim::for_town(seed, town));
         host.sim.place_starter_crates();
+        // Hero level until heroes have their own (it sets what they can break).
+        if let Some(level) = std::env::var("HW_LEVEL")
+            .ok()
+            .and_then(|v| v.parse::<u8>().ok())
+        {
+            host.sim.hero_level = level.clamp(1, 20);
+        }
         if open {
             let addr = host.listen(("0.0.0.0", hw_net::DEFAULT_PORT))?;
             println!("Hosting on {addr}");
@@ -102,6 +119,7 @@ impl Session {
                             predictor: None,
                             interp: Interpolator::new(),
                             last_tick: 0,
+                            news: Vec::new(),
                         },
                         seed,
                         people,
@@ -142,11 +160,16 @@ impl Session {
                 predictor,
                 interp,
                 last_tick,
+                news,
             } => {
                 let was_on = matches!(conn.state, ConnState::Connected { .. });
                 let seq = conn.update(input);
-                for news in conn.take_news() {
-                    println!("{news:?}");
+                for m in conn.take_news() {
+                    if is_world_news(&m) {
+                        news.push(m);
+                    } else {
+                        println!("{m:?}");
+                    }
                 }
                 if let (true, ConnState::Ended(reason)) = (was_on, &conn.state) {
                     println!("Session over: {reason}");
@@ -203,6 +226,105 @@ impl Session {
             Session::Local { host, .. } => (host.sim.tick as f64 + frac) * hw_sim::DT,
             Session::Remote { interp, .. } => interp.render_tick() * hw_sim::DT,
         }
+    }
+
+    /// Damage, repairs and impacts since the last call.
+    pub fn take_news(&mut self) -> Vec<ToClient> {
+        match self {
+            Session::Local { host, .. } => host.take_local_news(),
+            Session::Remote { news, .. } => std::mem::take(news),
+        }
+    }
+
+    /// For screenshots (`HW_VIEW=wrecked`): wrecks two small buildings near
+    /// the start, one with holes blasted into its front, one brought down.
+    /// Returns where to look from and at.
+    pub fn wreck_demo(&mut self, town: &GeneratedTown) -> Option<(DVec3, DVec3)> {
+        use hw_sim::destruction::{hero_power, material_factor, Frame};
+        let Session::Local { host, me, .. } = self else {
+            return None;
+        };
+        let solids = host.sim.solids();
+        let (spawn, _) = town.world.spawn_line();
+        let mut small: Vec<(f64, usize)> = (0..town.world.buildings.len())
+            .filter_map(|i| {
+                let (plan, _) = solids.building(i)?;
+                let ok = plan.floors.len() >= 2
+                    && plan.floors.len() <= 4
+                    && material_factor(&plan) <= 1.3;
+                let s = &plan.site;
+                let c = s.origin + s.along * s.size.x * 0.5 + s.inward * s.size.y * 0.5;
+                ok.then_some((c.distance(spawn), i))
+            })
+            .collect();
+        small.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let &(_, holed) = small.first()?;
+        // The other one: the nearest to it.
+        let centre = |i: usize| {
+            let (p, _) = solids.building(i).expect("a building");
+            let s = &p.site;
+            s.origin + s.along * s.size.x * 0.5 + s.inward * s.size.y * 0.5
+        };
+        let felled = small
+            .iter()
+            .map(|&(_, i)| i)
+            .filter(|&i| i != holed)
+            .min_by(|&a, &b| {
+                let d = |i| centre(i).distance(centre(holed));
+                d(a).total_cmp(&d(b))
+            })?;
+        let power = hero_power(1);
+        let tick = host.sim.tick;
+        let by = Some(*me);
+        // A blast into the first floor up, with a scorch mark.
+        let (plan, base) = solids.building(holed)?;
+        let f = Frame::of(&plan.site, base);
+        if let Some(floor) = plan.floors.get(1) {
+            {
+                let x = plan.site.size.x * 0.3;
+                let at = f.to_world(DVec3::new(x, floor.elevation + 1.8, 0.0));
+                let r = host
+                    .sim
+                    .damage
+                    .hit(&solids, at, power.blast_radius, power.blast, by, tick);
+                let into =
+                    f.to_world(DVec3::new(x, 0.0, 1.0)) - f.to_world(DVec3::new(x, 0.0, 0.0));
+                host.sim.damage.tell(ToClient::Impact {
+                    at: at.as_vec3().to_array(),
+                    dir: into.normalize().as_vec3().to_array(),
+                    kind: hw_net::ImpactKind::Blast,
+                    broke: r.broken > 0,
+                });
+            }
+        }
+        // The other one: its whole ground floor front punched out.
+        let (plan2, base2) = solids.building(felled)?;
+        let g = Frame::of(&plan2.site, base2);
+        for z in [0.0, plan2.site.size.y] {
+            let mut x = 0.4;
+            while x < plan2.site.size.x {
+                let at = g.to_world(DVec3::new(x, plan2.floors[0].elevation + 1.6, z));
+                host.sim
+                    .damage
+                    .hit(&solids, at, power.punch_radius, power.punch, by, tick);
+                x += 1.0;
+            }
+        }
+        // From the street, both in view.
+        let a = centre(holed);
+        let b = centre(felled);
+        let mid = (a + b) * 0.5;
+        let front = f.to_world(DVec3::new(plan.site.size.x * 0.5, 0.0, -1.0));
+        let out = (DVec2::new(front.x, front.z) - a).normalize_or(DVec2::X);
+        let span = a.distance(b).max(plan.site.size.x);
+        let eye = mid + out * (span * 0.9 + 16.0);
+        let look_at = DVec3::new(mid.x, base + 4.0, mid.y);
+        Some((DVec3::new(eye.x, base + 7.0, eye.y), look_at))
+    }
+
+    /// Playing in someone else's world.
+    pub fn joined(&self) -> bool {
+        matches!(self, Session::Remote { .. })
     }
 
     /// Puts our hero somewhere (single player only; for tests and screenshots).

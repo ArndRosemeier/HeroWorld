@@ -62,6 +62,9 @@ pub struct MeshBuilder {
     /// Texture for the plain faces added next ([`Self::finish_parts`]
     /// keeps it; [`Self::finish`] drops textures).
     pub tex: Option<Layer>,
+    /// No textures at all: faces keep their own colours (for meshes that
+    /// cannot carry a texture, like a breakable building's).
+    pub flat: bool,
 }
 
 /// The average colour of a texture layer (linear), so vertex colours can
@@ -103,6 +106,7 @@ impl MeshBuilder {
             textured: Vec::new(),
             surf: Surf::Plain,
             tex: None,
+            flat: false,
         }
     }
 
@@ -111,8 +115,9 @@ impl MeshBuilder {
     }
 
     fn target(&mut self) -> &mut Mesh {
+        let tex = if self.flat { None } else { self.tex };
         match self.surf {
-            Surf::Plain => match self.tex {
+            Surf::Plain => match tex {
                 None => &mut self.mesh,
                 Some(l) => {
                     let i = match self.textured.iter().position(|(k, _)| *k == l) {
@@ -225,7 +230,8 @@ impl MeshBuilder {
     }
 
     fn point(&mut self, p: DVec3, color: Color) -> PointId {
-        let color = match (self.surf, self.tex) {
+        let tex = if self.flat { None } else { self.tex };
+        let color = match (self.surf, tex) {
             (Surf::Plain, Some(l)) => {
                 let m = layer_mean(l);
                 Color {

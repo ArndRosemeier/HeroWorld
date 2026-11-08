@@ -130,6 +130,15 @@ Not needed for the first playable city, but the design depends on them eventuall
 - **Touch and gamepad input**, and quality presets for Mac and iPad (wgpu on Metal).
 - **A physics-only build** (added 2026-11-08): HeroWorld's server now uses `PhysicsWorld`, but `engine` is one crate, so the server also compiles wgpu, winit, egui and rodio (and needs `libasound2-dev` on Linux). Cargo features (say `render` and `audio`, on by default) would let a dedicated server link only physics.
 
+- **Breakable buildings, from HeroWorld's first use** (added 2026-11-08, M8):
+  - Rubble mounds of a collapse that starts above the ground floor sit on the standing storey
+    as a wide flat cap that overhangs the walls; they would look better kept to the footprint,
+    or poured down its sides.
+  - A breakable building cannot carry textures (`BuildingPlan::add` takes a mesh's colours, not
+    its albedo or material maps), so a damaged building loses its brick and stone texture.
+  - `BuildingPlan::add` re-indexes the whole plan per element (quadratic); fine for ~1000
+    elements (2 ms), but a bulk `add_all` would let big towers be planned off the frame.
+
 ## Ground rules
 
 These stay in HeroWorld, not in Engine, so Engine stays a general game engine:

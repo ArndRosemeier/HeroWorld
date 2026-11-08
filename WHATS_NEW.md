@@ -3,6 +3,17 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.021 (2026-11-08)
+
+- The city breaks! Left mouse punches, Q fires an energy blast. Glass shatters, walls cave in,
+  and knock out enough of a floor and everything above comes down, pancaking or toppling into
+  a heap of rubble, with dust, sparks and scorch marks.
+- How strong you are decides what you can break: a new hero gets through glass, plaster and
+  brick, but concrete towers need a hero of higher level.
+- Friends see the same ruins, even if they join later, and so does your saved world. Leave a
+  wreck alone for ten minutes and the city's repair crews quietly put it back while nobody is
+  looking.
+
 ## 0.020 (2026-11-08)
 
 - At night the windows glow: about a third of the rooms have their lights on, shop windows most of all.
