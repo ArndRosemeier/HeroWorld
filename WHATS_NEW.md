@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.062 (2026-11-08)
+
+- HeroWorld can be downloaded ready to play for Windows: unzip and double-click heroworld.exe,
+  no Rust or building needed (the release "windows-latest" on GitHub).
+
 ## 0.061 (2026-11-08)
 
 - The walking tank has its own battle music: a brassy 1950s monster-attack march that starts when

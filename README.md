@@ -12,6 +12,13 @@ The design:
 
 Both are snapshots of living design docs that are linked at the top of each file.
 
+## Playing on Windows
+
+Download `HeroWorld-windows.zip` from the release
+[windows-latest](https://github.com/ArndRosemeier/HeroWorld/releases/tag/windows-latest), unzip it
+and double-click `heroworld.exe`. It is built every night the version changed (or by hand:
+Actions, "Windows build", Run workflow).
+
 ## Building
 
 On Windows, double-click `start.bat` (needs [Rust](https://rustup.rs)); `start.bat host` opens the game to friends,

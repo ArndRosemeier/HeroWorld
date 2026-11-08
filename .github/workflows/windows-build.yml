@@ -1,0 +1,76 @@
+name: Windows build
+# A ready-to-play Windows download: the game and the dedicated server, built
+# for release, with the Actors packs and robot models beside them. Published
+# as the release "windows-latest" (HeroWorld-windows.zip), replaced each time.
+# Runs every night when the version changed, or by hand (Actions, "Run workflow").
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 3 * * *"
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip when this version is already published
+        id: want
+        shell: bash
+        run: |
+          v="$(tr -d '[:space:]' < VERSION)"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          have="$(gh release view windows-latest --json body -q .body 2>/dev/null | head -1 || true)"
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$have" = "HeroWorld $v" ]; then
+            echo "build=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=yes" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.want.outputs.build == 'yes'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.want.outputs.build == 'yes'
+        with:
+          shared-key: windows-release
+      - uses: actions/cache@v4
+        if: steps.want.outputs.build == 'yes'
+        with:
+          path: assets/packs
+          key: actors-packs-${{ hashFiles('assets/actors-packs.version') }}
+      - name: Fetch the Actors packs
+        if: steps.want.outputs.build == 'yes'
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-packs.ps1
+      - name: Build
+        if: steps.want.outputs.build == 'yes'
+        shell: bash
+        run: |
+          # The game opens without a console window; the server keeps one.
+          RUSTFLAGS="-C link-args=/SUBSYSTEM:WINDOWS -C link-args=/ENTRY:mainCRTStartup" \
+            cargo build --release -p hw-client --bin heroworld
+          cargo build --release -p hw-sim --bin hw-headless
+      - name: Package
+        if: steps.want.outputs.build == 'yes'
+        shell: bash
+        run: |
+          d=HeroWorld
+          mkdir -p "$d/assets"
+          cp target/release/heroworld.exe target/release/hw-headless.exe "$d/"
+          cp -r assets/packs assets/robots "$d/assets/"
+          cp WHATS_NEW.md "$d/"
+          cp packaging/windows/*.txt packaging/windows/*.bat "$d/"
+          7z a -tzip -mx=5 HeroWorld-windows.zip "$d" > /dev/null
+          ls -l HeroWorld-windows.zip
+      - name: Publish
+        if: steps.want.outputs.build == 'yes'
+        shell: bash
+        run: |
+          v="${{ steps.want.outputs.version }}"
+          notes="HeroWorld $v
+
+          Unzip, then double-click heroworld.exe (Windows 10 or 11, a graphics card with Vulkan or DirectX 12).
+          Built from ${{ github.sha }}."
+          gh release delete windows-latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create windows-latest HeroWorld-windows.zip \
+            --title "HeroWorld $v for Windows" --notes "$notes" --prerelease --target "${{ github.sha }}"

@@ -522,6 +522,13 @@ crashes at once to try it; `HW_CRASH_DIR` moves the folder.
   checking kilometre-long lines every tick (the host slowed to 13 ms a tick after 40 minutes):
   they now look 40 m ahead.
 
+**Status (0.062):** a Windows download. `.github/workflows/windows-build.yml` builds the game (no
+console window) and `hw-headless` for release, puts the Actors packs and robot models beside
+them with a README, `Host.bat` and `Join.bat` (`packaging/windows/`), and publishes
+`HeroWorld-windows.zip` as the release `windows-latest`. Nightly when the version changed, or
+by hand from the Actions tab. Multiplayer play tests wait until Arnd has someone to play with
+(2026-11-08).
+
 ## Sound, music and pictures
 
 OpenRouter is available for images, sound effects and music (Arnd's model preferences are in
