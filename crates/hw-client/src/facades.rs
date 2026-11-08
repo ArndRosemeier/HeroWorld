@@ -30,6 +30,8 @@ pub struct Facade {
     pub roof: Tex,
     /// A flat roof's covering and its colour.
     pub flat_roof: (Tex, Color),
+    /// Half-timbering: beams on the walls, their texture and colour.
+    pub timber: Option<(Tex, Color)>,
     pub wear: Wear,
     /// Street dirt and streaks, 0 to 1 (see `citymesh::Weather`).
     pub dirt: f32,
@@ -110,6 +112,8 @@ fn wall_base(plan: &BuildingPlan) -> Base {
             // Half-timbering and limewash need their beams and courses to
             // follow the storeys, which a repeating tile cannot do: plaster.
             (Style::OldTown, _) => Base::Facade(F::Plaster),
+            // (Half-timbered houses are plaster too, with beams on top: see
+            // `timber_of`.)
             // Clapboard family houses in the north.
             (Style::Cottage, Some(Region::Northern)) if roll < 0.5 => Base::Facade(F::WoodSiding),
             (Style::Cottage, _) if roll < 0.2 => Base::Facade(F::WoodSiding),
@@ -127,6 +131,31 @@ fn wall_base(plan: &BuildingPlan) -> Base {
             _ => Base::Enamel,
         },
     }
+}
+
+/// Half-timbering for some old-town houses of the north and the middle:
+/// dark oak mostly, ox-blood red or soot black now and then.
+fn timber_of(plan: &BuildingPlan, wear: Wear) -> Option<(Tex, Color)> {
+    let region = plan.site.vernacular.map(|v| v.region)?;
+    let roll = plan.site.seed.child("timber").unit();
+    let share = match region {
+        Region::Northern => 0.4,
+        Region::Continental => 0.3,
+        Region::Southern => 0.0,
+    };
+    if plan.look.style != Style::OldTown || plan.look.material != Material::Stucco || roll >= share
+    {
+        return None;
+    }
+    let paint = plan.site.seed.child("timber paint").unit();
+    let color = if paint < 0.65 {
+        rgb(74, 52, 36)
+    } else if paint < 0.85 {
+        rgb(112, 44, 34)
+    } else {
+        rgb(44, 42, 40)
+    };
+    Some((skin(Base::Medieval(M::Oak), wear), color))
 }
 
 /// The base course: the region's stone.
@@ -236,6 +265,7 @@ pub fn facade(plan: &BuildingPlan) -> Facade {
         accent: skin(Base::Enamel, wear.step(-1)),
         roof: skin(roof_base(plan), wear),
         flat_roof: (skin(flat, wear), flat_c),
+        timber: timber_of(plan, wear),
         wear,
         dirt,
     }

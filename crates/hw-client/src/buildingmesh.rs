@@ -588,6 +588,203 @@ fn far_floor(c: &mut Ctx, level: usize) {
         c.quad(q, w.out(), color);
         c.surf(Surf::Plain);
     }
+    // Half-timbering from afar: the beams along the floors and the corner
+    // posts (the rest would cost many faces for little).
+    if let Some((tex, tc)) = c.fac.timber {
+        let bottom = if level == 0 && look.plinth > 0.0 {
+            look.plinth.min(f.height * 0.5)
+        } else {
+            y0
+        };
+        c.set_tex(tex);
+        for side in SIDES {
+            if masonry_ground(plan, f, side) {
+                continue;
+            }
+            let w = Wall { side, o };
+            let spans: Vec<(f64, f64, f64, f64)> = plan
+                .openings
+                .iter()
+                .filter(|op| op.floor as usize == level && op.side == side)
+                .map(|op| {
+                    let ya = (f.elevation + op.sill).max(y0 + 0.05);
+                    (
+                        op.along - op.width * 0.5,
+                        op.along + op.width * 0.5,
+                        ya,
+                        f.elevation + op.sill + op.height,
+                    )
+                })
+                .collect();
+            timber_frame(c, &w, (bottom, y1), &spans, tc, false);
+        }
+        c.set_tex(c.fac.wall);
+    }
+}
+
+/// A timber on a wall: its front and ends only. It stands out a few
+/// centimetres; leaving off its top and bottom keeps them from doubling
+/// with ledges, sills and slabs at the same heights.
+fn beam(c: &mut Ctx, w: &Wall, t: (f64, f64), y: (f64, f64), d: f64, color: Color) {
+    let (t0, t1) = (t.0.min(t.1), t.0.max(t.1));
+    let (y0, y1) = (y.0.min(y.1), y.0.max(y.1));
+    if t1 - t0 < 1e-4 || y1 - y0 < 1e-4 {
+        return;
+    }
+    let a = w.along();
+    c.quad(w.rect(t0, t1, y0, y1, d), w.out(), color);
+    c.quad(
+        [
+            w.at(t0, y0, 0.0),
+            w.at(t0, y1, 0.0),
+            w.at(t0, y1, d),
+            w.at(t0, y0, d),
+        ],
+        -a,
+        color,
+    );
+    c.quad(
+        [
+            w.at(t1, y0, 0.0),
+            w.at(t1, y1, 0.0),
+            w.at(t1, y1, d),
+            w.at(t1, y0, d),
+        ],
+        a,
+        color,
+    );
+}
+
+/// Half-timbering on one wall of one floor between heights `y`: a sill
+/// beam and a head plate along the floor, posts at the corners and beside
+/// every opening (`holes`: t0, t1, bottom, top), a lintel and a rail
+/// round each window, and in the solid stretches studs with a brace in
+/// every panel. `full`: all of it; otherwise only the beams along the
+/// floor and the corner posts (for far detail).
+fn timber_frame(
+    c: &mut Ctx,
+    w: &Wall,
+    y: (f64, f64),
+    holes: &[(f64, f64, f64, f64)],
+    color: Color,
+    full: bool,
+) {
+    const W: f64 = 0.18;
+    const D: f64 = 0.05;
+    let (s0, s1) = w.range();
+    let (bottom, top) = y;
+    if top - bottom < 1.0 || s1 - s0 < 1.0 {
+        return;
+    }
+    // Beams along the floor, as deep as the openings leave room for.
+    let low = holes.iter().map(|h| h.2).fold(f64::INFINITY, f64::min);
+    let high = holes.iter().map(|h| h.3).fold(f64::NEG_INFINITY, f64::max);
+    let sill_h = W.min(low - bottom - 0.02);
+    let head_h = W.min(top - high - 0.02);
+    let y_lo = if sill_h > 0.06 {
+        beam(c, w, (s0, s1), (bottom, bottom + sill_h), D, color);
+        bottom + sill_h
+    } else {
+        bottom
+    };
+    let y_hi = if head_h > 0.06 {
+        beam(c, w, (s0, s1), (top - head_h, top), D, color);
+        top - head_h
+    } else {
+        top
+    };
+    if y_hi - y_lo < 0.5 {
+        return;
+    }
+    // Posts: corners, then beside each opening, merged where they meet.
+    let clear = |a: f64, b: f64| !holes.iter().any(|h| a < h.1 - 0.01 && b > h.0 + 0.01);
+    let mut posts: Vec<(f64, f64)> = Vec::new();
+    for (a, b) in [(s0, s0 + W), (s1 - W, s1)] {
+        if clear(a, b) {
+            posts.push((a, b));
+        }
+    }
+    if full {
+        for h in holes {
+            for (a, b) in [(h.0 - W, h.0), (h.1, h.1 + W)] {
+                let (a, b) = (a.max(s0), b.min(s1));
+                if b - a > 0.05 && clear(a, b) {
+                    posts.push((a, b));
+                }
+            }
+        }
+    }
+    posts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut merged: Vec<(f64, f64)> = Vec::new();
+    for p in posts {
+        match merged.last_mut() {
+            Some(m) if p.0 <= m.1 + 0.02 => m.1 = m.1.max(p.1),
+            _ => merged.push(p),
+        }
+    }
+    if full {
+        // Studs and braces in the solid stretches between posts.
+        let mut extra = Vec::new();
+        let mut panels = Vec::new();
+        let last_pair = merged.len().saturating_sub(2);
+        for (pi, pair) in merged.windows(2).enumerate() {
+            let (a, b) = (pair[0].1, pair[1].0);
+            if b - a < 0.4 || !clear(a, b) {
+                continue;
+            }
+            let n = ((b - a) / 1.3).round().max(1.0) as usize;
+            let step = (b - a + W) / n as f64;
+            for k in 1..n {
+                let x = a + step * k as f64 - W;
+                extra.push((x, x + W));
+            }
+            // Braces stiffen the ends of a wall (and the middle of a long
+            // blank stretch); the other panels are plain studs.
+            for k in 0..n {
+                let at_end = (pi == 0 && k == 0) || (pi == last_pair && k + 1 == n);
+                let middle = n >= 5 && k == n / 2;
+                if at_end || middle {
+                    let pa = a + step * k as f64;
+                    let pb = (pa + step - W).min(b);
+                    panels.push((pa, pb, pi == last_pair && k + 1 == n));
+                }
+            }
+        }
+        merged.extend(extra);
+        merged.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for &(a, b, right) in &panels {
+            if b - a < 0.5 {
+                continue;
+            }
+            // A brace corner to corner, rising towards the wall's middle.
+            // A little shallower than the posts, so their fronts do not
+            // double.
+            let (lo, hi, dir) = if right { (b, a, -1.0) } else { (a, b, 1.0) };
+            let quad = |d: f64| {
+                [
+                    w.at(lo, y_lo, d),
+                    w.at(lo + dir * W * 1.4, y_lo, d),
+                    w.at(hi, y_hi, d),
+                    w.at(hi - dir * W * 1.4, y_hi, d),
+                ]
+            };
+            c.hexa(quad(0.0), quad(D * 0.8), color);
+        }
+        // Lintels over and rails under the windows.
+        for h in holes {
+            // Between the posts beside the window.
+            let (a, b) = (h.0.max(s0), h.1.min(s1));
+            if h.3 + W < y_hi - 0.02 {
+                beam(c, w, (a, b), (h.3, h.3 + W), D, color);
+            }
+            if h.2 - 0.12 - W > y_lo + 0.02 {
+                beam(c, w, (a, b), (h.2 - 0.12 - W, h.2 - 0.12), D, color);
+            }
+        }
+    }
+    for (a, b) in merged {
+        beam(c, w, (a, b), (y_lo, y_hi), D, color);
+    }
 }
 
 /// Near detail: one floor's walls around real openings, with reveals,
@@ -710,8 +907,32 @@ fn near_floor(c: &mut Ctx, level: usize, first_of_tier: bool) {
         for &(op, t0, t1, ya, yb) in &holes {
             opening(c, &w, f, op, (t0, t1), (ya, yb));
         }
+        if let (Some((tex, tc)), false) = (c.fac.timber, masonry_ground(plan, f, side)) {
+            // An arched window's stone arch rises above its opening.
+            let spans: Vec<(f64, f64, f64, f64)> = cut
+                .iter()
+                .map(|h| {
+                    let arch =
+                        if h.0.kind == OpeningKind::Window && look.window == WindowKind::Arched {
+                            (h.2 - h.1) * 0.5 + 0.3
+                        } else {
+                            0.0
+                        };
+                    (h.1, h.2, h.3, (h.4 + arch).min(y1))
+                })
+                .collect();
+            // Above the ledge on the stone base.
+            let bottom = if level == 0 && plinth > 0.0 {
+                y0.max(plinth + 0.12)
+            } else {
+                y0
+            };
+            c.set_tex(tex);
+            timber_frame(c, &w, (bottom, y1), &spans, tc, true);
+            c.set_tex(c.fac.wall);
+        }
         // Pilasters between bays, floor by floor.
-        if look.piers == Piers::Pilasters {
+        if look.piers == Piers::Pilasters && c.fac.timber.is_none() {
             let lines = bay_lines(s0, s1, look.bay);
             let half = pier_half(look, &lines);
             for &l in &lines[1..lines.len() - 1] {
@@ -732,7 +953,7 @@ fn near_floor(c: &mut Ctx, level: usize, first_of_tier: bool) {
             }
         }
         // Floor bands (not where the tier starts on a terrace slab).
-        if look.floor_bands && level > 0 && !first_of_tier {
+        if look.floor_bands && level > 0 && !first_of_tier && c.fac.timber.is_none() {
             let ext = if matches!(side, Side::Front | Side::Back) {
                 0.08
             } else {
@@ -765,6 +986,17 @@ fn pier_half(look: &Look, lines: &[f64]) -> f64 {
     };
     let gap = (1.0 - look.window_share).max(0.05) * bay * 0.5;
     (gap * 0.8).min(0.32)
+}
+
+/// Half-timbered houses keep a masonry ground floor where it has the
+/// entrance or a shop front: the portal, signs and awnings need the room.
+fn masonry_ground(plan: &BuildingPlan, f: &Floor, side: Side) -> bool {
+    f.level == 0
+        && plan.openings.iter().any(|op| {
+            op.floor == 0
+                && op.side == side
+                && (op.kind == OpeningKind::Entrance || street_glass(plan, f, op))
+        })
 }
 
 fn street_glass(plan: &BuildingPlan, f: &Floor, op: &Opening) -> bool {
@@ -899,7 +1131,8 @@ fn opening(c: &mut Ctx, w: &Wall, f: &Floor, op: &Opening, t: (f64, f64), y: (f6
             w,
             (t0 - 0.08, t1 + 0.08),
             (ya - 0.12, ya),
-            (0.0, 0.1),
+            // Proud of the base's ledge (0.1), which can run at its height.
+            (0.0, 0.12),
             trim,
         );
     }
@@ -1369,6 +1602,52 @@ fn pitched(c: &mut Ctx, o: Rect, y: f64, hip: bool, color: Color, detail: Detail
             ];
             c.polygon(&g, n(dir, 0.0, 0.0), wall);
         }
+        if let Some((tex, tc)) = c.fac.timber {
+            // The gables are framed too: a collar beam, a king post and
+            // a stud each side, cut to the roof line.
+            const W: f64 = 0.18;
+            const D: f64 = 0.05;
+            let roof_at = |t: f64| y + h * (1.0 - (t - tm).abs() / half);
+            let reach = |top: f64| half * (1.0 - (top - y) / h);
+            c.set_tex(tex);
+            for (sw, dir) in [(ws0, -1.0), (ws1, 1.0)] {
+                let out = sw + dir * D;
+                let yc = y + (h * 0.45).max(0.9);
+                let r = reach(yc + W).min(tm - wt0) - 0.02;
+                if r > 0.6 {
+                    c.bx(p(sw, tm - r, yc), p(out, tm + r, yc + W), tc);
+                }
+                for (ta, tb) in [
+                    (tm - W * 0.5, tm + W * 0.5),
+                    (
+                        tm - (tm - wt0) * 0.55 - W * 0.5,
+                        tm - (tm - wt0) * 0.55 + W * 0.5,
+                    ),
+                    (
+                        tm + (tm - wt0) * 0.55 - W * 0.5,
+                        tm + (tm - wt0) * 0.55 + W * 0.5,
+                    ),
+                ] {
+                    let far = if (ta - tm).abs() > (tb - tm).abs() {
+                        ta
+                    } else {
+                        tb
+                    };
+                    let top = roof_at(far) - 0.03;
+                    // Stop at the collar where it crosses, so the faces do
+                    // not double.
+                    if top - y > 0.5 {
+                        if r > 0.6 && yc + W < top && (ta - tm).abs() < r && (tb - tm).abs() < r {
+                            c.stand(p(sw, ta, y), p(out, tb, yc), tc);
+                            c.bx(p(sw, ta, yc + W), p(out, tb, top), tc);
+                        } else {
+                            c.stand(p(sw, ta, y), p(out, tb, top), tc);
+                        }
+                    }
+                }
+            }
+            c.set_tex(c.fac.wall);
+        }
     }
     c.quad([a, b, cc, d], -DVec3::Y, shade(look.roof_color, 0.7));
     if detail != Detail::Near {
@@ -1385,7 +1664,7 @@ fn pitched(c: &mut Ctx, o: Rect, y: f64, hip: bool, color: Color, detail: Detail
             let s = ws0 + len * (0.2 + 0.6 * k as f64) + rng.range(-0.8, 0.8);
             let t = tm + half * rng.range(-0.45, 0.45);
             let top = (roof_at(t) + 1.2).max(y + h + 0.5);
-            c.bx(p(s - 0.35, t - 0.45, y), p(s + 0.35, t + 0.45, top), brick);
+            c.stand(p(s - 0.35, t - 0.45, y), p(s + 0.35, t + 0.45, top), brick);
             c.bx(
                 p(s - 0.45, t - 0.55, top),
                 p(s + 0.45, t + 0.55, top + 0.15),

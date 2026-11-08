@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.069 (2026-11-08)
+
+- Half-timbered houses in the old towns of the north and the middle: real oak beams that
+  follow every floor, with posts beside the windows, studs, corner braces and framed gables,
+  in dark oak, ox-blood red or soot black.
+- Where such a house has its door or a shop, the ground floor stays stone, as in real old towns.
+
 ## 0.068 (2026-11-08)
 
 - Real grass: lawns, verges and parks are now grass you can see blade by blade close up,

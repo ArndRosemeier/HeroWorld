@@ -434,6 +434,31 @@ fn main() -> EngineResult<()> {
             let p = c + DVec2::new(-30.0, 30.0);
             FlyCamera::new((p.x as f32, h as f32 + 32.0, p.y as f32), 135.0, -42.0)
         }
+        "timber" => {
+            // Across the street from the nearest half-timbered house.
+            let house = (0..generated.world.buildings.len())
+                .filter_map(|i| generated.obstacles.building(i))
+                .filter(|(p, _)| hw_client::facades::facade(p).timber.is_some())
+                .min_by(|a, b| {
+                    a.0.site
+                        .origin
+                        .distance(spawn)
+                        .total_cmp(&b.0.site.origin.distance(spawn))
+                });
+            match house {
+                Some((plan, base)) => {
+                    let s = &plan.site;
+                    let front = s.origin + s.along * (s.size.x * 0.5);
+                    let p = front - s.inward * 13.0 + s.along * 4.0;
+                    let d = front - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    let eye = base + 2.0;
+                    let pitch = (4.0 / d.length()).atan().to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
+                }
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
         "plinth" => {
             // Close up at the spire's plaza: its edge, steps and base, from
             // just outside, at eye height.
