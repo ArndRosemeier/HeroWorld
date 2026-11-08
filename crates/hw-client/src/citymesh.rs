@@ -830,6 +830,7 @@ pub fn add_building(
             );
         }
         draw_cut_walls(b, f, y, facade, &|x, y, z| to_city(x, y, z), u);
+        crate::interior::furnish(b, plan, shown_floors, y + 0.3, u);
     }
 }
 

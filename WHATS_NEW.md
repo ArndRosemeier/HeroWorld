@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.022 (2026-11-08)
+
+- Furnished interiors: lobbies with deco rugs, front desks and palms; offices with desks, banker's lamps and typewriters; flats with streamlined sofas, radio cabinets and rounded fridges; shops with stocked shelves; labs with glowing flasks and Aether coils; and a glowing Aether lift ring in every core.
+
 ## 0.021 (2026-11-08)
 
 - The city breaks! Left mouse punches, Q fires an energy blast. Glass shatters, walls cave in,
