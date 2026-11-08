@@ -6,6 +6,7 @@ pub mod buildingmesh;
 pub mod citymesh;
 pub mod crowdview;
 pub mod damageview;
+pub mod dispatchview;
 pub mod dystopiaview;
 pub mod fightview;
 pub mod heroview;

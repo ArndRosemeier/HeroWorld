@@ -266,6 +266,8 @@ fn main() -> EngineResult<()> {
     // The fight: targets, effects, the screen.
     let mut fight = FightView::new();
     let mut radio = hw_client::radioview::Radio::default();
+    let mut signal = hw_client::dispatchview::Signal::default();
+    let mut town_map = view == "map";
     // What was drawn last frame (for targeting), and a power key pressed
     // but not yet sent with a tick.
     let mut drawn: Vec<hw_net::EntityState> = Vec::new();
@@ -678,6 +680,7 @@ fn main() -> EngineResult<()> {
                     stands = hw_sim::taxi::stands(&generated.world);
                     traffic_view.clear(world);
                     radio.clear(world);
+                    signal.clear(world);
                     crowd.clear(world);
                     set_town_stream(world, &generated)?;
                     extras = spawn_extras(world, &generated)?;
@@ -1067,6 +1070,21 @@ fn main() -> EngineResult<()> {
                             .atan()
                             .to_degrees();
                         fly = FlyCamera::new((p.x, p.y, p.z), yaw, pitch + 22.0);
+                    }
+                    // `HW_VIEW=signal`: from a rooftop, up at the emblem.
+                    if view == "signal" && radio.calls.len() == 1 && radio.calls.contains_key(id) {
+                        let c = Vec3::from_array(*at)
+                            + Vec3::Y * hw_client::dispatchview::SIGNAL_HEIGHT as f32;
+                        let a = hw_sim::props::byte_to_yaw(*yaw) as f32;
+                        let p = Vec3::from_array(*at)
+                            + Vec3::new(a.sin(), 0.0, a.cos()) * 260.0
+                            + Vec3::Y * 40.0;
+                        let d = c - p;
+                        let yaw = d.x.atan2(d.z).to_degrees();
+                        let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                            .atan()
+                            .to_degrees();
+                        fly = FlyCamera::new((p.x, p.y, p.z), yaw, pitch);
                     }
                     false
                 }
@@ -1525,6 +1543,7 @@ fn main() -> EngineResult<()> {
                 );
                 let fighting = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
                 radio.update(frame.dt);
+                signal.update(world, &generated.world, &radio);
                 let cam = world.camera();
                 let hero_at = session.my_position(&heroes).map(|p| p.as_vec3());
                 radio.panel(
@@ -1533,6 +1552,21 @@ fn main() -> EngineResult<()> {
                     cam.target() - cam.eye(),
                     fighting,
                     hero_at,
+                );
+                let cam = world.camera();
+                let look = cam.target() - cam.eye();
+                hw_client::dispatchview::compass(frame.ui.ctx(), cam.eye(), look, &radio, fighting);
+                if frame.input.pressed(Key::M) {
+                    town_map = !town_map;
+                }
+                hw_client::dispatchview::map(
+                    frame.ui.ctx(),
+                    &mut town_map,
+                    &generated.world,
+                    hero_at,
+                    look,
+                    &radio,
+                    fighting,
                 );
                 for a in powers.ui(frame.ui.ctx(), &my_sheet, fighting, creating) {
                     match a {

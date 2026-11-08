@@ -356,7 +356,7 @@ fn lighthouse(b: &mut MeshBuilder, h: f64, near: bool) {
 }
 
 /// A square beam from `a` to `c`, `w` thick.
-fn strut(b: &mut MeshBuilder, a: DVec3, c: DVec3, w: f64, color: Color) {
+pub fn strut(b: &mut MeshBuilder, a: DVec3, c: DVec3, w: f64, color: Color) {
     let d = (c - a).normalize_or(DVec3::Y);
     let u = if d.y.abs() > 0.9 { DVec3::X } else { DVec3::Y };
     let s = d.cross(u).normalize() * w * 0.5;

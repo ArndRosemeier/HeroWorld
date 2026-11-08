@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.034 (2026-11-08)
+
+- The Hero Signal: when mutants run riot or villains break out, a searchlight on the Aether
+  Spire throws a star onto the sky above the trouble.
+- A compass at the top of the screen points to every call, and M opens a map of the town.
+
 ## 0.033 (2026-11-08)
 
 - Rescues: houses catch fire with people inside, and cars crash with people trapped. Get

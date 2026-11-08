@@ -343,6 +343,13 @@ are left (protocol 16). `HW_INCIDENT=fire|crash|mugging|...` picks the first kin
 carrying the injured to a medic, getting people out of buildings that heroes broke, the Hero
 Signal, map markers, rooftop groups, the transition band.
 
+**Status (0.034):** the Hero Signal, a compass and a town map (`hw-client/src/dispatchview.rs`).
+A mutant rampage or a breakout lights the Signal: a searchlight beam from the Aether Spire's
+crown to a glowing disc 260 m over the trouble, a dark star on it, visible from anywhere in
+town. A compass strip at the top of the screen marks each call (con colour, distance). M opens
+a map of the built-up town: streets, the villains' quarter outlined, landmarks, calls, and
+you as an arrow. `HW_VIEW=signal` looks up at the emblem, `HW_VIEW=map` opens the map.
+
 ### M10. Traffic, taxis and the underground (in progress)
 
 - Ground traffic on the streets (AssetGenerator cars with spinning wheels and opening doors as
