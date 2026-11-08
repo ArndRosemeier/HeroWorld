@@ -13,9 +13,10 @@
 //! touch never share a face in the same direction: the z-fighting test
 //! checks every building.
 
-use crate::citymesh::{MeshBuilder, Surf};
+use crate::citymesh::{MeshBuilder, Surf, Weather};
+use crate::facades::Facade;
+use crate::skins::Tex;
 use engine::prelude::*;
-use engine::texgen::{FacadeLayer, Layer, RoofLayer};
 use glam::{DVec2, DVec3};
 use hw_core::Rng;
 use hw_gen::building::{bay_lines, BuildingPlan, Floor, Opening, OpeningKind, RoomKind, Side};
@@ -96,9 +97,35 @@ struct Ctx<'a> {
     u: DVec3,
     v: DVec3,
     detail: Detail,
+    /// What the outside is made of.
+    fac: Facade,
+    /// The texture for faces whose colour is none of the palette's.
+    tex: Option<Tex>,
+    /// The building's own colours and the texture each stands for.
+    palette: [(Color, Tex); 6],
+    /// Street dirt on the main wall faces (only those: trim and roofs
+    /// overlap other faces, which would then differ in colour and flicker).
+    wx: Weather,
 }
 
 impl Ctx<'_> {
+    /// Picks the texture for a shape in `color`: walls get the wall's,
+    /// trim the trim's, and so on; other colours the current texture.
+    fn paint(&mut self, color: Color) {
+        let hit = self
+            .palette
+            .iter()
+            .find(|(c, _)| *c == color)
+            .map(|(_, t)| *t);
+        self.b.tex = hit.or(self.tex);
+    }
+
+    /// Sets the texture for shapes in colours outside the palette.
+    fn set_tex(&mut self, t: Tex) {
+        self.tex = Some(t);
+        self.b.tex = Some(t);
+    }
+
     /// Building point → city point.
     fn p(&self, q: DVec3) -> DVec3 {
         self.plan
@@ -119,6 +146,7 @@ impl Ctx<'_> {
         }
         let c = self.p((lo + hi) * 0.5);
         let u = self.u;
+        self.paint(color);
         self.b.oriented_box(c, u, (hi - lo) * 0.5, color);
     }
 
@@ -186,17 +214,20 @@ impl Ctx<'_> {
     fn quad(&mut self, q: [DVec3; 4], out: DVec3, color: Color) {
         let pts = q.map(|x| self.p(x));
         let o = self.dir(out);
+        self.paint(color);
         self.b.quad(pts, o, color);
     }
 
     fn polygon(&mut self, q: &[DVec3], out: DVec3, color: Color) {
         let pts: Vec<DVec3> = q.iter().map(|x| self.p(*x)).collect();
         let o = self.dir(out);
+        self.paint(color);
         self.b.polygon(&pts, o, color);
     }
 
     fn hexa(&mut self, bottom: [DVec3; 4], top: [DVec3; 4], color: Color) {
         let (b, t) = (bottom.map(|x| self.p(x)), top.map(|x| self.p(x)));
+        self.paint(color);
         self.b.hexa(b, t, color);
     }
 
@@ -211,11 +242,13 @@ impl Ctx<'_> {
         color: Color,
     ) {
         let c = self.p(c);
+        self.paint(color);
         self.b.cylinder(c, (r, r_top), h, seg, caps, color);
     }
 
     fn dome(&mut self, c: DVec3, r: f64, color: Color) {
         let c = self.p(c);
+        self.paint(color);
         self.b.dome(c, r, 20, 6, color);
     }
 
@@ -397,6 +430,7 @@ pub fn exterior(
     detail: Detail,
 ) {
     let site = &plan.site;
+    let fac = crate::facades::facade(plan);
     let mut c = Ctx {
         b,
         plan,
@@ -405,9 +439,31 @@ pub fn exterior(
         u: DVec3::new(site.along.x, 0.0, site.along.y),
         v: DVec3::new(site.inward.x, 0.0, site.inward.y),
         detail,
+        fac,
+        tex: Some(fac.wall),
+        palette: [
+            (col(plan.look.wall), fac.wall),
+            (col(plan.look.base), fac.base),
+            (col(plan.look.trim), fac.trim),
+            (col(plan.look.frame), fac.frame),
+            (col(plan.look.accent), fac.accent),
+            (col(plan.look.roof_color), fac.roof),
+        ],
+        wx: Weather {
+            ground: 0.0,
+            top: 0.0,
+            dirt: 0.0,
+            sill: None,
+        },
     };
     let look = &plan.look;
-    c.b.tex = Some(wall_layer(look));
+    c.set_tex(fac.wall);
+    c.wx = Weather {
+        ground: c.base,
+        top: c.base + plan.height(),
+        dirt: fac.dirt,
+        sill: None,
+    };
     let ts = tiers(plan, shown);
     for (n, &(i, j)) in ts.iter().enumerate() {
         let top_tier = n + 1 == ts.len();
@@ -426,7 +482,10 @@ pub fn exterior(
         if top_tier && !roofed {
             continue;
         }
+        // The slab's top is the roof (or a terrace): tar or gravel, not trim.
+        c.b.up_tex = Some(c.fac.flat_roof);
         let deck = cornice(&mut c, plan.floors[i].outline, y, detail);
+        c.b.up_tex = None;
         let last = top_tier && shown == plan.floors.len();
         if !last && look.parapet > 0.0 {
             // A terrace: a low railing wall along the edge.
@@ -447,41 +506,8 @@ pub fn exterior(
     }
     c.surf(Surf::Plain);
     c.b.tex = None;
-}
-
-/// The texture of a building's walls (tinted by its wall colour).
-pub fn wall_layer(look: &Look) -> Layer {
-    use hw_gen::style::Material;
-    let [r, g, b] = look.wall.map(|v| v as f64);
-    let l: Layer = match look.material {
-        Material::Limestone => FacadeLayer::Limestone.into(),
-        Material::Granite => FacadeLayer::Granite.into(),
-        Material::Brick if r + g + b < 300.0 => FacadeLayer::BrickBrown.into(),
-        Material::Brick if g > r * 0.75 => FacadeLayer::BrickYellow.into(),
-        Material::Brick => FacadeLayer::BrickRed.into(),
-        Material::Terracotta => FacadeLayer::Sandstone.into(),
-        Material::Stucco if look.style == Style::OldTown => FacadeLayer::Plaster.into(),
-        Material::Stucco => FacadeLayer::Stucco.into(),
-        Material::Concrete => FacadeLayer::Concrete.into(),
-        Material::Metal | Material::Glass => FacadeLayer::MetalPanel.into(),
-    };
-    let _ = b;
-    l
-}
-
-/// The texture of a pitched or mansard roof.
-fn roof_layer(look: &Look) -> Layer {
-    let [r, g, _] = look.roof_color.map(|v| v as f64);
-    let l = if r > g + 40.0 {
-        RoofLayer::ClayTile
-    } else if look.roof == Roof::Mansard && look.style == Style::Haussmann {
-        RoofLayer::Zinc
-    } else if look.style == Style::Cottage {
-        RoofLayer::AsphaltShingle
-    } else {
-        RoofLayer::Slate
-    };
-    l.into()
+    c.b.up_tex = None;
+    c.b.weather = None;
 }
 
 /// Far detail: plain walls and flat window panes.
@@ -613,30 +639,48 @@ fn near_floor(c: &mut Ctx, level: usize, first_of_tier: bool) {
             .copied()
             .collect();
         // Wall pieces: columns between holes, and above and below each hole.
-        let mut pieces: Vec<(f64, f64, f64, f64)> = Vec::new();
+        // A piece under a window carries the dirt that runs off its sill.
+        let mut pieces: Vec<(f64, f64, f64, f64, bool)> = Vec::new();
         let mut t = s0;
-        for &(_, t0, t1, ya, yb) in &cut {
+        for &(op, t0, t1, ya, yb) in &cut {
             if t0 > t {
-                pieces.push((t, t0, y0, y1));
+                pieces.push((t, t0, y0, y1, false));
             }
-            pieces.push((t0, t1, y0, ya));
-            pieces.push((t0, t1, yb, y1));
+            pieces.push((t0, t1, y0, ya, op.kind == OpeningKind::Window));
+            pieces.push((t0, t1, yb, y1, false));
             t = t.max(t1);
         }
         if t < s1 {
-            pieces.push((t, s1, y0, y1));
+            pieces.push((t, s1, y0, y1, false));
         }
-        for (t0, t1, ya, yb) in pieces {
+        // Rows: the stone base, and a band at the foot of the wall where
+        // the street splashes it, so the dirt fades out a metre up.
+        let mut rows = vec![plinth];
+        if level == 0 {
+            rows.push(plinth.max(y0) + 1.0);
+        }
+        for (t0, t1, ya, yb, under_sill) in pieces {
             if t1 - t0 < 1e-4 || yb - ya < 1e-4 {
                 continue;
             }
-            if plinth > ya && plinth < yb {
-                c.quad(w.rect(t0, t1, ya, plinth, 0.0), w.out(), base_c);
-                c.quad(w.rect(t0, t1, plinth, yb, 0.0), w.out(), wall);
-            } else {
-                let colr = if yb <= plinth { base_c } else { wall };
-                c.quad(w.rect(t0, t1, ya, yb, 0.0), w.out(), colr);
+            let mut wx = c.wx;
+            if under_sill {
+                wx.sill = Some((c.base + yb, 1.8));
             }
+            c.b.weather = Some(wx);
+            let mut cuts: Vec<f64> = rows
+                .iter()
+                .copied()
+                .filter(|&r| r > ya + 0.05 && r < yb - 0.05)
+                .collect();
+            cuts.insert(0, ya);
+            cuts.push(yb);
+            for k in 0..cuts.len() - 1 {
+                let (lo, hi) = (cuts[k], cuts[k + 1]);
+                let colr = if hi <= plinth + 1e-9 { base_c } else { wall };
+                c.quad(w.rect(t0, t1, lo, hi, 0.0), w.out(), colr);
+            }
+            c.b.weather = None;
         }
         // A ledge on top of the stone base, between the openings.
         if plinth > 0.0 {
@@ -1212,7 +1256,7 @@ fn roof(c: &mut Ctx, o: Rect, y: f64, detail: Detail) {
         Roof::Gable | Roof::Hip => {
             let hip = look.roof == Roof::Hip;
             pitched(c, o, y, hip, roof_c, detail);
-            c.b.tex = Some(wall_layer(look));
+            c.set_tex(c.fac.wall);
         }
         Roof::Mansard => {
             let inset = 1.4;
@@ -1229,9 +1273,9 @@ fn roof(c: &mut Ctx, o: Rect, y: f64, detail: Detail) {
                 DVec3::new(o.max.x - inset, y + h, o.max.y - inset),
                 DVec3::new(o.min.x + inset, y + h, o.max.y - inset),
             ];
-            c.b.tex = Some(roof_layer(look));
+            c.set_tex(c.fac.roof);
             c.hexa(lo, hi, roof_c);
-            c.b.tex = Some(wall_layer(look));
+            c.set_tex(c.fac.wall);
             if detail == Detail::Near {
                 if look.dormers {
                     mansard_dormers(c, o, y);
@@ -1302,15 +1346,15 @@ fn pitched(c: &mut Ctx, o: Rect, y: f64, hip: bool, color: Color, detail: Detail
     let r0 = p(s0 + inset, tm, y + h);
     let r1 = p(s1 - inset, tm, y + h);
     let (a, b, cc, d) = (p(s0, t0, y), p(s1, t0, y), p(s1, t1, y), p(s0, t1, y));
-    c.b.tex = Some(roof_layer(look));
+    c.set_tex(c.fac.roof);
     c.quad([a, b, r1, r0], n(0.0, -h, half), color);
     c.quad([d, cc, r1, r0], n(0.0, h, half), color);
     if hip {
         c.polygon(&[a, d, r0], n(-h, 0.0, half), color);
         c.polygon(&[b, cc, r1], n(h, 0.0, half), color);
-        c.b.tex = Some(wall_layer(look));
+        c.set_tex(c.fac.wall);
     } else {
-        c.b.tex = Some(wall_layer(look));
+        c.set_tex(c.fac.wall);
         // Gable ends in the wall's colour, on the wall line, under the
         // roof's ends.
         let e = y + h * ov / half;

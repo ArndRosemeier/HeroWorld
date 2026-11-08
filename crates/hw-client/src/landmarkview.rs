@@ -3,8 +3,9 @@
 //! mad scientist's Tesla tower, which is not.
 
 use crate::citymesh::{MeshBuilder, Surf};
+use crate::skins::Tex;
 use engine::prelude::*;
-use engine::texgen::{FacadeLayer, GroundLayer, Layer};
+use engine::texgen::{FacadeLayer, GroundLayer};
 use glam::{DVec2, DVec3};
 use hw_gen::urban::landmarks::{Landmark, LandmarkKind};
 use hw_gen::urban::world::TownWorld;
@@ -68,7 +69,7 @@ fn stairs(b: &mut MeshBuilder, l: &Landmark, near: bool) {
     let right = DVec2::new(l.dir.y, -l.dir.x);
     let local = |v: DVec2| (v.dot(right), v.dot(l.dir));
     let stone = rgb(204, 196, 180);
-    b.tex = near.then_some(Layer::from(FacadeLayer::Limestone));
+    b.tex = near.then_some(Tex::from(FacadeLayer::Limestone));
     for st in &l.stairs {
         let rise = (st.from - st.to) / st.steps as f64;
         let across = DVec2::new(st.down.y, -st.down.x);
@@ -105,7 +106,7 @@ fn plinth(b: &mut MeshBuilder, l: &Landmark, near: bool) {
     let drop = l.base - l.low + 0.4;
     let stone = rgb(196, 188, 172);
     let tex = |layer| near.then_some(layer);
-    b.tex = tex(Layer::from(FacadeLayer::Limestone));
+    b.tex = tex(Tex::from(FacadeLayer::Limestone));
     b.cylinder(
         DVec3::Y * -drop,
         (l.plaza, l.plaza),
@@ -114,7 +115,7 @@ fn plinth(b: &mut MeshBuilder, l: &Landmark, near: bool) {
         false,
         stone,
     );
-    b.tex = tex(Layer::from(GroundLayer::Paving));
+    b.tex = tex(Tex::from(GroundLayer::Paving));
     b.cylinder(
         DVec3::Y * -0.02,
         (l.plaza, l.plaza),

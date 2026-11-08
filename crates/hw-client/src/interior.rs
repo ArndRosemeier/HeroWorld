@@ -6,6 +6,7 @@
 //! inward, y up from the floor's top) and kept clear of the doorways.
 
 use crate::citymesh::{MeshBuilder, Surf};
+use crate::skins::Tex;
 use engine::prelude::*;
 use glam::{DVec2, DVec3};
 use hw_gen::building::{BuildingPlan, Floor, Room, RoomKind};
@@ -107,6 +108,7 @@ pub fn furnish(b: &mut MeshBuilder, plan: &BuildingPlan, level: usize, top: f64,
     let Some(f) = plan.floors.get(level) else {
         return;
     };
+    b.tex_of = Some(furniture_tex);
     let mut fu = Furnisher {
         b,
         plan,
@@ -130,6 +132,21 @@ pub fn furnish(b: &mut MeshBuilder, plan: &BuildingPlan, level: usize, top: f64,
             RoomKind::Corridor => {}
         }
     }
+    fu.b.tex_of = None;
+}
+
+/// Furniture's texture by its colour: wood is oak, upholstery cloth,
+/// the rest painted.
+fn furniture_tex(c: Color) -> Option<Tex> {
+    use crate::skins::{Base, Skin, Wear};
+    let base = if c == wood() || c == rgb(176, 132, 84) {
+        Base::Medieval(engine::texgen::MedievalLayer::Oak)
+    } else if FABRICS.iter().any(|&f| c3(f) == c) {
+        Base::Fabric
+    } else {
+        Base::PaintedWood
+    };
+    Some(Skin::new(base, Wear::Fresh).into())
 }
 
 fn hash(o: DVec2, level: usize, k: usize) -> u64 {
@@ -154,16 +171,17 @@ fn c3(t: (u8, u8, u8)) -> Color {
 }
 
 /// Upholstery in golden-age colours.
+const FABRICS: [(u8, u8, u8); 6] = [
+    (196, 70, 64),
+    (64, 150, 140),
+    (226, 180, 80),
+    (120, 90, 160),
+    (90, 140, 200),
+    (220, 130, 150),
+];
+
 fn fabric(seed: u64, shift: u32) -> Color {
-    let all = [
-        (196, 70, 64),
-        (64, 150, 140),
-        (226, 180, 80),
-        (120, 90, 160),
-        (90, 140, 200),
-        (220, 130, 150),
-    ];
-    c3(all[pick(seed, shift, all.len())])
+    c3(FABRICS[pick(seed, shift, FABRICS.len())])
 }
 
 fn wood() -> Color {

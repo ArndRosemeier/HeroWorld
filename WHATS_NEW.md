@@ -3,6 +3,18 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.067 (2026-11-08)
+
+- Houses get real surfaces: plaster, stucco and concrete now show their grain, stains, rain
+  streaks and hairline cracks instead of looking like flat paint; brick and stone weather too.
+- Every building is made of several materials: stone base courses, cast-stone sills and
+  cornices, painted wooden frames on old houses, glossy enamel panels on the golden-age
+  buildings, tar, gravel or green roofs on flat tops, slate, tile, zinc, shingle or thatch above.
+- Age shows: old towns are worn, new quarters kept clean, the works sooty and the villain
+  quarter filthy, with dirt splashed up the walls and dark streaks under the windowsills.
+- Inside, floors are boards, stone or tiles by room, walls are plastered, and furniture is
+  wood and cloth.
+
 ## 0.066 (2026-11-08)
 
 - A lighting pass: the game now plays in the warm light of mid-afternoon, so houses have a sunny

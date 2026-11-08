@@ -5,8 +5,8 @@
 //! boulevard cell, so a cell can be rebuilt on its own (for example when the
 //! cut-open area moves).
 
+use crate::skins::{self, Tex};
 use engine::prelude::*;
-use engine::texgen::Layer;
 use glam::{DVec2, DVec3, Vec3};
 use hw_gen::building::{BuildingPlan, Door, RoomKind};
 use hw_gen::city::{BlockUse, CityPlan, DistrictKind, StreetClass};
@@ -49,6 +49,52 @@ pub enum Surf {
     Metal,
 }
 
+/// Dirt that depends on where a face is on a building, in vertex colours
+/// (the texture's own wear repeats every tile; this does not): splashed up
+/// from the street at the foot of the walls, washed down from the roof
+/// edge, and streaks under sills.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Weather {
+    /// The street (builder coordinates).
+    pub ground: f64,
+    /// The roof edge.
+    pub top: f64,
+    /// How dirty: 0 clean to 1 filthy.
+    pub dirt: f32,
+    /// A sill above the faces added next: (its height, how far its
+    /// streaks run down).
+    pub sill: Option<(f64, f64)>,
+}
+
+impl Weather {
+    /// How much darker a point at `y` is (0 to about 0.6).
+    pub fn darkening(&self, y: f64) -> f32 {
+        let h = (y - self.ground).max(0.0);
+        let splash = (-h / 0.8).exp() as f32;
+        let eaves = (-(self.top - y).max(0.0) / 2.0).exp() as f32;
+        let mut d = 0.42 * splash + 0.2 * eaves;
+        if let Some((sill, reach)) = self.sill {
+            if y <= sill + 1e-6 {
+                d += 0.45 * (1.0 - ((sill - y) / reach) as f32).max(0.0);
+            }
+        }
+        (d * self.dirt).min(0.7)
+    }
+
+    /// `color` with the dirt at `p`.
+    pub fn apply(&self, p: DVec3, color: Color) -> Color {
+        let d = self.darkening(p.y);
+        // Dirt is a warm grey-brown: blue goes first.
+        let k = |tint: f32| 1.0 - d * (1.0 - tint);
+        Color {
+            r: color.r * k(0.5),
+            g: color.g * k(0.45),
+            b: color.b * k(0.38),
+            a: color.a,
+        }
+    }
+}
+
 /// A mesh plus helpers for shapes in arbitrary orientation.
 pub struct MeshBuilder {
     pub mesh: Mesh,
@@ -56,12 +102,23 @@ pub struct MeshBuilder {
     glow: Mesh,
     metal: Mesh,
     /// Plain faces with a texture, one mesh per texture.
-    textured: Vec<(Layer, Mesh)>,
+    textured: Vec<(Tex, Mesh)>,
     /// Material for the faces added next.
     pub surf: Surf,
     /// Texture for the plain faces added next ([`Self::finish_parts`]
     /// keeps it; [`Self::finish`] drops textures).
-    pub tex: Option<Layer>,
+    pub tex: Option<Tex>,
+    /// Texture and colour for faces that look up (a flat roof's covering on
+    /// a cornice slab), instead of `tex` and the colour asked for.
+    pub up_tex: Option<(Tex, Color)>,
+    /// A texture by colour for the faces added next (furniture: wood is
+    /// wood, upholstery cloth), before `tex`.
+    pub tex_of: Option<fn(Color) -> Option<Tex>>,
+    /// Dirt by height on the faces added next (see [`Weather`]).
+    pub weather: Option<Weather>,
+    /// Area (m²) of plain faces drawn without a texture and with one, for
+    /// the check that nothing big is left bare.
+    pub plain_area: [f64; 2],
     /// No textures at all: faces keep their own colours (for meshes that
     /// cannot carry a texture, like a breakable building's).
     pub flat: bool,
@@ -70,13 +127,13 @@ pub struct MeshBuilder {
 /// The average colour of a texture layer (linear), so vertex colours can
 /// be divided by it: a textured face then keeps the colour asked for on
 /// average, with the texture's grain on top.
-fn layer_mean(l: Layer) -> [f32; 3] {
-    static MEANS: OnceLock<Mutex<HashMap<Layer, [f32; 3]>>> = OnceLock::new();
+fn layer_mean(l: Tex) -> [f32; 3] {
+    static MEANS: OnceLock<Mutex<HashMap<Tex, [f32; 3]>>> = OnceLock::new();
     let means = MEANS.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some(m) = means.lock().expect("means").get(&l) {
         return *m;
     }
-    let t = engine::texgen::layer(l);
+    let t = skins::texture(l);
     let mut sum = [0.0f64; 3];
     let n = (t.albedo.len() / 4).max(1);
     for px in t.albedo.chunks_exact(4) {
@@ -106,6 +163,10 @@ impl MeshBuilder {
             textured: Vec::new(),
             surf: Surf::Plain,
             tex: None,
+            up_tex: None,
+            tex_of: None,
+            weather: None,
+            plain_area: [0.0; 2],
             flat: false,
         }
     }
@@ -114,8 +175,55 @@ impl MeshBuilder {
         self.face_count() == 0
     }
 
+    /// The texture a face with normal `n` gets, and the colour it is drawn
+    /// in instead of the one asked for (a roof covering's).
+    fn face_tex(&self, n: DVec3, color: Color) -> (Option<Tex>, Option<Color>) {
+        if self.flat {
+            return (None, None);
+        }
+        if let Some(t) = self.tex_of.and_then(|f| f(color)) {
+            if self.surf == Surf::Plain {
+                return (Some(t), None);
+            }
+        }
+        match self.up_tex {
+            Some((t, c)) if self.surf == Surf::Plain && n.normalize_or(DVec3::ZERO).y > 0.95 => {
+                (Some(t), Some(c))
+            }
+            _ => (self.tex, None),
+        }
+    }
+
+    fn count_area(&mut self, area: f64, tex: Option<Tex>) {
+        if self.surf == Surf::Plain {
+            self.plain_area[tex.is_some() as usize] += area;
+        }
+    }
+
+    /// The share of plain faces (by area) drawn without a texture.
+    pub fn bare_share(&self) -> f64 {
+        let [bare, tex] = self.plain_area;
+        if bare + tex <= 0.0 {
+            0.0
+        } else {
+            bare / (bare + tex)
+        }
+    }
+
+    fn cur_tex(&self) -> Option<Tex> {
+        if self.flat {
+            None
+        } else {
+            self.tex
+        }
+    }
+
     fn target(&mut self) -> &mut Mesh {
-        let tex = if self.flat { None } else { self.tex };
+        let tex = self.cur_tex();
+        self.target_for(tex)
+    }
+
+    fn target_for(&mut self, tex: Option<Tex>) -> &mut Mesh {
         match self.surf {
             Surf::Plain => match tex {
                 None => &mut self.mesh,
@@ -153,6 +261,8 @@ impl MeshBuilder {
     /// Adds everything `other` holds, moved by `offset`, keeping its
     /// materials and textures apart.
     pub fn append(&mut self, other: MeshBuilder, offset: Vec3) {
+        self.plain_area[0] += other.plain_area[0];
+        self.plain_area[1] += other.plain_area[1];
         for (to, from) in [
             (&mut self.mesh, other.mesh),
             (&mut self.glass, other.glass),
@@ -187,7 +297,7 @@ impl MeshBuilder {
             if m.face_count() == 0 {
                 continue;
             }
-            engine::texgen::layer(l)
+            skins::texture(l)
                 .apply_triplanar(&mut m)
                 .expect("texture a part");
             out.push(m);
@@ -233,8 +343,11 @@ impl MeshBuilder {
     /// normal, so Engine builds the mesh indexed (a quad is 4 vertices, not
     /// 6) and shading stays flat: points are never shared between faces
     /// that face different ways.
-    fn point(&mut self, p: DVec3, n: DVec3, color: Color) -> PointId {
-        let tex = if self.flat { None } else { self.tex };
+    fn point(&mut self, p: DVec3, n: DVec3, color: Color, tex: Option<Tex>) -> PointId {
+        let color = match (self.surf, self.weather) {
+            (Surf::Plain, Some(w)) => w.apply(p, color),
+            _ => color,
+        };
         let color = match (self.surf, tex) {
             (Surf::Plain, Some(l)) => {
                 let m = layer_mean(l);
@@ -247,7 +360,7 @@ impl MeshBuilder {
             }
             _ => color,
         };
-        let m = self.target();
+        let m = self.target_for(tex);
         let id = m.add_point(p.as_vec3()).expect("finite point");
         m.set_point_color(id, color).expect("point exists");
         m.set_point_normal(id, n.normalize_or(DVec3::Y).as_vec3())
@@ -264,8 +377,11 @@ impl MeshBuilder {
             [0, 2, 1]
         };
         let n = n * if n.dot(outward) >= 0.0 { 1.0 } else { -1.0 };
-        let ids = order.map(|i| self.point(pts[i], n, color));
-        self.target()
+        let (tex, over) = self.face_tex(n, color);
+        self.count_area(n.length() * 0.5, tex);
+        let color = over.unwrap_or(color);
+        let ids = order.map(|i| self.point(pts[i], n, color, tex));
+        self.target_for(tex)
             .add_triangle(ids[0], ids[1], ids[2])
             .expect("tri");
     }
@@ -426,12 +542,13 @@ impl MeshBuilder {
                     [0, 3, 2, 1]
                 };
                 self.surf = surf;
+                let tex = self.cur_tex();
                 let key_surf = surf as u8;
                 let key_col = [color.r, color.g, color.b, color.a].map(f32::to_bits);
                 let face = order.map(|k| {
                     let (a, c) = corners[k];
                     *ids.entry((a, c, key_surf, key_col))
-                        .or_insert_with(|| self.point(at(a, c), normals[a][c], color))
+                        .or_insert_with(|| self.point(at(a, c), normals[a][c], color, tex))
                 });
                 // Drop a corner a degenerate quad repeats (a tip).
                 let mut uniq: Vec<PointId> = Vec::with_capacity(4);
@@ -460,8 +577,14 @@ impl MeshBuilder {
             [0, 3, 2, 1]
         };
         let n = n * if n.dot(outward) >= 0.0 { 1.0 } else { -1.0 };
-        let ids = order.map(|i| self.point(pts[i], n, color));
-        self.target().add_face(&ids).expect("quad");
+        let (tex, over) = self.face_tex(n, color);
+        let area = ((pts[1] - pts[0]).cross(pts[2] - pts[0]).length()
+            + (pts[2] - pts[0]).cross(pts[3] - pts[0]).length())
+            * 0.5;
+        self.count_area(area, tex);
+        let color = over.unwrap_or(color);
+        let ids = order.map(|i| self.point(pts[i], n, color, tex));
+        self.target_for(tex).add_face(&ids).expect("quad");
     }
 
     /// A box with centre `c`, unit axes `u` (horizontal) and `v = up × u`
@@ -526,10 +649,11 @@ impl MeshBuilder {
         let at = |p: DVec2, y: f64| DVec3::new(p.x, y, p.y);
         let centre = pts.iter().copied().sum::<DVec2>() / n as f64;
         // The top is one flat fan sharing its points.
-        let c = self.point(at(centre, top), DVec3::Y, color);
+        let tex = self.cur_tex();
+        let c = self.point(at(centre, top), DVec3::Y, color, tex);
         let ring: Vec<PointId> = pts
             .iter()
-            .map(|&p| self.point(at(p, top), DVec3::Y, color))
+            .map(|&p| self.point(at(p, top), DVec3::Y, color, tex))
             .collect();
         for i in 0..n {
             let (a, b) = (pts[i], pts[(i + 1) % n]);
@@ -607,21 +731,21 @@ impl Palette {
     }
 
     /// Floor colour of a room in a cut-open building, so rooms read from above.
-    fn room_floor(kind: RoomKind) -> Color {
+    /// A room's floor: what it is laid with, and its colour.
+    fn room_floor(kind: RoomKind) -> (Tex, Color) {
+        use engine::texgen::{FacadeLayer as F, GroundLayer as G, MedievalLayer as M};
         match kind {
-            RoomKind::Lobby => rgb(214, 180, 120),
-            RoomKind::Corridor => rgb(190, 186, 178),
-            RoomKind::Core => rgb(120, 120, 128),
-            RoomKind::Office => rgb(150, 176, 204),
-            RoomKind::Apartment => rgb(206, 170, 136),
-            RoomKind::Living => rgb(214, 160, 120),
-            RoomKind::Kitchen => rgb(226, 222, 196),
-            RoomKind::Bedroom => rgb(196, 168, 200),
-            RoomKind::Shop => rgb(236, 150, 120),
-            RoomKind::Storage => rgb(140, 130, 116),
-            RoomKind::Hall => rgb(170, 184, 160),
-            RoomKind::Gallery => rgb(232, 210, 150),
-            RoomKind::Lab => rgb(120, 200, 140),
+            RoomKind::Lobby | RoomKind::Gallery => (G::PlazaStone.into(), rgb(226, 218, 200)),
+            RoomKind::Corridor | RoomKind::Hall | RoomKind::Shop => {
+                (G::PlazaStone.into(), rgb(204, 198, 186))
+            }
+            RoomKind::Core | RoomKind::Storage => (F::Concrete.into(), rgb(150, 148, 142)),
+            RoomKind::Office => (M::Boards.into(), rgb(170, 140, 110)),
+            RoomKind::Apartment | RoomKind::Living | RoomKind::Bedroom => {
+                (M::Boards.into(), rgb(196, 152, 112))
+            }
+            RoomKind::Kitchen => (M::Flagstone.into(), rgb(214, 206, 190)),
+            RoomKind::Lab => (F::ConcretePanel.into(), rgb(200, 210, 206)),
         }
     }
 
@@ -932,19 +1056,24 @@ pub fn add_building(
     if let Look::Cut { .. } = look {
         let f = &plan.floors[shown_floors];
         let y = base + f.elevation;
-        // Room floors, coloured by use. Each stops 1 mm short of its
+        // Room floors, laid by use. Each stops 1 mm short of its
         // neighbours: shared edges, rounded in city space, would overlap.
         for room in &f.rooms {
+            let (tex, floor) = Palette::room_floor(room.kind);
+            b.tex = Some(tex);
             let c = room.rect.center();
             let s = room.rect.size() - glam::DVec2::splat(0.002);
             b.oriented_box(
                 to_city(c.x, y + 0.15, c.y),
                 u,
                 DVec3::new(s.x * 0.5, 0.15, s.y * 0.5),
-                Palette::room_floor(room.kind),
+                floor,
             );
         }
+        // Inside walls are plastered.
+        b.tex = Some(engine::texgen::FacadeLayer::Plaster.into());
         draw_cut_walls(b, f, y, facade, &|x, y, z| to_city(x, y, z), u);
+        b.tex = None;
         crate::interior::furnish(b, plan, shown_floors, y + 0.3, u);
     }
 }

@@ -342,12 +342,15 @@ impl TownView {
                 b.append(one, lift);
             }
             if wb.base - wb.low > 0.05 {
+                // The plinth is the building's own base stone.
+                b.tex = Some(crate::facades::facade(&plan).base);
                 b.prism(
                     &wb.site.corners(),
                     wb.low - 1.0,
                     wb.base,
                     rgb(150, 142, 128),
                 );
+                b.tex = None;
             }
             if b.face_count() > MESH_FACES {
                 let full = std::mem::take(&mut b);
