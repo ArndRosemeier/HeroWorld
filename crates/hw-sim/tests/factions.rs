@@ -147,3 +147,48 @@ fn beating_villains_moves_the_heros_standing() {
     );
     assert!(after[Faction::Syndicate.index()] > before[Faction::Syndicate.index()]);
 }
+
+#[test]
+fn a_warning_is_heard_in_the_street() {
+    let (mut sim, hero) = turf([0; hw_net::FACTIONS]);
+    let (warned, _) = wait(&mut sim, hero, 14.0, 1.0);
+    assert!(warned);
+    assert!(sim
+        .alarms
+        .active()
+        .any(|a| a.kind == hw_sim::alarms::AlarmKind::Warning));
+}
+
+#[test]
+fn chrome_jackets_hang_out_round_the_quarter() {
+    use hw_sim::combat::EnemyKind;
+    use hw_sim::GeneratedTown;
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    let hero = sim.spawn_hero(PlayerId(1), sim.spawn_point(1));
+    let spot = sim
+        .fights()
+        .spots
+        .iter()
+        .position(|s| s.only == Some(EnemyKind::Greaser))
+        .expect("a Jackets hangout");
+    let s = sim.fights().spots[spot].clone();
+    let face = DVec3::new(s.facing.x, 0.0, s.facing.y);
+    sim.set_body(
+        hero,
+        Body {
+            pos: s.center + face * 40.0 + DVec3::Y,
+            vel: DVec3::ZERO,
+            grounded: false,
+        },
+    );
+    for _ in 0..3 {
+        sim.step();
+    }
+    let jackets: Vec<_> = sim
+        .enemies()
+        .into_iter()
+        .filter(|e| e.1 == EnemyKind::Greaser && e.2.distance(s.center) < 8.0)
+        .collect();
+    assert_eq!(jackets.len(), 3, "{:?} at {:?}", jackets, s.center);
+}

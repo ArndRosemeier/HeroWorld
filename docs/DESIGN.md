@@ -190,7 +190,7 @@ Arnd's direction (2026-11-08): this is a world that goes on without the heroes, 
 | Townsfolk | ordinary people | | friendly |
 | City Patrol | officers, police drones | | friendly |
 | The Doctor's Lab | mutant brutes, ray-gun technicians, robo-sentries, the colossus | the dystopian quarter | unfriendly (warns, then fights) |
-| Chrome Jackets | greasers in leather and denim: muggings, street crime | later: the edge band | unfriendly |
+| Chrome Jackets | greasers in leather and denim: muggings, street crime | corners in the band round the quarter | unfriendly |
 | Velvet Syndicate | pinstriped gunsels with ray pistols: robberies, rackets | | neutral |
 | Molehaven | the mole people | the underground | neutral |
 

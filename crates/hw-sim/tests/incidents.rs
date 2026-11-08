@@ -219,6 +219,13 @@ fn a_mugging_has_a_victim_and_the_crooks_turn_on_a_hero_who_steps_in() {
             .into_iter()
             .find(|e| e.kind == EntityKind::Bystander)
     };
+    // People near it notice: a mugging alarm while it lasts.
+    let mugging_alarm = |sim: &Sim| {
+        sim.alarms
+            .active()
+            .any(|a| a.kind == hw_sim::alarms::AlarmKind::Mugging)
+    };
+    assert!(mugging_alarm(&sim), "bystanders notice the mugging");
     let v = victim(&mut sim).expect("someone is being mugged");
     let at = DVec3::from_array(v.pos);
     assert!(at.distance(inc.at) < 5.0);
@@ -263,6 +270,7 @@ fn a_mugging_has_a_victim_and_the_crooks_turn_on_a_hero_who_steps_in() {
     }
     assert!(sim.incidents.open.iter().all(|i| i.id != inc.id));
     run(&mut sim, 4.0, &mut news);
+    assert!(!mugging_alarm(&sim), "it's over");
     let leaving = victim(&mut sim).expect("still walking off");
     assert!(
         DVec3::from_array(leaving.pos).distance(at) > 3.0,

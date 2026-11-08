@@ -675,7 +675,10 @@ fn main() -> EngineResult<()> {
     }
     .with_speed(40.0);
     fly.fast = 8.0;
-    let mut flying = !matches!(view.as_str(), "hero" | "inside" | "sky" | "title" | "fight");
+    let mut flying = !matches!(
+        view.as_str(),
+        "hero" | "inside" | "sky" | "title" | "fight" | "hangout"
+    );
     if view == "inside" {
         // Start in the lobby of the tallest building near the start.
         let tower = town.tallest_near(spawn, 400.0);
@@ -709,6 +712,19 @@ fn main() -> EngineResult<()> {
         }
         let ahead = -spawn_dir;
         hero_cam_yaw = ahead.x.atan2(ahead.y).to_degrees() as f32 + 18.0;
+    }
+    if view == "hangout" {
+        // Down the street from a Chrome Jackets corner.
+        let w = &generated.world;
+        if let Some(c) = hw_sim::quarter::hangouts(w, spawn, hw_sim::HANGOUT_CLEAR).first() {
+            // Down their pavement, from the kerb, looking at them.
+            let p = c.at + c.facing.perp() * 26.0 + c.facing * 6.0;
+            if let Some(s) = session.as_mut() {
+                s.teleport(glam::DVec3::new(p.x, ground(p) + 0.3, p.y));
+            }
+            let ahead = (c.at - p).normalize_or(-c.facing);
+            hero_cam_yaw = ahead.x.atan2(ahead.y).to_degrees() as f32;
+        }
     }
     if view == "rooftop" {
         // In the street below the quarter's first rooftop lookout.

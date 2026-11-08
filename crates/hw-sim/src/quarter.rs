@@ -3,6 +3,10 @@
 //! tower, a couple of levels above the team, while a hero is near; they go
 //! home when nobody is, and stand there fresh the next time. Technicians
 //! keep watch from flat roofs and shoot down at heroes in the street.
+//!
+//! The Chrome Jackets hang out in the frayed band around the quarter
+//! (the walls they tag with graffiti): small groups of greasers on street
+//! corners, who warn a stranger off their turf (see [`crate::factions`]).
 
 use crate::collision::Obstacles;
 use glam::{DVec2, DVec3};
@@ -162,6 +166,59 @@ pub fn corners(world: &TownWorld) -> Vec<Corner> {
     out
 }
 
+/// Jacket hangouts are at least this far apart (m), and at most this many.
+const HANGOUT_SPACING: f64 = 130.0;
+const MOST_HANGOUTS: usize = 6;
+/// Greasers at a hangout.
+pub const HANGOUT_GROUP: u32 = 3;
+
+/// Where the Chrome Jackets hang out: street ends and crossings in the
+/// band round the quarter, nearest the quarter first, facing out of it.
+/// None near `keep_clear` (where heroes appear) within `clear` m.
+pub fn hangouts(world: &TownWorld, keep_clear: DVec2, clear: f64) -> Vec<Corner> {
+    use hw_gen::urban::dystopia::Zone;
+    let Some(d) = &world.town.dystopia else {
+        return Vec::new();
+    };
+    // On the pavement a few metres in from a street's end, facing the
+    // street (out of the traffic).
+    let mut spots: Vec<(DVec2, DVec2)> = world
+        .roads
+        .iter()
+        .filter(|r| r.pts.len() >= 2)
+        .flat_map(|r| {
+            let n = r.pts.len();
+            [(r.pts[0], r.pts[1]), (r.pts[n - 1], r.pts[n - 2])].map(|(end, next)| {
+                let inward = (next - end).normalize_or(DVec2::X);
+                let side = inward.perp();
+                let at = end + inward * 6.0 + side * (r.half + r.pavement * 0.5);
+                (at, -side)
+            })
+        })
+        .filter(|(p, _)| d.zone(*p) == Zone::Edge && p.distance(keep_clear) > clear)
+        .collect();
+    spots.sort_by(|(a, _), (b, _)| {
+        a.distance(d.centre)
+            .total_cmp(&b.distance(d.centre))
+            .then(a.x.total_cmp(&b.x))
+            .then(a.y.total_cmp(&b.y))
+    });
+    let mut out: Vec<Corner> = Vec::new();
+    for (p, facing) in spots {
+        if out.len() >= MOST_HANGOUTS {
+            break;
+        }
+        if out.iter().all(|c| c.at.distance(p) >= HANGOUT_SPACING) {
+            out.push(Corner {
+                at: p,
+                facing,
+                extra: 0,
+            });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +242,12 @@ mod tests {
             assert!(d.contains(r.at - r.facing * r.depth * 0.5));
         }
         assert_eq!(roofs, lookouts(&w, &c));
+        let far = DVec2::new(1e6, 1e6);
+        let jackets = hangouts(&w, far, 0.0);
+        assert!(jackets.len() >= 2, "{} hangouts", jackets.len());
+        for j in &jackets {
+            assert_eq!(d.zone(j.at), hw_gen::urban::dystopia::Zone::Edge);
+        }
+        assert_eq!(jackets, hangouts(&w, far, 0.0));
     }
 }

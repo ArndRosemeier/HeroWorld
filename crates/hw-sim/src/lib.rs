@@ -44,7 +44,7 @@ use hw_net::{
     ToClient,
 };
 use physics::{Physics, PropState, CRATE_HALF};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// Simulation ticks per second.
@@ -95,6 +95,9 @@ pub struct Hero {
 /// The newest input from the hero's player.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Default)]
 pub struct Control(pub InputState);
+
+/// No gang hangs out this near where heroes appear (m).
+pub const HANGOUT_CLEAR: f64 = 300.0;
 
 /// A hero's progress (karma, level, powers): the player's hero file, which
 /// the server plays by and sends back when it changes.
@@ -394,6 +397,8 @@ pub struct Sim {
     /// Trouble bystanders notice: they run, stare, cars stop (see
     /// [`alarms`]).
     pub alarms: alarms::Alarms,
+    /// The alarm each open crime keeps up, by incident.
+    crime_alarms: BTreeMap<u32, u32>,
 }
 
 impl Sim {
@@ -446,7 +451,25 @@ impl Sim {
                 sim.add_lookout(p, l.facing);
             }
         }
+        // The Chrome Jackets' corners in the band round the quarter, never
+        // where heroes appear.
+        for c in quarter::hangouts(&town.world, sim.spawn.0, HANGOUT_CLEAR) {
+            let y = solids.ground_at(c.at).max(GROUND_Y);
+            sim.add_hangout(DVec3::new(c.at.x, y, c.at.y), c.facing);
+        }
         sim
+    }
+
+    /// A Chrome Jackets hangout: a few greasers on a corner, at the team's
+    /// level, while a hero is near; they warn strangers off. Returns the
+    /// spot's index.
+    pub fn add_hangout(&mut self, at: DVec3, facing: DVec2) -> usize {
+        let i = self.add_villain_corner(at, facing, 0, quarter::WAKE);
+        let mut f = self.world.resource_mut::<Fights>();
+        let spot = &mut f.spots[i];
+        spot.only = Some(combat::EnemyKind::Greaser);
+        spot.size = Some(quarter::HANGOUT_GROUP);
+        i
     }
 
     /// Breaks the first `n` weak points (knees, then the cannon) of every
@@ -527,6 +550,64 @@ impl Sim {
             wrecks: wrecks::Wrecks::default(),
             incidents: incidents::Incidents::default(),
             alarms: alarms::Alarms::default(),
+            crime_alarms: BTreeMap::new(),
+        }
+    }
+
+    /// People near a crime notice it: a mugging or a robbery while it
+    /// lasts, a rampage or a breakout as a fight; a gang's shout too.
+    fn raise_crime_alarms(&mut self) {
+        use alarms::AlarmKind;
+        use incidents::IncidentKind;
+        let tick = self.tick;
+        let warnings: Vec<DVec3> = self
+            .world
+            .resource::<Fights>()
+            .events
+            .iter()
+            .filter(|e| e.kind == FxKind::Warn)
+            .map(|e| DVec3::from_array(e.at.map(|x| x as f64)))
+            .collect();
+        for at in warnings {
+            self.alarms
+                .raise_or_refresh(AlarmKind::Warning, at, tick, TICK_HZ);
+        }
+        if !tick.is_multiple_of(TICK_HZ as u64) {
+            return;
+        }
+        let open: Vec<(u32, AlarmKind, DVec3)> = self
+            .incidents
+            .open
+            .iter()
+            .filter_map(|i| {
+                let kind = match i.kind {
+                    IncidentKind::Mugging => AlarmKind::Mugging,
+                    IncidentKind::Robbery => AlarmKind::Robbery,
+                    IncidentKind::Rampage | IncidentKind::Breakout => AlarmKind::Fight,
+                    _ => return None,
+                };
+                Some((i.id, kind, i.at))
+            })
+            .collect();
+        for &(id, kind, at) in &open {
+            match self.crime_alarms.get(&id) {
+                Some(&a) => self.alarms.refresh(a, at, tick, TICK_HZ),
+                None => {
+                    let a = self.alarms.raise(kind, at, tick, TICK_HZ);
+                    self.crime_alarms.insert(id, a);
+                }
+            }
+        }
+        let over: Vec<u32> = self
+            .crime_alarms
+            .keys()
+            .copied()
+            .filter(|id| open.iter().all(|o| o.0 != *id))
+            .collect();
+        for id in over {
+            if let Some(a) = self.crime_alarms.remove(&id) {
+                self.alarms.end(a);
+            }
         }
     }
 
@@ -556,6 +637,7 @@ impl Sim {
         combat::step(&mut self.world, self.tick);
         self.machines_break_the_city();
         self.incidents.step(&mut self.world, self.tick);
+        self.raise_crime_alarms();
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
         self.alarms.step(self.tick);

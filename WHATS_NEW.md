@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.059 (2026-11-08)
+
+- The Chrome Jackets hang out on corners in the run-down streets round the Doctor's quarter. Like
+  any gang on its own turf, they tell strangers to beat it, and fight if you don't.
+- The street notices crime: people back away from a mugging or a robbery, run from a rampage, and
+  turn to look when a gang shouts someone off its turf.
+- The powers window (B) shows where you stand with each faction, from hostile to allied.
+
 ## 0.058 (2026-11-08)
 
 - Cars drive smoothly now instead of jumping a few times a second.

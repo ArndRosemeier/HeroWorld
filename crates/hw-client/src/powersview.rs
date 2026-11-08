@@ -14,6 +14,35 @@ use hw_sim::progress::{
     BuyError, MAX_LEVEL, ORIGINS, REFUND,
 };
 
+/// How each faction regards the hero, one word each: a new hero is
+/// regarded like any townsperson, and deeds move it (`hw_sim::factions`).
+fn standing(ui: &mut egui::Ui, sheet: &Sheet) {
+    use hw_sim::factions::{toward_hero, Attitude};
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            egui::RichText::new("Standing:")
+                .size(13.0)
+                .color(egui::Color32::from_gray(200)),
+        );
+        for f in hw_net::Faction::ALL {
+            let a = Attitude::of(toward_hero(f, &sheet.regard));
+            let colour = match a {
+                Attitude::Hostile => egui::Color32::from_rgb(255, 90, 80),
+                Attitude::Unfriendly => egui::Color32::from_rgb(255, 170, 90),
+                Attitude::Neutral => egui::Color32::from_gray(185),
+                Attitude::Friendly => egui::Color32::from_rgb(130, 220, 130),
+                Attitude::Allied => GOLD,
+            };
+            ui.label(
+                egui::RichText::new(format!("{} {}", f.name(), a.name().to_lowercase()))
+                    .size(13.0)
+                    .color(colour),
+            );
+            ui.add_space(8.0);
+        }
+    });
+}
+
 /// What the player asked for in the windows this frame.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PowerAction {
@@ -218,6 +247,7 @@ impl PowersView {
                         ui.add_space(8.0);
                     }
                 });
+                standing(ui, sheet);
                 ui.separator();
                 egui::ScrollArea::vertical()
                     .max_height(ctx.screen_rect().height() * 0.62)
