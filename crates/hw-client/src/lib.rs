@@ -18,5 +18,6 @@ pub mod propview;
 pub mod title;
 pub mod townmesh;
 pub mod trafficview;
+pub mod undergroundview;
 pub mod waterfrontview;
 pub mod zfight;

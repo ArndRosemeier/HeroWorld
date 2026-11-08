@@ -3,6 +3,16 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.026 (2026-11-08)
+
+- There is a town below the town. Look for the glowing atom signs on the pavements beside the
+  main roads: step into the lift under the canopy and hold Ctrl to sink down into concrete
+  utility tunnels with pipes and a glowing Aether conduit along the ceiling. Jump in the lift
+  to ride back up.
+- Somewhere under the town lies Molehaven, the mole people's cavern: mushroom houses with
+  round doors, glowing toadstools and crystals, a market round a glowing well. Its own lift
+  has an amber sign, and a ramp leads there from the tunnels.
+
 ## 0.025 (2026-11-08)
 
 - Traffic! Golden-age cars drive the streets, their spoked wheels turning, busier downtown and

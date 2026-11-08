@@ -44,7 +44,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay`, `wrecked`, `traffic`, `skylanes` or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay`, `wrecked`, `traffic`, `skylanes`, `lift`, `tunnel`, `molehaven` or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -141,7 +141,8 @@ impl HeroCamera {
             let q = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
             let hidden = open_above.is_some_and(|y| q.y > y);
             if !hidden
-                && (solids.solid_at(q) || q.y < solids.ground_at(glam::DVec2::new(q.x, q.z)) + 0.2)
+                && (solids.solid_at(q)
+                    || q.y < solids.ground_for(glam::DVec2::new(q.x, q.z), q.y) + 0.2)
             {
                 d = (t - step).max(0.0);
                 break;
@@ -397,6 +398,52 @@ fn main() -> EngineResult<()> {
             let (up, pitch) = if sky { (30.0, 4.0) } else { (6.0, -10.0) };
             FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, pitch)
         }
+        "lift" | "tunnel" | "molehaven" => {
+            // The underground: a lift pavilion on the street, a utility
+            // tunnel from inside, or Molehaven's great hall.
+            let u = &generated.world.underground;
+            let lift = u
+                .entrances
+                .iter()
+                .filter(|e| !e.molehaven)
+                .min_by(|a, b| a.pos.distance(spawn).total_cmp(&b.pos.distance(spawn)));
+            let tunnel = u
+                .voids
+                .iter()
+                .filter(|v| v.kind == hw_gen::urban::underground::VoidKind::Tunnel)
+                .filter(|v| v.max.x - v.min.x > 30.0)
+                .min_by(|a, b| {
+                    a.origin
+                        .distance(spawn)
+                        .total_cmp(&b.origin.distance(spawn))
+                });
+            match (view.as_str(), lift, tunnel, &u.cavern) {
+                ("lift", Some(e), _, _) => {
+                    let p = e.pos + e.door * 9.0 + e.door.perp() * 4.0;
+                    let d = e.pos - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, e.top as f32 + 3.0, p.y as f32), yaw, -8.0)
+                }
+                ("tunnel", _, Some(v), _) => {
+                    let p = v.world(DVec2::new(v.min.x + 2.0, 0.0)) - v.inward() * 0.8;
+                    let yaw = v.along.x.atan2(v.along.y).to_degrees() as f32;
+                    let y = v.floor_at(p) + 1.8;
+                    FlyCamera::new((p.x as f32, y as f32, p.y as f32), yaw, -4.0)
+                }
+                ("molehaven", _, _, Some(c)) => {
+                    let hall = &u.voids[c.chambers[0]];
+                    let p = hall.world(DVec2::new(hall.max.x - 4.0, hall.max.y * 0.5));
+                    let d = c.centre - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, c.floor as f32 + 5.0, p.y as f32), yaw, -10.0)
+                }
+                _ => FlyCamera::new(
+                    (spawn.x as f32, ground(spawn) as f32 + 6.0, spawn.y as f32),
+                    0.0,
+                    -10.0,
+                ),
+            }
+        }
         "cutaway" => {
             let f = town.cut_focus;
             let h = ground(f) as f32;
@@ -650,6 +697,9 @@ fn main() -> EngineResult<()> {
             if let Some(lights) = extras.lights.as_mut() {
                 let dark = swoop.is_none() && hw_client::nightlights::dark_at(game_hour());
                 lights.update(world, world.camera().eye(), dark)?;
+            }
+            if let Some(under) = extras.under.as_mut() {
+                under.update(world, world.camera().eye(), &generated.world)?;
             }
             {
                 let eye = world.camera().eye();
@@ -1222,10 +1272,13 @@ fn main() -> EngineResult<()> {
                 _ => {
                     fly.update(world, frame);
                     let q = DVec2::new(fly.position.x as f64, fly.position.z as f64);
-                    let floor = generated
-                        .world
-                        .ground(q)
-                        .max(hw_gen::urban::world::WATER_LEVEL);
+                    let under = solids.ground_for(q, fly.position.y as f64);
+                    // Below the streets the water level does not count.
+                    let floor = if under < solids.ground_at(q) - 1.0 {
+                        under
+                    } else {
+                        under.max(hw_gen::urban::world::WATER_LEVEL)
+                    };
                     fly.position.y = fly.position.y.max(floor as f32 + 1.8);
                 }
             }
@@ -1300,6 +1353,8 @@ fn set_town_stream(world: &mut World, generated: &GeneratedTown) -> EngineResult
     let settings = StreamSettings {
         water_window: 1536.0,
         water_cell: 4.0,
+        // Deep enough for Molehaven under the streets.
+        voxel_below: (hw_gen::urban::underground::CAVERN_DEPTH + 8.0) as f32,
         ..StreamSettings::default()
     };
     let stream = WorldStream::new(TownGround(generated.world.clone()), settings)
@@ -1317,6 +1372,7 @@ struct TownExtras {
     entities: Vec<EntityId>,
     lights: Option<hw_client::nightlights::NightLights>,
     props: Option<hw_client::propview::PropView>,
+    under: Option<hw_client::undergroundview::UndergroundView>,
 }
 
 impl TownExtras {
@@ -1331,6 +1387,9 @@ impl TownExtras {
             l.clear(world);
         }
         self.props = None;
+        if let Some(mut u) = self.under.take() {
+            u.clear(world);
+        }
     }
 }
 
@@ -1345,11 +1404,13 @@ fn spawn_extras(world: &mut World, generated: &GeneratedTown) -> EngineResult<To
     );
     let landmarks = hw_client::landmarkview::LandmarkView::spawn(world, &generated.world)?;
     let waterfront = hw_client::waterfrontview::WaterfrontView::spawn(world, &generated.world)?;
+    let under = hw_client::undergroundview::UndergroundView::spawn(world, &generated.world)?;
     Ok(TownExtras {
         lods: props.sets.iter().copied().chain(landmarks.sets).collect(),
         entities: waterfront.entities,
         lights: Some(hw_client::nightlights::NightLights::new(&generated.world)),
         props: Some(props),
+        under: Some(under),
     })
 }
 

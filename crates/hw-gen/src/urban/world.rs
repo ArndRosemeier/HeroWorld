@@ -14,6 +14,7 @@ use super::plots::{plan_buildings, road_reach, side_reach};
 use super::props::{plan_props, Prop};
 use super::roads::RoadClass;
 use super::streets::{plan_piece, PieceStreets, StreetStyle};
+use super::underground::{plan_underground, Underground};
 use super::waterfront::{plan_waterfront, QuayWall, WaterSteps};
 use super::{Town, TownParams};
 use crate::building::BuildingSite;
@@ -77,6 +78,8 @@ pub struct TownWorld {
     pub quays: Vec<QuayWall>,
     /// Steps from the quays down to the water.
     pub water_steps: Vec<WaterSteps>,
+    /// Utility tunnels, lifts and Molehaven, below the town.
+    pub underground: Underground,
     /// Ground heights, river beds and sea floor included.
     terrain: Grid<f32>,
 }
@@ -113,6 +116,7 @@ impl TownWorld {
             landmarks: Vec::new(),
             quays: Vec::new(),
             water_steps: Vec::new(),
+            underground: Underground::default(),
             terrain,
         };
         out.roads = out.make_roads();
@@ -143,6 +147,7 @@ impl TownWorld {
         }
         out.buildings = buildings;
         out.props = plan_props(&out);
+        out.underground = plan_underground(&out);
         out
     }
 

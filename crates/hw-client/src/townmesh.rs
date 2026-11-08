@@ -37,6 +37,11 @@ impl WorldGenerator for TownGround {
         self.0.ground(DVec2::new(x as f64, z as f64)) as f32
     }
 
+    /// The utility tunnels, lift shafts and Molehaven carved out of the rock.
+    fn density(&self, p: glam::Vec3, ground: f32) -> f32 {
+        crate::undergroundview::density(&self.0.underground, p, ground)
+    }
+
     fn sea(&self) -> Option<engine::water::Sea> {
         self.0
             .coastal()

@@ -31,6 +31,7 @@ pub mod roads;
 pub mod streets;
 pub mod tensor;
 pub mod trace;
+pub mod underground;
 pub mod waterfront;
 pub mod world;
 

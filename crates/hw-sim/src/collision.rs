@@ -9,6 +9,7 @@ use hw_gen::building::BuildingPlan;
 use hw_gen::building::BuildingSite;
 use hw_gen::city::CityPlan;
 use hw_gen::geom::Rect;
+use hw_gen::urban::underground::Underground;
 use hw_gen::urban::world::{TownWorld, WATER_LEVEL};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -175,6 +176,8 @@ pub struct Obstacles {
     /// Hills and valleys (open ground is then the terrain, or the water
     /// surface at `ground` where the terrain dips below it).
     terrain: Option<Terrain>,
+    /// Tunnels, lift shafts and caverns below the ground.
+    under: Option<Arc<Underground>>,
 }
 
 /// Where the open ground is water, and the bridges over it.
@@ -257,6 +260,7 @@ impl Obstacles {
     pub fn from_town(world: &TownWorld, terrain: Terrain) -> Self {
         let mut out = Self::flat(WATER_LEVEL);
         out.terrain = Some(terrain);
+        out.under = Some(Arc::new(world.underground.clone()));
         for b in &world.buildings {
             let corners = b.site.corners();
             let mut c = Collider::new(
@@ -418,6 +422,13 @@ impl Obstacles {
 
     /// Is `p` inside any solid?
     pub fn solid_at(&self, p: DVec3) -> bool {
+        // Rock round the underground's open spaces.
+        if let Some(u) = &self.under {
+            let q = DVec2::new(p.x, p.z);
+            if p.y < self.ground_at(q) - 0.2 && !u.near(q, 4.0).is_empty() && !u.open_at(p) {
+                return true;
+            }
+        }
         let sets = self.near(DVec2::new(p.x, p.z), 0.0);
         let found = sets.iter().flat_map(|x| x.iter()).any(|s| {
             let l = s.to_local(DVec2::new(p.x, p.z));
@@ -474,6 +485,11 @@ impl Obstacles {
     /// Is `p` (feet) inside a lift shaft?
     pub fn in_lift(&self, p: DVec3) -> bool {
         let q = DVec2::new(p.x, p.z);
+        if let Some(u) = &self.under {
+            if u.in_shaft(p, self.ground_at(q)) {
+                return true;
+            }
+        }
         self.near_colliders(q, 0.0).into_iter().any(|i| {
             let c = &self.colliders[i as usize];
             let Some(plan) = c.plan() else { return false };
@@ -511,9 +527,24 @@ impl Obstacles {
         }
     }
 
+    /// Height of the open ground for something at height `y` over `p`:
+    /// a tunnel's or cavern's floor when it is down in one, else the
+    /// ground (or water) surface.
+    pub fn ground_for(&self, p: DVec2, y: f64) -> f64 {
+        self.under
+            .as_ref()
+            .and_then(|u| u.floor_for(p, y))
+            .unwrap_or_else(|| self.ground_at(p))
+    }
+
+    /// The underground, if the town has one.
+    pub fn underground(&self) -> Option<&Underground> {
+        self.under.as_deref()
+    }
+
     /// Height of whatever is under `p` (x, z) no higher than `max_y`.
     pub fn floor_under(&self, p: DVec2, max_y: f64) -> f64 {
-        let mut best = self.ground_at(p);
+        let mut best = self.ground_for(p, max_y - STEP);
         for s in self.near(p, 0.0).iter().flat_map(|x| x.iter()) {
             let l = s.to_local(p);
             if l.x >= s.min.x && l.x <= s.max.x && l.y >= s.min.y && l.y <= s.max.y && s.y1 <= max_y
@@ -600,7 +631,7 @@ impl Obstacles {
             }
             // Quay walls: the bank stands too high to step onto from the water.
             let q = DVec2::new(next.x, next.z);
-            if self.ground_at(q) > body.pos.y.max(next.y) + STEP {
+            if self.ground_for(q, body.pos.y.max(next.y)) > body.pos.y.max(next.y) + STEP {
                 next.x = body.pos.x;
                 next.z = body.pos.z;
                 body.vel.x = 0.0;
@@ -615,6 +646,17 @@ impl Obstacles {
                     let over = l.x >= s.min.x && l.x <= s.max.x && l.y >= s.min.y && l.y <= s.max.y;
                     if over && s.y0 >= body.pos.y + BODY_HEIGHT - 0.6 && head > s.y0 {
                         next.y = s.y0 - BODY_HEIGHT;
+                        body.vel.y = 0.0;
+                    }
+                }
+                // And so do tunnel and cavern roofs.
+                if let Some(c) = self
+                    .under
+                    .as_ref()
+                    .and_then(|u| u.ceiling_for(q, body.pos.y))
+                {
+                    if head > c {
+                        next.y = (c - BODY_HEIGHT).max(body.pos.y);
                         body.vel.y = 0.0;
                     }
                 }
