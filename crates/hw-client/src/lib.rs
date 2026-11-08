@@ -6,4 +6,5 @@ pub mod citymesh;
 pub mod landmarkview;
 pub mod propview;
 pub mod townmesh;
+pub mod waterfrontview;
 pub mod zfight;

@@ -30,6 +30,7 @@ pub mod roads;
 pub mod streets;
 pub mod tensor;
 pub mod trace;
+pub mod waterfront;
 pub mod world;
 
 pub use growth::{Centre, CentreKind, Era, Growth};

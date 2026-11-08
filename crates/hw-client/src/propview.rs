@@ -89,6 +89,7 @@ pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
         PropKind::Bin => vec![LodLevel::new(bin(), 120.0)],
         PropKind::Hydrant => vec![LodLevel::new(hydrant(), 120.0)],
         PropKind::Mailbox => vec![LodLevel::new(mailbox(), 180.0)],
+        PropKind::Bollard => vec![LodLevel::new(bollard(), 150.0)],
     })
 }
 
@@ -690,6 +691,19 @@ fn mailbox() -> Mesh {
     b.finish()
 }
 
+/// A cast-iron mooring bollard: a squat post with a flared cap.
+fn bollard() -> Mesh {
+    let mut b = MeshBuilder::new();
+    let iron = rgb(30, 34, 36);
+    metal(&mut b, |b| {
+        b.cylinder(DVec3::ZERO, (0.2, 0.2), 0.08, 10, true, iron);
+        b.cylinder(DVec3::Y * 0.08, (0.15, 0.12), 0.42, 10, false, iron);
+        b.cylinder(DVec3::Y * 0.5, (0.12, 0.2), 0.1, 10, false, iron);
+        b.cylinder(DVec3::Y * 0.6, (0.2, 0.18), 0.06, 10, true, iron);
+    });
+    b.finish()
+}
+
 /// A round basin with a bowl on a column and a glowing atom on top.
 fn fountain() -> Mesh {
     let mut b = MeshBuilder::new();
@@ -752,6 +766,7 @@ mod tests {
             PropKind::Hydrant,
             PropKind::Mailbox,
             PropKind::Fountain,
+            PropKind::Bollard,
         ];
         for k in kinds {
             let levels = model_levels(k).unwrap();

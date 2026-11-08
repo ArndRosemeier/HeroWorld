@@ -14,6 +14,7 @@ use super::plots::{plan_buildings, road_reach, side_reach};
 use super::props::{plan_props, Prop};
 use super::roads::RoadClass;
 use super::streets::{plan_piece, PieceStreets, StreetStyle};
+use super::waterfront::{plan_waterfront, QuayWall, WaterSteps};
 use super::{Town, TownParams};
 use crate::building::BuildingSite;
 use glam::DVec2;
@@ -72,6 +73,10 @@ pub struct TownWorld {
     pub props: Vec<Prop>,
     /// The Aether Spire and, by the sea, a lighthouse.
     pub landmarks: Vec<Landmark>,
+    /// Stone walls where streets meet the water.
+    pub quays: Vec<QuayWall>,
+    /// Steps from the quays down to the water.
+    pub water_steps: Vec<WaterSteps>,
     /// Ground heights, river beds and sea floor included.
     terrain: Grid<f32>,
 }
@@ -106,11 +111,14 @@ impl TownWorld {
             bridges: Vec::new(),
             props: Vec::new(),
             landmarks: Vec::new(),
+            quays: Vec::new(),
+            water_steps: Vec::new(),
             terrain,
         };
         out.roads = out.make_roads();
         out.bridges = out.make_bridges();
         out.landmarks = plan_landmarks(&out);
+        (out.quays, out.water_steps) = plan_waterfront(&out);
         let mut buildings = Vec::new();
         for (pc, streets) in out.town.pieces.iter().zip(&out.pieces) {
             for site in plan_buildings(seed, &out.town, pc, streets) {

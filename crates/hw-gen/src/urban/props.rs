@@ -78,6 +78,8 @@ pub enum PropKind {
     TrafficLight,
     Car(CarModel, u8),
     Fountain,
+    /// A cast-iron mooring bollard on a quay.
+    Bollard,
 }
 
 /// One thing standing in the town.
@@ -103,6 +105,7 @@ pub fn plan_props(w: &TownWorld) -> Vec<Prop> {
     for (ri, r) in w.roads.iter().enumerate() {
         p.road(ri, r, region, seed.child(ri as u32));
     }
+    p.quays();
     p.junctions(seed.child("junctions"));
     p.parks(region, seed.child("parks"));
     p.gardens(region, seed.child("gardens"));
@@ -248,7 +251,9 @@ impl<'a> Placer<'a> {
 
     /// Places `kind` if the spot is free; true if it did.
     fn put(&mut self, kind: PropKind, pos: DVec2, dir: DVec2, scale: f64, r: f64) -> bool {
-        if !self.dry(pos)
+        // Bollards stand on the quay's paving, over the water's edge.
+        let quay = kind == PropKind::Bollard;
+        if !(quay || self.dry(pos))
             || self.in_building(pos, r)
             || self.crowded(pos, r)
             || self.w.landmarks.iter().any(|l| l.covers(pos, r))
@@ -263,7 +268,11 @@ impl<'a> Placer<'a> {
         self.out.push(Prop {
             kind,
             pos,
-            y: self.w.ground(pos) + lift,
+            y: if quay {
+                self.w.road_height(pos) + lift
+            } else {
+                self.w.ground(pos) + lift
+            },
             dir,
             scale,
         });
@@ -450,6 +459,19 @@ impl<'a> Placer<'a> {
                 if !self.on_road(q, 0.4, Some(ri), false) && rng.chance(0.9) {
                     self.put(PropKind::TrafficLight, q, d, 1.0, 0.5);
                 }
+            }
+        }
+    }
+
+    /// Mooring bollards along the quay walls, clear of the steps.
+    fn quays(&mut self) {
+        for q in &self.w.quays {
+            for k in (2..q.pts.len().saturating_sub(2)).step_by(7) {
+                let p = q.pts[k] - q.out[k] * 0.45;
+                if self.w.water_steps.iter().any(|s| s.pos.distance(p) < 3.5) {
+                    continue;
+                }
+                self.put(PropKind::Bollard, p, q.out[k], 1.0, 0.3);
             }
         }
     }

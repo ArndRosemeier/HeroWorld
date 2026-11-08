@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.015 (2026-11-08)
+
+- Waterfronts: where a street meets a river or the sea it now ends in a granite quay wall with a stone kerb, iron mooring bollards, and steps down to a landing at the water.
+
 ## 0.014 (2026-11-08)
 
 - Play with friends anywhere: a hosted world (`HW_HOST=1`) now gets a six-letter room code, shown top right. Friends join with `HW_JOIN=<code>`, no port forwarding needed: the game travels through GameHub when it has to.

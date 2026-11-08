@@ -24,7 +24,7 @@
 //! Environment: `HW_SEED` (world seed, default 1); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse` or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `lighthouse`, `quay` or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -225,6 +225,20 @@ fn main() -> EngineResult<()> {
             let pitch = ((h * 0.4 - (eye - base)) / d.length()).atan().to_degrees() as f32;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
         }
+        "quay" => {
+            // Along a quay wall at the nearest steps down to the water.
+            let st = generated
+                .world
+                .water_steps
+                .iter()
+                .min_by(|a, b| a.pos.distance(spawn).total_cmp(&b.pos.distance(spawn)));
+            let (c, out, top) =
+                st.map_or((spawn, spawn_dir, ground(spawn)), |s| (s.pos, s.out, s.top));
+            let p = c + out * 9.0 + out.perp() * 14.0;
+            let d = c - p;
+            let yaw = d.x.atan2(d.y).to_degrees() as f32;
+            FlyCamera::new((p.x as f32, top as f32 + 4.0, p.y as f32), yaw, -14.0)
+        }
         "cutaway" => {
             let f = town.cut_focus;
             let h = ground(f) as f32;
@@ -337,6 +351,7 @@ fn main() -> EngineResult<()> {
                     t.elapsed().as_secs_f64()
                 );
                 hw_client::landmarkview::LandmarkView::spawn(world, &generated.world)?;
+                hw_client::waterfrontview::WaterfrontView::spawn(world, &generated.world)?;
             }
             version_corner(&frame.ui, &mut whats_new, session.room_code());
             {
