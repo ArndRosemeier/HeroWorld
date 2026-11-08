@@ -43,7 +43,15 @@ pub fn model(l: &Landmark, near: bool) -> Vec<Mesh> {
     let mut b = MeshBuilder::new();
     plinth(&mut b, l, near);
     match l.kind {
-        LandmarkKind::AetherSpire => spire(&mut b, l.height, near),
+        LandmarkKind::AetherSpire => {
+            spire(&mut b, l.height, near);
+            // The town's founding hero greets you on the way to the spire.
+            if near {
+                let mut s = MeshBuilder::new();
+                crate::propview::statue(&mut s, 0);
+                b.append(s, glam::Vec3::new(0.0, 0.0, (l.plaza * 0.62) as f32));
+            }
+        }
         LandmarkKind::Lighthouse => lighthouse(&mut b, l.height, near),
     }
     b.finish_parts()

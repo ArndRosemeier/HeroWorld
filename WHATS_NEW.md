@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.017 (2026-11-08)
+
+- News kiosks with saucer roofs and glowing signs on the wide pavements, round advertising pillars in the old quarters.
+- Bronze heroes on stone plinths in the parks, and the town's founding hero in front of the Aether Spire.
+
 ## 0.016 (2026-11-08)
 
 - A title screen! HeroWorld now opens on its own town at golden hour, seen from a camera drifting round the Aether Spire while flying taxis cross the sky. The golden HEROWORLD letters swoop in with a whoosh, glint now and then, and Aether sparks dance around them.

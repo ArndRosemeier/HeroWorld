@@ -90,6 +90,9 @@ pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
         PropKind::Hydrant => vec![LodLevel::new(hydrant(), 120.0)],
         PropKind::Mailbox => vec![LodLevel::new(mailbox(), 180.0)],
         PropKind::Bollard => vec![LodLevel::new(bollard(), 150.0)],
+        PropKind::Kiosk => two(kiosk(true), 200.0, kiosk(false), 600.0),
+        PropKind::AdPillar => vec![LodLevel::new(ad_pillar(), 250.0)],
+        PropKind::Statue(pose) => vec![LodLevel::new(statue_mesh(pose), 500.0)],
     })
 }
 
@@ -691,6 +694,233 @@ fn mailbox() -> Mesh {
     b.finish()
 }
 
+/// A round news kiosk: cream walls, a glowing sign band, a red saucer roof
+/// and an atom on a mast.
+fn kiosk(near: bool) -> Mesh {
+    let mut b = MeshBuilder::new();
+    let seg = if near { 16 } else { 8 };
+    let cream = rgb(236, 226, 200);
+    let red = rgb(196, 54, 44);
+    b.cylinder(DVec3::ZERO, (1.25, 1.25), 0.5, seg, true, red);
+    b.cylinder(DVec3::Y * 0.5, (1.2, 1.2), 1.7, seg, false, cream);
+    // The counter window, dark glass towards the street.
+    glass(&mut b, |b| {
+        bx(
+            b,
+            DVec3::new(-0.75, 1.0, 1.0),
+            DVec3::new(0.75, 1.9, 1.23),
+            rgb(50, 70, 90),
+        )
+    });
+    // The sign band all round.
+    glow(&mut b, |b| {
+        b.cylinder(
+            DVec3::Y * 2.2,
+            (1.24, 1.24),
+            0.45,
+            seg,
+            false,
+            rgb(255, 210, 120),
+        )
+    });
+    b.cylinder(DVec3::Y * 2.65, (1.2, 1.9), 0.25, seg, false, red);
+    b.cylinder(DVec3::Y * 2.9, (1.9, 0.0), 0.7, seg, true, red);
+    if near {
+        metal(&mut b, |b| {
+            b.cylinder(
+                DVec3::Y * 3.5,
+                (0.04, 0.04),
+                0.8,
+                4,
+                false,
+                rgb(200, 206, 214),
+            )
+        });
+        glow(&mut b, |b| {
+            ellipsoid(
+                b,
+                DVec3::Y * 4.4,
+                DVec3::splat(0.14),
+                8,
+                4,
+                rgb(140, 230, 255),
+            )
+        });
+    }
+    b.finish()
+}
+
+/// A round advertising pillar in green iron, posters all round, a dome cap.
+fn ad_pillar() -> Mesh {
+    let mut b = MeshBuilder::new();
+    let green = rgb(40, 82, 60);
+    b.cylinder(DVec3::ZERO, (0.62, 0.62), 0.3, 14, true, green);
+    // Posters: bands of colour round the drum.
+    let posters = [
+        (232, 196, 90),
+        (210, 70, 60),
+        (90, 150, 200),
+        (240, 236, 220),
+        (220, 120, 170),
+        (120, 190, 120),
+    ];
+    let seg = 12;
+    for i in 0..seg {
+        let (a0, a1) = (
+            TAU * i as f64 / seg as f64,
+            TAU * (i + 1) as f64 / seg as f64,
+        );
+        let at = |a: f64, y: f64| DVec3::new(0.55 * a.cos(), y, 0.55 * a.sin());
+        let mid = (a0 + a1) * 0.5;
+        let out = DVec3::new(mid.cos(), 0.0, mid.sin());
+        let c = posters[(i * 5 + i / 3) % posters.len()];
+        b.quad(
+            [at(a0, 0.3), at(a1, 0.3), at(a1, 2.5), at(a0, 2.5)],
+            out,
+            c3(c),
+        );
+    }
+    b.cylinder(DVec3::Y * 2.5, (0.62, 0.66), 0.15, 14, false, green);
+    b.dome(DVec3::Y * 2.65, 0.66, 14, 4, green);
+    metal(&mut b, |b| {
+        b.cylinder(
+            DVec3::Y * 3.25,
+            (0.06, 0.0),
+            0.35,
+            6,
+            false,
+            rgb(214, 170, 72),
+        )
+    });
+    b.finish()
+}
+
+/// A bronze hero on a stone plinth, facing +z.
+pub fn statue_mesh(pose: u8) -> Mesh {
+    let mut b = MeshBuilder::new();
+    statue(&mut b, pose);
+    b.finish()
+}
+
+/// A bronze hero on a stone plinth: fist to the sky (0), hands on hips (1)
+/// or taking off, one arm forward (2).
+pub fn statue(b: &mut MeshBuilder, pose: u8) {
+    let stone = rgb(200, 194, 182);
+    let bronze = rgb(126, 92, 52);
+    bx(
+        b,
+        DVec3::new(-1.0, 0.0, -1.0),
+        DVec3::new(1.0, 0.25, 1.0),
+        stone,
+    );
+    bx(
+        b,
+        DVec3::new(-0.8, 0.25, -0.8),
+        DVec3::new(0.8, 1.6, 0.8),
+        stone,
+    );
+    bx(
+        b,
+        DVec3::new(-0.9, 1.6, -0.9),
+        DVec3::new(0.9, 1.75, 0.9),
+        stone,
+    );
+    // A gold plaque in front.
+    metal(b, |b| {
+        bx(
+            b,
+            DVec3::new(-0.45, 0.7, 0.8),
+            DVec3::new(0.45, 1.15, 0.83),
+            rgb(214, 170, 72),
+        )
+    });
+    let y0 = 1.75;
+    let fly = pose == 2;
+    metal(b, |b| {
+        // Legs apart (one bent back when taking off).
+        for side in [-1.0, 1.0] {
+            let back = if fly && side > 0.0 { -0.35 } else { 0.0 };
+            ellipsoid(
+                b,
+                DVec3::new(0.2 * side, y0 + 0.55, back),
+                DVec3::new(0.13, 0.55, 0.14),
+                8,
+                5,
+                bronze,
+            );
+        }
+        // Torso, chest out; head.
+        ellipsoid(
+            b,
+            DVec3::new(0.0, y0 + 1.45, 0.0),
+            DVec3::new(0.36, 0.48, 0.22),
+            10,
+            6,
+            bronze,
+        );
+        ellipsoid(
+            b,
+            DVec3::new(0.0, y0 + 2.1, 0.02),
+            DVec3::new(0.13, 0.16, 0.14),
+            8,
+            5,
+            bronze,
+        );
+        // Arms.
+        let arm = |b: &mut MeshBuilder, side: f64, to: DVec3| {
+            let sh = DVec3::new(0.42 * side, y0 + 1.75, 0.0);
+            // Three beads from shoulder to fist.
+            for t in [0.15, 0.5, 0.85] {
+                let p = sh.lerp(to, t);
+                ellipsoid(b, p, DVec3::splat(0.1 + 0.02 * (1.0 - t)), 6, 4, bronze);
+            }
+        };
+        match pose {
+            0 => {
+                arm(b, 1.0, DVec3::new(0.55, y0 + 2.6, 0.05));
+                arm(b, -1.0, DVec3::new(-0.38, y0 + 1.2, 0.1));
+            }
+            1 => {
+                arm(b, 1.0, DVec3::new(0.3, y0 + 1.2, -0.05));
+                arm(b, -1.0, DVec3::new(-0.3, y0 + 1.2, -0.05));
+            }
+            _ => {
+                arm(b, 1.0, DVec3::new(0.35, y0 + 2.35, 0.6));
+                arm(b, -1.0, DVec3::new(-0.45, y0 + 1.25, -0.2));
+            }
+        }
+        // Fists.
+        let fist = match pose {
+            0 => DVec3::new(0.55, y0 + 2.62, 0.05),
+            1 => DVec3::new(0.3, y0 + 1.15, -0.05),
+            _ => DVec3::new(0.35, y0 + 2.4, 0.65),
+        };
+        ellipsoid(b, fist, DVec3::splat(0.12), 6, 4, bronze);
+        // The cape, flowing back.
+        let sway = if fly { 0.9 } else { 0.45 };
+        b.quad(
+            [
+                DVec3::new(-0.38, y0 + 1.85, -0.2),
+                DVec3::new(0.38, y0 + 1.85, -0.2),
+                DVec3::new(0.55, y0 + 0.35, -0.2 - sway),
+                DVec3::new(-0.55, y0 + 0.35, -0.2 - sway),
+            ],
+            -DVec3::Z + DVec3::Y * 0.3,
+            bronze,
+        );
+        b.quad(
+            [
+                DVec3::new(-0.38, y0 + 1.85, -0.18),
+                DVec3::new(0.38, y0 + 1.85, -0.18),
+                DVec3::new(0.55, y0 + 0.35, -0.18 - sway),
+                DVec3::new(-0.55, y0 + 0.35, -0.18 - sway),
+            ],
+            DVec3::Z - DVec3::Y * 0.3,
+            bronze,
+        );
+    });
+}
+
 /// A cast-iron mooring bollard: a squat post with a flared cap.
 fn bollard() -> Mesh {
     let mut b = MeshBuilder::new();
@@ -767,6 +997,11 @@ mod tests {
             PropKind::Mailbox,
             PropKind::Fountain,
             PropKind::Bollard,
+            PropKind::Kiosk,
+            PropKind::AdPillar,
+            PropKind::Statue(0),
+            PropKind::Statue(1),
+            PropKind::Statue(2),
         ];
         for k in kinds {
             let levels = model_levels(k).unwrap();

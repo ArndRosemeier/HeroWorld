@@ -80,7 +80,16 @@ pub enum PropKind {
     Fountain,
     /// A cast-iron mooring bollard on a quay.
     Bollard,
+    /// A round news kiosk with a saucer roof.
+    Kiosk,
+    /// A round advertising pillar, posters all round.
+    AdPillar,
+    /// A bronze hero on a stone plinth; the number picks the pose.
+    Statue(u8),
 }
+
+/// Poses of [`PropKind::Statue`].
+pub const STATUE_POSES: u8 = 3;
 
 /// One thing standing in the town.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -399,6 +408,34 @@ impl<'a> Placer<'a> {
                 }
             }
         }
+        // News kiosks on wide pavements; advertising pillars in the older
+        // quarters.
+        if r.pavement >= 2.2 && !matches!(style, Some(StreetStyle::Lanes | StreetStyle::Industrial))
+        {
+            let mut s = END_CLEAR + rng.range(20.0, 90.0);
+            while s < len - END_CLEAR {
+                let (p, d) = walk.point(s);
+                let sd = if rng.chance(0.5) { 1.0 } else { -1.0 };
+                let n = d.perp() * sd;
+                let kiosk = r.pavement >= 3.0 && (era == Era::Modern || rng.chance(0.5));
+                let (kind, rad) = if kiosk {
+                    (PropKind::Kiosk, 1.5)
+                } else {
+                    (PropKind::AdPillar, 0.7)
+                };
+                // Pillars belong to the older quarters, and not on every block.
+                if !kiosk && (era == Era::Modern || rng.chance(0.55)) {
+                    s += rng.range(110.0, 240.0);
+                    continue;
+                }
+                let q = p + n * (r.half + r.pavement * 0.62);
+                let fits = r.pavement * 0.38 > rad * 0.6;
+                if fits && !self.on_road(q, rad * 0.5, Some(ri), false) {
+                    self.put(kind, q, -n, 1.0, rad);
+                }
+                s += rng.range(110.0, 240.0);
+            }
+        }
         // Benches, bins, hydrants, mailboxes.
         let mut s = END_CLEAR + rng.range(10.0, 30.0);
         while s < len - END_CLEAR {
@@ -489,10 +526,18 @@ impl<'a> Placer<'a> {
                 let hi = block.iter().fold(DVec2::MIN, |m, p| m.max(*p));
                 let era = self.era_at((lo + hi) * 0.5);
                 let inside = |p: DVec2| super::contains(block, p);
-                if area > 2500.0 {
+                if area > 1500.0 {
                     if let Some(c) = super::inner_point(block) {
-                        if !self.on_road(c, 6.0, None, true) {
-                            self.put(PropKind::Fountain, c, DVec2::Y, 1.0, 5.0);
+                        let fountain = area > 2500.0
+                            && !self.on_road(c, 6.0, None, true)
+                            && self.put(PropKind::Fountain, c, DVec2::Y, 1.0, 5.0);
+                        // A hero in bronze, by the fountain or in its place.
+                        let d = DVec2::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0))
+                            .normalize_or(DVec2::Y);
+                        let q = if fountain { c + d * 9.0 } else { c };
+                        if inside(q) && !self.on_road(q, 2.0, None, true) {
+                            let pose = rng.range_int(0, STATUE_POSES as i64) as u8;
+                            self.put(PropKind::Statue(pose), q, -d, 1.0, 1.6);
                         }
                     }
                 }
