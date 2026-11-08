@@ -180,6 +180,7 @@ impl Sim {
         }
         self.street.clear();
         self.street.apply(&save.props, self.tick);
+        self.wrecks.clear();
         Ok(())
     }
 }

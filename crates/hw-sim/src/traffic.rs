@@ -98,6 +98,8 @@ pub struct Traffic {
     /// Stretches of lane by grid cell: (sky, lane, from, to).
     grid: BTreeMap<(i64, i64), Vec<Span>>,
     world: Arc<TownWorld>,
+    /// Street lanes held up by a wreck: the time they stopped.
+    stops: BTreeMap<u32, f64>,
 }
 
 impl Traffic {
@@ -186,6 +188,29 @@ impl Traffic {
             sky,
             grid,
             world,
+            stops: BTreeMap::new(),
+        }
+    }
+
+    /// Holds up the street lanes with wrecks on them: each stands still
+    /// from the earliest wreck's time (see [`crate::wrecks`]).
+    pub fn set_stops(&mut self, wrecks: impl IntoIterator<Item = (u64, f64)>) {
+        self.stops.clear();
+        for (id, time) in wrecks {
+            if id & SKY_BIT != 0 {
+                continue;
+            }
+            let lane = (id >> 16) as u32;
+            let t = self.stops.entry(lane).or_insert(time);
+            *t = t.min(time);
+        }
+    }
+
+    /// The time lane `lane` has reached by `time` (stopped lanes stand).
+    fn lane_time(&self, flies: bool, lane: u32, time: f64) -> f64 {
+        match (flies, self.stops.get(&lane)) {
+            (false, Some(&t)) => t.min(time),
+            _ => time,
         }
     }
 
@@ -207,7 +232,8 @@ impl Traffic {
                     let l = self.lane(flies, lane);
                     let len = l.path.len();
                     let gap = len / l.count as f64;
-                    let base = (l.phase + l.speed * time).rem_euclid(len);
+                    let t = self.lane_time(flies, lane, time);
+                    let base = (l.phase + l.speed * t).rem_euclid(len);
                     // Vehicle k sits at base + k * gap (round the loop).
                     let u0 = (s0 - base).rem_euclid(len);
                     let first = (u0 / gap).ceil() as i64;
@@ -253,7 +279,9 @@ impl Traffic {
             return None;
         }
         let len = l.path.len();
-        let s = l.phase + l.speed * time + len * k as f64 / l.count as f64;
+        let stopped = self.lane_time(flies, lane, time) < time;
+        let lt = self.lane_time(flies, lane, time);
+        let s = l.phase + l.speed * lt + len * k as f64 / l.count as f64;
         let (p, d) = l.path.sample(s);
         let mut rng = self.seed.child(id).rng();
         let kind = if flies {
@@ -303,7 +331,7 @@ impl Traffic {
             pos,
             dir,
             roll,
-            speed: l.speed,
+            speed: if stopped { 0.0 } else { l.speed },
             odometer: s,
         })
     }

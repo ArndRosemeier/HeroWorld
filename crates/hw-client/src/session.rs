@@ -40,7 +40,13 @@ pub enum Session {
 fn is_world_news(m: &ToClient) -> bool {
     matches!(
         m,
-        ToClient::Damage { .. } | ToClient::Repaired { .. } | ToClient::Impact { .. }
+        ToClient::Damage { .. }
+            | ToClient::Repaired { .. }
+            | ToClient::Impact { .. }
+            | ToClient::PropsBroken { .. }
+            | ToClient::PropsRepaired { .. }
+            | ToClient::CarsWrecked { .. }
+            | ToClient::CarsCleared { .. }
     )
 }
 
@@ -309,6 +315,37 @@ impl Session {
     /// For screenshots (`HW_VIEW=wrecked`): wrecks two small buildings near
     /// the start, one with holes blasted into its front, one brought down.
     /// Returns where to look from and at.
+    /// Wrecks the street cars within `r` of `near` (for screenshots).
+    pub fn wreck_cars(&mut self, near: DVec3, r: f64) -> usize {
+        let Session::Local { host, .. } = self else {
+            return 0;
+        };
+        let sim = &mut host.sim;
+        let tick = sim.tick;
+        let Some(t) = sim.wrecks.traffic.as_ref() else {
+            return 0;
+        };
+        let cars: Vec<_> = t
+            .near(
+                glam::DVec2::new(near.x, near.z),
+                r,
+                tick as f64 * hw_sim::DT,
+                12,
+            )
+            .into_iter()
+            .filter(|v| !v.flies())
+            .collect();
+        let mut n = 0;
+        for v in cars {
+            let dir = DVec3::new(v.dir.z, 0.0, -v.dir.x);
+            n += sim
+                .wrecks
+                .hit(v.pos + DVec3::Y * 0.8, dir, 1.0, 5000.0, tick)
+                .0;
+        }
+        n
+    }
+
     pub fn wreck_demo(&mut self, town: &GeneratedTown) -> Option<(DVec3, DVec3)> {
         use hw_sim::destruction::{hero_power, material_factor, Frame};
         let Session::Local { host, me, .. } = self else {

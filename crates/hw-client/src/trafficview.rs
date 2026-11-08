@@ -24,8 +24,9 @@ pub struct TrafficView {
     /// frame).
     near: Vec<u64>,
     refresh: f64,
-    /// Vehicles hidden (wrecked, or the taxi you ride in is drawn apart).
-    pub hidden: Vec<u64>,
+    /// Cars wrecked by heroes: as they stand, when it happened, and the
+    /// smoke rising from them (wrecked while someone watched).
+    wrecks: BTreeMap<u64, (Vehicle, f64, Option<EmitterId>)>,
 }
 
 impl TrafficView {
@@ -42,6 +43,65 @@ impl TrafficView {
             world.despawn_lod(id);
         }
         self.near.clear();
+        self.refresh = 0.0;
+        for (_, (_, _, smoke)) in std::mem::take(&mut self.wrecks) {
+            if let Some(e) = smoke {
+                let _ = world.particles_mut().stop(e);
+            }
+        }
+    }
+
+    /// Car `id` wrecked at `tick` by a blow going `fell` (a yaw byte): it
+    /// stops dented and askew, its lane stands still behind it; `live`:
+    /// sparks fly and it smokes.
+    pub fn wreck(
+        &mut self,
+        world: &mut World,
+        traffic: &mut Traffic,
+        id: u64,
+        tick: u64,
+        fell: u8,
+        live: bool,
+    ) -> EngineResult<()> {
+        let time = tick as f64 * hw_sim::DT;
+        let Some(mut v) = traffic.vehicle(id, time) else {
+            return Ok(());
+        };
+        // Knocked round a little, away from the blow, and leaning.
+        let blow = hw_sim::props::byte_to_yaw(fell);
+        let (yaw, _) = v.yaw_pitch();
+        let side = (blow - yaw).sin().signum();
+        let turn = side * (0.25 + (id % 7) as f64 * 0.04);
+        let (s, c) = (turn.sin(), turn.cos());
+        v.dir = DVec3::new(
+            v.dir.x * c + v.dir.z * s,
+            v.dir.y,
+            -v.dir.x * s + v.dir.z * c,
+        );
+        v.roll = side * 0.12;
+        v.speed = 0.0;
+        let mut smoke = None;
+        if live {
+            let at = v.pos.as_vec3() + Vec3::Y * 0.9;
+            let dir = Vec3::new(blow.sin() as f32, 0.6, blow.cos() as f32) * 6.0;
+            let p = world.particles_mut();
+            p.burst(ParticleEmitter::sparks(at, dir, 60))?;
+            smoke = p.start(ParticleEmitter::smoke(at, 1.4)).ok();
+        }
+        if let Some((_, _, Some(old))) = self.wrecks.insert(id, (v, time, smoke)) {
+            let _ = world.particles_mut().stop(old);
+        }
+        traffic.set_stops(self.wrecks.iter().map(|(id, w)| (*id, w.1)));
+        self.refresh = 0.0;
+        Ok(())
+    }
+
+    /// Wrecks towed away: their lanes drive on.
+    pub fn clear_wreck(&mut self, world: &mut World, traffic: &mut Traffic, id: u64) {
+        if let Some((_, _, Some(e))) = self.wrecks.remove(&id) {
+            let _ = world.particles_mut().stop(e);
+        }
+        traffic.set_stops(self.wrecks.iter().map(|(id, w)| (*id, w.1)));
         self.refresh = 0.0;
     }
 
@@ -70,8 +130,22 @@ impl TrafficView {
         }
         let mut bodies: BTreeMap<VehicleKind, Vec<Place>> = BTreeMap::new();
         let mut wheels: BTreeMap<CarModel, Vec<Place>> = BTreeMap::new();
+        for (v, _, _) in self.wrecks.values() {
+            if DVec2::new(v.pos.x, v.pos.z).distance(eye) > SHOW_RADIUS {
+                continue;
+            }
+            let body = body_place(v);
+            bodies.entry(v.kind).or_default().push(Place {
+                stretch: Vec3::new(1.03, 0.86, 0.94),
+                tint: Color::rgb(92, 86, 82),
+                ..body
+            });
+            if let VehicleKind::Car(model, _) = v.kind {
+                wheel_places(v, model, wheels.entry(model).or_default());
+            }
+        }
         for &id in &self.near {
-            if self.hidden.contains(&id) {
+            if self.wrecks.contains_key(&id) {
                 continue;
             }
             let Some(v) = traffic.vehicle(id, time) else {

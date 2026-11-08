@@ -20,6 +20,7 @@ pub mod props;
 pub mod save;
 pub mod taxi;
 pub mod traffic;
+pub mod wrecks;
 
 use bevy_ecs::prelude::*;
 use bubbles::Bubbles;
@@ -380,6 +381,8 @@ pub struct Sim {
     pub street: props::PropDamage,
     /// Taxi stands and the taxis flying fares (see [`taxi`]).
     pub taxis: taxi::Taxis,
+    /// The moving traffic and the cars wrecked in it (see [`wrecks`]).
+    pub wrecks: wrecks::Wrecks,
 }
 
 impl Sim {
@@ -402,6 +405,7 @@ impl Sim {
         sim.town_population = town.population();
         sim.street = props::PropDamage::new(town.world.clone());
         sim.taxis = taxi::Taxis::new(town.world.clone());
+        sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.world.clone()));
         sim
     }
 
@@ -433,6 +437,7 @@ impl Sim {
             damage: Damage::default(),
             street: props::PropDamage::default(),
             taxis: taxi::Taxis::default(),
+            wrecks: wrecks::Wrecks::default(),
         }
     }
 
@@ -479,6 +484,7 @@ impl Sim {
             let at: Vec<DVec3> = heroes.iter().map(|h| h.2).collect();
             self.damage.repair_unseen(&solids, &at, self.tick, TICK_HZ);
             self.street.repair_unseen(&at, self.tick, TICK_HZ);
+            self.wrecks.repair_unseen(&at, self.tick, TICK_HZ);
         }
         self.step_physics(&heroes);
         self.tick += 1;
@@ -535,7 +541,10 @@ impl Sim {
                     let wall = destruction::raycast(&solids, chest, aim, BLAST_RANGE);
                     let reach = wall.map_or(BLAST_RANGE, |p| p.distance(chest));
                     // A lamp post or car in the way takes the blast first.
-                    let Some(p) = self.street.raycast(chest, aim, reach).or(wall) else {
+                    let prop = self.street.raycast(chest, aim, reach);
+                    let reach = prop.map_or(reach, |p| p.distance(chest));
+                    let car = self.wrecks.raycast(chest, aim, reach, tick);
+                    let Some(p) = car.or(prop).or(wall) else {
                         continue;
                     };
                     (p, power.blast_radius, power.blast)
@@ -543,6 +552,9 @@ impl Sim {
             };
             let (props, spent) = self.street.hit(at, aim, radius, strength, tick);
             props::charge(&mut self.damage.collateral, Some(owner), spent);
+            let (cars, spent) = self.wrecks.hit(at, aim, radius, strength, tick);
+            props::charge(&mut self.damage.collateral, Some(owner), spent);
+            let props = props + cars;
             // A punch at thin air hits nothing (a prop it broke counts).
             let solid = solids.solid_at(at) || solids.solid_at(at + aim * 0.4);
             let broken = if kind == ImpactKind::Blast || solid {
@@ -568,6 +580,7 @@ impl Sim {
     /// impacts.
     pub fn take_news(&mut self) -> Vec<ToClient> {
         let mut news = self.street.take_news();
+        news.extend(self.wrecks.take_news());
         news.extend(self.damage.take_news());
         news
     }

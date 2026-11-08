@@ -318,7 +318,7 @@ resolves in single player and co-op.
 **Done when:** the streets and the sky are busy at noon, a taxi ride crosses the city, and
 there is somewhere to go below.
 
-**Status (0.026):** cars drive closed lane loops through the street network (keep right,
+**Status (0.027):** cars drive closed lane loops through the street network (keep right,
 rounded corners, wheels turning), hover cars and taxis fly three sky layers over the main
 roads; every vehicle's place is a function of seed and time, so all players see the same
 traffic. G opens "TAXI! Where to?": a server-driven taxi comes down at the hero, flies the
@@ -326,9 +326,10 @@ fare above the roofs to one of up to nine stands (town centre, landmarks, harbou
 villages, rooftop pads) and lets them out; G again hops out mid-air. Below: utility tunnels
 under the main roads, Aether lifts in Googie pavilions on the pavements, and Molehaven, the
 mole people's cavern (a great hall, side chambers, a ramp to the tunnels, its own lift),
-carved from Engine's voxel ground and walkable on the server. Still to do: moving cars that
-dent, spark and die (parked ones already flip and break), opening doors, cars yielding at
-junctions, people in Molehaven.
+carved from Engine's voxel ground and walkable on the server. Moving cars can be wrecked: a hero's
+blow stops one dented, smoking and askew, its lane jams behind it until the wreck is towed
+away unseen. Still to do: opening doors, cars yielding at junctions (crossing loops can
+overlap in a junction), people in Molehaven.
 
 ### M11. Robots and the colossus
 

@@ -57,6 +57,7 @@
 //! hero's origin card.
 //! `HW_VIEW=fight` starts in front of the minions, `HW_AUTOFIGHT=1`
 //! fights them on its own (both for screenshots);
+//! `HW_WRECK=<frames>` wrecks the cars near the camera that many frames in;
 //! `HW_TAXI=<stand>` hails a taxi at the start and `HW_TAXI_SECS=<s>` runs
 //! the world on that far (screenshots of a ride);
 //! `HW_WAIT_PEOPLE=1` waits at the start until every character is built
@@ -227,6 +228,9 @@ fn main() -> EngineResult<()> {
     let mut taxi_demo =
         env_num("HW_TAXI").map(|d| (d as usize, env_num("HW_TAXI_SECS").unwrap_or(0)));
     let mut traffic_view = hw_client::trafficview::TrafficView::new();
+    // HW_WRECK=<frames>: that many frames in, the cars near the camera are
+    // wrecked (for screenshots).
+    let mut wreck_demo = env_num("HW_WRECK");
     // People from Actors, built on a worker thread from the packs.
     let actors = match people::packs_dir() {
         Some(dir) => {
@@ -803,6 +807,15 @@ fn main() -> EngineResult<()> {
                 let locked = world.pointer_lock();
                 world.set_pointer_lock(!locked);
             }
+            if let Some(n) = wreck_demo.as_mut() {
+                if *n == 0 {
+                    let eye = world.camera().eye().as_dvec3();
+                    eprintln!("wrecked {} cars", session.wreck_cars(eye, 45.0));
+                    wreck_demo = None;
+                } else {
+                    *n -= 1;
+                }
+            }
             if let Some((dest, secs)) = taxi_demo.take() {
                 session.hail_taxi(dest as u8);
                 taxi_dest = Some(dest);
@@ -1018,6 +1031,18 @@ fn main() -> EngineResult<()> {
                         if let Some(l) = extras.lights.as_mut() {
                             l.set_broken(i, true);
                         }
+                    }
+                    false
+                }
+                hw_net::ToClient::CarsWrecked { cars, live } => {
+                    for &(id, tick, fell) in cars {
+                        let _ = traffic_view.wreck(world, &mut traffic, id, tick, fell, *live);
+                    }
+                    false
+                }
+                hw_net::ToClient::CarsCleared { cars } => {
+                    for &id in cars {
+                        traffic_view.clear_wreck(world, &mut traffic, id);
                     }
                     false
                 }

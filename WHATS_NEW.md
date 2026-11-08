@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.028 (2026-11-08)
+
+- Cars on the move can be wrecked now: punch or blast one and it stops dead in a shower of
+  sparks, dented, blackened and smoking, and the cars behind it wait in a jam. A tow truck
+  you never see clears it once nobody is around. (Wrecks count as damage you caused.)
+- In co-op, everyone now sees the street lamps, trees and parked cars a friend knocked over.
+
 ## 0.027 (2026-11-08)
 
 - Karma and levels! Beating villains earns karma (more for tougher ones). Your lifetime karma

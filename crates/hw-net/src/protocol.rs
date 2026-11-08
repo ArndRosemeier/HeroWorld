@@ -635,6 +635,17 @@ pub enum ToClient {
     PropsRepaired {
         props: Vec<u32>,
     },
+    /// Moving cars wrecked: (vehicle id, the tick it happened, which way
+    /// the blow went as a yaw byte). Every machine knows where the car was
+    /// then from the traffic plan. `live` as for [`ToClient::Damage`].
+    CarsWrecked {
+        cars: Vec<(u64, u64, u8)>,
+        live: bool,
+    },
+    /// Wrecked cars towed away: their lanes drive on.
+    CarsCleared {
+        cars: Vec<u64>,
+    },
     /// Something happened in a fight nearby.
     Fx(Fx),
     /// Your hero's progress changed (karma, level, powers): keep it in
@@ -688,6 +699,8 @@ impl ToClient {
             ToClient::Impact { .. } => 12 + 6 + 1 + 1,
             ToClient::PropsBroken { props, .. } => 1 + 1 + 5 * props.len().min(255),
             ToClient::PropsRepaired { props } => 1 + 4 * props.len().min(255),
+            ToClient::CarsWrecked { cars, .. } => 1 + 1 + 17 * cars.len().min(255),
+            ToClient::CarsCleared { cars } => 1 + 8 * cars.len().min(255),
             ToClient::Fx(_) => FX_BYTES,
             ToClient::Sheet(s) => s.wire_size(),
         }
@@ -749,6 +762,20 @@ impl ToClient {
                 w.u8(9).u8(n as u8);
                 for i in &props[..n] {
                     w.u32(*i);
+                }
+            }
+            ToClient::CarsWrecked { cars, live } => {
+                let n = cars.len().min(255);
+                w.u8(12).bool(*live).u8(n as u8);
+                for (id, tick, fell) in &cars[..n] {
+                    w.u64(*id).u64(*tick).u8(*fell);
+                }
+            }
+            ToClient::CarsCleared { cars } => {
+                let n = cars.len().min(255);
+                w.u8(13).u8(n as u8);
+                for id in &cars[..n] {
+                    w.u64(*id);
                 }
             }
             ToClient::Fx(fx) => {
@@ -838,6 +865,23 @@ impl ToClient {
                     props.push(r.u32()?);
                 }
                 ToClient::PropsRepaired { props }
+            }
+            12 => {
+                let live = r.bool()?;
+                let n = r.u8()? as usize;
+                let mut cars = Vec::with_capacity(n);
+                for _ in 0..n {
+                    cars.push((r.u64()?, r.u64()?, r.u8()?));
+                }
+                ToClient::CarsWrecked { cars, live }
+            }
+            13 => {
+                let n = r.u8()? as usize;
+                let mut cars = Vec::with_capacity(n);
+                for _ in 0..n {
+                    cars.push(r.u64()?);
+                }
+                ToClient::CarsCleared { cars }
             }
             10 => {
                 let tick = r.u64()?;
@@ -1378,6 +1422,14 @@ mod tests {
                     },
                 ),
                 (6, ToClient::PropsRepaired { props: vec![3] }),
+                (
+                    7,
+                    ToClient::CarsWrecked {
+                        cars: vec![(1 << 40 | 3 << 16 | 2, 9000, 77)],
+                        live: true,
+                    },
+                ),
+                (8, ToClient::CarsCleared { cars: vec![65538] }),
                 (
                     4,
                     ToClient::Impact {
