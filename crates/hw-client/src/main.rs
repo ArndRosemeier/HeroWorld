@@ -379,11 +379,12 @@ fn main() -> EngineResult<()> {
             let yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, ground(p) as f32 + 6.0, p.y as f32), yaw, 8.0)
         }
-        "props" | "park" => {
-            // Close to parked cars (or a park fountain), for screenshots.
+        "props" | "park" | "lawn" => {
+            // Close to parked cars (or a park fountain; `lawn`: low over the
+            // park's grass), for screenshots.
             use hw_gen::urban::props::PropKind;
             let want = |k: &PropKind| {
-                if view == "park" {
+                if view == "park" || view == "lawn" {
                     matches!(k, PropKind::Fountain)
                 } else {
                     // HW_PROP picks a kind by name ("Hover", "Atomic", ...).
@@ -398,12 +399,20 @@ fn main() -> EngineResult<()> {
                 .filter(|p| want(&p.kind))
                 .min_by(|a, b| a.pos.distance(spawn).total_cmp(&b.pos.distance(spawn)));
             let (c, side) = target.map_or((spawn, spawn_dir.perp()), |t| (t.pos, t.dir.perp()));
-            let back = if view == "park" { 22.0 } else { 9.0 };
+            let back = match view.as_str() {
+                "park" => 22.0,
+                "lawn" => 10.0,
+                _ => 9.0,
+            };
             let p = c + side * back + side.perp() * back * 0.5;
             let d = c - p;
             let yaw = d.x.atan2(d.y).to_degrees() as f32;
-            let up = if view == "park" { 9.0 } else { 3.0 };
-            FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, -14.0)
+            let (up, pitch) = match view.as_str() {
+                "park" => (9.0, -14.0),
+                "lawn" => (1.5, -8.0),
+                _ => (3.0, -14.0),
+            };
+            FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, pitch)
         }
         "pad" => {
             // Above the nearest rooftop taxi pad.
@@ -842,13 +851,12 @@ fn main() -> EngineResult<()> {
                     let (eye, yaw, pitch) = t.camera(&generated.world, &solids);
                     world.look_first_person(eye, yaw, pitch);
                 }
-                set_town_stream(world, &generated)?;
                 // Behind the title the town builds bit by bit while you look.
                 if title_screen.is_none() || shooting {
                     let eye = world.camera().eye();
                     town.build_all(world, DVec2::new(eye.x as f64, eye.z as f64));
                 }
-                extras = spawn_extras(world, &generated)?;
+                extras = spawn_extras(world, &generated, town.green.clone())?;
             }
 
             // What heroes can be made of, once the packs are loaded.
@@ -913,8 +921,7 @@ fn main() -> EngineResult<()> {
                     radio.clear(world);
                     signal.clear(world);
                     crowd.clear(world);
-                    set_town_stream(world, &generated)?;
-                    extras = spawn_extras(world, &generated)?;
+                    extras = spawn_extras(world, &generated, town.green.clone())?;
                 }
                 let eye = world.camera().eye();
                 let eye = DVec2::new(eye.x as f64, eye.z as f64);
@@ -1084,6 +1091,9 @@ fn main() -> EngineResult<()> {
             }
             if let Some(under) = extras.under.as_mut() {
                 under.update(world, world.camera().eye(), &generated.world)?;
+            }
+            if let Some(g) = extras.grass.as_mut() {
+                g.update(world, world.camera().eye())?;
             }
             if let Some(d) = extras.dystopia.as_mut() {
                 d.update(world, &generated.world, frame.dt)?;
@@ -2154,7 +2164,12 @@ fn moons() -> Vec<engine::sky::MoonSpec> {
 }
 
 /// Engine streams the town's ground and water.
-fn set_town_stream(world: &mut World, generated: &GeneratedTown) -> EngineResult<()> {
+fn set_town_stream(
+    world: &mut World,
+    generated: &GeneratedTown,
+    green: std::sync::Arc<hw_gen::urban::greenery::Greenery>,
+    trees: std::collections::BTreeMap<hw_gen::urban::props::PropKind, LodId>,
+) -> EngineResult<()> {
     // A wide, coarse water window, so rivers and lakes show across the town
     // and not only around the camera.
     let settings = StreamSettings {
@@ -2164,8 +2179,12 @@ fn set_town_stream(world: &mut World, generated: &GeneratedTown) -> EngineResult
         voxel_below: (hw_gen::urban::underground::CAVERN_DEPTH + 8.0) as f32,
         ..StreamSettings::default()
     };
-    let stream = WorldStream::new(TownGround(generated.world.clone()), settings)
-        .with_terrain(|t| t.with_beach(1.8));
+    let ground = TownGround {
+        town: generated.world.clone(),
+        green,
+        trees,
+    };
+    let stream = WorldStream::new(ground, settings).with_terrain(|t| t.with_beach(1.8));
     world.set_stream(Some(stream))?;
     world.prepare_stream(20.0);
     Ok(())
@@ -2182,10 +2201,13 @@ struct TownExtras {
     props: Option<hw_client::propview::PropView>,
     under: Option<hw_client::undergroundview::UndergroundView>,
     dystopia: Option<hw_client::dystopiaview::DystopiaView>,
+    grass: Option<hw_client::grassview::GrassView>,
 }
 
 impl TownExtras {
     fn despawn(&mut self, world: &mut World) {
+        // The streamed woods copy tree sets below: out with them first.
+        let _ = world.set_stream(None);
         for id in self.lods.drain(..) {
             world.despawn_lod(id);
         }
@@ -2205,11 +2227,18 @@ impl TownExtras {
         if let Some(mut d) = self.dystopia.take() {
             d.clear(world);
         }
+        if let Some(g) = self.grass.take() {
+            g.despawn(world);
+        }
     }
 }
 
 /// The town's props, landmarks and waterfronts.
-fn spawn_extras(world: &mut World, generated: &GeneratedTown) -> EngineResult<TownExtras> {
+fn spawn_extras(
+    world: &mut World,
+    generated: &GeneratedTown,
+    green: std::sync::Arc<hw_gen::urban::greenery::Greenery>,
+) -> EngineResult<TownExtras> {
     let t = std::time::Instant::now();
     let props = hw_client::propview::PropView::spawn(world, &generated.world)?;
     eprintln!(
@@ -2220,8 +2249,37 @@ fn spawn_extras(world: &mut World, generated: &GeneratedTown) -> EngineResult<To
     let landmarks = hw_client::landmarkview::LandmarkView::spawn(world, &generated.world)?;
     let waterfront = hw_client::waterfrontview::WaterfrontView::spawn(world, &generated.world)?;
     let under = hw_client::undergroundview::UndergroundView::spawn(world, &generated.world)?;
+    let grass =
+        hw_client::grassview::GrassView::spawn(world, generated.world.clone(), green.clone())?;
+    // The country's woods stream in around the camera, drawn with the
+    // town's tree sets (and a few more kinds only the woods grow).
+    let mut lods: Vec<LodId> = props.sets.iter().copied().chain(landmarks.sets).collect();
+    let h = generated.world.half();
+    let wild = green.wild_trees(&generated.world, DVec2::splat(-h), DVec2::splat(h));
+    let mut trees = std::collections::BTreeMap::new();
+    for kind in wild
+        .iter()
+        .map(|t| t.kind)
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        let set = match props.set_for(kind) {
+            Some(set) => set,
+            None => {
+                let set = world.spawn_lod(hw_client::propview::model_levels(kind)?)?;
+                lods.push(set);
+                set
+            }
+        };
+        trees.insert(kind, set);
+    }
+    eprintln!(
+        "{} trees in the country around the town (streamed)",
+        wild.len()
+    );
+    set_town_stream(world, generated, green, trees)?;
     Ok(TownExtras {
-        lods: props.sets.iter().copied().chain(landmarks.sets).collect(),
+        grass: Some(grass),
+        lods,
         entities: waterfront.entities,
         lights: Some(hw_client::nightlights::NightLights::new(&generated.world)),
         signals: Some(hw_client::signalview::SignalView::new(&generated.world)),

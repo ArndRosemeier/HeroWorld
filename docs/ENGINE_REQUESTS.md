@@ -166,7 +166,6 @@ Not needed for the first playable city, but the design depends on them eventuall
     parts (the robots' chrome and brass, some rooftop domes) render as white glare with black
     specks (NaN-looking); the same parts from the side, or from 50 m up, look right.
 
-<<<<<<< HEAD
 - **Lighting a whole town** (added 2026-11-08, from the lighting pass, 0.066):
   - **Far sun shadows for meshes.** Three cascades end at a few hundred metres (HeroWorld sets
     500 m on High), so from the air the town beyond that has no building shadows at all and
@@ -179,14 +178,26 @@ Not needed for the first playable city, but the design depends on them eventuall
   - **A day that runs.** Lit windows are baked into the building meshes, so the hour is fixed
     per session; an emissive strength per mesh or material that can change at runtime would
     let windows switch on at dusk and allow a slow day and night cycle.
-=======
+<<<<<<< HEAD
 - **Several textures in one mesh** (added 2026-11-08, from real facade materials, 0.067): a mesh
   carries one albedo and one set of maps, so a town cell is split into a mesh per texture
   (wall, trim, base stone, frames, roof covering and their worn versions: often 20 to 40 per
   cell, each a draw call). A texture-array index per vertex (or per face) with triplanar
   mapping would let a cell stay one mesh, and the same index would let breakable buildings
   keep their textures (see above).
->>>>>>> 44ee75e (Real surfaces on houses: worn plaster, stucco, brick and stone, own trim, frames and roof coverings, street dirt and streaks, textured interiors (0.066))
+=======
+- **Grass on streamed ground** (added 2026-11-08, 0.065): Engine's GPU grass blades only grow
+  on the clipmap terrain, and the streamed voxel ground shades flat land a single noisy green
+  that reads as paint. HeroWorld now drapes a textured lawn skin over the town's ground
+  (`hw-client/src/lawnmesh.rs`) and places instanced blade clumps around the camera
+  (`grassview.rs`, using the far-canopy vegetation profile for wind). What would help:
+  - grass blades on a `WorldStream`, grown where the generator says (a `grass(x, z)` density
+    and kind), drawn like the clipmap grass with no per-frame CPU work;
+  - a ground layer per point from the generator (lawn, meadow, dirt, paving), so the voxel
+    ground can be textured without a skin above it;
+  - a public per-point surface (`Mesh::set_point_surface`): the clumps' per-vertex wind weight
+    is set today by appending one-point meshes.
+>>>>>>> f27cf52 (0.067: real grass, more trees and hedges, streamed woods, solid trees)
 
 ## Ground rules
 

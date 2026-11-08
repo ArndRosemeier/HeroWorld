@@ -19,6 +19,8 @@ use std::f64::consts::TAU;
 /// draw only what is near enough).
 pub struct PropView {
     pub sets: Vec<LodId>,
+    /// The kind each set draws (sorted).
+    kinds: Vec<PropKind>,
     pub count: usize,
     /// Per set: every instance's place as it stands, and its model's bounds.
     places: Vec<Vec<Place>>,
@@ -36,7 +38,7 @@ impl PropView {
         for p in &town.props {
             let g = groups.entry(p.kind).or_default();
             at.push(g.len());
-            g.push(place(p));
+            g.push(prop_place(p));
         }
         // Growing trees takes a moment: grow every model at once.
         let kinds: Vec<PropKind> = groups.keys().copied().collect();
@@ -70,6 +72,7 @@ impl PropView {
             .collect();
         Ok(Self {
             sets,
+            kinds: kinds.clone(),
             count: town.props.len(),
             places: kinds
                 .iter()
@@ -81,13 +84,18 @@ impl PropView {
         })
     }
 
+    /// The LOD set drawing `kind`, if the town has any.
+    pub fn set_for(&self, kind: PropKind) -> Option<LodId> {
+        self.kinds.binary_search(&kind).ok().map(|k| self.sets[k])
+    }
+
     /// Draws prop `i` broken, fallen the way `fell` says (a yaw byte, see
     /// `hw_sim::props`), or whole again (`None`).
     pub fn set_broken(&mut self, town: &TownWorld, i: usize, fell: Option<u8>) {
         let (Some(p), Some(&(k, j))) = (town.props.get(i), self.slot.get(i)) else {
             return;
         };
-        let mut at = place(p);
+        let mut at = prop_place(p);
         if let Some(fell) = fell {
             at = broken_place(p, at, self.bounds[k], fell);
         }
@@ -146,11 +154,46 @@ fn broken_place(p: &Prop, whole: Place, (_, hi): (Vec3, Vec3), fell: u8) -> Plac
     }
 }
 
-fn place(p: &Prop) -> Place {
+/// Where a prop stands, as Engine places it.
+pub fn prop_place(p: &Prop) -> Place {
     let yaw = p.dir.x.atan2(p.dir.y).to_degrees();
-    Place::new(p.pos.x as f32, p.y as f32, p.pos.y as f32)
+    let at = Place::new(p.pos.x as f32, p.y as f32, p.pos.y as f32)
         .with_yaw_deg(yaw as f32)
-        .with_scale(p.scale as f32)
+        .with_scale(p.scale as f32);
+    match p.kind {
+        // Bushes grown in a row, clipped into a hedge.
+        // Clipped box is a deeper, warmer green than the loose bushes.
+        PropKind::Hedge(_) => Place {
+            stretch: HEDGE_STRETCH,
+            tint: Color::rgb01_unchecked(0.82, 1.0, 0.62),
+            ..at
+        },
+        _ => at,
+    }
+}
+
+/// How a hedge's bushes are clipped (see [`hedge_levels`]).
+const HEDGE_STRETCH: Vec3 = Vec3::new(0.62, 0.58, 0.34);
+
+/// Box bushes planted close in a row: one piece of hedge
+/// ([`hw_gen::urban::props::HEDGE_LEN`] long once clipped by
+/// [`HEDGE_STRETCH`]), from Engine's evergreen shrubs.
+fn hedge_levels(v: u8) -> EngineResult<Vec<LodLevel>> {
+    // Odd shrub variants are evergreen boxwood.
+    let bushes: Vec<_> = (0..3)
+        .map(|k| shrub_model(1 + 2 * ((v as u32 + k) % 4)))
+        .collect::<EngineResult<_>>()?;
+    let row = |pick: &dyn Fn(&engine::vegetation::TreeModel) -> &Mesh| -> EngineResult<Mesh> {
+        let mut m = pick(&bushes[0]).clone();
+        m.append_translated(pick(&bushes[1]), Vec3::new(-1.25, 0.0, 0.05))?;
+        m.append_translated(pick(&bushes[2]), Vec3::new(1.25, 0.0, -0.05))?;
+        Ok(m)
+    };
+    Ok(vec![
+        LodLevel::new(row(&|t| &t.near)?, 30.0),
+        LodLevel::new(row(&|t| &t.mid)?, 90.0),
+        LodLevel::new(row(&|t| &t.far)?, 350.0),
+    ])
 }
 
 fn species(s: Species) -> TreeSpecies {
@@ -181,6 +224,7 @@ pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
     Ok(match kind {
         PropKind::Tree(s, v) => tree_model(species(s), v as u32)?.lod_levels(),
         PropKind::Shrub(v) => shrub_model(v as u32)?.lod_levels(),
+        PropKind::Hedge(v) => hedge_levels(v)?,
         PropKind::Lamp(style) => three(&|l| pm::lamp(style, l), [30.0, 140.0, 700.0]),
         PropKind::Car(m, paint) => parked_car_levels(m, paint),
         PropKind::TrafficLight => three(&pm::traffic_light, [30.0, 160.0, 500.0]),

@@ -9,6 +9,8 @@ use engine::stream::WorldGenerator;
 use engine::texgen::GroundLayer;
 use glam::{DVec2, DVec3, Vec3};
 use hw_gen::building::BuildingPlan;
+use hw_gen::urban::greenery::Greenery;
+use hw_gen::urban::props::PropKind;
 use hw_gen::urban::world::{TownWorld, WorldRoad, WATER_LEVEL};
 use hw_sim::collision::Inside;
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,21 +33,49 @@ const MESH_FACES: usize = 250_000;
 /// Longest stretch of road between height samples (m).
 const ROAD_STEP: f64 = 3.0;
 
-/// The town's ground and water for Engine's world streaming.
-pub struct TownGround(pub Arc<TownWorld>);
+/// The town's ground and water for Engine's world streaming, and the woods
+/// of the open country, streamed in tiles around the camera.
+pub struct TownGround {
+    pub town: Arc<TownWorld>,
+    pub green: Arc<Greenery>,
+    /// The LOD set each tree kind is drawn with (templates the tiles copy).
+    pub trees: BTreeMap<PropKind, LodId>,
+}
+
+impl TownGround {
+    fn world(&self) -> &TownWorld {
+        &self.town
+    }
+}
 
 impl WorldGenerator for TownGround {
     fn height(&self, x: f32, z: f32) -> f32 {
-        self.0.ground(DVec2::new(x as f64, z as f64)) as f32
+        self.town.ground(DVec2::new(x as f64, z as f64)) as f32
+    }
+
+    /// Woods and field trees outside the town.
+    fn populate(&self, tile: &mut engine::stream::Tile) -> EngineResult<()> {
+        let (lo, hi) = (tile.min(), tile.max());
+        let trees = self.green.wild_trees(
+            &self.town,
+            DVec2::new(lo.x as f64, lo.y as f64),
+            DVec2::new(hi.x as f64, hi.y as f64),
+        );
+        for t in trees {
+            if let Some(&model) = self.trees.get(&t.kind) {
+                tile.place(model, crate::propview::prop_place(&t));
+            }
+        }
+        Ok(())
     }
 
     /// The utility tunnels, lift shafts and Molehaven carved out of the rock.
     fn density(&self, p: glam::Vec3, ground: f32) -> f32 {
-        crate::undergroundview::density(&self.0.underground, p, ground)
+        crate::undergroundview::density(&self.world().underground, p, ground)
     }
 
     fn sea(&self) -> Option<engine::water::Sea> {
-        self.0
+        self.world()
             .coastal()
             .then(|| engine::water::Sea::calm(WATER_LEVEL as f32))
     }
@@ -59,7 +89,7 @@ impl WorldGenerator for TownGround {
     /// the horizon: a coastal town uses it for all its water. Inland, the
     /// rivers and lakes are drawn by [`TownView`] across the whole town.
     fn has_water(&self) -> bool {
-        self.0.coastal()
+        self.world().coastal()
     }
 }
 
@@ -98,10 +128,15 @@ pub struct TownView {
     /// Damaged buildings: Engine draws them breakable instead (see
     /// `damageview`), so the cells leave them out.
     hidden: BTreeSet<usize>,
+    /// Where grass grows (the lawns drawn in each cell).
+    pub green: Arc<Greenery>,
+    /// Cells of open land (no roads or buildings) that still get lawn.
+    land: BTreeSet<CellKey>,
 }
 
 impl TownView {
     pub fn new(world: Arc<TownWorld>) -> Self {
+        let green = Arc::new(Greenery::new(&world));
         let mut buildings: BTreeMap<CellKey, Vec<usize>> = BTreeMap::new();
         for (i, b) in world.buildings.iter().enumerate() {
             buildings.entry(cell_of(centre(b))).or_default().push(i);
@@ -141,7 +176,16 @@ impl TownView {
             cut_level: 1,
             inside: None,
             hidden: BTreeSet::new(),
+            green,
+            land: BTreeSet::new(),
         };
+        let h = v.world.half();
+        let (a, b) = (cell_of(DVec2::splat(-h)), cell_of(DVec2::splat(h)));
+        for x in a.0..=b.0 {
+            for z in a.1..=b.1 {
+                v.land.insert((x, z));
+            }
+        }
         v.cut_focus = v
             .tallest_near(v.world.spawn_line().0, 300.0)
             .map_or(DVec2::ZERO, |i| centre(&v.world.buildings[i]));
@@ -259,6 +303,7 @@ impl TownView {
             .buildings
             .keys()
             .chain(self.roads.keys())
+            .chain(self.land.iter())
             .copied()
             .collect::<BTreeSet<_>>()
             .into_iter()
@@ -289,6 +334,7 @@ impl TownView {
             .buildings
             .keys()
             .chain(self.roads.keys())
+            .chain(self.land.iter())
             .copied()
             .filter(|k| cell_centre(*k).distance(eye) < LOAD)
             .collect();
@@ -359,6 +405,29 @@ impl TownView {
         }
         if !b.is_empty() {
             ids.extend(b.finish_parts().into_iter().map(|m| world.spawn(m)));
+        }
+        // Lawns and meadows, finer close by.
+        // (Across town, past DISTANT_DETAIL, Engine's own green ground is
+        // enough under the haze.)
+        let step = match detail {
+            Detail::Near => 2.0,
+            Detail::Far => 5.0,
+            Detail::Distant => 0.0,
+        };
+        let (lo, hi) = (
+            DVec2::new(k.0 as f64, k.1 as f64) * CELL,
+            DVec2::new(k.0 as f64 + 1.0, k.1 as f64 + 1.0) * CELL,
+        );
+        let lawns = if step == 0.0 || std::env::var("HW_LAWN").is_ok_and(|v| v == "0") {
+            Vec::new()
+        } else {
+            crate::lawnmesh::lawn(&self.world, &self.green, lo, hi, step)
+        };
+        for m in lawns {
+            let id = world.spawn(m);
+            // Flat ground casts no shadow worth its cost.
+            let _ = world.set_casts_shadow(id, false);
+            ids.push(id);
         }
         // Inland water (a coastal town's comes from Engine's sea).
         if !self.world.coastal() {

@@ -127,7 +127,7 @@ pub struct MeshBuilder {
 /// The average colour of a texture layer (linear), so vertex colours can
 /// be divided by it: a textured face then keeps the colour asked for on
 /// average, with the texture's grain on top.
-fn layer_mean(l: Tex) -> [f32; 3] {
+pub(crate) fn layer_mean(l: Tex) -> [f32; 3] {
     static MEANS: OnceLock<Mutex<HashMap<Tex, [f32; 3]>>> = OnceLock::new();
     let means = MEANS.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some(m) = means.lock().expect("means").get(&l) {

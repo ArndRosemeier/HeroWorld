@@ -32,6 +32,7 @@ pub enum Breaks {
 pub fn toughness(kind: PropKind) -> Option<(f32, Breaks)> {
     Some(match kind {
         PropKind::Shrub(_) => (20.0, Breaks::Smashed),
+        PropKind::Hedge(_) => (60.0, Breaks::Smashed),
         PropKind::Bin => (40.0, Breaks::Smashed),
         PropKind::Bench => (120.0, Breaks::Smashed),
         PropKind::Mailbox => (90.0, Breaks::Topples),
@@ -64,6 +65,7 @@ pub fn trunk(kind: PropKind) -> (f64, f64) {
         PropKind::AdPillar => (0.7, 3.2),
         PropKind::Tree(..) => (0.4, 6.0),
         PropKind::Shrub(_) => (0.6, 1.0),
+        PropKind::Hedge(_) => (1.2, 1.15),
         PropKind::Lamp(_) | PropKind::TrafficLight => (0.2, 5.0),
         PropKind::Bin | PropKind::Hydrant | PropKind::Bollard => (0.3, 0.9),
         PropKind::Mailbox => (0.35, 1.4),

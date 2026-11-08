@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.068 (2026-11-08)
+
+- Real grass: lawns, verges and parks are now grass you can see blade by blade close up,
+  swaying in the wind, with daisies and clover in the parks and wildflowers in the meadows.
+- Many more trees: in back gardens, by the old town's lanes, in groves on the open greens and
+  woods out in the country. Front gardens and parks get clipped hedges.
+- Hedges are solid too, and the woods out in the country, and a hard enough blow still knocks
+  a tree or a hedge down.
+
 ## 0.067 (2026-11-08)
 
 - Houses get real surfaces: plaster, stucco and concrete now show their grain, stains, rain

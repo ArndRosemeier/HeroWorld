@@ -10,6 +10,7 @@ use hw_gen::building::BuildingSite;
 use hw_gen::city::CityPlan;
 use hw_gen::geom::Rect;
 use hw_gen::urban::footprint::Footprint;
+use hw_gen::urban::greenery::Greenery;
 use hw_gen::urban::underground::Underground;
 use hw_gen::urban::world::{TownWorld, WATER_LEVEL};
 use std::collections::BTreeMap;
@@ -189,6 +190,71 @@ pub struct Obstacles {
     movers: RwLock<Arc<[Solid]>>,
     /// Landmarks, whose paved plinths are raised ground.
     plinths: Vec<hw_gen::urban::landmarks::Landmark>,
+    /// The country's woods, made cell by cell where bodies go.
+    woods: Option<Woods>,
+}
+
+/// The trunks of each wood cell made so far.
+type WoodCells = BTreeMap<(i64, i64), Arc<[Solid]>>;
+
+/// Tree trunks of the open country ([`Greenery::wild_trees`]), worked out
+/// for a cell the first time something moves there: nothing is made for
+/// land nobody visits.
+struct Woods {
+    town: Arc<TownWorld>,
+    green: Greenery,
+    cells: RwLock<WoodCells>,
+}
+
+impl std::fmt::Debug for Woods {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Woods").finish_non_exhaustive()
+    }
+}
+
+/// Edge of a cell of woods (m).
+const WOOD_CELL: f64 = 64.0;
+
+impl Woods {
+    fn cell(&self, k: (i64, i64)) -> Arc<[Solid]> {
+        if let Some(c) = self.cells.read().expect("woods lock").get(&k) {
+            return c.clone();
+        }
+        let lo = DVec2::new(k.0 as f64, k.1 as f64) * WOOD_CELL;
+        let solids: Arc<[Solid]> = self
+            .green
+            .wild_trees(&self.town, lo, lo + DVec2::splat(WOOD_CELL))
+            .iter()
+            .flat_map(|t| t.footprints())
+            .flat_map(|f| solids_of(&f))
+            .collect();
+        self.cells
+            .write()
+            .expect("woods lock")
+            .insert(k, solids.clone());
+        solids
+    }
+
+    fn near(&self, p: DVec2, r: f64) -> Vec<Arc<[Solid]>> {
+        let (x0, z0) = (
+            ((p.x - r) / WOOD_CELL).floor() as i64,
+            ((p.y - r) / WOOD_CELL).floor() as i64,
+        );
+        let (x1, z1) = (
+            ((p.x + r) / WOOD_CELL).floor() as i64,
+            ((p.y + r) / WOOD_CELL).floor() as i64,
+        );
+        let mut out = Vec::new();
+        for x in x0..=x1 {
+            for z in z0..=z1 {
+                let c = self.cell((x, z));
+                if !c.is_empty() {
+                    out.push(c);
+                }
+            }
+        }
+        out
+    }
 }
 
 /// Where the open ground is water, and the bridges over it.
@@ -268,8 +334,15 @@ impl Obstacles {
     /// A town on its terrain: open ground follows `terrain` (water stands at
     /// `water`), each building stands at its own base on a plinth, bridge
     /// decks span the water. Building plans are made when first needed.
-    pub fn from_town(world: &TownWorld, terrain: Terrain) -> Self {
+    /// The town's solids; its country's woods are worked out where bodies
+    /// go ([`Woods`]).
+    pub fn from_town(world: &Arc<TownWorld>, terrain: Terrain) -> Self {
         let mut out = Self::flat(WATER_LEVEL);
+        out.woods = Some(Woods {
+            town: world.clone(),
+            green: Greenery::new(world),
+            cells: RwLock::new(BTreeMap::new()),
+        });
         out.terrain = Some(terrain);
         out.under = Some(Arc::new(world.underground.clone()));
         for b in &world.buildings {
@@ -408,6 +481,9 @@ impl Obstacles {
             .any(|m| m.origin.distance(p) < r + MOVER_REACH)
         {
             sets.push(SolidSet::Shared(movers));
+        }
+        if let Some(w) = &self.woods {
+            sets.extend(w.near(p, r).into_iter().map(SolidSet::Shared));
         }
         sets
     }

@@ -92,7 +92,17 @@ pub enum PropKind {
     /// A piece of a barricade where a street runs into the villains'
     /// quarter ([`super::edge::barricades`]).
     Barricade(BarricadePiece),
+    /// A clipped evergreen hedge, [`HEDGE_LEN`] long along its x (the
+    /// number picks the bushes it is grown from).
+    Hedge(u8),
 }
+
+/// Length of one piece of hedge (m); its height and depth.
+pub const HEDGE_LEN: f64 = 2.4;
+pub const HEDGE_HEIGHT: f64 = 1.15;
+pub const HEDGE_DEPTH: f64 = 0.85;
+/// Hedge bush variants.
+pub const HEDGE_VARIANTS: u8 = 4;
 
 /// The pieces barricades are made of. Each faces along the street (its
 /// +z), its length across it (x).
@@ -154,6 +164,8 @@ impl Prop {
             PropKind::TrafficLight => vec![disc(0.16, 4.1)],
             PropKind::Tree(..) => vec![disc((0.32 * s).max(0.15), 3.0)],
             PropKind::Shrub(_) => Vec::new(),
+            // A clipped hedge: dense enough to stop a body.
+            PropKind::Hedge(_) => vec![block(HEDGE_LEN * 0.5, HEDGE_DEPTH * 0.5, HEDGE_HEIGHT)],
             PropKind::Bench => vec![block(0.97, 0.36, 0.95)],
             PropKind::Bin => vec![disc(0.31, 0.95)],
             PropKind::Hydrant => vec![disc(0.2, 0.7)],
@@ -236,6 +248,11 @@ pub fn plan_props(w: &TownWorld) -> Vec<Prop> {
     p.gardens(region, seed.child("gardens"));
     // Last, so the props before keep their numbers in towns without them.
     p.out.extend(barricade_props(w));
+    // Greenery added later goes after everything else, for the same reason.
+    p.hedges(region, seed.child("hedges"));
+    p.back_gardens(region, seed.child("back-gardens"));
+    p.old_town_trees(region, seed.child("old-town-trees"));
+    p.open_greens(region, seed.child("open-greens"));
     p.out
 }
 
@@ -815,6 +832,224 @@ impl<'a> Placer<'a> {
             self.put(kind, p, -inward, scale, 1.2);
         }
     }
+
+    /// Hedges: along the front of many gardens (a gap left for the path
+    /// to the door) and round some of the parks.
+    fn hedges(&mut self, region: Region, seed: Seed) {
+        let share = match region {
+            Region::Northern => 0.45,
+            Region::Continental => 0.4,
+            Region::Southern => 0.25,
+        };
+        for i in 0..self.w.buildings.len() {
+            let site = self.w.buildings[i].site.clone();
+            if site.usage != BuildingUse::House {
+                continue;
+            }
+            let mut rng = seed.child(i as u32).rng();
+            if !rng.chance(share) || site.size.x < HEDGE_LEN * 2.0 {
+                continue;
+            }
+            // How deep the front garden is: out from the facade to the
+            // pavement.
+            let mid = site.origin + site.along * site.size.x * 0.5;
+            let mut depth = 0.0;
+            while depth < 12.0 && !self.on_road(mid - site.inward * (depth + 0.5), 0.0, None, true)
+            {
+                depth += 0.5;
+            }
+            if !(2.5..12.0).contains(&depth) {
+                continue;
+            }
+            let line = depth - 0.45 - HEDGE_DEPTH * 0.5;
+            let v = rng.range_int(0, HEDGE_VARIANTS as i64) as u8;
+            let n = (site.size.x / HEDGE_LEN).floor() as usize;
+            let start = (site.size.x - n as f64 * HEDGE_LEN) * 0.5;
+            let gap = n / 2;
+            for k in 0..n {
+                if k == gap {
+                    continue;
+                }
+                let x = start + (k as f64 + 0.5) * HEDGE_LEN;
+                let p = site.origin + site.along * x - site.inward * line;
+                self.put_hedge(p, site.along, v);
+            }
+        }
+        for (pi, piece) in self.w.pieces.iter().enumerate() {
+            if piece.style != StreetStyle::Park {
+                continue;
+            }
+            for (bi, block) in piece.blocks.iter().enumerate() {
+                let mut rng = seed.child("park").child(pi as u32).child(bi as u32).rng();
+                if !rng.chance(0.45) {
+                    continue;
+                }
+                let v = rng.range_int(0, HEDGE_VARIANTS as i64) as u8;
+                // Inset from the edge, which runs along the streets.
+                let n = block.len();
+                let ccw = super::graph::signed_area(block) > 0.0;
+                for k in 0..n {
+                    let (a, b) = (block[k], block[(k + 1) % n]);
+                    let len = a.distance(b);
+                    if len < HEDGE_LEN * 3.0 {
+                        continue;
+                    }
+                    let d = (b - a) / len;
+                    let inward = if ccw { d.perp() } else { -d.perp() };
+                    let segs = (len / HEDGE_LEN) as usize;
+                    // Entrances every so often.
+                    let every = rng.range_int(5, 9) as usize;
+                    for j in 1..segs.saturating_sub(1) {
+                        if j % every == every / 2 {
+                            continue;
+                        }
+                        let p = a + d * ((j as f64 + 0.5) * HEDGE_LEN);
+                        // Just inside the pavement.
+                        let mut off = 0.5;
+                        while off < 14.0
+                            && self.on_road(p + inward * off, HEDGE_DEPTH * 0.5 + 0.3, None, true)
+                        {
+                            off += 0.5;
+                        }
+                        if off >= 14.0 {
+                            continue;
+                        }
+                        self.put_hedge(p + inward * off, d, v);
+                    }
+                }
+            }
+        }
+    }
+
+    /// One piece of hedge along `along`, if it fits.
+    fn put_hedge(&mut self, p: DVec2, along: DVec2, v: u8) -> bool {
+        let half = HEDGE_LEN * 0.5;
+        let ends = [p - along * half * 0.9, p + along * half * 0.9];
+        if !self.dry(p)
+            || ends
+                .iter()
+                .any(|e| self.on_road(*e, 0.2, None, true) || self.in_building(*e, 0.2))
+            || self.w.landmarks.iter().any(|l| l.covers(p, 1.0))
+            || (self.w.ground(ends[0]) - self.w.ground(ends[1])).abs() > 0.8
+        {
+            return false;
+        }
+        // Hedges stand in a row: only the end discs count as taken, so the
+        // next piece can follow, but no tree or bench lands in one.
+        if self.crowded(p, 0.4) {
+            return false;
+        }
+        for e in ends {
+            self.taken.entry(key(e)).or_default().push((e, 0.55));
+        }
+        // The prop's front (+z) faces across the hedge.
+        let dir = DVec2::new(along.y, -along.x);
+        self.out.push(Prop {
+            kind: PropKind::Hedge(v),
+            pos: p,
+            y: self.w.ground(p) - 0.05,
+            dir,
+            scale: 1.0,
+        });
+        true
+    }
+
+    /// A tree in many back gardens, behind the houses.
+    fn back_gardens(&mut self, region: Region, seed: Seed) {
+        for i in 0..self.w.buildings.len() {
+            let site = self.w.buildings[i].site.clone();
+            if site.usage != BuildingUse::House {
+                continue;
+            }
+            let mut rng = seed.child(i as u32).rng();
+            if !rng.chance(0.55) {
+                continue;
+            }
+            let back = rng.range(3.0, 7.0);
+            let p = site.origin
+                + site.along * site.size.x * rng.range(0.2, 0.8)
+                + site.inward * (site.size.y + back);
+            if self.on_road(p, 2.0, None, true) {
+                continue;
+            }
+            let era = self.era_at(p);
+            let kind = PropKind::Tree(
+                park_species(region, era, &mut rng),
+                rng.range_int(0, TREE_VARIANTS as i64) as u8,
+            );
+            self.put(kind, p, -site.inward, rng.range(0.55, 0.9), 2.5);
+        }
+    }
+
+    /// The old town keeps a few trees: by its squares and churches, where a
+    /// street opens out, along its wider lanes.
+    fn old_town_trees(&mut self, region: Region, seed: Seed) {
+        for (ri, r) in self.w.roads.iter().enumerate() {
+            let mut rng = seed.child(ri as u32).rng();
+            let n = r.pts.len();
+            if n < 2 {
+                continue;
+            }
+            let mid = r.pts[n / 2];
+            if self.era_at(mid) != Era::Old || r.main {
+                continue;
+            }
+            let walk = Walk::new(&r.pts);
+            let len = walk.len();
+            let mut s = rng.range(6.0, 30.0);
+            while s < len {
+                let (p, d) = walk.point(s);
+                let sd = if rng.chance(0.5) { 1.0 } else { -1.0 };
+                // Just beyond the pavement, where there is room.
+                let q = p + d.perp() * sd * (r.half + r.pavement + 2.2);
+                if !self.on_road(q, 1.6, None, true) && !self.in_building(q, 2.0) {
+                    let kind = PropKind::Tree(
+                        street_species(region, Era::Old, &mut rng),
+                        rng.range_int(0, TREE_VARIANTS as i64) as u8,
+                    );
+                    self.put(kind, q, d, rng.range(0.55, 0.85), 2.4);
+                }
+                s += rng.range(18.0, 45.0);
+            }
+        }
+    }
+
+    /// Groups of trees on the larger greens inside the town: the open
+    /// middles of blocks, the land between roads and the works.
+    fn open_greens(&mut self, region: Region, seed: Seed) {
+        let noise = hw_core::Noise::new(seed.child("groves"));
+        let half = self.w.half() - 20.0;
+        let step = 9.0;
+        let n = (half * 2.0 / step) as i64;
+        let mut rng = seed.rng();
+        for j in 0..n {
+            for i in 0..n {
+                let p = DVec2::new(
+                    -half + (i as f64 + rng.range(0.15, 0.85)) * step,
+                    -half + (j as f64 + rng.range(0.15, 0.85)) * step,
+                );
+                let grove = 0.5 + 0.5 * noise.fbm(p.x * 0.02, p.y * 0.02, 3);
+                let take = rng.unit();
+                if take > grove * grove * 0.8 || !super::greenery::built(&self.w.town, p) {
+                    continue;
+                }
+                if self.w.ground(p) < 3.0
+                    || self.on_road(p, 5.0, None, true)
+                    || self.in_building(p, 4.5)
+                {
+                    continue;
+                }
+                let era = self.era_at(p);
+                let kind = PropKind::Tree(
+                    park_species(region, era, &mut rng),
+                    rng.range_int(0, TREE_VARIANTS as i64) as u8,
+                );
+                let dir =
+                    DVec2::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0)).normalize_or(DVec2::Y);
+                self.put(kind, p, dir, rng.range(0.6, 1.05), 3.0);
+            }
+        }
+    }
 }
 
 fn street_species(region: Region, era: Era, rng: &mut Rng) -> Species {
@@ -826,6 +1061,27 @@ fn street_species(region: Region, era: Era, rng: &mut Rng) -> Species {
         Region::Northern => (&[Linden, Oak, Birch, Maple], &[0.35, 0.2, 0.2, 0.25]),
         Region::Continental => (&[Plane, Chestnut, Linden, Maple], &[0.35, 0.25, 0.2, 0.2]),
         Region::Southern => (&[Palm, Plane, Cypress, Pine], &[0.4, 0.25, 0.15, 0.2]),
+    };
+    s[rng.weighted(w)]
+}
+
+/// Trees of the woods and fields: conifers higher up.
+pub(super) fn wild_species(region: Region, height: f64, rng: &mut Rng) -> Species {
+    use Species::*;
+    let high = height > 40.0;
+    let (s, w): (&[Species], &[f64]) = match (region, high) {
+        (Region::Northern, false) => (
+            &[Oak, Birch, Pine, Linden, Maple],
+            &[0.3, 0.25, 0.2, 0.1, 0.15],
+        ),
+        (Region::Northern, true) => (&[Pine, Birch], &[0.75, 0.25]),
+        (Region::Continental, false) => (
+            &[Oak, Chestnut, Linden, Maple, Pine, Birch],
+            &[0.3, 0.15, 0.15, 0.15, 0.15, 0.1],
+        ),
+        (Region::Continental, true) => (&[Pine, Oak, Birch], &[0.6, 0.25, 0.15]),
+        (Region::Southern, false) => (&[Pine, Oak, Cypress, Plane], &[0.4, 0.3, 0.2, 0.1]),
+        (Region::Southern, true) => (&[Pine, Cypress], &[0.7, 0.3]),
     };
     s[rng.weighted(w)]
 }
