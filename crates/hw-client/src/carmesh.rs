@@ -843,14 +843,114 @@ pub fn wheel_layout(model: CarModel) -> Option<(f64, [f64; 2], f64)> {
     }
 }
 
+/// Which part of a car to build: all of it, all but its doors, or one
+/// door (on the side `sx`, +1 or -1 along x).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Part {
+    Whole,
+    Shell,
+    Door(f64),
+}
+
+impl Part {
+    /// Whether a quad goes into this part: `door` says whether it belongs
+    /// to a door, and on which side.
+    fn keeps(self, door: Option<f64>) -> bool {
+        match (self, door) {
+            (Part::Whole, _) => true,
+            (Part::Shell, d) => d.is_none(),
+            (Part::Door(sx), Some(d)) => d * sx > 0.0,
+            (Part::Door(_), None) => false,
+        }
+    }
+
+    fn paint(self, door: Option<f64>, p: Paint) -> Paint {
+        if self.keeps(door) {
+            p
+        } else {
+            None
+        }
+    }
+}
+
+/// A door that opens: its mesh in the hinge's frame (the hinge at the
+/// origin, the door shut), the hinge's place on the car, the axis to turn
+/// it about (a positive angle opens it) and how far it opens (radians).
+pub struct Door {
+    pub mesh: Mesh,
+    pub hinge: DVec3,
+    pub axis: DVec3,
+    pub open: f64,
+}
+
 /// Builds `model` in `paint` into `b`; `wheels` adds the wheels (parked
 /// cars and far levels: moving cars turn theirs on their own).
 pub fn car_into(b: &mut MeshBuilder, model: CarModel, paint: u8, lod: Lod, wheels: bool) {
+    model_into(b, model, paint, lod, wheels, Part::Whole);
+}
+
+/// A car without the doors that [`car_doors`] gives, for a car whose
+/// doors open: the cruiser's two front doors, the bubble car's and the
+/// hover car's canopies.
+pub fn car_shell_into(b: &mut MeshBuilder, model: CarModel, paint: u8, lod: Lod, wheels: bool) {
+    model_into(b, model, paint, lod, wheels, Part::Shell);
+}
+
+/// The doors left off by [`car_shell_into`]. The cruiser's front doors
+/// are hinged at their front edge (the car's left, +x, first; glTF's +x is
+/// the car's left); the bubble car's canopy is hinged along its left foot
+/// and lifts away from the kerb; the hover car's tilts up and forward.
+pub fn car_doors(model: CarModel, paint: u8, lod: Lod) -> Vec<Door> {
+    let kit = Kit::new(paint);
+    let door = |hinge: DVec3, axis: DVec3, open: f64, build: &dyn Fn(&mut MeshBuilder)| {
+        let mut part = MeshBuilder::new();
+        build(&mut part);
+        let mut b = MeshBuilder::new();
+        b.append(part, -hinge.as_vec3());
+        Door {
+            mesh: b.finish(),
+            hinge,
+            axis,
+            open,
+        }
+    };
+    match model {
+        CarModel::Cruiser => [1.0, -1.0]
+            .into_iter()
+            .map(|sx| {
+                let hinge = cruiser_hinge(sx);
+                door(hinge, DVec3::Y * sx, 1.1, &|b| {
+                    cruiser(b, &kit, lod, Part::Door(sx));
+                })
+            })
+            .collect(),
+        CarModel::Bubble => {
+            let hinge = bubble_hinge();
+            vec![door(hinge, -DVec3::Z, 1.6, &|b| {
+                bubble(b, &kit, lod, Part::Door(1.0));
+            })]
+        }
+        CarModel::Hover => {
+            let mut part = MeshBuilder::new();
+            let hinge = hover_canopy(&mut part, &kit, lod, false);
+            let mut b = MeshBuilder::new();
+            b.append(part, -hinge.as_vec3());
+            vec![Door {
+                mesh: b.finish(),
+                hinge,
+                axis: DVec3::X,
+                open: 0.9,
+            }]
+        }
+    }
+}
+
+fn model_into(b: &mut MeshBuilder, model: CarModel, paint: u8, lod: Lod, wheels: bool, part: Part) {
     let kit = Kit::new(paint);
     match model {
-        CarModel::Cruiser => cruiser(b, &kit, lod),
-        CarModel::Bubble => bubble(b, &kit, lod),
-        CarModel::Hover => hover(b, &kit, lod, false, true),
+        CarModel::Cruiser => cruiser(b, &kit, lod, part),
+        CarModel::Bubble => bubble(b, &kit, lod, part),
+        CarModel::Hover => hover(b, &kit, lod, false, part == Part::Whole),
     }
     if wheels {
         if let Some((x, zs, r)) = wheel_layout(model) {
@@ -888,24 +988,44 @@ pub fn taxi_door(lod: Lod) -> (Mesh, DVec3, DVec3) {
 /// The long, low two-tone sedan: tail fins, a wraparound windscreen, a
 /// chrome spear and a contrasting cove, dual headlamps, bumper bullets,
 /// rear wheel skirts.
-fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod) {
-    let section = |z: f64| {
-        let front = smooth(1.9, 2.65, z);
-        let rear = smooth(-2.0, -2.65, z);
-        let hood = smooth(0.9, 2.65, z);
-        Section {
-            w: 1.0 - 0.03 * front - 0.02 * rear,
-            bot: 0.3 + 0.1 * front + 0.1 * rear,
-            mid: 0.64,
-            top: 0.97 - 0.07 * hood - 0.03 * rear,
-            n_up: 5.0,
-            n_dn: 3.2,
-            tumble: 0.1,
-            tuck: 0.16,
-        }
-    };
-    let door = [-0.38, 0.92];
+/// The cruiser's shape at z.
+fn cruiser_section(z: f64) -> Section {
+    let front = smooth(1.9, 2.65, z);
+    let rear = smooth(-2.0, -2.65, z);
+    let hood = smooth(0.9, 2.65, z);
+    Section {
+        w: 1.0 - 0.03 * front - 0.02 * rear,
+        bot: 0.3 + 0.1 * front + 0.1 * rear,
+        mid: 0.64,
+        top: 0.97 - 0.07 * hood - 0.03 * rear,
+        n_up: 5.0,
+        n_dn: 3.2,
+        tumble: 0.1,
+        tuck: 0.16,
+    }
+}
+
+/// The cruiser's front doors run from `CRUISER_DOOR[0]` to the hinge at
+/// `CRUISER_DOOR[1]` along z.
+const CRUISER_DOOR: [f64; 2] = [-0.38, 0.92];
+
+fn cruiser_hinge(sx: f64) -> DVec3 {
+    let z = CRUISER_DOOR[1];
+    DVec3::new(sx * cruiser_section(z).x_at(0.64), 0.64, z)
+}
+
+fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod, part: Part) {
+    let section = cruiser_section;
+    let door = CRUISER_DOOR;
     let seam_w = 0.007;
+    // The deck is open over the cabin (the seats show through the glass)
+    // close up; far away it stays shut, with no cabin inside.
+    let open_top = lod != Lod::Far;
+    let hole = |at: At| open_top && at.s > 0.84 && at.z > -1.2 && at.z < 0.85;
+    let door_of = |at: At| {
+        (at.z > door[0] && at.z < door[1] && at.s > -0.9 && at.s < 0.84 && at.side())
+            .then_some(at.c.signum())
+    };
     let body = Body {
         z: [-2.65, 2.65],
         end_r: [0.12, 0.14],
@@ -937,11 +1057,18 @@ fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod) {
             -2.4 - seam_w,
             -2.45,
             0.2,
+            -1.2,
+            -1.3,
+            0.85,
+            0.95,
         ],
         bands: vec![-0.9, -0.43, -0.36, 0.3, 0.37, 0.8, 0.84],
     };
     let k = *kit;
-    body.build(b, lod, |at| {
+    let outer = |at: At| -> Paint {
+        if hole(at) {
+            return None;
+        }
         if at.s < -0.9 || at.well {
             return Kit::plain(k.under);
         }
@@ -973,7 +1100,17 @@ fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod) {
             }
         }
         Kit::plain(k.body)
-    });
+    };
+    body.build(b, lod, |at| part.paint(door_of(at), outer(at)));
+    // The door's inner panel, in the cabin's colour.
+    let trim = k.top;
+    if lod != Lod::Far && part != Part::Shell {
+        inside(|| {
+            body.build(b, lod, |at| {
+                door_of(at).and_then(|d| part.paint(Some(d), Kit::plain(trim)))
+            })
+        });
+    }
     let deck = |z: f64, x: f64| body.shape(z).y_at(x);
 
     // The hardtop: wraparound glass front and back, a thick C-pillar.
@@ -987,10 +1124,13 @@ fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod) {
         n: 4.5,
         base: &base,
         ease: 0.9,
-        stations: vec![-0.5, 0.36, 0.44],
+        stations: vec![-0.5, -0.38, 0.36, 0.44],
         bands: vec![0.05, 0.955, 0.975],
     };
-    cabin.build(b, lod, |at| {
+    // The door's window: the side glass between the B and A pillars.
+    let window_of =
+        |at: At| (at.z > door[0] && at.z < 0.36 && at.s < 0.955).then_some(at.c.signum());
+    let glass = |at: At| -> Paint {
         if at.s < 0.05 {
             return k.metal();
         }
@@ -1010,7 +1150,36 @@ fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod) {
             return k.metal();
         }
         k.glazed()
-    });
+    };
+    cabin.build(b, lod, |at| part.paint(window_of(at), glass(at)));
+    if lod != Lod::Far && part != Part::Shell {
+        // The window seen from inside.
+        inside(|| {
+            cabin.build(b, lod, |at| {
+                window_of(at).and_then(|d| part.paint(Some(d), glass(at)))
+            })
+        });
+    }
+    if let Part::Door(sx) = part {
+        if lod == Lod::Near {
+            // The door handle, at the back of the door.
+            let x = body.shape(-0.25).x_at(0.84) + 0.005;
+            tube(
+                b,
+                &[
+                    DVec3::new(sx * x, 0.84, -0.28),
+                    DVec3::new(sx * x, 0.84, -0.14),
+                ],
+                (0.016, 0.014),
+                8,
+                k.metal(),
+            );
+        }
+        return;
+    }
+    if open_top {
+        cruiser_cabin(b, &body, &k, lod);
+    }
 
     // Fins rising to the tail, a rocket tail-light in each.
     let fin_base = |z: f64| deck(z.max(-2.6), 0.84);
@@ -1083,19 +1252,22 @@ fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod) {
             6,
             k.metal(),
         );
-        // Door handles, mirrors, an aerial, the rear plate.
+        // Door handles (unless the doors are apart), mirrors, an aerial,
+        // the rear plate.
         for sx in [-1.0, 1.0] {
-            let x = body.shape(-0.25).x_at(0.84) + 0.005;
-            tube(
-                b,
-                &[
-                    DVec3::new(sx * x, 0.84, -0.28),
-                    DVec3::new(sx * x, 0.84, -0.14),
-                ],
-                (0.016, 0.014),
-                8,
-                k.metal(),
-            );
+            if part == Part::Whole {
+                let x = body.shape(-0.25).x_at(0.84) + 0.005;
+                tube(
+                    b,
+                    &[
+                        DVec3::new(sx * x, 0.84, -0.28),
+                        DVec3::new(sx * x, 0.84, -0.14),
+                    ],
+                    (0.016, 0.014),
+                    8,
+                    k.metal(),
+                );
+            }
             let mx = body.shape(0.75).x_at(0.95);
             tube(
                 b,
@@ -1137,6 +1309,124 @@ fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod) {
             rgb(236, 226, 160),
         );
     }
+}
+
+/// The cruiser's cabin: lined inside, closed fore and aft, with a front
+/// and a rear bench in the second tone, a padded dash with dials and a
+/// big white steering wheel on the left (+x).
+fn cruiser_cabin(b: &mut MeshBuilder, body: &Body, k: &Kit, lod: Lod) {
+    let (z0, z1) = (-1.3, 0.95);
+    let carpet = rgb(46, 40, 38);
+    let lining = rgb(70, 62, 58);
+    // The lining: the body's inner face round the cabin, coarser than its
+    // outside (no one looks at it closely), open where the deck is.
+    let coarse = if lod == Lod::Near { Lod::Mid } else { Lod::Far };
+    inside(|| {
+        body.build(b, coarse, |at| {
+            if at.z < z0 || at.z > z1 || (at.s > 0.84 && at.z > -1.2 && at.z < 0.85) {
+                return None;
+            }
+            Kit::plain(if at.s < -0.5 { carpet } else { lining })
+        })
+    });
+    // Bulkheads: the firewall and the back of the rear seat.
+    for (z, n) in [(z1, -DVec3::Z), (z0, DVec3::Z)] {
+        let sec = body.sec(z);
+        let pts: Vec<DVec3> = (0..32)
+            .map(|i| {
+                let p = sec.at(TAU * i as f64 / 32.0);
+                DVec3::new(p.x, p.y, z)
+            })
+            .collect();
+        b.polygon(&pts, n, lining);
+    }
+    let seat = Kit::plain(k.top);
+    for (z, back) in [(0.12, 0.18), (-0.78, 0.17)] {
+        slab(
+            b,
+            DVec3::new(0.0, 0.4, z),
+            [DVec3::X, DVec3::Y],
+            DVec3::new(0.66, 0.1, 0.2),
+            carpet,
+        );
+        cushion(
+            b,
+            lod,
+            DVec3::new(0.0, 0.55, z),
+            DVec3::new(0.72, 0.07, 0.24),
+            0.0,
+            seat,
+        );
+        cushion(
+            b,
+            lod,
+            DVec3::new(0.0, 0.6 + back, z - 0.24),
+            DVec3::new(0.72, back, 0.06),
+            -0.22,
+            seat,
+        );
+    }
+    // The dash under the windscreen.
+    let (dz, dy) = (0.84, 0.86);
+    cushion(
+        b,
+        lod,
+        DVec3::new(0.0, dy, dz),
+        DVec3::new(0.8, 0.07, 0.12),
+        0.25,
+        Kit::plain(k.body),
+    );
+    if lod == Lod::Near {
+        tube(
+            b,
+            &[
+                DVec3::new(-0.8, dy + 0.05, dz - 0.1),
+                DVec3::new(0.8, dy + 0.05, dz - 0.1),
+            ],
+            (0.012, 0.012),
+            6,
+            k.metal(),
+        );
+        for dx in [0.28, 0.46, -0.2] {
+            b.surf = Surf::Glow;
+            disc(
+                b,
+                DVec3::new(dx, dy, dz - 0.125),
+                (DVec3::X * 0.05, DVec3::Y * 0.05),
+                16,
+                -DVec3::Z,
+                rgb(255, 230, 170),
+            );
+            b.surf = Surf::Plain;
+        }
+        steering_wheel(b, DVec3::new(0.38, 0.86, 0.55), 0.19, k);
+    }
+}
+
+/// A thin white steering wheel facing the driver (-z), tipped back, with
+/// three spokes and its column running forward to the dash.
+fn steering_wheel(b: &mut MeshBuilder, c: DVec3, r: f64, k: &Kit) {
+    let tilt = 0.45f64;
+    let (u, v) = (DVec3::X, DVec3::new(0.0, tilt.cos(), tilt.sin()));
+    let ring: Vec<DVec3> = (0..=28)
+        .map(|i| {
+            let a = TAU * i as f64 / 28.0;
+            c + (u * a.cos() + v * a.sin()) * r
+        })
+        .collect();
+    let ivory = Kit::plain(rgb(240, 236, 224));
+    tube(b, &ring, (0.014, 0.014), 8, ivory);
+    for a in [PI * 0.5, PI * 1.2, PI * 1.8] {
+        tube(
+            b,
+            &[c, c + (u * a.cos() + v * a.sin()) * r],
+            (0.008, 0.008),
+            6,
+            k.metal(),
+        );
+    }
+    let n = u.cross(v);
+    tube(b, &[c, c + n * 0.28], (0.018, 0.018), 8, k.metal());
 }
 
 /// Chrome bumpers round the nose (at `nose`) and the tail, bullets on the
@@ -1492,21 +1782,34 @@ fn lamp_pod(b: &mut MeshBuilder, lod: Lod, at: DVec3, r: f64, k: &Kit, pod: Colo
 
 /// The little car under a glass bubble: an egg of a body, a continental
 /// spare wheel on its tail, round lamps on its wings.
-fn bubble(b: &mut MeshBuilder, kit: &Kit, lod: Lod) {
-    let section = |z: f64| {
-        let u = (z / 1.7).clamp(-1.0, 1.0);
-        let front = smooth(0.6, 1.7, z);
-        Section {
-            w: 0.84 * (1.0 - u.powi(6)).max(0.05).powf(0.25),
-            bot: 0.24 + 0.06 * front,
-            mid: 0.62,
-            top: 0.92 - 0.12 * front,
-            n_up: 3.0,
-            n_dn: 2.6,
-            tumble: 0.12,
-            tuck: 0.2,
-        }
-    };
+fn bubble_section(z: f64) -> Section {
+    let u = (z / 1.7).clamp(-1.0, 1.0);
+    let front = smooth(0.6, 1.7, z);
+    Section {
+        w: 0.84 * (1.0 - u.powi(6)).max(0.05).powf(0.25),
+        bot: 0.24 + 0.06 * front,
+        mid: 0.62,
+        top: 0.92 - 0.12 * front,
+        n_up: 3.0,
+        n_dn: 2.6,
+        tumble: 0.12,
+        tuck: 0.2,
+    }
+}
+
+/// Where the bubble car's canopy sits on the deck.
+fn bubble_base(z: f64) -> f64 {
+    bubble_section(z).y_at(0.66) - 0.03
+}
+
+/// The bubble car's canopy hinge: along its left foot (+x), level with
+/// the deck at the middle.
+fn bubble_hinge() -> DVec3 {
+    DVec3::new(0.7, bubble_base(0.0), 0.0)
+}
+
+fn bubble(b: &mut MeshBuilder, kit: &Kit, lod: Lod, part: Part) {
+    let section = bubble_section;
     let body = Body {
         z: [-1.62, 1.7],
         end_r: [0.3, 0.38],
@@ -1531,6 +1834,37 @@ fn bubble(b: &mut MeshBuilder, kit: &Kit, lod: Lod) {
         bands: vec![-0.9, -0.2, -0.14, 0.16, 0.22],
     };
     let k = *kit;
+    let deck = |z: f64, x: f64| body.shape(z).y_at(x);
+    let base = bubble_base;
+    let canopy = Cabin {
+        z: [-1.0, 1.02],
+        roof: [-0.15, 0.2],
+        height: 0.56,
+        w_base: 0.7,
+        w_roof: 0.5,
+        n: 2.4,
+        base: &base,
+        ease: 0.75,
+        stations: vec![],
+        bands: vec![0.07, 0.99],
+    };
+    let glass = |at: At| {
+        if at.s < 0.07 || (lod == Lod::Near && at.s > 0.99) {
+            return k.metal();
+        }
+        k.glazed()
+    };
+    // The canopy is the door: it lifts sideways on a hinge along its left
+    // foot, like a Kabinenroller's.
+    if part != Part::Shell {
+        canopy.build(b, lod, glass);
+        if lod != Lod::Far {
+            inside(|| canopy.build(b, lod, glass));
+        }
+    }
+    if matches!(part, Part::Door(_)) {
+        return;
+    }
     body.build(b, lod, |at| {
         if at.s < -0.9 || at.well {
             return Kit::plain(k.under);
@@ -1545,26 +1879,39 @@ fn bubble(b: &mut MeshBuilder, kit: &Kit, lod: Lod) {
         }
         Kit::plain(k.body)
     });
-    let deck = |z: f64, x: f64| body.shape(z).y_at(x);
-    let base = |z: f64| deck(z, 0.66) - 0.03;
-    let canopy = Cabin {
-        z: [-1.0, 1.02],
-        roof: [-0.15, 0.2],
-        height: 0.56,
-        w_base: 0.7,
-        w_roof: 0.5,
-        n: 2.4,
-        base: &base,
-        ease: 0.75,
-        stations: vec![],
-        bands: vec![0.07, 0.99],
-    };
-    canopy.build(b, lod, |at| {
-        if at.s < 0.07 || (lod == Lod::Near && at.s > 0.99) {
-            return k.metal();
+    if lod != Lod::Far {
+        // The cabin under the bubble: a bench, a dash, a steering wheel.
+        let seat = Kit::plain(k.top);
+        let y = deck(-0.3, 0.0);
+        cushion(
+            b,
+            lod,
+            DVec3::new(0.0, y + 0.07, -0.3),
+            DVec3::new(0.48, 0.07, 0.2),
+            0.0,
+            seat,
+        );
+        cushion(
+            b,
+            lod,
+            DVec3::new(0.0, y + 0.2, -0.52),
+            DVec3::new(0.48, 0.15, 0.05),
+            -0.25,
+            seat,
+        );
+        let (dz, dy) = (0.62, deck(0.62, 0.0) + 0.08);
+        cushion(
+            b,
+            lod,
+            DVec3::new(0.0, dy, dz),
+            DVec3::new(0.52, 0.07, 0.1),
+            0.3,
+            Kit::plain(k.body),
+        );
+        if lod == Lod::Near {
+            steering_wheel(b, DVec3::new(0.22, dy + 0.06, dz - 0.25), 0.15, &k);
         }
-        k.glazed()
-    });
+    }
     // Little fins on the hips.
     let fin_base = |z: f64| deck(z.max(-1.5), 0.62);
     for sx in [-1.0, 1.0] {
@@ -1800,7 +2147,7 @@ fn hover_interior(b: &mut MeshBuilder, k: &Kit, lod: Lod) {
             b.surf = Surf::Plain;
         }
         // The steering wheel, before the left seat.
-        let c = DVec3::new(-0.25, y + 0.2, z - 0.2);
+        let c = DVec3::new(0.25, y + 0.2, z - 0.2);
         let tilt = 0.5f64;
         let (u, v) = (DVec3::X, DVec3::new(0.0, tilt.cos(), tilt.sin()));
         let ring: Vec<DVec3> = (0..=24)
@@ -2031,6 +2378,37 @@ mod tests {
     }
 
     #[test]
+    fn doors_and_shell_make_the_whole_car() {
+        for m in [CarModel::Cruiser, CarModel::Bubble, CarModel::Hover] {
+            for lod in [Lod::Near, Lod::Mid, Lod::Far] {
+                let count = |shell: bool| {
+                    let mut b = MeshBuilder::new();
+                    if shell {
+                        car_shell_into(&mut b, m, 2, lod, true);
+                    } else {
+                        car_into(&mut b, m, 2, lod, true);
+                    }
+                    b.finish().build().triangle_count()
+                };
+                let doors = car_doors(m, 2, lod);
+                assert!(!doors.is_empty());
+                let d: usize = doors.iter().map(|d| d.mesh.build().triangle_count()).sum();
+                // The doors' inner faces are extra (the shut car never
+                // shows them), so the parts hold at least the whole car.
+                assert!(count(true) + d >= count(false), "{m:?} {lod:?}");
+                assert!(
+                    count(true) < count(false),
+                    "{m:?} {lod:?}: the shell kept its doors"
+                );
+                for door in &doors {
+                    assert!(door.open > 0.5 && door.open < 2.0);
+                    assert!((door.axis.length() - 1.0).abs() < 1e-9);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn the_taxi_canopy_is_the_closed_taxis_canopy() {
         for lod in [Lod::Near, Lod::Mid, Lod::Far] {
             let count = |canopy: bool| {
@@ -2050,7 +2428,7 @@ mod tests {
     #[test]
     fn bodies_shade_smooth_and_face_out() {
         let mut b = MeshBuilder::new();
-        cruiser(&mut b, &Kit::new(0), Lod::Near);
+        cruiser(&mut b, &Kit::new(0), Lod::Near, Part::Whole);
         let m = b.finish();
         assert!(m.has_normals());
         let built = m.build();

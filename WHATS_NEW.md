@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.050 (2026-11-08)
+
+- The cruisers have a real cabin: two-tone bench seats, a padded dash with glowing dials and a
+  big ivory steering wheel, seen through the glass.
+- Their front doors and the bubble car's canopy are parts of their own now, ready to swing open.
+
 ## 0.049 (2026-11-08)
 
 - Molehaven is alive: short, pale mole folk in goggles keep the market stalls, run errands from

@@ -254,6 +254,47 @@ fn parked_car_levels(model: CarModel, paint: u8) -> Vec<LodLevel> {
     ]
 }
 
+/// A parked car whose doors open: the car without them (wheels on), with
+/// [`car_door_levels`] drawn at their hinges.
+pub fn parked_car_shell_levels(model: CarModel, paint: u8) -> Vec<LodLevel> {
+    let make = |lod: Lod| {
+        let mut b = MeshBuilder::new();
+        crate::carmesh::car_shell_into(&mut b, model, paint, lod, true);
+        b.finish()
+    };
+    vec![
+        LodLevel::new(make(Lod::Near), 35.0),
+        LodLevel::new(make(Lod::Mid), 140.0),
+        LodLevel::new(make(Lod::Far), 650.0),
+    ]
+}
+
+/// A car's opening doors (see [`crate::carmesh::car_doors`]), each as LOD
+/// levels in its hinge's frame, with the hinge's place on the car, the axis
+/// a positive angle opens it about, and how far it opens (radians).
+pub fn car_door_levels(model: CarModel, paint: u8) -> Vec<(Vec<LodLevel>, DVec3, DVec3, f64)> {
+    use crate::carmesh::car_doors;
+    let near = car_doors(model, paint, Lod::Near);
+    let mid = car_doors(model, paint, Lod::Mid);
+    let far = car_doors(model, paint, Lod::Far);
+    near.into_iter()
+        .zip(mid)
+        .zip(far)
+        .map(|((n, m), f)| {
+            (
+                vec![
+                    LodLevel::new(n.mesh, 35.0),
+                    LodLevel::new(m.mesh, 140.0),
+                    LodLevel::new(f.mesh, 650.0),
+                ],
+                n.hinge,
+                n.axis,
+                n.open,
+            )
+        })
+        .collect()
+}
+
 /// A car driving in traffic: its body (the wheels turn on their own, see
 /// [`wheel_levels`], as far as traffic draws them), then far off with
 /// wheels of its own.

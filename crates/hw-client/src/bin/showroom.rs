@@ -10,7 +10,7 @@
 
 use engine::prelude::*;
 use glam::DVec3;
-use hw_client::carmesh::{car_into, taxi_into, wheel, Lod};
+use hw_client::carmesh::{car_doors, car_into, car_shell_into, taxi_into, wheel, Door, Lod};
 use hw_client::citymesh::MeshBuilder;
 use hw_gen::urban::props::CarModel;
 
@@ -29,6 +29,9 @@ fn model(name: &str, lod: Lod, paint: u8) -> Mesh {
         "hover" => car_into(&mut b, CarModel::Hover, paint, lod, true),
         "taxi" => taxi_into(&mut b, lod, true),
         "taxi_open" => taxi_into(&mut b, lod, false),
+        "cruiser_open" => car_shell_into(&mut b, CarModel::Cruiser, paint, lod, true),
+        "bubble_open" => car_shell_into(&mut b, CarModel::Bubble, paint, lod, true),
+        "hover_open" => car_shell_into(&mut b, CarModel::Hover, paint, lod, true),
         "ambulance" => hw_client::carmesh::ambulance_into(&mut b, lod),
         "wheel" => wheel(&mut b, DVec3::new(0.0, 0.36, 0.0), 0.36, 0.22, lod),
         _ => return prop(name, lod),
@@ -111,14 +114,37 @@ fn main() -> EngineResult<()> {
                 rgb(120, 122, 126),
             )?);
             world.set_sun((0.5, 1.0, 0.35), 0.25);
-            if show == "taxi_open" {
-                // The canopy, opened on its hinge (HW_OPEN degrees).
-                let (door, hinge, _) = hw_client::carmesh::taxi_door(lod);
-                let open = env_f("HW_OPEN", 50.0);
-                world.place(
-                    door,
-                    Place::new(hinge.x as f32, hinge.y as f32, hinge.z as f32).with_pitch_deg(open),
-                )?;
+            // Opened doors (HW_OPEN, a fraction of fully open).
+            let open = env_f("HW_OPEN", 0.8) as f64;
+            let doors: Vec<Door> = match show.as_str() {
+                "taxi_open" => {
+                    let (mesh, hinge, axis) = hw_client::carmesh::taxi_door(lod);
+                    vec![Door {
+                        mesh,
+                        hinge,
+                        axis,
+                        open: 0.9,
+                    }]
+                }
+                "cruiser_open" => car_doors(CarModel::Cruiser, paint, lod),
+                "bubble_open" => car_doors(CarModel::Bubble, paint, lod),
+                "hover_open" => car_doors(CarModel::Hover, paint, lod),
+                _ => vec![],
+            };
+            for d in doors {
+                let deg = (d.open * open).to_degrees() as f32;
+                let a = d.axis;
+                let mut place = Place::new(d.hinge.x as f32, d.hinge.y as f32, d.hinge.z as f32);
+                if a.y.abs() > 0.5 {
+                    // Engine turns a positive yaw clockwise seen from above:
+                    // about -Y.
+                    place = place.with_yaw_deg(-deg * a.y.signum() as f32);
+                } else if a.x.abs() > 0.5 {
+                    place = place.with_pitch_deg(deg * a.x.signum() as f32);
+                } else {
+                    place = place.with_roll_deg(deg * a.z.signum() as f32);
+                }
+                world.place(d.mesh, place)?;
             }
         }
         let target_y = env_f("HW_LOOK_Y", 0.8);
