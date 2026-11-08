@@ -1088,6 +1088,18 @@ fn main() -> EngineResult<()> {
                     }
                     false
                 }
+                hw_net::ToClient::Casualty { medic, yaw, .. } => {
+                    radio.hear(world, m);
+                    // `HW_VIEW=medic`: the camera by the ambulance.
+                    if view == "medic" {
+                        let c = Vec3::from_array(*medic);
+                        let a = hw_sim::props::byte_to_yaw(*yaw) as f32 + 0.9;
+                        let p = c + Vec3::new(a.sin(), 0.0, a.cos()) * 9.0 + Vec3::Y * 2.5;
+                        let d = c - p;
+                        fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), -10.0);
+                    }
+                    false
+                }
                 hw_net::ToClient::PropsBroken { props, .. } => {
                     for &(i, fell) in props {
                         if let Some(v) = extras.props.as_mut() {
@@ -1542,7 +1554,16 @@ fn main() -> EngineResult<()> {
                     Some(&my_sheet),
                 );
                 let fighting = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
+                radio.me = mine.map(|m| m.0);
                 radio.update(frame.dt);
+                radio.carry(world, |id| {
+                    let h = heroes.iter().find(|h| h.id.0 == id)?;
+                    let yaw = anims.get(&h.id).map_or(0.0, |a| a.yaw());
+                    Some((
+                        Vec3::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32),
+                        yaw,
+                    ))
+                });
                 signal.update(world, &generated.world, &radio);
                 let cam = world.camera();
                 let hero_at = session.my_position(&heroes).map(|p| p.as_vec3());

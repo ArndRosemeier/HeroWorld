@@ -6,7 +6,7 @@ use glam::DVec3;
 use hw_core::Seed;
 use hw_net::{PlayerId, Status, ToClient};
 use hw_sim::collision::Body;
-use hw_sim::incidents::{self, State, FARTHEST, NEAREST};
+use hw_sim::incidents::{self, Hurt, State, FARTHEST, NEAREST};
 use hw_sim::{GeneratedTown, Sim, TICK_HZ};
 
 fn news_of(sim: &mut Sim) -> Vec<(u32, u8, [f32; 3], u8)> {
@@ -149,6 +149,50 @@ fn heroes_get_people_out_of_a_fire_one_by_one() {
             assert_eq!(sim.incidents.open[0].left, k, "not got out");
         }
     }
+    // The last one out is hurt, in the hero's arms; the rescue is not done
+    // until they reach the ambulance.
+    run(&mut sim, 1.5, &mut news);
+    let open = sim.incidents.open[0].clone();
+    assert_eq!(open.left, 0);
+    assert!(
+        matches!(open.hurt, Some(Hurt::Carried(_))),
+        "nobody carries the hurt one: {:?}",
+        open.hurt
+    );
+    assert!(
+        !news.iter().any(|n| n.0 == inc.id && n.3 == 1),
+        "done too soon"
+    );
+    let (medic, _) = open.medic.expect("an ambulance");
+    let away = glam::DVec2::new(medic.x - inc.at.x, medic.z - inc.at.z).length();
+    assert!(
+        (20.0..120.0).contains(&away),
+        "the ambulance is {away:.0} m off"
+    );
+    // Dropped (say the carrier was knocked down): lying there until a hero
+    // lifts them again.
+    let lying = inc.at + DVec3::new(2.0, 0.0, 0.0);
+    sim.incidents.open[0].hurt = Some(Hurt::Lying(lying));
+    sim.set_body(
+        hero,
+        Body {
+            pos: lying + DVec3::new(1.0, 0.2, 0.0),
+            vel: DVec3::ZERO,
+            grounded: true,
+        },
+    );
+    run(&mut sim, incidents::LIFT_SECONDS + 0.5, &mut news);
+    assert!(matches!(sim.incidents.open[0].hurt, Some(Hurt::Carried(_))));
+    // Handed to the medic: done.
+    sim.set_input(me, InputState::default());
+    sim.set_body(
+        hero,
+        Body {
+            pos: medic + DVec3::new(1.5, 0.2, 0.0),
+            vel: DVec3::ZERO,
+            grounded: true,
+        },
+    );
     run(&mut sim, 1.5, &mut news);
     assert!(
         news.iter().any(|n| n.0 == inc.id && n.3 == 1),

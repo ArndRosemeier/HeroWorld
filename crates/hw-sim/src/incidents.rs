@@ -6,8 +6,12 @@
 //! A fight is a group of villains standing where it happens; beating them
 //! all resolves it (karma for everyone near). A rescue is people to get
 //! out: a hero holds the help key (the revive key) next to each in turn
-//! until they are free (Guardian karma for each). One nobody answers ends
-//! after a few minutes (the crooks get away, or the fire brigade comes).
+//! until they are free (Guardian karma for each). The last one out is hurt:
+//! the hero who freed them carries them to the ambulance waiting down the
+//! street, and only then is the rescue done. A carrier knocked down drops
+//! them; anyone can pick them up again with the same key. One nobody
+//! answers ends after a few minutes (the crooks get away, or the fire
+//! brigade comes).
 //!
 //! The spawn rule (DESIGN.md): two to four open at once within about 800 m
 //! of the heroes, at least a minute apart. Which and where come from the
@@ -40,6 +44,12 @@ pub const NEAREST: f64 = 150.0;
 pub const FARTHEST: f64 = 800.0;
 /// A hero this near a trapped person can help them out (m).
 pub const RESCUE_REACH: f64 = 3.5;
+/// Carrying the hurt this near the medic hands them over (m).
+pub const MEDIC_REACH: f64 = 5.0;
+/// Seconds of holding the help key to lift someone lying hurt.
+pub const LIFT_SECONDS: f64 = 1.0;
+/// The ambulance waits about this far from a rescue (m).
+const MEDIC_AWAY: f64 = 50.0;
 
 /// What kind of trouble.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -148,6 +158,15 @@ impl State {
     }
 }
 
+/// Where a rescue's hurt person is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Hurt {
+    /// On the ground, waiting to be lifted.
+    Lying(DVec3),
+    /// In a hero's arms.
+    Carried(NetId),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Incident {
     pub id: u32,
@@ -160,8 +179,13 @@ pub struct Incident {
     pub facing: DVec2,
     /// People still to get out.
     pub left: u8,
-    /// Seconds a hero has been helping the next one out.
+    /// Seconds a hero has been helping the next one out (or lifting the
+    /// hurt one).
     pub freeing: f64,
+    /// A rescue's hurt person, once out.
+    pub hurt: Option<Hurt>,
+    /// Where a rescue's ambulance waits, and which way it faces.
+    pub medic: Option<(DVec3, DVec2)>,
     pub level: u8,
     pub started: u64,
     /// Unanswered, it ends at this tick.
@@ -181,6 +205,25 @@ impl Incident {
             yaw: crate::props::yaw_to_byte(self.facing.x.atan2(self.facing.y)),
             left: self.left,
         }
+    }
+
+    /// The hurt person's news (none for a fight or before anyone is out).
+    fn casualty(&self, delivered: bool) -> Option<ToClient> {
+        let (medic, face) = self.medic?;
+        let (state, carrier, at) = match (delivered, self.hurt) {
+            (true, _) => (2, 0, medic),
+            (false, Some(Hurt::Lying(p))) => (0, 0, p),
+            (false, Some(Hurt::Carried(h))) => (1, h.0, self.at),
+            (false, None) => return None,
+        };
+        Some(ToClient::Casualty {
+            id: self.id,
+            medic: medic.as_vec3().to_array(),
+            yaw: crate::props::yaw_to_byte(face.x.atan2(face.y)),
+            state,
+            carrier,
+            at: at.as_vec3().to_array(),
+        })
     }
 
     /// Where the people still trapped are (the next to get out last).
@@ -222,6 +265,9 @@ pub struct Incidents {
     pub first_after: f64,
     /// The kind the next one will be, if set (tests and screenshots).
     pub next_kind: Option<IncidentKind>,
+    /// Screenshots: the next rescue starts with everyone out and the hurt
+    /// one in the arms of the hero it started near, who stands beside it.
+    pub carried_start: bool,
     /// Spots of incidents that ended, free to use again.
     free: Vec<usize>,
     news: Vec<ToClient>,
@@ -275,27 +321,89 @@ impl Incidents {
     }
 
     /// Heroes holding the help key next to the next trapped person get
-    /// them out, one after another.
+    /// them out, one after another; the last one out is carried to the
+    /// medic.
     fn rescue(&mut self, world: &mut World) {
-        if self.open.iter().all(|i| i.left == 0) {
+        if self.open.iter().all(|i| i.medic.is_none()) {
             return;
         }
-        let mut helpers: Vec<(NetId, DVec3, u8, bool)> = world
+        let mut helpers: Vec<(NetId, DVec3, u8, bool, bool)> = world
             .query::<(&Hero, &Net, &Motion, &Fighter, &Control)>()
             .iter(world)
-            .map(|(_, n, m, f, c)| (n.0, m.0.pos, f.level, c.0.revive && f.standing()))
+            .map(|(_, n, m, f, c)| {
+                let up = f.standing();
+                (n.0, m.0.pos, f.level, c.0.revive && up, up)
+            })
             .collect();
         helpers.sort_by_key(|h| h.0);
         let mut rewards = Vec::new();
-        for inc in self.open.iter_mut().filter(|i| i.left > 0) {
+        let guardian = |rewards: &mut Vec<combat::Reward>, inc: &Incident, near: DVec3, x: f32| {
+            let base = combat::enemy_spec(EnemyKind::Brute).karma;
+            for h in helpers.iter().filter(|h| h.1.distance(near) < REWARD) {
+                let one = progress::defeat_karma(base, inc.level, h.2) as f32;
+                rewards.push(combat::Reward {
+                    hero: h.0,
+                    karma: (one * inc.kind.bonus() * x).round() as u32,
+                    deed: Some(Affinity::Guardian),
+                    lean: 0,
+                });
+            }
+        };
+        for inc in self.open.iter_mut().filter(|i| i.medic.is_some()) {
+            let (medic, _) = inc.medic.expect("a rescue");
+            match inc.hurt {
+                Some(Hurt::Carried(id)) => {
+                    let carrier = helpers.iter().find(|h| h.0 == id);
+                    match carrier {
+                        Some(h) if h.4 => {
+                            let flat = DVec2::new(h.1.x - medic.x, h.1.z - medic.z).length();
+                            if flat < MEDIC_REACH && (h.1.y - medic.y).abs() < 4.0 {
+                                // Handed over: the rescue is done.
+                                let news = inc.casualty(true);
+                                inc.hurt = None;
+                                guardian(&mut rewards, inc, medic, 2.0);
+                                self.news.extend(news);
+                            }
+                        }
+                        // Knocked down (or gone): they drop them.
+                        _ => {
+                            let at = carrier.map_or(inc.at, |h| h.1);
+                            inc.hurt = Some(Hurt::Lying(at));
+                            inc.freeing = 0.0;
+                            self.news.extend(inc.casualty(false));
+                        }
+                    }
+                    continue;
+                }
+                Some(Hurt::Lying(at)) => {
+                    let lifter = helpers
+                        .iter()
+                        .find(|h| h.3 && h.1.distance(at) < RESCUE_REACH);
+                    match lifter {
+                        None => inc.freeing = (inc.freeing - DT).max(0.0),
+                        Some(h) => {
+                            inc.freeing += DT;
+                            if inc.freeing + 1e-9 >= LIFT_SECONDS {
+                                inc.freeing = 0.0;
+                                inc.hurt = Some(Hurt::Carried(h.0));
+                                self.news.extend(inc.casualty(false));
+                            }
+                        }
+                    }
+                    continue;
+                }
+                None if inc.left == 0 => continue,
+                None => {}
+            }
             let next = *inc.victims().last().expect("someone trapped");
-            let helping = helpers
+            let helper = helpers
                 .iter()
-                .any(|h| h.3 && h.1.distance(next) < RESCUE_REACH);
-            if !helping {
+                .filter(|h| h.3 && h.1.distance(next) < RESCUE_REACH)
+                .min_by(|a, b| a.1.distance(next).total_cmp(&b.1.distance(next)));
+            let Some(helper) = helper else {
                 inc.freeing = (inc.freeing - DT).max(0.0);
                 continue;
-            }
+            };
             inc.answered = true;
             inc.freeing += DT;
             if inc.freeing + 1e-9 < inc.kind.rescue_seconds() {
@@ -304,17 +412,13 @@ impl Incidents {
             inc.freeing = 0.0;
             inc.left -= 1;
             // Karma for everyone who helped or stood by.
-            let base = combat::enemy_spec(EnemyKind::Brute).karma;
-            for h in helpers.iter().filter(|h| h.1.distance(next) < REWARD) {
-                let one = progress::defeat_karma(base, inc.level, h.2) as f32;
-                rewards.push(combat::Reward {
-                    hero: h.0,
-                    karma: (one * inc.kind.bonus()).round() as u32,
-                    deed: Some(Affinity::Guardian),
-                    lean: 0,
-                });
-            }
+            guardian(&mut rewards, inc, next, 1.0);
             self.news.push(inc.news());
+            if inc.left == 0 {
+                // The last one out is hurt: in the arms of who freed them.
+                inc.hurt = Some(Hurt::Carried(helper.0));
+                self.news.extend(inc.casualty(false));
+            }
         }
         world.resource_mut::<Fights>().rewards.extend(rewards);
     }
@@ -331,7 +435,7 @@ impl Incidents {
                     let spot = &world.resource::<Fights>().spots[i];
                     spot.groups > 0 && spot.members == 0
                 }
-                None => inc.left == 0,
+                None => inc.left == 0 && inc.hurt.is_none(),
             };
             if beaten {
                 inc.state = State::Resolved;
@@ -496,6 +600,7 @@ impl Incidents {
         let (size, only, extra) = kind.group();
         if kind.trapped() > 0 {
             let level = world.resource::<Fights>().team_level;
+            let medic = medic_spot(&town, &world.resource::<Solids>().0, p);
             let inc = Incident {
                 id: self.count,
                 kind,
@@ -504,13 +609,35 @@ impl Incidents {
                 facing,
                 left: kind.trapped(),
                 freeing: 0.0,
+                hurt: None,
+                medic: Some(medic),
                 level,
                 started: tick,
                 expires: tick + ticks(TIMEOUT_SECONDS),
                 answered: false,
                 state: State::Open,
             };
+            let mut inc = inc;
+            if std::mem::take(&mut self.carried_start) {
+                let id = heroes
+                    .iter()
+                    .min_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)))
+                    .map(|h| h.0);
+                let mut q = world.query::<(&Net, &mut Motion)>();
+                for (n, mut m) in q.iter_mut(world) {
+                    if Some(n.0) == id {
+                        m.0.pos = at + DVec3::new(facing.x, 0.0, facing.y) * 5.0 + DVec3::Y * 0.3;
+                        m.0.vel = DVec3::ZERO;
+                    }
+                }
+                if let Some(id) = id {
+                    inc.left = 0;
+                    inc.answered = true;
+                    inc.hurt = Some(Hurt::Carried(id));
+                }
+            }
             self.news.push(inc.news());
+            self.news.extend(inc.casualty(false));
             self.open.push(inc);
             return;
         }
@@ -550,6 +677,8 @@ impl Incidents {
             facing,
             left: 0,
             freeing: 0.0,
+            hurt: None,
+            medic: None,
             level,
             started: tick,
             expires: tick + ticks(TIMEOUT_SECONDS),
@@ -562,10 +691,35 @@ impl Incidents {
 
     /// Every open incident, for a player who joins.
     pub fn snapshot(&self) -> Vec<ToClient> {
-        self.open.iter().map(Incident::news).collect()
+        let mut all: Vec<ToClient> = self.open.iter().map(Incident::news).collect();
+        all.extend(self.open.iter().filter_map(|i| i.casualty(false)));
+        all
     }
 
     pub fn take_news(&mut self) -> Vec<ToClient> {
         std::mem::take(&mut self.news)
     }
+}
+
+/// Where an ambulance waits for a rescue at `p`: at the kerb of a street
+/// about [`MEDIC_AWAY`] off, facing along it.
+fn medic_spot(town: &TownWorld, solids: &crate::collision::Obstacles, p: DVec2) -> (DVec3, DVec2) {
+    let quarter = town.town.dystopia.as_ref();
+    let mut best: Option<(f64, DVec2, DVec2)> = None;
+    for r in &town.roads {
+        for w in r.pts.windows(2) {
+            let along = (w[1] - w[0]).normalize_or(DVec2::X);
+            let kerb = (w[0] + w[1]) * 0.5 + along.perp() * (r.half - 1.4).max(0.0);
+            if quarter.is_some_and(|d| d.contains(kerb)) {
+                continue;
+            }
+            let off = (kerb.distance(p) - MEDIC_AWAY).abs();
+            if best.is_none_or(|b| off < b.0) {
+                best = Some((off, kerb, along));
+            }
+        }
+    }
+    let (at, along) = best.map_or((p + DVec2::X * 20.0, DVec2::X), |b| (b.1, b.2));
+    let y = solids.ground_at(at).max(GROUND_Y);
+    (DVec3::new(at.x, y, at.y), along)
 }

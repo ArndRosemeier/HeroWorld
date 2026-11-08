@@ -49,6 +49,7 @@ fn is_world_news(m: &ToClient) -> bool {
             | ToClient::CarsCleared { .. }
             | ToClient::Traffic { .. }
             | ToClient::Incident { .. }
+            | ToClient::Casualty { .. }
     )
 }
 
@@ -78,6 +79,8 @@ impl Session {
                 _ => None,
             };
         }
+        // `HW_CARRY=1`: that rescue starts with the hurt one in our arms.
+        host.sim.incidents.carried_start = std::env::var_os("HW_CARRY").is_some();
         if open {
             let addr = host.listen(("0.0.0.0", hw_net::DEFAULT_PORT))?;
             println!("Hosting on {addr}");

@@ -2,7 +2,8 @@
 //! as a clock direction, how tough against you), and a beam of light over
 //! each one so it can be found from the rooftops. Rescues show on the
 //! spot: a crash's two smashed cars smoking, a house's front in flames, and
-//! the people still trapped waving for help.
+//! the people still trapped waving for help. The last one out is hurt: an
+//! ambulance pulls up down the street, and the hero carries them there.
 
 use crate::citymesh::{MeshBuilder, Surf};
 use crate::fightview::con_colour;
@@ -11,7 +12,7 @@ use engine::ui::egui;
 use glam::{DVec2, DVec3, Vec3};
 use hw_gen::urban::props::CarModel;
 use hw_net::ToClient;
-use hw_sim::incidents::{victims, IncidentKind, RESCUE_REACH};
+use hw_sim::incidents::{victims, IncidentKind, MEDIC_REACH, RESCUE_REACH};
 use std::collections::BTreeMap;
 
 /// How tall the beam over an incident stands (m).
@@ -29,6 +30,31 @@ pub struct Call {
     pub left: u8,
     /// Seconds since it came in (new calls flash).
     pub age: f32,
+    /// A rescue's hurt person, once out.
+    pub casualty: Option<Casualty>,
+}
+
+/// A rescue's hurt person and the ambulance waiting for them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Casualty {
+    /// Where the ambulance stands, and its yaw (radians).
+    pub medic: Vec3,
+    pub yaw: f32,
+    /// 0 lying at `at`, 1 carried by `carrier`, 2 with the medic.
+    pub state: u8,
+    pub carrier: u32,
+    pub at: Vec3,
+}
+
+/// What the player can do about a rescue just now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Help {
+    /// Next to someone trapped.
+    FreeThem,
+    /// Next to someone lying hurt.
+    LiftThem,
+    /// Carrying someone hurt: on to the ambulance.
+    CarryThem,
 }
 
 /// What stands at a rescue: wrecked cars, flames and smoke, the people.
@@ -37,6 +63,10 @@ struct Scene {
     cars: Vec<LodId>,
     fire: Vec<EmitterId>,
     people: Vec<EntityId>,
+    /// The ambulance and its medic.
+    ambulance: Vec<EntityId>,
+    /// The hurt person, lying or in someone's arms.
+    hurt: Option<EntityId>,
 }
 
 #[derive(Default)]
@@ -46,6 +76,8 @@ pub struct Radio {
     scenes: BTreeMap<u32, Scene>,
     /// The last word on the air: (text, seconds left).
     pub flash: Option<(String, f32)>,
+    /// Our hero's id (to know what we carry).
+    pub me: Option<u32>,
 }
 
 /// A beam's colour by kind.
@@ -63,6 +95,25 @@ fn beam_colour(kind: IncidentKind) -> Color {
 impl Radio {
     /// An incident message; returns false for other messages.
     pub fn hear(&mut self, world: &mut World, m: &ToClient) -> bool {
+        if let ToClient::Casualty {
+            id,
+            medic,
+            yaw,
+            state,
+            carrier,
+            at,
+        } = m
+        {
+            let c = Casualty {
+                medic: Vec3::from_array(*medic),
+                yaw: hw_sim::props::byte_to_yaw(*yaw) as f32,
+                state: *state,
+                carrier: *carrier,
+                at: Vec3::from_array(*at),
+            };
+            self.casualty(world, *id, c);
+            return true;
+        }
         let ToClient::Incident {
             id,
             kind,
@@ -100,6 +151,7 @@ impl Radio {
                     facing,
                     left: *left,
                     age: 0.0,
+                    casualty: None,
                 },
             );
             let mut b = MeshBuilder::new();
@@ -239,8 +291,73 @@ impl Radio {
         }
     }
 
+    /// News of a rescue's hurt person: the ambulance arrives, they lie
+    /// there, are lifted, or are handed over.
+    fn casualty(&mut self, world: &mut World, id: u32, c: Casualty) {
+        let Some(call) = self.calls.get_mut(&id) else {
+            return;
+        };
+        call.casualty = Some(c);
+        let scene = self.scenes.entry(id).or_default();
+        if scene.ambulance.is_empty() {
+            let deg = c.yaw.to_degrees();
+            let place = Place::new(c.medic.x, c.medic.y, c.medic.z).with_yaw_deg(deg);
+            if let Ok(e) = world.place(ambulance(), place) {
+                scene.ambulance.push(e);
+            }
+            // The medic waits at the back doors, waving them over.
+            let back = c.medic - Vec3::new(c.yaw.sin(), 0.0, c.yaw.cos()) * 3.8;
+            let place = Place::new(back.x, back.y, back.z).with_yaw_deg(deg + 180.0);
+            if let Ok(e) = world.place(person(MEDIC_LOOK), place) {
+                scene.ambulance.push(e);
+            }
+        }
+        match c.state {
+            2 => {
+                if let Some(e) = scene.hurt.take() {
+                    world.despawn(e);
+                }
+                self.flash = Some(("With the medic now. They'll pull through!".into(), 4.0));
+            }
+            _ => {
+                if scene.hurt.is_none() {
+                    if let Ok(e) = world.place(lying(id), Place::new(c.at.x, c.at.y, c.at.z)) {
+                        scene.hurt = Some(e);
+                    }
+                }
+                if let (0, Some(e)) = (c.state, scene.hurt) {
+                    let _ = world.set_place(e, Place::new(c.at.x, c.at.y + 0.15, c.at.z));
+                }
+                if c.state == 1 && Some(c.carrier) == self.me {
+                    self.flash = Some(("They're hurt: get them to the ambulance!".into(), 5.0));
+                }
+            }
+        }
+    }
+
+    /// Puts each hurt person someone carries into their arms; `hero` gives
+    /// a hero's feet and yaw (degrees).
+    pub fn carry(&self, world: &mut World, hero: impl Fn(u32) -> Option<(Vec3, f32)>) {
+        for (id, c) in &self.calls {
+            let Some(cas) = c.casualty.filter(|k| k.state == 1) else {
+                continue;
+            };
+            let (Some(e), Some((feet, yaw))) =
+                (self.scenes.get(id).and_then(|s| s.hurt), hero(cas.carrier))
+            else {
+                continue;
+            };
+            let a = yaw.to_radians();
+            let p = feet + Vec3::new(a.sin(), 0.0, a.cos()) * 0.45 + Vec3::Y * 1.0;
+            let _ = world.set_place(e, Place::new(p.x, p.y, p.z).with_yaw_deg(yaw));
+        }
+    }
+
     fn unstage(&mut self, world: &mut World, id: u32) {
         if let Some(scene) = self.scenes.remove(&id) {
+            for e in scene.ambulance.into_iter().chain(scene.hurt) {
+                world.despawn(e);
+            }
             for l in scene.cars {
                 world.despawn_lod(l);
             }
@@ -254,14 +371,29 @@ impl Radio {
         }
     }
 
-    /// Is a trapped person within reach of `hero` (to tell the player how
-    /// to help)?
-    pub fn near_victim(&self, hero: Vec3) -> bool {
-        self.calls.values().any(|c| {
-            victims(c.kind, c.at.as_dvec3(), c.facing, c.left)
+    /// What our hero at `hero` can do for a rescue just now, if anything.
+    pub fn help(&self, hero: Vec3) -> Option<Help> {
+        let reach = RESCUE_REACH as f32 + 0.5;
+        if self.carrying().is_some() {
+            return Some(Help::CarryThem);
+        }
+        self.calls.values().find_map(|c| match c.casualty {
+            Some(k) if k.state == 0 && k.at.distance(hero) < reach => Some(Help::LiftThem),
+            _ => victims(c.kind, c.at.as_dvec3(), c.facing, c.left)
                 .last()
-                .is_some_and(|v| v.as_vec3().distance(hero) < RESCUE_REACH as f32 + 0.5)
+                .is_some_and(|v| v.as_vec3().distance(hero) < reach)
+                .then_some(Help::FreeThem),
         })
+    }
+
+    /// The ambulance we are carrying someone to.
+    pub fn carrying(&self) -> Option<Vec3> {
+        let me = self.me?;
+        self.calls
+            .values()
+            .filter_map(|c| c.casualty)
+            .find(|k| k.state == 1 && k.carrier == me)
+            .map(|k| k.medic)
     }
 
     pub fn update(&mut self, dt: f32) {
@@ -279,7 +411,23 @@ impl Radio {
     /// The radio on screen, top left: each call with its distance, the way
     /// to go (against where the camera looks) and a con colour.
     pub fn panel(&self, ctx: &egui::Context, eye: Vec3, look: Vec3, mine: u8, hero: Option<Vec3>) {
-        if hero.is_some_and(|h| self.near_victim(h)) {
+        if let Some(help) = hero.and_then(|h| self.help(h)) {
+            let text = match help {
+                Help::FreeThem => "Hold E to help them out".to_string(),
+                Help::LiftThem => "Hold E to lift them".to_string(),
+                Help::CarryThem => {
+                    let d = match (hero, self.carrying()) {
+                        (Some(h), Some(m)) => {
+                            glam::Vec2::new(m.x - h.x, m.z - h.z).length() - MEDIC_REACH as f32
+                        }
+                        _ => 0.0,
+                    };
+                    format!(
+                        "Carry them to the ambulance (+ on the compass), {:.0} m",
+                        d.max(0.0)
+                    )
+                }
+            };
             egui::Area::new(egui::Id::new("rescue"))
                 .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -170.0))
                 .show(ctx, |ui| {
@@ -289,7 +437,7 @@ impl Radio {
                         .inner_margin(egui::Margin::symmetric(10, 5))
                         .show(ui, |ui| {
                             ui.label(
-                                egui::RichText::new("Hold E to help them out")
+                                egui::RichText::new(text)
                                     .color(egui::Color32::from_rgb(255, 230, 140))
                                     .size(17.0)
                                     .strong(),
@@ -358,6 +506,143 @@ impl Radio {
         self.calls.clear();
         self.flash = None;
     }
+}
+
+/// The medic's look in [`person`]: all in white.
+const MEDIC_LOOK: u32 = 4;
+
+/// A streamlined ambulance, retro-future: white with a red stripe and
+/// crosses, a rounded nose, tail fins and a red bubble light on the roof.
+/// Faces +z, wheels on the ground.
+fn ambulance() -> Mesh {
+    let mut b = MeshBuilder::new();
+    let white = rgb(238, 238, 230);
+    let red = rgb(200, 30, 36);
+    let chrome = rgb(170, 175, 185);
+    let glass = rgb(40, 60, 80);
+    let tyre = rgb(25, 25, 28);
+    let z = DVec3::Z;
+    // The body, and the tall box at the back where the patient lies.
+    b.oriented_box(
+        DVec3::new(0.0, 1.0, 0.0),
+        z,
+        DVec3::new(2.9, 0.55, 1.05),
+        white,
+    );
+    b.oriented_box(
+        DVec3::new(0.0, 1.95, -0.7),
+        z,
+        DVec3::new(2.2, 0.45, 1.0),
+        white,
+    );
+    // The cab's roof, lower, and its windscreen.
+    b.oriented_box(
+        DVec3::new(0.0, 1.75, 1.85),
+        z,
+        DVec3::new(0.55, 0.22, 0.95),
+        white,
+    );
+    b.quad(
+        [
+            DVec3::new(-0.92, 1.55, 2.45),
+            DVec3::new(0.92, 1.55, 2.45),
+            DVec3::new(0.88, 1.95, 2.42),
+            DVec3::new(-0.88, 1.95, 2.42),
+        ],
+        z,
+        glass,
+    );
+    // The rounded nose.
+    b.oriented_box(
+        DVec3::new(0.0, 0.85, 3.0),
+        z,
+        DVec3::new(0.25, 0.4, 0.95),
+        white,
+    );
+    // The stripe along both sides and the crosses on them and on the roof.
+    for sx in [-1.0, 1.0] {
+        let x = sx * 1.07;
+        b.oriented_box(
+            DVec3::new(x, 1.15, 0.0),
+            z,
+            DVec3::new(2.95, 0.1, 0.02),
+            red,
+        );
+        b.oriented_box(
+            DVec3::new(x, 1.95, -0.8),
+            z,
+            DVec3::new(0.12, 0.38, 0.02),
+            red,
+        );
+        b.oriented_box(
+            DVec3::new(x, 1.95, -0.8),
+            z,
+            DVec3::new(0.38, 0.12, 0.02),
+            red,
+        );
+        // A tail fin.
+        b.hexa(
+            [
+                DVec3::new(sx * 0.9, 2.4, -2.9),
+                DVec3::new(sx * 1.0, 2.4, -2.9),
+                DVec3::new(sx * 1.0, 2.4, -1.9),
+                DVec3::new(sx * 0.9, 2.4, -1.9),
+            ],
+            [
+                DVec3::new(sx * 0.9, 3.0, -3.1),
+                DVec3::new(sx * 1.0, 3.0, -3.1),
+                DVec3::new(sx * 1.0, 3.0, -2.8),
+                DVec3::new(sx * 0.9, 3.0, -2.8),
+            ],
+            red,
+        );
+        // Wheels.
+        for wz in [-1.9, 1.9] {
+            b.oriented_box(
+                DVec3::new(sx * 0.95, 0.38, wz),
+                z,
+                DVec3::new(0.38, 0.38, 0.14),
+                tyre,
+            );
+        }
+    }
+    b.oriented_box(
+        DVec3::new(0.0, 2.41, -0.8),
+        z,
+        DVec3::new(0.12, 0.01, 0.4),
+        red,
+    );
+    b.oriented_box(
+        DVec3::new(0.0, 2.41, -0.8),
+        z,
+        DVec3::new(0.4, 0.01, 0.12),
+        red,
+    );
+    // Chrome bumpers.
+    for (bz, w) in [(3.27, 0.06), (-2.95, 0.06)] {
+        b.oriented_box(
+            DVec3::new(0.0, 0.55, bz),
+            z,
+            DVec3::new(w, 0.1, 1.08),
+            chrome,
+        );
+    }
+    // The bubble light, lit.
+    b.surf = Surf::Glow;
+    b.dome(DVec3::new(0.0, 1.97, 1.85), 0.22, 10, 4, rgb(255, 60, 50));
+    b.finish()
+}
+
+/// Someone hurt, lying on their back along x (carried across the arms).
+fn lying(look: u32) -> Mesh {
+    let shirt = [rgb(70, 130, 190), rgb(210, 190, 90), rgb(150, 80, 120)][look as usize % 3];
+    let mut m = Mesh::new();
+    let _ = m.add_box((-0.55, 0.12, 0.0), (0.9, 0.22, 0.34), rgb(60, 62, 80));
+    let _ = m.add_box((0.25, 0.14, 0.0), (0.62, 0.26, 0.46), shirt);
+    let _ = m.add_box((0.7, 0.14, 0.0), (0.26, 0.24, 0.24), rgb(224, 182, 150));
+    // A bandage round the head.
+    let _ = m.add_box((0.7, 0.2, 0.0), (0.12, 0.26, 0.27), rgb(245, 245, 240));
+    m
 }
 
 /// Someone in trouble: plain clothes in one of a few colours, an arm up

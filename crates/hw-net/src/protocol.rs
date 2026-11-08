@@ -670,6 +670,18 @@ pub enum ToClient {
         yaw: u8,
         left: u8,
     },
+    /// The hurt person of a rescue (incident `id`): where the medic waits
+    /// (and which way the ambulance faces, a yaw byte), and where the
+    /// person is: lying at `at` (state 0), carried by hero `carrier`
+    /// (state 1), or with the medic (state 2: gone).
+    Casualty {
+        id: u32,
+        medic: [f32; 3],
+        yaw: u8,
+        state: u8,
+        carrier: u32,
+        at: [f32; 3],
+    },
     /// Something happened in a fight nearby.
     Fx(Fx),
     /// Your hero's progress changed (karma, level, powers): keep it in
@@ -727,6 +739,7 @@ impl ToClient {
             ToClient::Traffic { cars, .. } => 8 + 4 + 2 + 1 + 20 * cars.len().min(255),
             ToClient::CarsCleared { cars } => 1 + 8 * cars.len().min(255),
             ToClient::Incident { .. } => 4 + 1 + 12 + 1 + 1 + 1 + 1,
+            ToClient::Casualty { .. } => 4 + 12 + 1 + 1 + 4 + 12,
             ToClient::Fx(_) => FX_BYTES,
             ToClient::Sheet(s) => s.wire_size(),
         }
@@ -830,6 +843,23 @@ impl ToClient {
                     w.f32(*v);
                 }
                 w.u8(*level).u8(*state).u8(*yaw).u8(*left);
+            }
+            ToClient::Casualty {
+                id,
+                medic,
+                yaw,
+                state,
+                carrier,
+                at,
+            } => {
+                w.u8(16).u32(*id);
+                for v in medic {
+                    w.f32(*v);
+                }
+                w.u8(*yaw).u8(*state).u32(*carrier);
+                for v in at {
+                    w.f32(*v);
+                }
             }
             ToClient::Fx(fx) => {
                 w.u8(10)
@@ -976,6 +1006,14 @@ impl ToClient {
                 })
             }
             11 => ToClient::Sheet(Sheet::read(r)?),
+            16 => ToClient::Casualty {
+                id: r.u32()?,
+                medic: [r.f32()?, r.f32()?, r.f32()?],
+                yaw: r.u8()?,
+                state: r.u8()?,
+                carrier: r.u32()?,
+                at: [r.f32()?, r.f32()?, r.f32()?],
+            },
             15 => ToClient::Incident {
                 id: r.u32()?,
                 kind: r.u8()?,
@@ -1527,6 +1565,17 @@ mod tests {
                         state: 1,
                         yaw: 200,
                         left: 2,
+                    },
+                ),
+                (
+                    10,
+                    ToClient::Casualty {
+                        id: 7,
+                        medic: [40.0, 2.0, -3.5],
+                        yaw: 64,
+                        state: 1,
+                        carrier: 12,
+                        at: [1.0, 2.5, -3.0],
                     },
                 ),
                 (

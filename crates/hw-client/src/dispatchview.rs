@@ -170,6 +170,29 @@ pub fn compass(ctx: &egui::Context, eye: Vec3, look: Vec3, radio: &Radio, mine: 
             }
         }
     }
+    // The ambulance we carry someone to: a white cross.
+    if let Some(m) = radio.carrying() {
+        let b = bearing(glam::Vec2::new(m.x - eye.x, m.z - eye.z));
+        let rel = (b - heading + PI).rem_euclid(TAU) - PI;
+        let x = x_of(b).unwrap_or(if rel < 0.0 {
+            rect.left() + 8.0
+        } else {
+            rect.right() - 8.0
+        });
+        let c = egui::pos2(x, rect.top() + 9.0);
+        painter.rect_filled(
+            egui::Rect::from_center_size(c, egui::vec2(16.0, 16.0)),
+            2.0,
+            egui::Color32::from_rgb(200, 30, 36),
+        );
+        for size in [egui::vec2(10.0, 3.0), egui::vec2(3.0, 10.0)] {
+            painter.rect_filled(
+                egui::Rect::from_center_size(c, size),
+                0.0,
+                egui::Color32::WHITE,
+            );
+        }
+    }
     for c in radio.calls.values() {
         let d = glam::Vec2::new(c.at.x - eye.x, c.at.z - eye.z);
         let b = bearing(d);

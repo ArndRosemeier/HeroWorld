@@ -350,6 +350,17 @@ town. A compass strip at the top of the screen marks each call (con colour, dist
 a map of the built-up town: streets, the villains' quarter outlined, landmarks, calls, and
 you as an arrow. `HW_VIEW=signal` looks up at the emblem, `HW_VIEW=map` opens the map.
 
+**Status (0.036):** carrying the injured to a medic. A rescue's last person out is hurt: the
+hero who freed them holds them (`incidents::Hurt::Carried`), and an ambulance waits at the
+kerb of a street about 50 m off (`Incident::medic`). Carried within 5 m of it, they are handed
+over (double Guardian karma) and only then is the rescue resolved. A carrier knocked down drops
+them (`Hurt::Lying`); any hero lifts them again by holding E for a second. `ToClient::Casualty`
+tells clients (protocol 17); they draw a retro ambulance with fins and a bubble light, its
+medic, the hurt person lying or across the hero's arms, a red cross on the compass and "Carry
+them to the ambulance, N m". `HW_CARRY=1` (with `HW_INCIDENT=fire|crash`) starts with the hurt
+one in your arms; `HW_VIEW=medic` looks at the ambulance. Not yet: carrying slows you or
+blocks powers; people in buildings that heroes broke.
+
 ### M10. Traffic, taxis and the underground (in progress)
 
 - Ground traffic on the streets (AssetGenerator cars with spinning wheels and opening doors as

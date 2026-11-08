@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.036 (2026-11-08)
+
+- The last person out of a fire or a crash is hurt. Carry them to the ambulance waiting down
+  the street (the red cross on your compass). If you get knocked down you drop them: hold E
+  to pick them up again.
+
 ## 0.035 (2026-11-08)
 
 - A new title theme: a swinging golden-age serial tune with a heroic trumpet and glockenspiel sparkles.
