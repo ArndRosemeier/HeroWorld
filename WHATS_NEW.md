@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.016 (2026-11-08)
+
+- A title screen! HeroWorld now opens on its own town at golden hour, seen from a camera drifting round the Aether Spire while flying taxis cross the sky. The golden HEROWORLD letters swoop in with a whoosh, glint now and then, and Aether sparks dance around them.
+- A heroic title theme plays as you arrive, with playful sounds on the buttons.
+- Big friendly buttons: Play (or Continue), New hero (pick a name and a world number, or let it surprise you), Play with friends (host your world or join by room code), Settings (music, sounds, less motion), What's new and Quit.
+- The town builds behind the title with a loading bar; press Play early and you start the moment it is ready, the camera swooping down to your hero.
+- The game remembers your hero's name, your world and your sound settings.
+
 ## 0.015 (2026-11-08)
 
 - Waterfronts: where a street meets a river or the sea it now ends in a granite quay wall with a stone kerb, iron mooring bollards, and steps down to a landing at the water.

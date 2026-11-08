@@ -255,6 +255,28 @@ impl TownView {
         self.update(world, eye, f64::INFINITY);
     }
 
+    /// How much of the town around `eye` is built: (cells built, cells
+    /// wanted), for a loading bar.
+    pub fn progress(&self, eye: DVec2) -> (usize, usize) {
+        let wanted: BTreeSet<CellKey> = self
+            .buildings
+            .keys()
+            .chain(self.roads.keys())
+            .copied()
+            .filter(|k| cell_centre(*k).distance(eye) < LOAD)
+            .collect();
+        let built = wanted.iter().filter(|k| self.built.contains_key(k)).count();
+        (built, wanted.len())
+    }
+
+    /// Takes every built cell out of the world (before switching towns).
+    pub fn clear(&mut self, world: &mut World) {
+        let keys: Vec<CellKey> = self.built.keys().copied().collect();
+        for k in keys {
+            self.drop_cell(world, k);
+        }
+    }
+
     fn drop_cell(&mut self, world: &mut World, k: CellKey) {
         for e in self.entities.remove(&k).unwrap_or_default() {
             world.despawn(e);

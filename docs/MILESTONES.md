@@ -142,6 +142,15 @@ same hero; a friend who joins sees it.
 
 ### M4. Title screen
 
+**Status (2026-11-08, 0.016):** built. The town at golden hour from a camera circling the
+Aether Spire, flying taxis, two moons; the HEROWORLD logo (gold letters with a red block
+shadow on an arch, swooping in, a glint every 7.5 s, sunburst and Aether sparks, still with
+"less motion"); Play/Continue, New hero, Play with friends (host, join by code), Settings,
+What's new, Quit; the Lyria title theme fading in and out after the game starts; the town
+built behind the title with a loading bar; a camera swoop down to the hero. Profile in
+`%APPDATA%\HeroWorld\profile.json`. Still open: the hero posing in the foreground (needs M2's
+Actors hero and M3's creator), searchlights, and the hero creator behind New hero.
+
 The first thing anyone sees, so it gets hero quality: playful and inviting, at least as good as
 Scale's start screen (rising title letters, the sunset city behind, the title theme).
 
