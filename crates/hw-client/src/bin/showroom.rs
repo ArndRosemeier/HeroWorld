@@ -1,0 +1,80 @@
+//! A showroom for vehicles and props: one model (or a row of them) on a
+//! plain floor in daylight, for close-up screenshots while modelling.
+//!
+//! HW_SHOW=cruiser|bubble|hover|taxi|wheel|cars (default cars)
+//! HW_LOD=near|mid|far  HW_PAINT=0..7  HW_YAW=degrees  HW_DIST=metres  HW_PITCH=degrees
+//!
+//! xvfb-run -a env ENGINE_SCREENSHOT=$PWD/screenshots/show.png HW_SHOW=cruiser \
+//!   cargo run -p hw-client --bin showroom
+
+use engine::prelude::*;
+use glam::DVec3;
+use hw_client::carmesh::{car_into, taxi_into, wheel, Lod};
+use hw_client::citymesh::MeshBuilder;
+use hw_gen::urban::props::CarModel;
+
+fn env_f(name: &str, default: f32) -> f32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
+fn model(name: &str, lod: Lod, paint: u8) -> Mesh {
+    let mut b = MeshBuilder::new();
+    match name {
+        "cruiser" => car_into(&mut b, CarModel::Cruiser, paint, lod, true),
+        "bubble" => car_into(&mut b, CarModel::Bubble, paint, lod, true),
+        "hover" => car_into(&mut b, CarModel::Hover, paint, lod, true),
+        "taxi" => taxi_into(&mut b, lod),
+        "ambulance" => hw_client::carmesh::ambulance_into(&mut b, lod),
+        "wheel" => wheel(&mut b, DVec3::new(0.0, 0.36, 0.0), 0.36, 0.22, lod),
+        _ => {}
+    }
+    b.finish()
+}
+
+fn main() -> EngineResult<()> {
+    let show = std::env::var("HW_SHOW").unwrap_or_else(|_| "cars".into());
+    let lod = match std::env::var("HW_LOD").as_deref() {
+        Ok("mid") => Lod::Mid,
+        Ok("far") => Lod::Far,
+        _ => Lod::Near,
+    };
+    let paint = env_f("HW_PAINT", 0.0) as u8;
+    let names: Vec<&str> = if show == "cars" {
+        vec!["cruiser", "bubble", "hover", "taxi"]
+    } else {
+        vec![show.as_str()]
+    };
+    let spacing = 3.4f32;
+    let width = spacing * (names.len() as f32 - 1.0);
+    let meshes: Vec<Mesh> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| model(n, lod, paint + i as u8))
+        .collect();
+    for (n, m) in names.iter().zip(&meshes) {
+        println!("{n}: {} triangles", m.build().triangle_count());
+    }
+    let yaw = env_f("HW_YAW", 35.0);
+    let pitch = env_f("HW_PITCH", 14.0);
+    let dist = env_f("HW_DIST", if names.len() > 1 { 9.0 + width } else { 7.0 });
+    let mut meshes = Some(meshes);
+    Engine::run("showroom", move |world, frame| {
+        if frame.first {
+            for (i, m) in meshes.take().unwrap_or_default().into_iter().enumerate() {
+                let x = -width * 0.5 + spacing * i as f32;
+                world.place(m, Place::new(x, 0.0, 0.0))?;
+            }
+            world.spawn(Shape::box_at(
+                (0.0, -0.05, 0.0),
+                (60.0, 0.1, 60.0),
+                rgb(120, 122, 126),
+            )?);
+            world.set_sun((0.5, 1.0, 0.35), 0.25);
+        }
+        world.look_orbit((0.0, 0.8, 0.0), dist, yaw, pitch);
+        Ok(())
+    })
+}

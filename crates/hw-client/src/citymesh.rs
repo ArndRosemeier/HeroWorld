@@ -349,6 +349,108 @@ impl MeshBuilder {
         }
     }
 
+    /// A smooth surface through a grid of points: `rows[i][j]`, rows along
+    /// the length of a shape, columns around it (`wrap`: the last column
+    /// joins the first). Normals are shared between neighbouring quads, so
+    /// curves shade round instead of faceted. `out` points the normals:
+    /// `true` uses (along the rows) × (around), `false` the reverse.
+    ///
+    /// `paint(i, j)` gives the quad between rows i, i+1 and columns j, j+1
+    /// its material and colour, or `None` to leave a hole (a window cut
+    /// in a panel is better done as glass). Where paint changes, the
+    /// vertices are split, so the border stays crisp along the grid line
+    /// while the shape stays smooth.
+    pub fn grid(
+        &mut self,
+        rows: &[Vec<DVec3>],
+        wrap: bool,
+        out: bool,
+        paint: impl Fn(usize, usize) -> Option<(Surf, Color)>,
+    ) {
+        let n_rows = rows.len();
+        let Some(n_cols) = rows.first().map(Vec::len) else {
+            return;
+        };
+        if n_rows < 2 || n_cols < 2 || rows.iter().any(|r| r.len() != n_cols) {
+            return;
+        }
+        let at = |i: usize, j: usize| rows[i][j];
+        let normal = |i: usize, j: usize| {
+            let (i0, i1) = (i.saturating_sub(1), (i + 1).min(n_rows - 1));
+            let (j0, j1) = if wrap {
+                ((j + n_cols - 1) % n_cols, (j + 1) % n_cols)
+            } else {
+                (j.saturating_sub(1), (j + 1).min(n_cols - 1))
+            };
+            let mut du = at(i1, j) - at(i0, j);
+            let mut dv = at(i, j1) - at(i, j0);
+            // A row (or column) shrunk to a point: borrow the neighbour's
+            // direction so the tip still gets a sensible normal.
+            if du.length_squared() < 1e-12 {
+                du = at(i1, j1) - at(i0, j0);
+            }
+            if dv.length_squared() < 1e-12 {
+                let k = if i + 1 < n_rows { i + 1 } else { i - 1 };
+                dv = at(k, j1) - at(k, j0);
+            }
+            let n = du.cross(dv);
+            if out {
+                n
+            } else {
+                -n
+            }
+        };
+        let normals: Vec<Vec<DVec3>> = (0..n_rows)
+            .map(|i| (0..n_cols).map(|j| normal(i, j)).collect())
+            .collect();
+        let quads_around = if wrap { n_cols } else { n_cols - 1 };
+        let saved = self.surf;
+        let mut ids: HashMap<(usize, usize, u8, [u32; 4]), PointId> = HashMap::new();
+        for i in 0..n_rows - 1 {
+            for j in 0..quads_around {
+                let Some((surf, color)) = paint(i, j) else {
+                    continue;
+                };
+                let jn = (j + 1) % n_cols;
+                let corners = [(i, j), (i + 1, j), (i + 1, jn), (i, jn)];
+                let pts = corners.map(|(a, c)| at(a, c));
+                let mean: DVec3 = corners.iter().map(|&(a, c)| normals[a][c]).sum();
+                let geo = (pts[1] - pts[0]).cross(pts[2] - pts[0])
+                    + (pts[2] - pts[0]).cross(pts[3] - pts[0]);
+                if geo.length_squared() < 1e-16 {
+                    continue;
+                }
+                let order = if geo.dot(mean) >= 0.0 {
+                    [0, 1, 2, 3]
+                } else {
+                    [0, 3, 2, 1]
+                };
+                self.surf = surf;
+                let key_surf = surf as u8;
+                let key_col = [color.r, color.g, color.b, color.a].map(f32::to_bits);
+                let face = order.map(|k| {
+                    let (a, c) = corners[k];
+                    *ids.entry((a, c, key_surf, key_col))
+                        .or_insert_with(|| self.point(at(a, c), normals[a][c], color))
+                });
+                // Drop a corner a degenerate quad repeats (a tip).
+                let mut uniq: Vec<PointId> = Vec::with_capacity(4);
+                let mut seen: Vec<DVec3> = Vec::with_capacity(4);
+                for (k, id) in face.iter().enumerate() {
+                    let p = pts[order[k]];
+                    if !seen.iter().any(|q| q.distance_squared(p) < 1e-14) {
+                        seen.push(p);
+                        uniq.push(*id);
+                    }
+                }
+                if uniq.len() >= 3 {
+                    self.target().add_face(&uniq).expect("grid face");
+                }
+            }
+        }
+        self.surf = saved;
+    }
+
     /// A quad facing `outward` (winding fixed up to match).
     pub fn quad(&mut self, pts: [DVec3; 4], outward: DVec3, color: Color) {
         let n = (pts[1] - pts[0]).cross(pts[2] - pts[0]);

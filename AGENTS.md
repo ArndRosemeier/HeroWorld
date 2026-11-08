@@ -45,6 +45,33 @@ file; when they change, re-export the snapshot here.
   streaming, destruction), propose it in ENGINE_REQUESTS.md rather than working around it.
 - Warnings are errors. Do not silence a lint or skip a test to get green.
 
+## Visual quality bar
+
+Every model the player sees (cars, taxis, vans, robots, props, landmarks, furniture) ships at
+**final quality**, never as a low-poly stand-in. Arnd judges the game by its screenshots; a
+boxy car is a bug, not a first version. The early box cars, the box ambulance and the cube
+people were proofs of concept, not the bar: do not copy them, and do not build a new model
+"like the existing ones" without checking they meet this section.
+
+- **Look:** golden-age retro-future (1950s Googie and streamline: long fins, chrome bumpers and
+  spears, whitewalls, bubble glass, two-tone paint, rocket and atom motifs). A real designer's
+  object of that era, with its details: bumpers, grilles, lamps in bezels, door seams, handles,
+  trim, wheel arches, tyres with tread and hubcaps.
+- **Shape:** curved things are smooth. Build them as lofted or lathed surfaces with smooth
+  normals (`MeshBuilder::grid`, or an AssetGenerator `.glb`), not boxes, tapers or 6-12 sided
+  ellipsoids with flat facets. Hard edges only where the real object has them.
+- **Close-up budget:** spend what a close-up needs. A car or van near the camera is several
+  thousand triangles (about 5 000-15 000); a lamp, hydrant or bench a few hundred to a couple of
+  thousand. Round parts get at least 24 sides near the camera.
+- **Frame rate comes from LODs,** not from crude meshes: give every model at least three levels
+  (close-up, mid at a fifth or so of the triangles, far at a few hundred) and instance them
+  (`spawn_lod_at`). Check `ENGINE_FRAME_STATS=1` on a busy street.
+- **Look before you push:** take a close-up screenshot of every new or changed model (a
+  `HW_VIEW` for it, the camera within 5 m) and compare it with a photo of a real 1950s car or
+  object. If it would look out of place in a modern game, it is not done.
+- Tools: AssetGenerator (`prop.assembly`, `organic.sculpt`; see M11's `tools/robots/`) for
+  complex parts; OpenRouter for reference images and textures (`tools/openrouter/or.py`).
+
 ## Checks
 
 ```

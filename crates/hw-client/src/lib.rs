@@ -3,6 +3,7 @@
 //! people from Actors.
 
 pub mod buildingmesh;
+pub mod carmesh;
 pub mod citymesh;
 pub mod creator;
 pub mod crowdview;

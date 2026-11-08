@@ -177,7 +177,7 @@ pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
         PropKind::Tree(s, v) => tree_model(species(s), v as u32)?.lod_levels(),
         PropKind::Shrub(v) => shrub_model(v as u32)?.lod_levels(),
         PropKind::Lamp(style) => two(lamp(style, true), 140.0, lamp(style, false), 700.0),
-        PropKind::Car(m, paint) => two(car(m, paint, true), 130.0, car(m, paint, false), 650.0),
+        PropKind::Car(m, paint) => parked_car_levels(m, paint),
         PropKind::TrafficLight => two(traffic_light(true), 160.0, traffic_light(false), 500.0),
         PropKind::Fountain => vec![LodLevel::new(fountain(), 900.0)],
         PropKind::Bench => vec![LodLevel::new(bench(), 160.0)],
@@ -244,24 +244,6 @@ fn ellipsoid(b: &mut MeshBuilder, c: DVec3, r: DVec3, seg: usize, rings: usize, 
             }
         }
     }
-}
-
-/// A box tapering from `lo` (x half, z range) at `y0` to `hi` at `y1`.
-fn taper(
-    b: &mut MeshBuilder,
-    (y0, w0, z00, z01): (f64, f64, f64, f64),
-    (y1, w1, z10, z11): (f64, f64, f64, f64),
-    c: Color,
-) {
-    let q = |y: f64, w: f64, za: f64, zb: f64| {
-        [
-            DVec3::new(-w, y, za),
-            DVec3::new(w, y, za),
-            DVec3::new(w, y, zb),
-            DVec3::new(-w, y, zb),
-        ]
-    };
-    b.hexa(q(y0, w0, z00, z01), q(y1, w1, z10, z11), c);
 }
 
 fn glow(b: &mut MeshBuilder, f: impl FnOnce(&mut MeshBuilder)) {
@@ -384,585 +366,87 @@ fn lamp(style: LampStyle, near: bool) -> Mesh {
 
 // ---------------------------------------------------------------- cars
 
-/// Two-tone paints: body, then roof and trim.
-const PAINTS: [[(u8, u8, u8); 2]; 8] = [
-    [(196, 36, 48), (244, 238, 228)],
-    [(56, 186, 186), (244, 238, 228)],
-    [(240, 150, 172), (250, 244, 238)],
-    [(150, 218, 178), (240, 232, 212)],
-    [(108, 166, 228), (32, 52, 102)],
-    [(244, 206, 58), (40, 40, 44)],
-    [(238, 226, 198), (120, 30, 42)],
-    [(176, 148, 218), (204, 208, 218)],
-];
+pub use crate::carmesh::wheel_layout;
+use crate::carmesh::{ambulance_into, car_into, taxi_into, wheel, Lod};
 
-/// A golden-age car, its nose to +z.
-fn car(model: CarModel, paint: u8, near: bool) -> Mesh {
-    car_parts(model, paint, near, true)
+fn car_mesh(model: CarModel, paint: u8, lod: Lod, wheels: bool) -> Mesh {
+    let mut b = MeshBuilder::new();
+    car_into(&mut b, model, paint, lod, wheels);
+    b.finish()
 }
 
-/// Where a model's wheels sit: half the track, the axles along z, the
-/// radius. Hover cars have none.
-pub fn wheel_layout(model: CarModel) -> Option<(f64, [f64; 2], f64)> {
-    match model {
-        CarModel::Cruiser => Some((0.95, [-1.6, 1.65], 0.36)),
-        CarModel::Bubble => Some((0.8, [-1.05, 1.1], 0.3)),
-        CarModel::Hover => None,
-    }
+/// A parked golden-age car, its nose to +z: close up, down the street, far.
+fn parked_car_levels(model: CarModel, paint: u8) -> Vec<LodLevel> {
+    vec![
+        LodLevel::new(car_mesh(model, paint, Lod::Near, true), 35.0),
+        LodLevel::new(car_mesh(model, paint, Lod::Mid, true), 140.0),
+        LodLevel::new(car_mesh(model, paint, Lod::Far, true), 650.0),
+    ]
 }
 
 /// A car driving in traffic: its body (the wheels turn on their own, see
-/// [`wheel_levels`]), close up and far.
+/// [`wheel_levels`], as far as traffic draws them), then far off with
+/// wheels of its own.
 pub fn moving_car_levels(model: CarModel, paint: u8) -> Vec<LodLevel> {
     vec![
-        LodLevel::new(car_parts(model, paint, true, false), 140.0),
-        LodLevel::new(car_parts(model, paint, false, false), 700.0),
+        LodLevel::new(car_mesh(model, paint, Lod::Near, false), 35.0),
+        LodLevel::new(car_mesh(model, paint, Lod::Mid, false), 120.0),
+        LodLevel::new(car_mesh(model, paint, Lod::Far, true), 700.0),
     ]
 }
 
 /// The ambulance that waits for a rescue's hurt: a long 1950s coach-built
-/// ambulance, white with a red stripe and crosses, a tall rear compartment
-/// with frosted windows and a rounded roof, tail fins, a chrome grille and
-/// twin red bubble lights. Nose to +z; close up and far.
+/// ambulance (see [`crate::carmesh::ambulance_into`]). Nose to +z, wheels
+/// on the ground; close up, down the street and far.
 pub fn ambulance_levels() -> Vec<LodLevel> {
-    let make = |near: bool| {
+    let make = |lod: Lod| {
         let mut b = MeshBuilder::new();
-        let seg = if near { 14 } else { 6 };
-        let white = rgb(242, 240, 232);
-        let red = rgb(196, 30, 40);
-        let chrome = rgb(225, 228, 232);
-        let window = rgb(40, 62, 78);
-        let frosted = rgb(196, 210, 214);
-        // The long lower body, its nose rounded off.
-        taper(
-            &mut b,
-            (0.32, 1.0, -3.05, 2.95),
-            (0.95, 1.03, -3.12, 2.85),
-            white,
-        );
-        ellipsoid(
-            &mut b,
-            DVec3::new(0.0, 0.7, 2.75),
-            DVec3::new(1.0, 0.36, 0.5),
-            seg,
-            seg / 2 + 1,
-            white,
-        );
-        // The rear compartment, its roof rounded, running over the cab.
-        taper(
-            &mut b,
-            (0.95, 1.03, -3.1, 0.75),
-            (1.78, 0.98, -3.02, 0.7),
-            white,
-        );
-        ellipsoid(
-            &mut b,
-            DVec3::new(0.0, 1.78, -1.15),
-            DVec3::new(0.98, 0.16, 1.92),
-            seg,
-            seg / 2 + 1,
-            white,
-        );
-        // The cab: a raked windscreen up to the roofline.
-        glass(&mut b, |b| {
-            taper(b, (0.95, 0.98, 0.75, 1.95), (1.74, 0.92, 0.7, 1.05), window)
-        });
-        taper(&mut b, (1.74, 0.92, 0.7, 1.05), (1.8, 0.9, 0.7, 1.0), white);
-        for sx in [-1.0, 1.0] {
-            let x = sx * 1.035;
-            // Frosted windows down the side of the compartment.
-            glass(&mut b, |b| {
-                for (z0, z1) in [(-2.75, -1.35), (-1.15, 0.45)] {
-                    bx(
-                        b,
-                        DVec3::new(x - 0.01, 1.12, z0),
-                        DVec3::new(x + 0.01, 1.58, z1),
-                        frosted,
-                    );
-                }
-            });
-            // The red stripe and a cross between the windows' frames.
-            bx(
-                &mut b,
-                DVec3::new(x - 0.012, 0.8, -3.05),
-                DVec3::new(x + 0.012, 0.9, 2.8),
-                red,
-            );
-            bx(
-                &mut b,
-                DVec3::new(x - 0.015, 1.27, -1.33),
-                DVec3::new(x + 0.015, 1.43, -1.17),
-                red,
-            );
-            // Tail fins with red lamps.
-            let q = |y: f64, za: f64, zb: f64, w: f64| {
-                [
-                    DVec3::new(sx * 0.86, y, za),
-                    DVec3::new(sx * (0.86 + w), y, za),
-                    DVec3::new(sx * (0.86 + w), y, zb),
-                    DVec3::new(sx * 0.86, y, zb),
-                ]
-            };
-            b.hexa(q(0.9, -3.12, -1.9, 0.16), q(1.22, -3.22, -2.8, 0.1), white);
-        }
-        // A red cross on the rear doors and on the roof.
-        bx(
-            &mut b,
-            DVec3::new(-0.08, 1.05, -3.145),
-            DVec3::new(0.08, 1.55, -3.12),
-            red,
-        );
-        bx(
-            &mut b,
-            DVec3::new(-0.25, 1.22, -3.145),
-            DVec3::new(0.25, 1.38, -3.12),
-            red,
-        );
-        bx(
-            &mut b,
-            DVec3::new(-0.1, 1.94, -1.75),
-            DVec3::new(0.1, 1.95, -0.95),
-            red,
-        );
-        bx(
-            &mut b,
-            DVec3::new(-0.4, 1.94, -1.45),
-            DVec3::new(0.4, 1.95, -1.25),
-            red,
-        );
-        if near {
-            metal(&mut b, |b| {
-                // Bumpers, a wide grille with bars, a siren on the roof.
-                for z in [-3.18, 3.18] {
-                    bx(
-                        b,
-                        DVec3::new(-1.04, 0.34, z - 0.07),
-                        DVec3::new(1.04, 0.5, z + 0.07),
-                        chrome,
-                    );
-                }
-                bx(
-                    b,
-                    DVec3::new(-0.75, 0.5, 3.12),
-                    DVec3::new(0.75, 0.74, 3.16),
-                    chrome,
-                );
-                for k in 0..7 {
-                    let x = -0.6 + 0.2 * k as f64;
-                    bx(
-                        b,
-                        DVec3::new(x - 0.02, 0.5, 3.15),
-                        DVec3::new(x + 0.02, 0.74, 3.2),
-                        rgb(150, 152, 160),
-                    );
-                }
-                for sx in [-1.0, 1.0] {
-                    bx(
-                        b,
-                        DVec3::new(sx * 1.04 - 0.01, 0.58, -2.9),
-                        DVec3::new(sx * 1.04 + 0.01, 0.64, 2.7),
-                        chrome,
-                    );
-                }
-                xcyl(b, DVec3::new(0.0, 1.98, 0.35), 0.1, 0.36, seg, chrome);
-            });
-            glow(&mut b, |b| {
-                for x in [-0.72, 0.72] {
-                    ellipsoid(
-                        b,
-                        DVec3::new(x, 0.78, 3.1),
-                        DVec3::splat(0.12),
-                        8,
-                        4,
-                        c3(WARM),
-                    );
-                }
-                for x in [-0.93, 0.93] {
-                    bx(
-                        b,
-                        DVec3::new(x - 0.05, 1.08, -3.26),
-                        DVec3::new(x + 0.05, 1.22, -3.16),
-                        rgb(255, 50, 40),
-                    );
-                }
-            });
-        }
-        // Twin red bubble lights over the windscreen.
-        glow(&mut b, |b| {
-            for x in [-0.45, 0.45] {
-                ellipsoid(
-                    b,
-                    DVec3::new(x, 1.86, 0.55),
-                    DVec3::new(0.13, 0.15, 0.13),
-                    10,
-                    6,
-                    rgb(255, 50, 45),
-                );
-            }
-        });
-        wheels(
-            &mut b,
-            0.98,
-            &[-1.95, 1.95],
-            0.38,
-            seg,
-            rgb(24, 24, 26),
-            chrome,
-            near,
-        );
+        ambulance_into(&mut b, lod);
         b.finish()
     };
     vec![
-        LodLevel::new(make(true), 140.0),
-        LodLevel::new(make(false), 700.0),
+        LodLevel::new(make(Lod::Near), 40.0),
+        LodLevel::new(make(Lod::Mid), 160.0),
+        LodLevel::new(make(Lod::Far), 700.0),
     ]
 }
 
 /// One wheel of `model`, centred, its axle along x: tyre, whitewalls and a
-/// spoked chrome hub on both faces, so it can be seen to turn.
+/// chrome hubcap with a spinner on both faces, so it can be seen to turn.
 pub fn wheel_levels(model: CarModel) -> Option<Vec<LodLevel>> {
     let (_, _, r) = wheel_layout(model)?;
-    let make = |near: bool| {
+    let make = |lod: Lod| {
         let mut b = MeshBuilder::new();
-        let seg = if near { 14 } else { 6 };
-        let tyre = rgb(24, 24, 26);
-        let chrome = rgb(225, 228, 232);
-        xcyl(&mut b, DVec3::ZERO, r, 0.24, seg, tyre);
-        if near {
-            for sx in [-1.0, 1.0] {
-                let o = sx * 0.125;
-                xcyl(
-                    &mut b,
-                    DVec3::new(o, 0.0, 0.0),
-                    r * 0.72,
-                    0.01,
-                    seg,
-                    rgb(240, 238, 230),
-                );
-                metal(&mut b, |b| {
-                    xcyl(b, DVec3::new(o * 1.1, 0.0, 0.0), r * 0.4, 0.02, seg, chrome);
-                    // Three spokes across the hub.
-                    for k in 0..3 {
-                        let a = std::f64::consts::PI * k as f64 / 3.0;
-                        let d = DVec3::new(0.0, a.cos(), a.sin());
-                        let e = DVec3::new(0.0, -a.sin(), a.cos());
-                        let (l, t) = (r * 0.62, 0.035);
-                        let q = |x: f64| {
-                            let c = DVec3::new(x, 0.0, 0.0);
-                            [
-                                c - d * l - e * t,
-                                c + d * l - e * t,
-                                c + d * l + e * t,
-                                c - d * l + e * t,
-                            ]
-                        };
-                        b.hexa(q(o * 1.2 - 0.02), q(o * 1.2 + 0.02), rgb(150, 152, 160));
-                    }
-                });
-            }
-        }
+        wheel(&mut b, DVec3::ZERO, r, 0.22, lod);
         b.finish()
     };
     Some(vec![
-        LodLevel::new(make(true), 60.0),
-        LodLevel::new(make(false), 260.0),
+        LodLevel::new(make(Lod::Near), 35.0),
+        LodLevel::new(make(Lod::Mid), 260.0),
     ])
 }
 
-fn car_parts(model: CarModel, paint: u8, near: bool, with_wheels: bool) -> Mesh {
-    let mut b = MeshBuilder::new();
-    car_into(&mut b, model, paint, near, with_wheels);
-    b.finish()
-}
-
-fn car_into(b: &mut MeshBuilder, model: CarModel, paint: u8, near: bool, with_wheels: bool) {
-    let [body, top] = PAINTS[paint as usize % PAINTS.len()].map(c3);
-    let chrome = rgb(225, 228, 232);
-    let tyre = rgb(24, 24, 26);
-    let window = rgb(40, 62, 78);
-    let seg = if near { 12 } else { 6 };
-    match model {
-        CarModel::Cruiser => {
-            // Long, low, with tail fins and a glassy cabin under a
-            // contrasting roof.
-            taper(b, (0.3, 0.98, -2.55, 2.6), (0.86, 1.0, -2.62, 2.5), body);
-            glass(b, |b| {
-                taper(b, (0.86, 0.93, -1.1, 1.0), (1.34, 0.8, -0.78, 0.5), window)
-            });
-            taper(b, (1.34, 0.8, -0.78, 0.5), (1.42, 0.76, -0.72, 0.44), top);
-            for x in [-1.0, 1.0] {
-                let q = |y: f64, za: f64, zb: f64, w: f64| {
-                    [
-                        DVec3::new(x * 0.84, y, za),
-                        DVec3::new(x * (0.84 + w), y, za),
-                        DVec3::new(x * (0.84 + w), y, zb),
-                        DVec3::new(x * 0.84, y, zb),
-                    ]
-                };
-                // Fins rising to the tail.
-                b.hexa(q(0.86, -2.62, -1.2, 0.16), q(1.2, -2.7, -2.35, 0.1), top);
-            }
-            if near {
-                metal(b, |b| {
-                    for z in [-2.66, 2.64] {
-                        bx(
-                            b,
-                            DVec3::new(-1.0, 0.36, z - 0.06),
-                            DVec3::new(1.0, 0.52, z + 0.06),
-                            chrome,
-                        );
-                    }
-                    for x in [-1.005, 1.005] {
-                        bx(
-                            b,
-                            DVec3::new(x - 0.01, 0.6, -2.3),
-                            DVec3::new(x + 0.01, 0.66, 2.3),
-                            chrome,
-                        );
-                    }
-                });
-                glow(b, |b| {
-                    for x in [-0.7, 0.7] {
-                        bx(
-                            b,
-                            DVec3::new(x - 0.13, 0.62, 2.55),
-                            DVec3::new(x + 0.13, 0.76, 2.66),
-                            c3(WARM),
-                        );
-                    }
-                    for x in [-0.91, 0.91] {
-                        bx(
-                            b,
-                            DVec3::new(x - 0.05, 0.98, -2.74),
-                            DVec3::new(x + 0.05, 1.12, -2.64),
-                            rgb(255, 50, 40),
-                        );
-                    }
-                });
-            }
-            if with_wheels {
-                wheels(b, 0.95, &[-1.6, 1.65], 0.36, seg, tyre, chrome, near);
-            }
-        }
-        CarModel::Bubble => {
-            taper(b, (0.28, 0.8, -1.55, 1.6), (0.62, 0.86, -1.7, 1.75), body);
-            ellipsoid(
-                b,
-                DVec3::new(0.0, 0.7, 0.05),
-                DVec3::new(0.87, 0.36, 1.85),
-                seg,
-                seg / 2 + 1,
-                body,
-            );
-            glass(b, |b| {
-                ellipsoid(
-                    b,
-                    DVec3::new(0.0, 0.98, -0.15),
-                    DVec3::new(0.7, 0.48, 0.95),
-                    seg,
-                    seg / 2 + 1,
-                    window,
-                )
-            });
-            if near {
-                metal(b, |b| {
-                    ellipsoid(
-                        b,
-                        DVec3::new(0.0, 0.62, 0.05),
-                        DVec3::new(0.9, 0.05, 1.9),
-                        seg,
-                        4,
-                        top,
-                    )
-                });
-                glow(b, |b| {
-                    for x in [-0.5, 0.5] {
-                        ellipsoid(
-                            b,
-                            DVec3::new(x, 0.74, 1.72),
-                            DVec3::splat(0.11),
-                            8,
-                            4,
-                            c3(WARM),
-                        );
-                    }
-                });
-            }
-            if with_wheels {
-                wheels(b, 0.8, &[-1.05, 1.1], 0.3, seg, tyre, chrome, near);
-            }
-        }
-        CarModel::Hover => {
-            // Parked a little off the ground, glowing underneath.
-            ellipsoid(
-                b,
-                DVec3::new(0.0, 1.0, 0.0),
-                DVec3::new(1.0, 0.32, 2.3),
-                seg,
-                seg / 2 + 1,
-                body,
-            );
-            ellipsoid(
-                b,
-                DVec3::new(0.0, 1.13, -0.55),
-                DVec3::new(0.62, 0.2, 1.3),
-                seg,
-                seg / 2,
-                top,
-            );
-            glass(b, |b| {
-                ellipsoid(
-                    b,
-                    DVec3::new(0.0, 1.22, 0.35),
-                    DVec3::new(0.62, 0.36, 0.95),
-                    seg,
-                    seg / 2 + 1,
-                    window,
-                )
-            });
-            metal(b, |b| {
-                for x in [-1.05, 1.05] {
-                    ellipsoid(
-                        b,
-                        DVec3::new(x, 0.86, -0.4),
-                        DVec3::new(0.22, 0.2, 1.3),
-                        seg,
-                        seg / 2,
-                        chrome,
-                    );
-                }
-            });
-            let fin = |y: f64, za: f64, zb: f64| {
-                [
-                    DVec3::new(-0.04, y, za),
-                    DVec3::new(0.04, y, za),
-                    DVec3::new(0.04, y, zb),
-                    DVec3::new(-0.04, y, zb),
-                ]
-            };
-            b.hexa(fin(1.15, -2.2, -1.3), fin(1.85, -2.5, -2.15), top);
-            glow(b, |b| {
-                ellipsoid(
-                    b,
-                    DVec3::new(0.0, 0.68, 0.0),
-                    DVec3::new(0.8, 0.04, 1.9),
-                    seg,
-                    4,
-                    rgb(120, 232, 255),
-                );
-                if near {
-                    for x in [-1.05, 1.05] {
-                        ellipsoid(
-                            b,
-                            DVec3::new(x, 0.86, -1.68),
-                            DVec3::new(0.14, 0.13, 0.06),
-                            8,
-                            4,
-                            rgb(255, 150, 70),
-                        );
-                    }
-                }
-            });
-        }
-    }
-}
-
-/// A flying taxi: the hover car in taxi yellow, a black-and-white check
-/// along its flanks and a glowing TAXI lamp on the roof.
-fn taxi(near: bool) -> Mesh {
-    let mut b = MeshBuilder::new();
-    car_into(&mut b, CarModel::Hover, 5, near, false);
-    if near {
-        // The check: two rows of squares along each flank.
-        for x in [-1.0f64, 1.0] {
-            for k in 0..14 {
-                for row in 0..2 {
-                    let z = -1.55 + k as f64 * 0.22;
-                    let y = 1.02 + row as f64 * 0.11;
-                    // How far out the flank bulges at this point.
-                    let t = (z / 2.3).clamp(-1.0, 1.0);
-                    let w = (1.0 - t * t).max(0.0).sqrt() * 1.0 + 0.012;
-                    let dark = (k + row) % 2 == 0;
-                    let c = if dark {
-                        rgb(22, 22, 24)
-                    } else {
-                        rgb(245, 245, 240)
-                    };
-                    bx(
-                        &mut b,
-                        DVec3::new(x * w - 0.005, y, z),
-                        DVec3::new(x * w + 0.005 * x.signum(), y + 0.1, z + 0.21),
-                        c,
-                    );
-                }
-            }
-        }
-    }
-    glow(&mut b, |b| {
-        bx(
-            b,
-            DVec3::new(-0.32, 1.52, -0.05),
-            DVec3::new(0.32, 1.72, 0.25),
-            rgb(255, 214, 70),
-        )
-    });
-    b.finish()
-}
-
-/// Flying taxis, close up and far.
+/// Flying taxis: close up, in the next lane, far.
 pub fn taxi_levels() -> Vec<LodLevel> {
+    let make = |lod: Lod| {
+        let mut b = MeshBuilder::new();
+        taxi_into(&mut b, lod);
+        b.finish()
+    };
     vec![
-        LodLevel::new(taxi(true), 200.0),
-        LodLevel::new(taxi(false), 1200.0),
+        LodLevel::new(make(Lod::Near), 50.0),
+        LodLevel::new(make(Lod::Mid), 250.0),
+        LodLevel::new(make(Lod::Far), 1200.0),
     ]
 }
 
 /// A private hover car flying in a sky lane.
 pub fn sky_car_levels(paint: u8) -> Vec<LodLevel> {
     vec![
-        LodLevel::new(car_parts(CarModel::Hover, paint, true, false), 200.0),
-        LodLevel::new(car_parts(CarModel::Hover, paint, false, false), 1200.0),
+        LodLevel::new(car_mesh(CarModel::Hover, paint, Lod::Near, false), 50.0),
+        LodLevel::new(car_mesh(CarModel::Hover, paint, Lod::Mid, false), 250.0),
+        LodLevel::new(car_mesh(CarModel::Hover, paint, Lod::Far, false), 1200.0),
     ]
-}
-
-#[allow(clippy::too_many_arguments)]
-fn wheels(
-    b: &mut MeshBuilder,
-    x: f64,
-    zs: &[f64],
-    r: f64,
-    seg: usize,
-    tyre: Color,
-    chrome: Color,
-    near: bool,
-) {
-    for &z in zs {
-        for sx in [-x, x] {
-            xcyl(b, DVec3::new(sx, r, z), r, 0.24, seg, tyre);
-            if near {
-                // Whitewalls and a chrome hub.
-                let o = sx.signum() * 0.125;
-                xcyl(
-                    b,
-                    DVec3::new(sx + o, r, z),
-                    r * 0.72,
-                    0.01,
-                    seg,
-                    rgb(240, 238, 230),
-                );
-                metal(b, |b| {
-                    xcyl(
-                        b,
-                        DVec3::new(sx + o * 1.1, r, z),
-                        r * 0.4,
-                        0.02,
-                        seg,
-                        chrome,
-                    )
-                });
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------- street
