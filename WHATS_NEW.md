@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.080 (2026-11-09)
+
+- The Doctor's lab is better lit: green enamel lamps hang from the ceiling, and you can see
+  the coils, vats and the reactor across the hall.
+- The phone kiosk that hides the lab's lift is now a proper 1950s newsstand, with a flying-saucer
+  roof ringed with lights, chrome trim, lit windows full of magazines and a striped awning.
+
 ## 0.079 (2026-11-09)
 
 - The town goes deeper. Under the streets runs the **Aether Tube**: cream and brass tubes along

@@ -392,6 +392,16 @@ fn build(town: &TownWorld, t: &DeepTile) -> Built {
     for f in &t.fixtures {
         fixture(&mut inner, f, &mut glows);
     }
+    // The lab's high lamps hang from the ceiling in enamel shades.
+    for l in &t.lamps {
+        let q = DVec2::new(l.pos.x, l.pos.z);
+        let lab = t.at(q).find(|(_, v)| {
+            v.kind == VoidKind::Lair && l.pos.y > v.floor_at(q) + 6.0 && v.height >= 9.0
+        });
+        if let Some((_, v)) = lab {
+            hanging_lamp(&mut inner, l.pos, v.floor_at(q) + v.height);
+        }
+    }
     // Buffer stops where a line ends.
     for (li, line) in net.lines.iter().enumerate() {
         for e in [0, line.pts.len() - 1] {
@@ -925,15 +935,48 @@ fn ruin_room(b: &mut MeshBuilder, v: &Void, other: &dyn Fn(DVec3) -> bool) {
 
 /// A room of the Doctor's lab: steel plate walls with a red band, dark
 /// floor panels, a ceiling with ducts.
+/// An industrial lamp: a rod from the ceiling at `ceiling`, a green enamel
+/// shade and a glowing bulb at `at`.
+fn hanging_lamp(b: &mut MeshBuilder, at: DVec3, ceiling: f64) {
+    let top = at + DVec3::Y * 0.45;
+    if ceiling > top.y {
+        uv::tube(
+            b,
+            top,
+            DVec3::new(at.x, ceiling, at.z),
+            0.025,
+            rgb(60, 62, 64),
+        );
+    }
+    lathe(
+        b,
+        at - DVec3::Y * 0.05,
+        DVec3::Y,
+        &[
+            (0.62, 0.0),
+            (0.6, 0.04),
+            (0.42, 0.22),
+            (0.16, 0.42),
+            (0.05, 0.5),
+            (0.0, 0.5),
+        ],
+        24,
+        |_| Some((Surf::Plain, rgb(52, 98, 78))),
+    );
+    b.surf = Surf::Glow;
+    uv::sphere(b, at + DVec3::Y * 0.02, 0.16, rgb(240, 255, 236));
+    b.surf = Surf::Plain;
+}
+
 fn lab_room(b: &mut MeshBuilder, v: &Void, other: &dyn Fn(DVec3) -> bool) {
     box_room(
         b,
         v,
         &Finish {
-            floor: (Some(FacadeLayer::ConcretePanel.into()), rgb(84, 88, 92)),
-            wall: (Some(FacadeLayer::MetalPanel.into()), rgb(104, 118, 112)),
+            floor: (Some(FacadeLayer::ConcretePanel.into()), rgb(122, 126, 128)),
+            wall: (Some(FacadeLayer::MetalPanel.into()), rgb(150, 172, 160)),
             wall_h: None,
-            ceiling: Some((Some(FacadeLayer::MetalPanel.into()), rgb(60, 64, 66))),
+            ceiling: Some((Some(FacadeLayer::MetalPanel.into()), rgb(96, 102, 104))),
             band: Some((1.9, 2.1, rgb(196, 40, 36), Surf::Plain)),
             dado: Some((0.35, rgb(40, 42, 44))),
         },
@@ -2195,133 +2238,256 @@ fn buffer_stop(b: &mut MeshBuilder, p: DVec2, out: DVec2, f: f64, glows: &mut Ve
 /// roof, a striped awning and racks of papers, and a door at the back of
 /// the shop (the lift inside).
 fn kiosk(b: &mut MeshBuilder, p: DVec2, door: DVec2, top: f64) {
+    // A 1950s newsstand: enamelled green panels between chrome corner
+    // posts, a chrome belt and kick plate, lit side windows full of
+    // magazines, a flying-saucer roof and a lit drum sign on a stalk. The
+    // walls stand where the fixture's footprints are (back, sides and the
+    // front either side of the door).
     let side = door.perp();
     let half = SHAFT_HALF + 0.3;
     let wall_h = 2.9;
-    let green = rgb(52, 94, 72);
-    let cream = rgb(232, 222, 196);
+    let green = rgb(46, 104, 84);
+    let cream = rgb(236, 226, 198);
+    let red = rgb(190, 46, 40);
+    let chrome = rgb(214, 216, 222);
     let q = |x: f64, z: f64, y: f64| v3(p + side * x + door * z, top + y);
-    // Walls: back and sides, the front with a doorway in the middle.
-    let wall = |b: &mut MeshBuilder, c: DVec3, ax: DVec2, hx: f64| {
+    let before = b.tex;
+    b.tex = Some(FacadeLayer::MetalPanel.into());
+    // One wall panel, `hx` either side of `c` along `ax`, facing `out`.
+    let panel = |b: &mut MeshBuilder, c: DVec3, ax: DVec2, hx: f64, y0: f64, y1: f64, col| {
         slab(
             b,
-            c,
+            c + DVec3::Y * ((y0 + y1) * 0.5 - c.y + top),
             [v3(ax, 0.0), DVec3::Y],
-            DVec3::new(hx, wall_h * 0.5, 0.06),
-            green,
+            DVec3::new(hx, (y1 - y0) * 0.5, 0.06),
+            col,
         );
     };
-    wall(b, q(0.0, -half, wall_h * 0.5), side, half);
-    wall(b, q(-half, 0.0, wall_h * 0.5), door, half);
-    wall(b, q(half, 0.0, wall_h * 0.5), door, half);
+    // Back wall, whole.
+    panel(b, q(0.0, -half, 0.0), side, half - 0.12, 0.0, wall_h, green);
+    // Side walls: below and above a window.
     for sx in [-1.0, 1.0] {
-        wall(
-            b,
-            q(sx * (half + 0.6) * 0.5, half, wall_h * 0.5),
-            side,
-            (half - 0.6) * 0.5,
-        );
-    }
-    slab(
-        b,
-        q(0.0, half, wall_h - 0.25),
-        [v3(side, 0.0), DVec3::Y],
-        DVec3::new(0.62, 0.25, 0.06),
-        green,
-    );
-    // A counter window on each side, papers stacked in it.
-    for sx in [-1.0, 1.0] {
-        let c = q(sx * (half + 0.02), 0.0, 1.35);
-        slab(
-            b,
-            c,
-            [v3(door, 0.0), DVec3::Y],
-            DVec3::new(half * 0.7, 0.45, 0.04),
-            rgb(30, 34, 36),
-        );
-        for k in 0..5 {
-            let colr = [
-                rgb(230, 60, 50),
-                rgb(240, 200, 60),
-                rgb(60, 120, 220),
-                rgb(240, 240, 230),
-                rgb(60, 180, 90),
-            ][k];
-            slab(
+        let c = q(sx * half, 0.0, 0.0);
+        panel(b, c, door, half - 0.12, 0.0, 0.95, green);
+        panel(b, c, door, half - 0.12, 1.85, wall_h, green);
+        for z in [-1.0, 1.0] {
+            panel(
                 b,
-                c + v3(side * sx * 0.06, 0.0)
-                    + v3(door, 0.0) * (-half * 0.55 + k as f64 * half * 0.28)
-                    - DVec3::Y * 0.2,
-                [v3(door, 0.0), v3(side * sx * 0.3, 1.0).normalize()],
-                DVec3::new(0.12, 0.17, 0.01),
-                colr,
+                q(sx * half, z * (half - 0.3), 0.0),
+                door,
+                0.18,
+                0.95,
+                1.85,
+                green,
             );
         }
+    }
+    // The front either side of the door, and a lintel over it.
+    for sx in [-1.0, 1.0] {
+        panel(
+            b,
+            q(sx * (half + 0.6) * 0.5, half, 0.0),
+            side,
+            (half - 0.6) * 0.5 - 0.06,
+            0.0,
+            wall_h,
+            green,
+        );
+    }
+    panel(b, q(0.0, half, 0.0), side, 0.62, 2.35, wall_h, cream);
+    b.tex = before;
+    // Chrome corner posts, and a chrome belt and kick plate all round.
+    for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        lathe(
+            b,
+            q(sx * half, sz * half, 0.0),
+            DVec3::Y,
+            &[(0.0, 0.0), (0.13, 0.0), (0.13, wall_h), (0.0, wall_h)],
+            24,
+            |_| Some((Surf::Metal, chrome)),
+        );
+    }
+    for (y, h) in [(0.12, 0.12), (1.9, 0.05)] {
+        for (c, ax, hx) in [
+            (q(0.0, -half, y), side, half),
+            (q(-half, 0.0, y), door, half),
+            (q(half, 0.0, y), door, half),
+        ] {
+            let out = (c - q(0.0, 0.0, y)).normalize_or(DVec3::X);
+            b.surf = Surf::Metal;
+            slab(
+                b,
+                c + out * 0.07,
+                [v3(ax, 0.0), DVec3::Y],
+                DVec3::new(hx, h, 0.015),
+                chrome,
+            );
+            b.surf = Surf::Plain;
+        }
+    }
+    // Lit side windows with magazines on wire racks behind the glass.
+    for sx in [-1.0, 1.0] {
+        let c = q(sx * half, 0.0, 1.4);
+        b.surf = Surf::Glow;
         slab(
             b,
-            q(sx * (half + 0.18), 0.0, 0.88),
+            c - v3(side * sx * 0.03, 0.0),
             [v3(door, 0.0), DVec3::Y],
-            DVec3::new(half * 0.75, 0.03, 0.2),
+            DVec3::new(half - 0.5, 0.44, 0.01),
+            rgb(255, 238, 200),
+        );
+        b.surf = Surf::Plain;
+        for row in 0..2 {
+            for k in 0..6 {
+                let colr = [
+                    rgb(220, 50, 44),
+                    rgb(240, 196, 50),
+                    rgb(50, 110, 210),
+                    rgb(244, 240, 228),
+                    rgb(50, 170, 84),
+                    rgb(230, 110, 40),
+                ][(k + row * 3) % 6];
+                slab(
+                    b,
+                    c + v3(side * sx * 0.03, 0.0)
+                        + v3(door, 0.0) * (-(half - 0.75) + k as f64 * (half - 0.75) * 0.4)
+                        + DVec3::Y * (row as f64 * 0.42 - 0.2),
+                    [v3(door, 0.0), v3(side * sx * 0.25, 1.0).normalize()],
+                    DVec3::new(0.13, 0.17, 0.01),
+                    colr,
+                );
+            }
+        }
+        b.surf = Surf::Glass;
+        slab(
+            b,
+            c + v3(side * sx * 0.06, 0.0),
+            [v3(door, 0.0), DVec3::Y],
+            DVec3::new(half - 0.5, 0.45, 0.01),
+            rgb(170, 200, 210),
+        );
+        b.surf = Surf::Plain;
+        // A cream counter ledge under the window.
+        slab(
+            b,
+            q(sx * (half + 0.2), 0.0, 0.92),
+            [v3(door, 0.0), DVec3::Y],
+            DVec3::new(half - 0.3, 0.03, 0.18),
             cream,
         );
     }
-    // The canted roof with an overhang, and a sign board on top.
-    let (lo, hi) = (wall_h, wall_h + 0.5);
-    let o = half + 0.45;
-    b.quad(
-        [q(-o, -o, lo), q(o, -o, lo), q(o, o, hi), q(-o, o, hi)],
-        DVec3::Y,
-        rgb(196, 60, 46),
-    );
-    b.quad(
-        [
-            q(o, -o, lo - 0.08),
-            q(-o, -o, lo - 0.08),
-            q(-o, o, hi - 0.08),
-            q(o, o, hi - 0.08),
-        ],
-        -DVec3::Y,
-        cream,
-    );
-    slab(
+    // The flying-saucer roof: a red lens with a cream underside and a
+    // chrome rim, overhanging all round.
+    let o = half * 1.45;
+    let roof = |y: f64| q(0.0, 0.0, wall_h + y);
+    lathe(
         b,
-        q(0.0, o - 0.1, hi + 0.35),
-        [v3(side, 0.0), DVec3::Y],
-        DVec3::new(o * 0.8, 0.3, 0.04),
-        cream,
+        roof(0.0),
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (o * 0.7, 0.02),
+            (o, 0.16),
+            (o + 0.05, 0.22),
+            (o, 0.3),
+            (o * 0.75, 0.45),
+            (o * 0.35, 0.58),
+            (0.0, 0.62),
+        ],
+        40,
+        |k| {
+            Some(match k {
+                0 | 1 => (Surf::Plain, cream),
+                2 | 3 => (Surf::Metal, chrome),
+                _ => (Surf::Plain, red),
+            })
+        },
     );
+    // A ring of lights under the rim.
     b.surf = Surf::Glow;
-    for k in 0..4 {
-        let c = q(-o * 0.6 + k as f64 * o * 0.4, o - 0.05, hi + 0.35);
-        slab(
+    for k in 0..16 {
+        let a = TAU * k as f64 / 16.0;
+        let d = side * a.cos() + door * a.sin();
+        uv::sphere(
             b,
-            c,
-            [v3(side, 0.0), DVec3::Y],
-            DVec3::new(0.12, 0.16, 0.02),
-            rgb(255, 90, 70),
+            v3(p + d * (o * 0.86), top + wall_h + 0.08),
+            0.06,
+            rgb(255, 226, 160),
         );
     }
     b.surf = Surf::Plain;
-    // A striped awning over the front.
-    let rows: Vec<Vec<DVec3>> = (0..=12)
+    // The drum sign on a chrome stalk, lit, with red bands.
+    lathe(
+        b,
+        roof(0.6),
+        DVec3::Y,
+        &[(0.0, 0.0), (0.06, 0.0), (0.06, 0.55), (0.0, 0.55)],
+        12,
+        |_| Some((Surf::Metal, chrome)),
+    );
+    lathe(
+        b,
+        roof(1.15),
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.5, 0.0),
+            (0.55, 0.06),
+            (0.55, 0.14),
+            (0.55, 0.56),
+            (0.55, 0.64),
+            (0.5, 0.7),
+            (0.0, 0.7),
+        ],
+        32,
+        |k| {
+            Some(match k {
+                3 => (Surf::Glow, rgb(255, 236, 196)),
+                1 | 5 => (Surf::Metal, chrome),
+                _ => (Surf::Plain, red),
+            })
+        },
+    );
+    // A starburst on top.
+    b.surf = Surf::Glow;
+    uv::sphere(b, roof(2.0), 0.1, rgb(255, 210, 90));
+    for k in 0..6 {
+        let a = PI * k as f64 / 6.0;
+        let d = DVec3::new(a.cos(), a.sin() * 0.7, a.sin() * 0.7).normalize() * 0.28;
+        let w = DVec3::Y.cross(d).normalize_or(DVec3::X) * 0.015;
+        let c = roof(2.0);
+        b.quad(
+            [c - d - w, c + d - w, c + d + w, c - d + w],
+            DVec3::Y.cross(w),
+            rgb(255, 200, 80),
+        );
+    }
+    b.surf = Surf::Plain;
+    // A scalloped striped awning over the door.
+    let rows: Vec<Vec<DVec3>> = (0..=16)
         .map(|i| {
-            let x = -half + 2.0 * half * i as f64 / 12.0;
+            let x = -1.0 + 2.0 * i as f64 / 16.0;
+            let drop = 0.1 * (i as f64 * PI / 2.0).sin().abs();
             vec![
-                q(x, half, 2.55),
-                q(x, half + 0.7, 2.2),
-                q(x, half + 0.75, 2.05),
+                q(x, half + 0.05, 2.6),
+                q(x, half + 0.75, 2.25),
+                q(x, half + 0.8, 2.08 - drop),
             ]
         })
         .collect();
     surface(b, &rows, false, |i, _| {
-        Some((
-            Surf::Plain,
-            if i % 2 == 0 { rgb(200, 50, 44) } else { cream },
-        ))
+        Some((Surf::Plain, if (i / 2) % 2 == 0 { red } else { cream }))
     });
-    // Inside, a dim red bulb over the hole.
+    // Inside: a lit ceiling disc over the hole and a red bulb.
     b.surf = Surf::Glow;
-    uv::sphere(b, q(0.0, 0.0, wall_h - 0.3), 0.08, rgb(255, 80, 60));
+    slab(
+        b,
+        q(0.0, 0.0, wall_h - 0.05),
+        [v3(side, 0.0), v3(door, 0.0)],
+        DVec3::new(half * 0.6, half * 0.6, 0.02),
+        rgb(255, 228, 190),
+    );
+    uv::sphere(b, q(0.0, half - 0.4, wall_h - 0.4), 0.08, rgb(255, 80, 60));
     b.surf = Surf::Plain;
 }
 
@@ -2539,9 +2705,10 @@ pub fn view_camera(town: &TownWorld, view: &str, near: DVec2) -> Option<FlyCamer
             "lab" if !t.lairs.is_empty() => {
                 let l = &t.lairs[0];
                 let v = &t.voids[l.hall];
-                let p = v.world(DVec2::new(v.min.x + 1.5, 0.0));
-                let at = v.world(DVec2::new(v.max.x * 0.5, 0.0));
-                return Some(cam(v3d(p, l.floor + 4.5), v3d(at, l.floor + 2.0)));
+                // From high in a corner, over the coils, across the hall.
+                let p = v.world(DVec2::new(v.min.x + 1.5, v.max.y - 1.5));
+                let at = v.world(DVec2::new(v.max.x * 0.3, -v.max.y * 0.3));
+                return Some(cam(v3d(p, l.floor + 6.5), v3d(at, l.floor + 1.0)));
             }
             "grotto" if !t.grottos.is_empty() => {
                 let g = &t.grottos[0];
