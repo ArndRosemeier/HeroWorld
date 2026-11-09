@@ -1567,27 +1567,31 @@ pub(crate) fn step(world: &mut World, tick: u64) {
         world.despawn(*e);
     }
     for id in back_to_hospital {
-        let hospital = world.resource::<crate::SpawnLine>().hospital(&solids);
         let found = world
-            .query::<(Entity, &Net)>()
+            .query::<(Entity, &Net, &Fighter)>()
             .iter(world)
-            .find(|(_, n)| n.0 == id)
-            .map(|(e, _)| e);
-        if let Some(e) = found {
-            let mut em = world.entity_mut(e);
-            if let Some(mut m) = em.get_mut::<Motion>() {
-                m.0 = Body {
-                    pos: hospital,
-                    vel: DVec3::ZERO,
-                    grounded: false,
-                };
-            }
-            if let Some(mut f) = em.get_mut::<Fighter>() {
-                let mut fresh = Fighter::hero_at(f.level, f.kit);
-                fresh.last_combat = tick;
-                *f = fresh;
-                fx.push(event(tick, FxKind::Healed, id, id, hospital.as_vec3()));
-            }
+            .find(|(_, n, _)| n.0 == id)
+            .map(|(e, _, f)| (e, f.level));
+        let Some((e, level)) = found else {
+            continue;
+        };
+        // New heroes come back on their own street.
+        let hospital = world
+            .resource::<crate::SpawnLine>()
+            .hospital(&solids, level);
+        let mut em = world.entity_mut(e);
+        if let Some(mut m) = em.get_mut::<Motion>() {
+            m.0 = Body {
+                pos: hospital,
+                vel: DVec3::ZERO,
+                grounded: false,
+            };
+        }
+        if let Some(mut f) = em.get_mut::<Fighter>() {
+            let mut fresh = Fighter::hero_at(f.level, f.kit);
+            fresh.last_combat = tick;
+            *f = fresh;
+            fx.push(event(tick, FxKind::Healed, id, id, hospital.as_vec3()));
         }
     }
 

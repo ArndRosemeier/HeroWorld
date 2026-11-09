@@ -72,9 +72,16 @@ the last run is pointed out once on the title.
 | Sworn Guardian | You promised someone you would keep this city safe. | Guardian |
 | Masked Avenger | The mad scientist's gang crossed the wrong family. | Justice |
 
-- **Start:** 960 karma (exactly one tier-1 power), level 1, no powers except Strike. You
-  appear on the spawn line near the town centre, beside a stack of wooden crates that
-  tumble when you run into them.
+- **Start:** 960 karma (exactly one tier-1 power), level 1, no powers except Strike. A hero
+  below level 5 (before Flight opens) starts on the **rookies' street**: the side street
+  nearest the town centre that lies 120-300 m from a Chrome Jackets hangout and at least
+  180 m out of the mad scientist's quarter (and clear of the pirates' landing), off the
+  gang's turf, so nobody warns a newcomer off on arrival (`quarter::rookie_start`). Small
+  crime is close and frequent there (see Incidents). From level 5, or when a friend of level
+  5 or more is already playing, heroes appear on the spawn line near the town centre, beside
+  a stack of wooden crates that tumble when you run into them. A town without the quarter
+  (a small one) has no Jackets: everyone starts at the centre. A hero placed by a view or
+  the debug menu before their hero file arrives stays where they were put.
 
 ### What the PC remembers (`profile.rs`)
 
@@ -249,7 +256,7 @@ targeting, ragdolls, nobody dies.
 - **Defeated villains** lie in glowing energy cuffs; after 2 s a police drone lifts them away.
 - **Defeated heroes** lie down. A teammate holds E within 2.5 m for 3 s to revive them at
   half health. Otherwise press H, or wait 20 s, and a medical drone flies them to the
-  hospital (beside the spawn line). Carrying someone and getting knocked down drops them.
+  hospital (beside the spawn line; below level 5, beside the rookies' street). Carrying someone and getting knocked down drops them.
 - **Villain AI:** villains notice heroes within their aggro range, walk round walls and
   houses on a grid A* path (`hw-sim/src/nav.rs`), and go home when the fight moves away.
   Ranged ones keep their distance.
@@ -366,7 +373,8 @@ canopy over the doors with the heroes' star shield. A taxi stand is in front.
 Five of the town's own heroes stand in a row on its plaza: Commander Starling, Atomic Annie,
 the Brass Badger, Lady Lumen and Rocket Rory (looks in `people::npc_hero`). Come within 7 m
 and they greet you with tips, one at a time and a new one each time (each hero again after
-90 s). When a fight has gone unanswered for 75 s and no player hero is within 120 m of it,
+90 s). When a fight has gone unanswered for 75 s, no player hero is within 120 m of it and none is
+on the way to it (see Incidents),
 the nearest one at home flies out (up to 70 m over the roofs, 28 m/s), hovers 3.5 m over the
 fight and bolts the villains (30 m, every 1.5 s). They are never beaten: below 30% health
 they break off and fly home to mend, and they go home when a player hero comes near, so
@@ -377,9 +385,15 @@ they never take a player's fight. Villains they beat pay no one karma.
 ## 7. Incidents: trouble comes to you (`hw-sim/src/incidents.rs`)
 
 The town makes trouble near the heroes: the first one 20 s into the game, then at least a
-minute apart, 150 to 800 m from a hero, with two to four open at once (one more per extra
-hero, up to four). Which kind and where come from the world seed and a running count, so the
-same save gives the same sequence.
+minute apart, with two to four open at once (one more per extra hero, up to four). It starts
+150 to 800 m from a hero who flies or has Super Speed, and 50 to 350 m (at most a minute's
+run; the nearer of two places picked) from a hero on foot. Which kind and where come from
+the world seed and a running count, so the same save gives the same sequence.
+
+**Rough streets:** within 450 m of a Chrome Jackets hangout crime comes twice as often (30 s
+apart, one more open at once), and more of it is small: muggings 60 and robberies 30 by
+weight, rampages, breakouts and pirate raids a third to a half as often as elsewhere. New
+heroes start here.
 
 Each shows on the **wrist radio** (top left, `radioview.rs`) with its name, distance, a clock
 direction ("at 3 o'clock") and con colour, as a **column of light** in the call's colour
@@ -391,7 +405,10 @@ star onto the sky above the trouble, visible from anywhere in town.
 
 A fight is resolved when its group is beaten; a rescue when everyone is out and the hurt one
 is with the ambulance. Unanswered (no hero within 60 m) for 4 minutes, it ends: the crooks
-get away, or the fire brigade comes.
+get away, or the fire brigade comes. **A hero on the way** (closing in from within 1200 m)
+keeps it waiting: while they get nearer it lasts at least their running time from there
+(×1.5, +30 s), up to 5 minutes past its usual end, and the town's own heroes leave it to
+them (they stop waiting 12 s after the hero stops closing in).
 
 | Incident | Chance | Who / what | Level | Reach | Bonus |
 | --- | --- | --- | --- | --- | --- |
@@ -751,7 +768,7 @@ on the way. Rides are free.
 - **Hero**: set the level, add karma, buy every open power (either theme) or give them all back,
   move each faction's standing, full health, back to the saved hero. A hero changed here is not
   saved (until "Back to my saved hero").
-- **Events**: start any incident near you (fights come 150-800 m away; Go to lists them), bring
+- **Events**: start any incident near you (fights come 150-800 m away, 50-350 m on foot; Go to lists them), bring
   the nearest small house down (a collapse rescue), blast a building, wreck cars, knock over lamps
   and trees or people, break the colossus's weak points one by one.
 - **World**: time of day (dawn to midnight), run the world on 10 s / 1 min / 5 min, free camera,

@@ -219,6 +219,63 @@ pub fn hangouts(world: &Area, keep_clear: DVec2, clear: f64) -> Vec<Corner> {
     out
 }
 
+/// Heroes below this level start near the Chrome Jackets' corners, where
+/// small crime is common and close (flight, which makes the whole town
+/// near, opens at this level).
+pub const ROOKIE_LEVEL: u8 = 5;
+/// The rookies' street is this far from the nearest hangout (m): the
+/// Jackets' muggings are round the corner, but the street is off their
+/// turf, so nobody warns a newcomer off on arrival.
+const ROOKIE_NEAR: f64 = 120.0;
+const ROOKIE_FAR: f64 = 300.0;
+/// ... and at least this far out of the mad scientist's quarter (m), clear
+/// of its corners and rooftop lookouts.
+const ROOKIE_QUARTER_CLEAR: f64 = 180.0;
+
+/// Where new heroes start: the side street nearest `home` (the town's
+/// core) that lies within a few minutes' walk of a Jacket hangout, off
+/// their turf and out of the quarter, and the way along it; none if the
+/// town has no gang (a small town: then heroes start at its core). Never
+/// within `clear` m of any of `avoid` (another gang's roost).
+pub fn rookie_start(
+    world: &Area,
+    hangouts: &[Corner],
+    home: DVec2,
+    avoid: &[DVec2],
+    clear: f64,
+) -> Option<(DVec2, DVec2)> {
+    let d = world.town.dystopia.as_ref()?;
+    if hangouts.is_empty() {
+        return None;
+    }
+    let mut best: Option<(f64, DVec2, DVec2)> = None;
+    for r in world.roads.iter().filter(|r| !r.main) {
+        for w in r.pts.windows(2) {
+            let m = (w[0] + w[1]) * 0.5;
+            if w[0].distance(w[1]) < 8.0 || world.world.ground(m) < hw_gen::urban::world::DECK {
+                continue;
+            }
+            let gang = hangouts
+                .iter()
+                .map(|h| h.at.distance(m))
+                .fold(f64::INFINITY, f64::min);
+            if !(ROOKIE_NEAR..ROOKIE_FAR).contains(&gang)
+                || d.distance(m) < ROOKIE_QUARTER_CLEAR
+                || avoid.iter().any(|a| a.distance(m) < clear)
+            {
+                continue;
+            }
+            let score = m.distance(home);
+            let better =
+                best.is_none_or(|b| score < b.0 || (score == b.0 && (m.x, m.y) < (b.1.x, b.1.y)));
+            if better {
+                best = Some((score, m, (w[1] - w[0]).normalize()));
+            }
+        }
+    }
+    best.map(|b| (b.1, b.2))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,5 +311,23 @@ mod tests {
             assert_eq!(d.zone(j.at), hw_gen::urban::dystopia::Zone::Edge);
         }
         assert_eq!(jackets, hangouts(&w, far, 0.0));
+        // New heroes start a short walk from a hangout, off its turf and
+        // out of the quarter.
+        let core = w.world.spawn_line().0;
+        let near = hangouts(&w, core, 300.0);
+        let (start, _) = rookie_start(&w, &near, core, &[], 0.0).expect("a rookie start");
+        let gang = near
+            .iter()
+            .map(|h| h.at.distance(start))
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            (ROOKIE_NEAR..ROOKIE_FAR).contains(&gang),
+            "{gang:.0} m from the Jackets"
+        );
+        assert!(d.distance(start) >= ROOKIE_QUARTER_CLEAR);
+        assert_eq!(
+            Some(start),
+            rookie_start(&w, &near, core, &[], 0.0).map(|s| s.0)
+        );
     }
 }

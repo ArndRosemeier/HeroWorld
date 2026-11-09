@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.110 (2026-11-09)
+
+- New heroes (below level 5) now start on a street near the Chrome Jackets' corners, where small crime happens all the time: muggings and hold-ups come about every 30 seconds, usually a short run away.
+- While you are on foot, trouble starts within about 350 m of you instead of 800 m.
+- A crime you are running towards waits for you, and the Hero Hall heroes leave it to you.
+- Knocked out as a new hero, the medical drone brings you back to your own street.
+
 ## 0.109 (2026-11-09)
 
 - The airships are solid: you can no longer fly through the liner *Skylark* or the sky pirates' ship over the harbour. Bump into them, or land on their backs (the liner flies on without you).

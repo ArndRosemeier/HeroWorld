@@ -263,12 +263,16 @@ impl Host {
         );
         // Where they were before the host changed, else in a row along
         // the central street.
-        let at = self
-            .arrivals
-            .remove(name)
-            .map(|p| p + DVec3::Y * 0.2)
-            .unwrap_or_else(|| self.sim.spawn_point(id.0 as u32));
-        self.sim.spawn_hero(id, at);
+        // (New heroes move on to the rookies' street once their hero file
+        // is in: see [`Sim::spawn_at_start`].)
+        match self.arrivals.remove(name) {
+            Some(p) => {
+                self.sim.spawn_hero(id, p + DVec3::Y * 0.2);
+            }
+            None => {
+                self.sim.spawn_at_start(id);
+            }
+        }
         Some(id)
     }
 

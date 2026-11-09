@@ -293,7 +293,8 @@ pub fn step(world: &mut World, tick: u64, open: &[Incident]) {
 }
 
 /// Does `inc` want one of them: a fight with villains, left alone for
-/// [`ANSWER_AFTER`], with no player hero near enough to be paid for it?
+/// [`ANSWER_AFTER`], with no player hero near enough to be paid for it,
+/// nor one on the way to it?
 fn wants_help(inc: &Incident, tick: u64, players: &[(NetId, DVec3)]) -> bool {
     let fight = inc.spot.is_some()
         && !matches!(
@@ -303,6 +304,7 @@ fn wants_help(inc: &Incident, tick: u64, players: &[(NetId, DVec3)]) -> bool {
         );
     fight
         && !inc.answered
+        && !inc.awaited(tick)
         && inc.calmed.is_none()
         && tick.saturating_sub(inc.started) as f64 * DT >= ANSWER_AFTER
         && players

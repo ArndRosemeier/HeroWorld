@@ -150,14 +150,19 @@ pub struct LastChange(pub u64);
 #[derive(Resource)]
 struct Ids(NetIdAllocator);
 
-/// The street where heroes appear (its middle and direction); the hospital
-/// sends heroes back here for now.
+/// The street where heroes appear (its middle and direction), and the one
+/// new heroes start on; the hospital sends heroes back to theirs for now.
 #[derive(Resource, Clone, Copy)]
-struct SpawnLine(DVec2, DVec2);
+struct SpawnLine(DVec2, DVec2, Option<(DVec2, DVec2)>);
 
 impl SpawnLine {
-    fn hospital(&self, solids: &Obstacles) -> DVec3 {
-        let p = self.0 - self.1 * 4.0;
+    /// Where a hero fighting at `level` comes back after the medical drone.
+    fn hospital(&self, solids: &Obstacles, level: u8) -> DVec3 {
+        let (mid, dir) = match self.2 {
+            Some(rookie) if level < quarter::ROOKIE_LEVEL => rookie,
+            _ => (self.0, self.1),
+        };
+        let p = mid - dir * 4.0;
         DVec3::new(p.x, solids.ground_at(p).max(GROUND_Y) + 0.5, p.y)
     }
 }
@@ -463,6 +468,12 @@ pub struct Sim {
     pub town_population: f64,
     pub tick: u64,
     spawn: (DVec2, DVec2),
+    /// Where heroes below [`quarter::ROOKIE_LEVEL`] start: a street near
+    /// the Chrome Jackets' corners (none in a town without a gang).
+    rookie: Option<(DVec2, DVec2)>,
+    /// Players who appeared at the start and whose hero file has not come
+    /// in yet: it decides which start is theirs.
+    fresh: BTreeSet<PlayerId>,
     schedule: Schedule,
     track: Schedule,
     /// Engine physics for loose bodies.
@@ -577,18 +588,28 @@ impl Sim {
         }
         // The Chrome Jackets' corners in the band round the quarter, never
         // where heroes appear.
-        for c in quarter::hangouts(&villains, sim.spawn.0, HANGOUT_CLEAR) {
+        let hangouts = quarter::hangouts(&villains, sim.spawn.0, HANGOUT_CLEAR);
+        for c in &hangouts {
             let y = solids.ground_at(c.at).max(GROUND_Y);
             sim.add_hangout(DVec3::new(c.at.x, y, c.at.y), c.facing);
         }
         // The sky pirates' landing on the quay under their airship, never
         // where heroes appear; Molehaven's guards inside its gate.
-        if let Some(r) = roosts::pirate_roost(&town.world) {
-            let (at, facing) = r.watch();
+        let roost = roosts::pirate_roost(&town.world).map(|r| r.watch());
+        let mut roost_at = Vec::new();
+        if let Some((at, facing)) = roost {
             if DVec2::new(at.x, at.z).distance(sim.spawn.0) > ROOST_CLEAR {
                 sim.add_pirate_roost(at, facing);
+                roost_at.push(DVec2::new(at.x, at.z));
             }
         }
+        // New heroes start a short walk from the Jackets, where the small
+        // crime is (see [`incidents::Incidents::set_hot`]).
+        sim.rookie =
+            quarter::rookie_start(&villains, &hangouts, sim.spawn.0, &roost_at, ROOST_CLEAR);
+        sim.set_spawn(sim.spawn);
+        sim.incidents
+            .set_hot(hangouts.iter().map(|c| c.at).collect());
         if let Some((at, facing)) = roosts::mole_gate(town.world.underground()) {
             sim.add_mole_gate(at, facing);
         }
@@ -778,7 +799,7 @@ impl Sim {
         world.insert_resource(Ids(NetIdAllocator::new()));
         world.insert_resource(Solids(solids.clone()));
         world.insert_resource(Now(0));
-        world.insert_resource(SpawnLine(DVec2::ZERO, DVec2::X));
+        world.insert_resource(SpawnLine(DVec2::ZERO, DVec2::X, None));
         world.insert_resource(Fights {
             seed: seed.0,
             ..Default::default()
@@ -793,6 +814,8 @@ impl Sim {
             town_population: DEFAULT_POPULATION,
             tick: 0,
             spawn: (DVec2::ZERO, DVec2::X),
+            rookie: None,
+            fresh: Default::default(),
             schedule,
             track,
             physics: Physics::new(solids),
@@ -875,7 +898,8 @@ impl Sim {
     /// Sets the street heroes appear on.
     pub fn set_spawn(&mut self, line: (DVec2, DVec2)) {
         self.spawn = line;
-        self.world.insert_resource(SpawnLine(line.0, line.1));
+        self.world
+            .insert_resource(SpawnLine(line.0, line.1, self.rookie));
     }
 
     pub fn solids(&self) -> Arc<Obstacles> {
@@ -884,7 +908,70 @@ impl Sim {
 
     /// Where the `k`-th player appears: in a row along the central street.
     pub fn spawn_point(&self, k: u32) -> DVec3 {
-        let (mid, dir) = self.spawn;
+        self.point_on(self.spawn, k)
+    }
+
+    /// Where the `k`-th new hero (below [`quarter::ROOKIE_LEVEL`]) starts:
+    /// in a row along a street near the Jackets' corners, or the central
+    /// street in a town without them.
+    pub fn rookie_point(&self, k: u32) -> DVec3 {
+        self.point_on(self.rookie.unwrap_or(self.spawn), k)
+    }
+
+    /// The street new heroes start on, if the town has one apart from its
+    /// centre.
+    pub fn rookie_line(&self) -> Option<(DVec2, DVec2)> {
+        self.rookie
+    }
+
+    /// Spawns `owner`'s hero at the start; once their hero file comes in
+    /// ([`Self::set_sheet`]), a hero below [`quarter::ROOKIE_LEVEL`] moves
+    /// to the rookies' street, unless a stronger friend is playing.
+    pub fn spawn_at_start(&mut self, owner: PlayerId) -> NetId {
+        let id = self.spawn_hero(owner, self.spawn_point(owner.0 as u32));
+        self.fresh.insert(owner);
+        id
+    }
+
+    /// A fresh hero's first file is in: the rookies go to their street.
+    fn place_fresh(&mut self, owner: PlayerId) {
+        if !self.fresh.remove(&owner) || self.rookie.is_none() {
+            return;
+        }
+        let mut mine = None;
+        let mut strongest = 1;
+        for (hero, p, net) in self
+            .world
+            .query::<(&Hero, &Progress, &Net)>()
+            .iter(&self.world)
+        {
+            let level = progress::level_of(p.sheet.lifetime);
+            if hero.owner == owner {
+                mine = Some((net.0, level));
+            } else {
+                strongest = strongest.max(level);
+            }
+        }
+        let Some((id, level)) = mine else {
+            return;
+        };
+        let k = owner.0 as u32;
+        let here = self.position(id).unwrap_or_default();
+        // Still where they appeared (not moved by a view or the debug menu).
+        let unmoved = here.distance(self.spawn_point(k)) < 5.0;
+        if unmoved && level.max(strongest) < quarter::ROOKIE_LEVEL {
+            self.set_body(
+                id,
+                Body {
+                    pos: self.rookie_point(k),
+                    ..Default::default()
+                },
+            );
+        }
+    }
+
+    fn point_on(&self, line: (DVec2, DVec2), k: u32) -> DVec3 {
+        let (mid, dir) = line;
         let offset = (k as f64 - 1.0) * 2.5 * if k.is_multiple_of(2) { 1.0 } else { -1.0 };
         let p = mid + dir * offset;
         let ground = self.world.resource::<Solids>().0.ground_at(p).max(GROUND_Y);
@@ -1424,6 +1511,7 @@ impl Sim {
     pub fn set_sheet(&mut self, owner: PlayerId, sheet: Sheet) {
         let sheet = progress::sanitize(sheet);
         self.change_sheet(owner, |s| *s = sheet);
+        self.place_fresh(owner);
     }
 
     /// `owner` buys `power` in `theme`. Returns the price paid.
@@ -1603,6 +1691,7 @@ impl Sim {
     }
 
     pub fn remove_hero(&mut self, owner: PlayerId) {
+        self.fresh.remove(&owner);
         let found: Vec<Entity> = self
             .world
             .query::<(Entity, &Hero)>()

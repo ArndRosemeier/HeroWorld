@@ -6,7 +6,7 @@ use glam::DVec3;
 use hw_core::Seed;
 use hw_net::{PlayerId, Status, ToClient};
 use hw_sim::collision::Body;
-use hw_sim::incidents::{self, Hurt, State, FARTHEST, NEAREST};
+use hw_sim::incidents::{self, Hurt, State, FARTHEST_AFOOT, NEAREST_AFOOT};
 use hw_sim::{GeneratedTown, Sim, TICK_HZ};
 
 fn news_of(sim: &mut Sim) -> Vec<(u32, u8, [f32; 3], u8)> {
@@ -49,7 +49,11 @@ fn an_incident_starts_near_a_hero_and_is_resolved_by_beating_its_villains() {
         "not on the radio"
     );
     let d = sim.position(hero).unwrap().distance(inc.at);
-    assert!(d > NEAREST - 1.0 && d < FARTHEST + 1.0, "{d:.0} m away");
+    // A hero on foot: near enough to run to.
+    assert!(
+        d > NEAREST_AFOOT - 1.0 && d < FARTHEST_AFOOT + 1.0,
+        "{d:.0} m away"
+    );
     // Run there and beat them all at once (a cheat); the police take them.
     sim.set_body(
         hero,

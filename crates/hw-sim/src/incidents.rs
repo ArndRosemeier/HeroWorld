@@ -27,7 +27,7 @@ use hw_core::{NetId, Seed};
 use hw_gen::building::BuildingUse;
 use hw_gen::urban::area::Area;
 use hw_gen::urban::landmarks::LandmarkKind;
-use hw_net::ToClient;
+use hw_net::{Power, ToClient};
 use std::sync::Arc;
 
 /// At least this long between two incidents starting (s).
@@ -40,9 +40,25 @@ pub const TIMEOUT_SECONDS: f64 = 240.0;
 pub const ANSWER: f64 = 60.0;
 /// Heroes this near share the karma when it is resolved (m).
 pub const REWARD: f64 = 120.0;
-/// Incidents start this far from a hero (m).
+/// Incidents start this far from a hero (m) who flies or runs at super
+/// speed: the whole town is near for them.
 pub const NEAREST: f64 = 150.0;
 pub const FARTHEST: f64 = 800.0;
+/// For a hero on foot, this far (m): a minute's run at most.
+pub const NEAREST_AFOOT: f64 = 50.0;
+pub const FARTHEST_AFOOT: f64 = 350.0;
+/// The streets this near a gang's hangout (m) are rough: crime comes
+/// about twice as often there, and more of it is the gang's muggings.
+pub const HOT_REACH: f64 = 450.0;
+pub const HOT_GAP: f64 = 30.0;
+/// A hero closing in on an incident from this near (m) is on the way: it
+/// waits for them (it does not time out, and the town's own heroes leave it
+/// to them) ...
+pub const COMING_REACH: f64 = 1200.0;
+/// ... as long as they keep closing in (they may stop for this long, s) ...
+const COMING_PAUSE: f64 = 12.0;
+/// ... up to this long past its usual time (s).
+const COMING_MOST: f64 = 300.0;
 /// A colossus nobody answers goes home after this long (s).
 pub const COLOSSUS_TIMEOUT: f64 = 600.0;
 /// The colossus comes out at most this often (s), and not before the team
@@ -307,9 +323,33 @@ pub struct Incident {
     pub state: State,
     /// Mole folk talked down at this tick: they are on their way home.
     pub calmed: Option<u64>,
+    /// The nearest hero's distance at the last second (m).
+    pub nearest: f64,
+    /// A hero is on the way until this tick (see [`COMING_REACH`]).
+    pub coming_until: u64,
 }
 
 impl Incident {
+    /// Is a hero on their way to it (closing in from not too far)?
+    pub fn awaited(&self, tick: u64) -> bool {
+        !self.answered && tick < self.coming_until
+    }
+
+    /// Notes how near the nearest hero is now (`d`, m), once a second: one
+    /// closing in keeps it waiting for them.
+    fn watch(&mut self, tick: u64, d: f64) {
+        let closing = d < self.nearest - 2.0 && d < COMING_REACH;
+        self.nearest = d;
+        if !closing || self.answered {
+            return;
+        }
+        self.coming_until = tick + ticks(COMING_PAUSE);
+        // Time for them to get here at a run, and to spare.
+        let eta = d / crate::RUN_SPEED * 1.5 + 30.0;
+        let most = self.started + ticks(self.kind.timeout() + COMING_MOST);
+        self.expires = self.expires.max((tick + ticks(eta)).min(most));
+    }
+
     fn news(&self) -> ToClient {
         ToClient::Incident {
             id: self.id,
@@ -497,6 +537,8 @@ pub struct Incidents {
     free: Vec<usize>,
     /// When the colossus last came out.
     last_colossus: Option<u64>,
+    /// Gang hangouts: the streets round them are rough (see [`HOT_REACH`]).
+    hot: Vec<DVec2>,
     /// Buildings that came down since the last second (people trapped).
     collapses: Vec<u64>,
     news: Vec<ToClient>,
@@ -506,6 +548,10 @@ pub struct Incidents {
 pub fn wanted(heroes: usize) -> usize {
     (1 + heroes).clamp(2, 4)
 }
+
+/// A hero as incidents see them: who, where, their level, and whether they
+/// are on foot (neither flight nor super speed).
+type Seen = (NetId, DVec3, u8, bool);
 
 fn ticks(seconds: f64) -> u64 {
     (seconds * TICK_HZ as f64).round() as u64
@@ -518,6 +564,17 @@ impl Incidents {
             first_after: FIRST_SECONDS,
             ..Default::default()
         }
+    }
+
+    /// The gangs' hangouts: crime is more common round them.
+    pub fn set_hot(&mut self, hangouts: Vec<DVec2>) {
+        self.hot = hangouts;
+    }
+
+    /// Is `p` in the rough streets round a gang's hangout?
+    pub fn is_hot(&self, p: DVec3) -> bool {
+        let p = DVec2::new(p.x, p.z);
+        self.hot.iter().any(|h| h.distance(p) < HOT_REACH)
     }
 
     /// New incidents come in another square of the town (open ones stay
@@ -538,10 +595,13 @@ impl Incidents {
         if !tick.is_multiple_of(TICK_HZ as u64) {
             return;
         }
-        let mut heroes: Vec<(NetId, DVec3, u8)> = world
+        let mut heroes: Vec<Seen> = world
             .query::<(&Hero, &Net, &Motion, &Fighter)>()
             .iter(world)
-            .map(|(_, n, m, f)| (n.0, m.0.pos, f.level))
+            .map(|(_, n, m, f)| {
+                let afoot = !f.kit.has(Power::Flight) && !f.kit.has(Power::SuperSpeed);
+                (n.0, m.0.pos, f.level, afoot)
+            })
             .collect();
         heroes.sort_by_key(|h| h.0);
         self.settle(world, tick, &heroes);
@@ -561,12 +621,16 @@ impl Incidents {
             self.next_kind = None;
             return;
         }
-        if heroes.is_empty() || self.open.len() >= wanted(heroes.len()) {
+        // More, and more often, in the rough streets round a gang.
+        let hot = heroes.iter().any(|h| self.is_hot(h.1));
+        let most = wanted(heroes.len()) + hot as usize;
+        if heroes.is_empty() || self.open.len() >= most {
             return;
         }
+        let gap = if hot { HOT_GAP } else { GAP_SECONDS };
         let due = match self.last_start {
             None => tick >= ticks(self.first_after),
-            Some(t) => tick >= t + ticks(GAP_SECONDS),
+            Some(t) => tick >= t + ticks(gap),
         };
         if due {
             self.start(world, tick, &heroes);
@@ -640,6 +704,8 @@ impl Incidents {
             answered: false,
             state: State::Open,
             calmed: None,
+            nearest: f64::INFINITY,
+            coming_until: 0,
         }
     }
 
@@ -845,7 +911,7 @@ impl Incidents {
     }
 
     /// Answered, resolved or timed out.
-    fn settle(&mut self, world: &mut World, tick: u64, heroes: &[(NetId, DVec3, u8)]) {
+    fn settle(&mut self, world: &mut World, tick: u64, heroes: &[Seen]) {
         // The walking tank moves on: its call follows it.
         let tanks: Vec<(usize, DVec3)> = world
             .query::<(&combat::Enemy, &Motion)>()
@@ -879,6 +945,11 @@ impl Incidents {
             if heroes.iter().any(|h| h.1.distance(inc.at) < ANSWER) {
                 inc.answered = true;
             }
+            let nearest = heroes
+                .iter()
+                .map(|h| h.1.distance(inc.at))
+                .fold(f64::INFINITY, f64::min);
+            inc.watch(tick, nearest);
             let beaten = match inc.spot {
                 Some(i) => {
                     let spot = &world.resource::<Fights>().spots[i];
@@ -912,7 +983,7 @@ impl Incidents {
         }
     }
 
-    fn reward(&self, world: &mut World, inc: &Incident, heroes: &[(NetId, DVec3, u8)]) {
+    fn reward(&self, world: &mut World, inc: &Incident, heroes: &[Seen]) {
         let (size, only, _) = inc.kind.group();
         let base = combat::enemy_spec(only.unwrap_or(EnemyKind::Brute)).karma;
         let mut f = world.resource_mut::<Fights>();
@@ -946,7 +1017,7 @@ impl Incidents {
     }
 
     /// Starts one near a hero.
-    fn start(&mut self, world: &mut World, tick: u64, heroes: &[(NetId, DVec3, u8)]) {
+    fn start(&mut self, world: &mut World, tick: u64, heroes: &[Seen]) {
         let Some(town) = self.town.clone() else {
             return;
         };
@@ -956,9 +1027,16 @@ impl Incidents {
         self.count += 1;
         self.last_start = Some(tick);
         let mut rng = seed.rng();
-        let hero = rng.pick(heroes).1;
+        let &(_, hero, _, afoot) = rng.pick(heroes);
         let me = DVec2::new(hero.x, hero.z);
-        let ring = |p: DVec2| (NEAREST..FARTHEST).contains(&p.distance(me));
+        // Near enough to run to for a hero on foot.
+        let (near, far) = if afoot {
+            (NEAREST_AFOOT, FARTHEST_AFOOT)
+        } else {
+            (NEAREST, FARTHEST)
+        };
+        let ring = |p: DVec2| (near..far).contains(&p.distance(me));
+        let hot = self.is_hot(hero);
         let quarter = town.town.dystopia.as_ref();
         let held = |p: DVec2| quarter.is_some_and(|d| d.contains(p));
         // Labs near enough for a breakout, shops for a robbery.
@@ -992,15 +1070,18 @@ impl Incidents {
             .filter(|(p, _)| ring(*p) && !held(*p))
             .collect();
         let mut kinds: Vec<(IncidentKind, f64)> = vec![
-            (IncidentKind::Mugging, 0.25),
-            (IncidentKind::Robbery, 0.2),
-            (IncidentKind::Rampage, 0.15),
-            (IncidentKind::Breakout, 0.12),
+            // Round a gang's corner, mostly its muggings and hold-ups.
+            (IncidentKind::Mugging, if hot { 0.6 } else { 0.25 }),
+            (IncidentKind::Robbery, if hot { 0.3 } else { 0.2 }),
+            // Brutes and lab breakouts are rarer there: they are fights
+            // for heroes who have grown.
+            (IncidentKind::Rampage, if hot { 0.05 } else { 0.15 }),
+            (IncidentKind::Breakout, if hot { 0.04 } else { 0.12 }),
             (IncidentKind::CarCrash, 0.14),
             (IncidentKind::Fire, 0.14),
             (IncidentKind::Colossus, 0.08),
             (IncidentKind::Surfacing, 0.1),
-            (IncidentKind::PirateRaid, 0.1),
+            (IncidentKind::PirateRaid, if hot { 0.05 } else { 0.1 }),
             (IncidentKind::IronLanding, 0.07),
         ];
         // The walking tank comes out of the Tesla tower now and then, once
@@ -1066,7 +1147,20 @@ impl Incidents {
             IncidentKind::Colossus => &tower_place,
             _ => &streets,
         };
-        let (p, face) = *rng.pick(places);
+        // On foot, the nearer of two places: most of it round the corner.
+        let (p, face) = {
+            let a = *rng.pick(places);
+            if afoot {
+                let b = *rng.pick(places);
+                if b.0.distance(me) < a.0.distance(me) {
+                    b
+                } else {
+                    a
+                }
+            } else {
+                a
+            }
+        };
         // Not on top of another one.
         if self
             .open
@@ -1158,6 +1252,8 @@ impl Incidents {
             answered: false,
             state: State::Open,
             calmed: None,
+            nearest: f64::INFINITY,
+            coming_until: 0,
         };
         if kind == IncidentKind::Colossus {
             self.last_colossus = Some(tick);

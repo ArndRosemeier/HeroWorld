@@ -69,7 +69,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 if [ "$mode" = full ]; then
     step "cargo test, everything"
-    cargo test --workspace -- --include-ignored --skip level_twenty_in_about_ten_hours
+    cargo test --workspace -- --include-ignored --skip level_twenty_in_about_ten_hours --skip at_the_climb_tests_pace
     step "done"
     exit 0
 fi

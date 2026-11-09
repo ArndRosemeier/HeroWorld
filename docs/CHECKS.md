@@ -61,7 +61,9 @@ junctions, feet on the ground). Today they are:
 
 A new test that runs that long gets the same mark. The ten-hour climb
 (`a_new_hero_reaches_level_twenty_in_about_ten_hours`) stays out even of `--full`; run it
-with `--ignored` or the balance example.
+with `--ignored` or the balance example. So does the rookies' climb in a real town
+(`a_new_hero_near_the_jackets_climbs_at_the_climb_tests_pace`, tests/rookies.rs, about a
+minute in release): run it with `cargo test --release -p hw-sim --test rookies -- --ignored`.
 
 To find slow tests (stable Rust, libtest's timing report):
 
