@@ -42,6 +42,8 @@ pub mod propmesh;
 pub mod propview;
 pub mod radioview;
 pub mod robotview;
+pub mod rocketmesh;
+pub mod rocketview;
 pub mod settings;
 pub mod signalview;
 pub mod skins;

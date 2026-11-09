@@ -147,7 +147,8 @@ pub struct TownWorld {
     pub main_roads: Vec<WorldRoad>,
     /// Where main roads cross water.
     pub main_bridges: Vec<Bridge>,
-    /// The Aether Spire and, by the sea, a lighthouse.
+    /// The Aether Spire, Hero Hall, the Tesla tower, the rocket port and,
+    /// by the sea, a lighthouse.
     pub landmarks: Vec<Landmark>,
     /// The deep underground, planned tile by tile.
     deep: Deep,

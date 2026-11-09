@@ -437,7 +437,8 @@ between them) is designed but not built; the town stands in endless streamed gro
 - **Landmarks:** the **Aether Spire** (every town, on a raised plaza near the old centre,
   with steps; the Hero Signal shines from it), the **lighthouse** (seaside towns), the
   **Tesla tower** (in the villain quarter), the **airship mooring mast** (every town, on
-  its airfield just past the edge).
+  its airfield just past the edge), the **rocket port** (every town, just past its edge;
+  see below).
 - **Street furniture:** lamps in each quarter's style (iron lanterns, deco double globes,
   atomic saucers), parked golden-age cars, trees by region (lindens and birches north,
   planes and chestnuts in the middle, palms and cypresses south), hedges, fountains,
@@ -477,6 +478,34 @@ comes back. The beacon blinks red, a second on, a second off. Sound: the engines
 (within 900 m, louder as they work), a horn on the glide in and as it casts off (1.5 km),
 the latch clanking, the winch whirring. Views: `HW_VIEW=mast`, `mastapron`, `terminal`,
 `liner`; `HW_MAST_T=<s>` holds the liner that many seconds into its cycle (0 just moored).
+
+### The rocket port (`hw-gen/src/urban/gantry.rs`, `hw-sim/src/rocket.rs`, `hw-client/src/rocketview.rs`)
+
+Every town has a rocket port out past its built edge (the first level spot 45 m or more
+beyond where its districts end, off every road, at least 60 m clear of the villain quarter
+and the other landmarks): a paved round pad 21-26 m across with a 30 m finned rocket on a
+3 m concrete launch stand, a 40 m orange lattice gantry with two swing arms (fuel lines at
+11 m, the crew walkway at 20 m), a countdown board and a chrome atom on its crane, a domed
+blockhouse facing the town, two fuel spheres and four floodlight masts (lit at night). A
+taxi stand "The rocket port" goes there.
+
+**Launches** run on the game clock, the same for every player: the first countdown starts
+45-120 s into a session (by seed), then one every **480 s**. A launch: venting and the
+klaxon (0 s), the arms swing away (8-16 s), the board counts 10 to 1 (20-30 s), the engine
+lights and roars on the stand with fire and smoke out of the flame duct (30-33 s), the
+rocket climbs at 3 m/s² out of sight (2 600 m, about 42 s), stays away, relights 1 600 m up
+(260 s), brakes all the way down and touches down at 300 s in a ring of dust, vents while
+it cools and the arms swing back (312-322 s). Between launches the board shows the minutes
+left (amber), the last 99 seconds in red. The rocket and its arms are solid wherever they
+are (moving solids, like the street cars); the stand, duct, tower, blockhouse, spheres and
+masts are footprints. Sound: the engine's roar (heard 3 km away), venting hiss, klaxon,
+countdown beeps, ignition, touchdown.
+
+**Mission hooks** (not used yet): `Schedule::scrub` calls off a launch before the engine
+lights (the next goes ahead); `gantry::weak_spots` are where a saboteur goes (the umbilical
+valves at the gantry's foot, each sphere's valve, the blockhouse door).
+Views: `HW_VIEW=rocket`, `rocketpad`, `rocketarm`, `rocketboard`; `HW_ROCKET_T=<s>`
+freezes the first launch that many seconds in.
 
 ### The villain quarter (`hw-gen/src/urban/dystopia.rs`, `hw-sim/src/quarter.rs`)
 
@@ -740,7 +769,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default 40 000; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `mast`, `mastapron`, `terminal`, `liner`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |

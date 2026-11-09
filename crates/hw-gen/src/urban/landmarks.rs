@@ -1,7 +1,7 @@
 //! The town's landmarks: the Aether Spire on its civic plaza near the old
 //! core, Hero Hall (home of the town's own heroes) not far from it, a
-//! lighthouse on the shore of a seaside town, and the mad scientist's Tesla
-//! tower in his quarter.
+//! lighthouse on the shore of a seaside town, the mad scientist's Tesla
+//! tower in his quarter, and the rocket port at the town's edge.
 //!
 //! Each stands on a round paved plinth cleared of buildings, in a spot no
 //! road crosses. The plinth's top is level; where the ground falls away its
@@ -30,6 +30,10 @@ pub enum LandmarkKind {
     /// The airship mooring mast on its airfield at the town's edge, where
     /// the liner docks ([`super::mast`]).
     MooringMast,
+    /// The rocket port at the town's edge: a finned rocket beside its
+    /// gantry, that now and then goes up and comes back (see
+    /// [`super::gantry`]).
+    RocketGantry,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -208,6 +212,7 @@ impl Landmark {
                 }
                 v
             }
+            LandmarkKind::RocketGantry => super::gantry::footprints(self.plaza),
             LandmarkKind::HeroHall => {
                 let mut v = vec![
                     disc(HALL_R, HALL_WALL + 0.4),
@@ -314,7 +319,7 @@ impl Landmark {
 /// The landmark's stairs: up the plinth on each of its four sides where
 /// it stands higher than a step (unless the flight would run onto a
 /// street or into the water), and the spire's four flights to its doors.
-fn plan_stairs(w: &TownWorld, roads: &RoadGrid, l: &Landmark) -> Vec<Stair> {
+pub(super) fn plan_stairs(w: &TownWorld, roads: &RoadGrid, l: &Landmark) -> Vec<Stair> {
     let mut out = Vec::new();
     let quarter = |k: usize| {
         let d = hw_core::det::dir2(std::f64::consts::FRAC_PI_2 * k as f64);
@@ -489,10 +494,15 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
     for l in &mut out {
         l.stairs = plan_stairs(w, &roads, l);
     }
+    // The rocket port, out past the town's edge (its stairs are its own:
+    // these roads stop short of it).
+    if let Some(g) = super::gantry::plan_gantry(w, &out) {
+        out.push(g);
+    }
     out
 }
 
-fn landmark_at(w: &TownWorld, p: DVec2, plaza: f64) -> Landmark {
+pub(super) fn landmark_at(w: &TownWorld, p: DVec2, plaza: f64) -> Landmark {
     let (lo, hi) = rim(w, p, plaza);
     Landmark {
         kind: LandmarkKind::AetherSpire,
@@ -507,7 +517,7 @@ fn landmark_at(w: &TownWorld, p: DVec2, plaza: f64) -> Landmark {
 }
 
 /// Lowest and highest ground over a disc.
-fn rim(w: &TownWorld, p: DVec2, r: f64) -> (f64, f64) {
+pub(super) fn rim(w: &TownWorld, p: DVec2, r: f64) -> (f64, f64) {
     let mut lo = w.ground(p);
     let mut hi = lo;
     for ring in [0.5, 1.0] {
@@ -525,7 +535,7 @@ fn rim(w: &TownWorld, p: DVec2, r: f64) -> (f64, f64) {
 /// where a plinth of radius `plaza` stands on dry, fairly level ground clear
 /// of every road.
 #[allow(clippy::too_many_arguments)]
-fn best_spot(
+pub(super) fn best_spot(
     w: &TownWorld,
     roads: &RoadGrid,
     centre: DVec2,
@@ -615,6 +625,19 @@ mod tests {
                 d.contains(tesla.pos),
                 "seed {s}: the tower outside the quarter"
             );
+            // The rocket port stands out past the town's edge, off every
+            // street, its pad clear of buildings (checked above).
+            let pad = w
+                .landmarks
+                .iter()
+                .find(|l| l.kind == LandmarkKind::RocketGantry)
+                .expect("a rocket port");
+            assert!(!w.in_a_piece(pad.pos), "seed {s}: the pad in town");
+            assert!(
+                pad.pos.distance(w.core()) > 300.0,
+                "seed {s}: too near the core"
+            );
+            assert!(pad.plaza >= 21.0 && pad.height >= 40.0);
             // The lightning rods the arcs strike are solid, up on the
             // lab's roof inside its walls.
             let fps = tesla.footprints();

@@ -26,6 +26,7 @@ pub mod progress;
 pub mod props;
 pub mod quarter;
 pub mod robots;
+pub mod rocket;
 pub mod roosts;
 pub mod save;
 pub mod streets;
@@ -473,6 +474,8 @@ pub struct Sim {
     area_ready: Option<(Arc<Area>, traffic::Traffic)>,
     /// Has the square moved from the one every machine starts with?
     area_moved: bool,
+    /// The rocket port's launches (see [`rocket`]).
+    pub rockets: Vec<rocket::Pad>,
 }
 
 impl Sim {
@@ -498,6 +501,7 @@ impl Sim {
         sim.area = Some(town.area.clone());
         sim.taxis = taxi::Taxis::new(town.area.clone());
         sim.tubes = tube::Tubes::new(town.world.clone());
+        sim.rockets = rocket::pads(&town.world);
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.area.clone()));
         sim.incidents = incidents::Incidents::new(town.area.clone());
         sim.world.resource_mut::<Fights>().streets = Some(Arc::new(streets::Streets::new(
@@ -779,6 +783,7 @@ impl Sim {
             area_job: None,
             area_ready: None,
             area_moved: false,
+            rockets: Vec::new(),
         }
     }
 
@@ -893,19 +898,22 @@ impl Sim {
             _ => None,
         }));
         let stops = self.alarms.car_stops();
+        // Heroes bump into the cars near them (and can stand on them),
+        // and into the rocket and its arms.
+        let heroes: Vec<DVec3> = self
+            .world
+            .query::<(&Motion, &Hero)>()
+            .iter(&self.world)
+            .map(|(m, _)| m.0.pos)
+            .collect();
+        let now = self.tick as f64 * DT;
+        let mut movers = rocket::solids(&self.rockets, now, &heroes, 25.0);
         if let Some(t) = self.wrecks.traffic.as_mut() {
             t.set_blockers(&standing, &stops);
-            t.advance_to(self.tick as f64 * DT);
-            // Heroes bump into the cars near them (and can stand on them).
-            let heroes: Vec<DVec3> = self
-                .world
-                .query::<(&Motion, &Hero)>()
-                .iter(&self.world)
-                .map(|(m, _)| m.0.pos)
-                .collect();
-            let cars = t.car_solids(&heroes, 25.0, self.tick as f64 * DT);
-            self.world.resource::<Solids>().0.set_movers(cars);
+            t.advance_to(now);
+            movers.extend(t.car_solids(&heroes, 25.0, now));
         }
+        self.world.resource::<Solids>().0.set_movers(movers);
         self.pay_karma();
         self.sync_levels();
         self.clear_rubble();

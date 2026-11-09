@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.106 (2026-11-09)
+
+- Every town now has a rocket port just past its edge: a gleaming finned rocket beside an orange launch gantry, a domed blockhouse, fuel spheres and floodlights. Take a taxi to "The rocket port".
+- Every eight minutes it launches. Vapour streams off the hull, the klaxon sounds, the arms swing away and the big board on the gantry counts down from ten. Then fire and smoke roll out across the pad and the rocket climbs out of sight on a column of flame.
+- A few minutes later it comes back down on its tail, braking on its flame, and settles onto the stand in a ring of dust. Between launches the board shows the minutes to the next one.
+
 ## 0.105 (2026-11-09)
 
 - Smoother play: in single player the world (fights, physics, people, traffic) now runs on its own processor core instead of sharing one with the picture. The traffic, the minimap, the grass and what the town sounds like are worked out on other cores too, so far less waits on the main one.

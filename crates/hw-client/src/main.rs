@@ -54,7 +54,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `call` (the light over the first call, with `HW_INCIDENT`), `far` (a main road across town, where people and traffic must follow) or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the light over the first call, with `HW_INCIDENT`), `far` (a main road across town, where people and traffic must follow) or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -587,13 +587,14 @@ fn main() -> EngineResult<()> {
             let eye = base + 1.9;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, 4.0)
         }
-        "spire" | "lighthouse" | "tesla" | "hall" => {
+        "spire" | "lighthouse" | "tesla" | "hall" | "rocket" => {
             // Looking up at a landmark from across its plaza.
             use hw_gen::urban::landmarks::LandmarkKind;
             let kind = match view.as_str() {
                 "spire" => LandmarkKind::AetherSpire,
                 "tesla" => LandmarkKind::TeslaTower,
                 "hall" => LandmarkKind::HeroHall,
+                "rocket" => LandmarkKind::RocketGantry,
                 _ => LandmarkKind::Lighthouse,
             };
             let l = hw_client::landmarkview::nearest(&generated.world, kind, spawn);
@@ -615,6 +616,42 @@ fn main() -> EngineResult<()> {
             let yaw = d.x.atan2(d.y).to_degrees() as f32;
             let eye = ground(p).max(base) + h * 0.5 + 6.0;
             let pitch = ((h * 0.4 - (eye - base)) / d.length()).atan().to_degrees() as f32;
+            FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
+        }
+        "rocketpad" | "rocketarm" | "rocketboard" => {
+            // Close up at the rocket port: from the pad at eye height, level
+            // with the crew arm, or at the countdown board.
+            use hw_gen::urban::gantry::{ARM_HEIGHTS, BOARD_Y, TOWER_X};
+            use hw_gen::urban::landmarks::LandmarkKind;
+            let l = hw_client::landmarkview::nearest(
+                &generated.world,
+                LandmarkKind::RocketGantry,
+                spawn,
+            );
+            let (p, eye, look_at, look_y) = match l {
+                Some(l) => {
+                    let (from, up, at, at_y) = match view.as_str() {
+                        "rocketpad" => (DVec2::new(-9.0, 16.0), 1.8, DVec2::ZERO, 9.0),
+                        "rocketarm" => (
+                            DVec2::new(12.0, 13.0),
+                            ARM_HEIGHTS[1] + 2.0,
+                            DVec2::new(3.0, 0.0),
+                            ARM_HEIGHTS[1],
+                        ),
+                        _ => (
+                            DVec2::new(TOWER_X - 6.0, 18.0),
+                            BOARD_Y - 4.0,
+                            DVec2::new(TOWER_X, 0.0),
+                            BOARD_Y,
+                        ),
+                    };
+                    (l.to_plan(from), l.base + up, l.to_plan(at), l.base + at_y)
+                }
+                None => (spawn, ground(spawn) + 2.0, spawn + spawn_dir, ground(spawn)),
+            };
+            let d = look_at - p;
+            let yaw = d.x.atan2(d.y).to_degrees() as f32;
+            let pitch = ((look_y - eye) / d.length()).atan().to_degrees() as f32;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
         }
         "tesladome" | "teslayard" => {
@@ -1719,6 +1756,10 @@ fn main() -> EngineResult<()> {
             hw_client::hitch::mark("mast");
             if let Some(m) = extras.mast.as_mut() {
                 m.update(world, session.time(tick_clock / hw_sim::DT), frame.dt)?;
+            }
+            hw_client::hitch::mark("rocket port");
+            if let Some(r) = extras.rocket.as_mut() {
+                r.update(world, session.time(tick_clock / hw_sim::DT), frame.dt)?;
             }
             {
                 let eye = world.camera().eye();
@@ -2876,7 +2917,11 @@ fn main() -> EngineResult<()> {
             // the host's does (the host sets them itself when we host).
             if matches!(session, Session::Remote { .. }) {
                 if let Some(me) = session.my_position(&heroes) {
-                    solids.set_movers(traffic.car_solids(&[me], 25.0, game_time));
+                    let mut movers = traffic.car_solids(&[me], 25.0, game_time);
+                    if let Some(pad) = extras.rocket.as_ref().and_then(|r| r.pad()) {
+                        movers.extend(pad.solids(game_time, &[me], 25.0));
+                    }
+                    solids.set_movers(movers);
                 }
             }
             if let (Some(s), Some(props)) = (extras.signals.as_mut(), extras.props.as_ref()) {
@@ -3102,6 +3147,11 @@ fn main() -> EngineResult<()> {
                         .map(|d| d.heard())
                         .unwrap_or_default(),
                     mast: extras.mast.as_mut().map(|m| m.heard()).unwrap_or_default(),
+                    rocket: extras
+                        .rocket
+                        .as_mut()
+                        .map(|r| r.heard())
+                        .unwrap_or_default(),
                 };
                 hw_client::hitch::mark("sounds");
                 sounds.update(world, &scene);

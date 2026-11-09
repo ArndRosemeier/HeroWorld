@@ -53,6 +53,8 @@ pub struct TownExtras {
     pub dystopia: Option<crate::dystopiaview::DystopiaView>,
     /// The airship mooring mast and its liner.
     pub mast: Option<crate::mastview::MastView>,
+    /// The rocket port's launches.
+    pub rocket: Option<crate::rocketview::RocketView>,
     pub grass: Option<GrassView>,
     pub waterfront: Option<crate::waterfrontview::WaterfrontView>,
 }
@@ -82,6 +84,9 @@ impl TownExtras {
         }
         if let Some(mut d) = self.deep.take() {
             d.clear(world);
+        }
+        if let Some(mut r) = self.rocket.take() {
+            r.clear(world);
         }
         if let Some(mut d) = self.dystopia.take() {
             d.clear(world);
@@ -364,6 +369,7 @@ fn assemble(
         deep: Some(crate::deepview::DeepView::new(town.clone())),
         dystopia: Some(crate::dystopiaview::DystopiaView::new(town)),
         mast: Some(crate::mastview::MastView::new(town)),
+        rocket: Some(crate::rocketview::RocketView::new(town)),
     }
 }
 

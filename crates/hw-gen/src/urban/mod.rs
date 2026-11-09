@@ -23,6 +23,7 @@ pub mod deep;
 pub mod dystopia;
 pub mod edge;
 pub mod footprint;
+pub mod gantry;
 pub mod graph;
 pub mod greenery;
 pub mod growth;

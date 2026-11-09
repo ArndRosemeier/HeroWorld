@@ -70,6 +70,12 @@ static CLIPS: &[(&str, &[u8])] = clips![
     "airship_horn",
     "mooring_clank",
     "winch",
+    "rocket_roar",
+    "rocket_ignite",
+    "rocket_klaxon",
+    "rocket_beep",
+    "rocket_vent",
+    "rocket_touchdown",
 ];
 
 /// The fight's clips (`fightview.rs` plays them).
@@ -278,6 +284,8 @@ pub struct Scene<'a> {
     pub tesla: crate::teslaview::Heard,
     /// The airship mooring mast: the liner's engines, its horn, the winch.
     pub mast: crate::mastview::Heard,
+    /// The rocket port's roar, hiss and moments.
+    pub rocket: crate::rocketview::Heard,
 }
 
 /// The ambience layers and how loud each one plays at full share.
@@ -349,6 +357,9 @@ pub struct Soundscape {
     cracks: u32,
     /// The liner's engines and the mast's winch.
     mast_loops: [Option<SoundId>; 2],
+    /// The rocket's engine and its venting.
+    rocket_roar: Option<SoundId>,
+    rocket_vent: Option<SoundId>,
     pub music: Music,
 }
 
@@ -382,6 +393,8 @@ impl Soundscape {
             tesla_hum: None,
             cracks: 0,
             mast_loops: [None, None],
+            rocket_roar: None,
+            rocket_vent: None,
             music: Music::new(),
         }
     }
@@ -408,6 +421,7 @@ impl Soundscape {
         self.life(world, s);
         self.tesla(world, s);
         self.mast(world, s);
+        self.rocket(world, s);
         self.timed.retain(|(id, until)| {
             if s.now >= *until {
                 world.stop_sound(*id, 2.5);
@@ -435,6 +449,12 @@ impl Soundscape {
             world.stop_sound(id, 0.5);
         }
         if let Some(v) = self.tesla_hum.take() {
+            world.stop_sound(v, 0.5);
+        }
+        for v in [self.rocket_roar.take(), self.rocket_vent.take()]
+            .into_iter()
+            .flatten()
+        {
             world.stop_sound(v, 0.5);
         }
         for v in self.mast_loops.iter_mut().filter_map(Option::take) {
@@ -856,6 +876,110 @@ impl Soundscape {
         }
     }
 
+    /// A looping voice that follows `at` while it is wanted: started,
+    /// moved, its volume and pitch set, and faded out when not.
+    #[allow(clippy::too_many_arguments)]
+    fn follow(
+        &mut self,
+        world: &mut World,
+        voice: Option<SoundId>,
+        clip: &'static str,
+        at: Option<Vec3>,
+        vol: f32,
+        pitch: f32,
+        range: (f32, f32),
+        now: f64,
+    ) -> Option<SoundId> {
+        match (voice, at) {
+            (Some(v), Some(p)) => {
+                let _ = self.bank.get(clip, now);
+                let a = world.audio_mut();
+                a.set_position(v, p);
+                a.set_volume(v, vol);
+                a.set_pitch(v, pitch);
+                Some(v)
+            }
+            (None, Some(p)) => self.bank.get(clip, now).map(|c| {
+                let play = PlaySound::at(p)
+                    .looped()
+                    .volume(vol)
+                    .pitch(pitch)
+                    .range(range.0, range.1)
+                    .fade_in(0.6);
+                world.play_sound(&c, play)
+            }),
+            (Some(v), None) => {
+                world.stop_sound(v, 1.2);
+                None
+            }
+            (None, None) => None,
+        }
+    }
+
+    /// The rocket port: the engine's roar (heard across the town, rising
+    /// and falling with the thrust), the hiss of venting, the klaxon, the
+    /// count's beeps, the ignition and the touchdown.
+    fn rocket(&mut self, world: &mut World, s: &Scene) {
+        let muffle = if s.under != Under::No {
+            0.15
+        } else if s.indoors {
+            0.4
+        } else {
+            1.0
+        };
+        let r = &s.rocket;
+        let roar = r
+            .roar
+            .filter(|(at, _)| at.distance(s.eye) < 3000.0)
+            .map(|(at, _)| at);
+        let thrust = r.roar.map_or(0.0, |(_, k)| k);
+        let v = self.rocket_roar.take();
+        self.rocket_roar = self.follow(
+            world,
+            v,
+            "rocket_roar",
+            roar,
+            (0.4 + 0.6 * thrust) * muffle,
+            0.85 + 0.2 * thrust,
+            (40.0, 3000.0),
+            s.now,
+        );
+        let vent = r.vent.filter(|at| at.distance(s.eye) < 220.0);
+        let v = self.rocket_vent.take();
+        self.rocket_vent = self.follow(
+            world,
+            v,
+            "rocket_vent",
+            vent,
+            // The clip is mastered quiet (its pops limit it).
+            0.9 * muffle,
+            1.0,
+            (10.0, 220.0),
+            s.now,
+        );
+        for &(shot, at) in &r.shots {
+            let (clip, vol, range, pitch) = match shot {
+                crate::rocketview::Shot::Klaxon => ("rocket_klaxon", 0.9, 900.0, 1.0),
+                // The last three beeps a little higher.
+                crate::rocketview::Shot::Beep(n) => {
+                    ("rocket_beep", 0.7, 400.0, if n <= 3 { 1.25 } else { 1.0 })
+                }
+                crate::rocketview::Shot::Ignition => ("rocket_ignite", 1.0, 3000.0, 1.0),
+                crate::rocketview::Shot::Touchdown => ("rocket_touchdown", 1.0, 1200.0, 1.0),
+            };
+            if at.distance(s.eye) > range {
+                continue;
+            }
+            if let Some(c) = self.bank.get(clip, s.now) {
+                let p = PlaySound::at(at)
+                    .volume(vol * muffle)
+                    .pitch(pitch)
+                    .range(20.0, range);
+                world.play_sound(&c, p);
+            }
+        }
+    }
+
     fn footsteps(&mut self, world: &mut World, s: &Scene) {
         let Some(feet) = s.hero else {
             return;
@@ -1257,6 +1381,7 @@ mod tests {
             boss_music: false,
             tesla: Default::default(),
             mast: Default::default(),
+            rocket: Default::default(),
         }
     }
 

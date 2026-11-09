@@ -313,6 +313,7 @@ impl Minimap {
                     LandmarkKind::TeslaTower => egui::Color32::from_rgb(140, 220, 90),
                     LandmarkKind::HeroHall => egui::Color32::from_rgb(240, 190, 70),
                     LandmarkKind::MooringMast => egui::Color32::from_rgb(230, 70, 60),
+                    LandmarkKind::RocketGantry => egui::Color32::from_rgb(235, 90, 60),
                 };
                 painter.circle_filled(p, 4.5, c);
                 painter.circle_stroke(

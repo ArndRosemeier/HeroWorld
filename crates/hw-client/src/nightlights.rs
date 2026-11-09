@@ -147,6 +147,22 @@ impl NightLights {
                 }
                 // Its lights pulse with its arcs: see `teslaview`.
                 LandmarkKind::TeslaTower => {}
+                LandmarkKind::RocketGantry => {
+                    // Floodlights on the masts, lighting up the rocket.
+                    let rocket = hw_gen::urban::gantry::ROCKET_H * 0.45;
+                    for m in hw_gen::urban::gantry::masts(l.plaza) {
+                        let p = l.to_plan(m * 0.55);
+                        let up = hw_gen::urban::gantry::STAND_H + rocket * 0.6;
+                        sources.push(Source {
+                            lamp: Lamp::point(
+                                Vec3::new(p.x as f32, (l.base + up) as f32, p.y as f32),
+                                rgb(236, 240, 255),
+                                60.0,
+                                38.0,
+                            ),
+                        });
+                    }
+                }
             }
         }
         Self {

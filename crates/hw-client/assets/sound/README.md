@@ -51,6 +51,12 @@ seam.
 | `airship_horn.ogg` | shot | The sound of a giant airship's deep foghorn blast, one long low brass horn note echoing over an airfield |
 | `mooring_clank.ogg` | shot | The sound of a heavy steel mooring latch locking shut, a deep metallic clank and a chain rattle |
 | `winch.ogg` | loop | The sound of an electric cargo winch unspooling steel cable, a steady mechanical whirr with gear clicks, continuous |
+| `rocket_roar.ogg` | loop | The sound of a huge rocket engine burning continuously, a deep thunderous rumbling roar with crackling fire, steady and constant |
+| `rocket_ignite.ogg` | shot | The sound of a giant rocket engine igniting, a sharp whoosh and bang that swells into a thunderous roar |
+| `rocket_klaxon.ogg` | shot | The sound of a 1950s launch site klaxon alarm horn over a loudspeaker, three loud ah-oo-gah blasts (the first two kept) |
+| `rocket_beep.ogg` | shot | The sound of a single short clean electronic beep from a 1950s science fiction control console |
+| `rocket_vent.ogg` | loop | The sound of cold gas venting from a rocket, a steady loud hiss of escaping vapour with soft pops, continuous |
+| `rocket_touchdown.ogg` | shot | The sound of a heavy rocket landing on a concrete pad, quick: the engine cuts off with a short falling whoosh, at once a deep metallic thud and clank, then a short hiss |
 
 ## From Scale
 
