@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.092 (2026-11-09)
+
+- Lift and Telekinesis no longer leave a crate floating over your head for ever: press the key again to throw it where you aim, or after 8 seconds it slips free and drops in front of you.
+
 ## 0.091 (2026-11-09)
 
 - Tab now cycles through the villains around you: the nearest one in view first, then each press the next nearest you haven't picked yet, round and round. Villains behind you come after the ones you can see.

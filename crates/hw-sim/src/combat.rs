@@ -76,6 +76,9 @@ pub const SHIELD_BLOCKS: f32 = 0.5;
 pub const THROW_SPEED: f64 = 22.0;
 /// How far a hero reaches for something to lift.
 pub const LIFT_REACH: f64 = 6.0;
+/// A lifted thing not thrown in this long slips from the hero's grip and
+/// falls just ahead (s): nothing is held for ever.
+pub const CARRY_SECONDS: f64 = 8.0;
 /// Rubble torn up to throw is gone this long after it lands.
 pub const RUBBLE_SECONDS: f64 = 20.0;
 /// Gravity in Engine's physics (for the arc of a throw).
@@ -621,6 +624,8 @@ pub struct Fighter {
     pub shield_until: u64,
     /// What it holds over its head to throw.
     pub carrying: Option<NetId>,
+    /// Tick the held thing slips free if not thrown first.
+    pub carry_until: u64,
     /// Effects a robot's state adds ([`EFFECT_ARMOURED`] and the like).
     pub marks: u16,
     /// Inside a Rally aura this tick (a hero's own counts).
@@ -648,6 +653,7 @@ impl Fighter {
             held_until: 0,
             shield_until: 0,
             carrying: None,
+            carry_until: 0,
             marks: 0,
             rallied: false,
         }
@@ -1390,15 +1396,34 @@ pub(crate) fn step(world: &mut World, tick: u64) {
         e.theme = theme;
         fx.push(e);
         actors[i].f.carrying = Some(id);
+        actors[i].f.carry_until = tick + ticks(CARRY_SECONDS);
     }
     // Lifted things ride over their heroes' heads, and fall if they fall.
+    // Held too long, they slip free and drop just ahead.
     let mut riding: BTreeMap<NetId, Body> = BTreeMap::new();
     let mut dropped: Vec<NetId> = Vec::new();
     for a in actors.iter_mut() {
         let Some(c) = a.f.carrying else {
             continue;
         };
-        if a.f.standing() {
+        if a.f.standing() && tick >= a.f.carry_until {
+            a.f.carrying = None;
+            let flat = DVec3::new(a.body.vel.x, 0.0, a.body.vel.z).normalize_or(DVec3::X);
+            out.tosses
+                .push((c, a.body.vel + flat * 3.0 + DVec3::Y * 1.5));
+            // The power recharges as after a throw.
+            let haste = if a.f.rallied { RALLY_HASTE } else { 1.0 };
+            a.f.ready[slot(Power::Lift)] = tick + ticks(power_spec(Power::Lift).recharge / haste);
+            let mut e = event(
+                tick,
+                FxKind::Throw,
+                a.id,
+                a.id,
+                a.body.pos + DVec3::Y * CARRY_HEIGHT,
+            );
+            e.theme = a.f.kit.theme(Power::Lift);
+            fx.push(e);
+        } else if a.f.standing() {
             riding.insert(
                 c,
                 Body {

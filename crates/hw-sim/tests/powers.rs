@@ -411,3 +411,94 @@ fn powers_are_bought_and_given_up_over_the_network() {
         .collect();
     assert_eq!(sheets.last(), Some(&s));
 }
+
+/// Things lifted and held anywhere in the world (by what holds them).
+fn held(sim: &mut Sim) -> Vec<NetId> {
+    sim.world
+        .query::<&hw_sim::combat::Carried>()
+        .iter(&sim.world)
+        .map(|c| c.0)
+        .collect()
+}
+
+#[test]
+fn nothing_lifted_outlives_its_power() {
+    let lift = InputState {
+        power: Power::Lift.code(),
+        ..Default::default()
+    };
+    let secs = |s: f64| (s * TICK_HZ as f64).ceil() as u64;
+    let hold_for = secs(hw_sim::combat::CARRY_SECONDS) + 2;
+
+    // Lifted with no villain anywhere: a chunk of street rides overhead,
+    // then slips free on its own, lands and is cleared away.
+    let mut sim = arena(4);
+    let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(5, &[Power::Lift]));
+    sim.step();
+    let fx = press(&mut sim, lift, 2);
+    assert!(fx.iter().any(|e| e.kind == FxKind::Lift && e.from == hero));
+    let chunk = sim
+        .fighter(hero)
+        .unwrap()
+        .carrying
+        .expect("lifted something");
+    assert_eq!(held(&mut sim), vec![hero]);
+    let fx = press(&mut sim, InputState::default(), hold_for);
+    assert!(fx.iter().any(|e| e.kind == FxKind::Throw && e.from == hero));
+    assert!(sim.fighter(hero).unwrap().carrying.is_none());
+    assert!(
+        held(&mut sim).is_empty(),
+        "still held after the grip ran out"
+    );
+    press(
+        &mut sim,
+        InputState::default(),
+        secs(hw_sim::combat::RUBBLE_SECONDS) + 2,
+    );
+    let left: Vec<NetId> = sim
+        .world
+        .query::<&hw_sim::Net>()
+        .iter(&sim.world)
+        .map(|n| n.0)
+        .collect();
+    assert!(!left.contains(&chunk), "torn-up rubble is never cleared");
+
+    // Lifted with no target, then thrown where aimed: let go at once.
+    let lifted = |sim: &mut Sim| {
+        let fx = press(sim, lift, secs(2.0));
+        assert!(fx.iter().any(|e| e.kind == FxKind::Lift));
+        assert_eq!(held(sim).len(), 1);
+    };
+    lifted(&mut sim);
+    let throw = InputState {
+        aim: [0.0, 0.0, 1.0],
+        ..lift
+    };
+    let fx = press(&mut sim, throw, 2);
+    assert!(fx.iter().any(|e| e.kind == FxKind::Throw && e.from == hero));
+    assert!(held(&mut sim).is_empty());
+
+    // Giving the power up lets go of what it held.
+    let fx = press(&mut sim, InputState::default(), secs(5.0));
+    let _ = fx;
+    lifted(&mut sim);
+    sim.give_up(PlayerId(1), Power::Lift);
+    sim.step();
+    assert!(sim.fighter(hero).unwrap().carrying.is_none());
+    assert!(
+        held(&mut sim).is_empty(),
+        "held after the power was given up"
+    );
+
+    // Knocked down while holding it: it falls.
+    let mut sim = arena(4);
+    let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(5, &[Power::Lift]));
+    sim.step();
+    lifted(&mut sim);
+    let mut f = sim.fighter(hero).unwrap();
+    f.status = Status::Down;
+    f.until = u64::MAX;
+    sim.set_fighter(hero, f);
+    sim.step();
+    assert!(held(&mut sim).is_empty(), "held by a downed hero");
+}

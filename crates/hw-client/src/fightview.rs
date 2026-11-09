@@ -531,6 +531,9 @@ impl FightView {
                     self.act(e.from, "spell cast", 0.6);
                     rise(world, at - Vec3::Y * 1.5, core);
                     self.play(world, |s| &s.whoosh, at, 0.7, 0.8);
+                    if mine {
+                        self.say("Press 5 again to throw it where you aim");
+                    }
                 }
                 FxKind::Throw => {
                     self.act(e.from, "punch cross", 0.6);

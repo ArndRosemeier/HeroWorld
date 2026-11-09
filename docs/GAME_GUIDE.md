@@ -193,7 +193,7 @@ grows with the same ×(1 + 0.1 per level).
 | passive | **Super Jump**: *Spring Heels* / *Rocket Boots* | 1 | Jump at 16.5 m/s (clears a house) with strong air control. |
 | 3 | **Binding Hold**: *Gravity Cuffs* (Science) / *Binding Sigils* (Mystic) | 2 | 12 damage, 30 m, 12 energy, 6 s recharge; pins the villain for 7 s. |
 | 4 | **Force Shield**: *Force Field* (Science) / *Guardian Aegis* (Guardian) | 2 | 16 energy, 26 s recharge; for 18 s you and allies within 12 m take half damage. |
-| 5 | **Lift and Throw**: *Mighty Heave* (Might) / *Telekinesis* (Mystic) | 2 | First press picks up a car, bench, prop or torn-up rubble within 6 m; second throws it (60 damage, 30 m, 12 energy, 3 s, knockback). |
+| 5 | **Lift and Throw**: *Mighty Heave* (Might) / *Telekinesis* (Mystic) | 2 | First press picks up a car, bench, prop or torn-up rubble within 6 m; second throws it where you aim, at the target if there is one (60 damage, 30 m, 12 energy, 3 s, knockback). Not thrown within 8 s (`CARRY_SECONDS`), it slips free and drops just ahead, and the power recharges as after a throw; it also falls if the hero is knocked down or gives the power up. |
 | passive / V | **Flight**: *Jet Pack* / *Soaring Cape* | 3 | Fly at 22 m/s, 60 m/s with Shift, climb 10 m/s, ceiling 900 m. |
 | 6 | **Shockwave**: *Thunderclap* (Might) / *Sonic Boom* (Science) | 3 | 34 damage to everyone within 8 m, knocks them all down; 26 energy, 12 s. |
 | passive / Shift | **Super Speed**: *Lightning Legs* / *Rocket Skates* | 4 | Run at 18 m/s, 32 m/s with Shift; a crackling trail. |
