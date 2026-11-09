@@ -380,6 +380,7 @@ impl Host {
                     out.push(HostEvent::Chat { player, name, text });
                 }
                 ToServer::Taxi { dest } => self.sim.hail_taxi(player, dest),
+                ToServer::Tube { dest } => self.sim.ride_tube(player, dest),
                 ToServer::Sheet(sheet) => self.sim.set_sheet(player, sheet),
                 ToServer::Buy { power, theme } => {
                     // A refused buy changes nothing; the client checks first.

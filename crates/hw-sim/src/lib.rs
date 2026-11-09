@@ -27,6 +27,7 @@ pub mod save;
 pub mod streets;
 pub mod taxi;
 pub mod traffic;
+pub mod tube;
 pub mod wrecks;
 
 use bevy_ecs::prelude::*;
@@ -435,6 +436,8 @@ pub struct Sim {
     pub street: props::PropDamage,
     /// Taxi stands and the taxis flying fares (see [`taxi`]).
     pub taxis: taxi::Taxis,
+    /// The Aether Tube's capsules (see [`tube`]).
+    pub tubes: tube::Tubes,
     /// The moving traffic and the cars wrecked in it (see [`wrecks`]).
     pub wrecks: wrecks::Wrecks,
     /// Trouble that comes to the heroes (see [`incidents`]).
@@ -466,6 +469,7 @@ impl Sim {
         sim.town_population = town.population();
         sim.street = props::PropDamage::new(town.world.clone()).with_solids(town.obstacles.clone());
         sim.taxis = taxi::Taxis::new(town.area.clone());
+        sim.tubes = tube::Tubes::new(town.world.clone());
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.area.clone()));
         sim.incidents = incidents::Incidents::new(town.area.clone());
         sim.world.resource_mut::<Fights>().streets = Some(Arc::new(streets::Streets::new(
@@ -627,6 +631,7 @@ impl Sim {
             damage: Damage::default(),
             street: props::PropDamage::default(),
             taxis: taxi::Taxis::default(),
+            tubes: tube::Tubes::default(),
             wrecks: wrecks::Wrecks::default(),
             incidents: incidents::Incidents::default(),
             alarms: alarms::Alarms::default(),
@@ -720,6 +725,7 @@ impl Sim {
         self.raise_crime_alarms();
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
+        tube::step(&mut self.world, &mut self.tubes, self.tick, DT);
         self.alarms.step(self.tick);
         // Cars stop for anyone in the road (heroes, villains on their feet
         // or knocked down, a mugging's victim, someone lying hurt), and
@@ -1492,6 +1498,30 @@ impl Sim {
         );
     }
 
+    /// `owner` calls a capsule to station `dest` of the Aether Tube (see
+    /// [`tube`]), or with [`tube::HOP_OUT`] gets out of it.
+    pub fn ride_tube(&mut self, owner: PlayerId, dest: u16) {
+        let Some(hero) = self
+            .world
+            .query::<(Entity, &Hero)>()
+            .iter(&self.world)
+            .find(|(_, h)| h.owner == owner)
+            .map(|(e, _)| e)
+        else {
+            return;
+        };
+        let id = self.world.resource_mut::<Ids>().0.allocate();
+        tube::call(
+            &mut self.world,
+            &mut self.tubes,
+            id,
+            owner,
+            hero,
+            dest,
+            self.tick,
+        );
+    }
+
     /// Every replicated entity with the tick it last changed, sorted by ID.
     pub fn replicated(&mut self) -> Vec<(EntityState, u64)> {
         let mut out: Vec<(EntityState, u64)> = self
@@ -1507,11 +1537,12 @@ impl Sim {
                     Option<&taxi::Fare>,
                     Option<&robots::Mount>,
                     Has<incidents::Bystander>,
+                    Option<&tube::Passenger>,
                 ),
             )>()
             .iter(&self.world)
             .map(
-                |(n, m, h, o, (prop, enemy, drone, view), (c, fare, mount, bystander))| {
+                |(n, m, h, o, (prop, enemy, drone, view), (c, fare, mount, bystander, rider))| {
                     (
                         EntityState {
                             id: n.0,
@@ -1519,6 +1550,8 @@ impl Sim {
                                 EntityKind::Crate
                             } else if fare.is_some() {
                                 EntityKind::Taxi
+                            } else if rider.is_some() {
+                                EntityKind::Capsule
                             } else if let Some(e) = enemy {
                                 e.kind.entity_kind()
                             } else if drone {
@@ -1533,7 +1566,10 @@ impl Sim {
                             vel: m.0.vel.as_vec3().to_array(),
                             rot: o.map_or(hw_net::protocol::NO_ROTATION, |o| o.0),
                             grounded: m.0.grounded,
-                            owner: h.map(|h| h.owner).or(fare.map(|f| f.0)),
+                            owner: h
+                                .map(|h| h.owner)
+                                .or(fare.map(|f| f.0))
+                                .or(rider.map(|r| r.0)),
                             mount: mount.map(|m| (m.on, m.part)),
                         },
                         c.0,

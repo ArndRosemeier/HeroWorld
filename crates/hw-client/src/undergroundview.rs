@@ -33,6 +33,11 @@ pub fn carve(v: &Void, p: DVec3) -> f64 {
     let q = DVec2::new(p.x, p.z);
     let l = v.local(q);
     let (side, below, above) = match v.kind {
+        VoidKind::Gallery | VoidKind::Grotto => {
+            // Natural rock: lumpy walls and roof, the floor where it is.
+            let n = (p.x * 0.23).sin() * (p.z * 0.19).cos() + (p.y * 0.31 + p.z * 0.09).sin() * 0.6;
+            (1.0 + n * 0.8, 0.05, 1.2 + n * 0.7)
+        }
         VoidKind::Cavern => {
             // Rough walls: a few metres of lumps.
             let n = (p.x * 0.21).sin() * (p.z * 0.17).cos() + (p.y * 0.33 + p.x * 0.07).sin() * 0.6;
@@ -207,7 +212,7 @@ impl UndergroundView {
     }
 }
 
-fn v3(p: DVec2, y: f64) -> DVec3 {
+pub(crate) fn v3(p: DVec2, y: f64) -> DVec3 {
     DVec3::new(p.x, y, p.y)
 }
 
@@ -221,6 +226,30 @@ fn open_elsewhere(u: &Underground, i: usize, p: DVec3) -> bool {
 /// void opens onto (junctions, side passages, the shafts' open tops).
 fn lining(b: &mut MeshBuilder, u: &Underground, i: usize, town: &TownWorld) {
     let v = &u.voids[i];
+    lining_of(
+        b,
+        v,
+        town,
+        |mid, f| {
+            !u.at(mid).any(|(j, o)| {
+                j < i && (o.floor_at(mid) - f).abs() < 0.6 && o.kind != VoidKind::Shaft
+            })
+        },
+        |p| open_elsewhere(u, i, p),
+    );
+}
+
+/// Floor, walls and ceiling of a concrete void (tunnel, passage, shaft):
+/// `owns_floor(mid, floor)` says whether this void draws the floor cell at
+/// `mid` (one floor where voids overlap), `elsewhere(p)` whether `p` is in
+/// another void's open space (so a wall there would block an opening).
+pub(crate) fn lining_of(
+    b: &mut MeshBuilder,
+    v: &Void,
+    town: &TownWorld,
+    owns_floor: impl Fn(DVec2, f64) -> bool,
+    elsewhere: impl Fn(DVec3) -> bool,
+) {
     let size = v.max - v.min;
     let (nx, ny) = (
         (size.x / STEP).ceil().max(1.0) as usize,
@@ -242,10 +271,7 @@ fn lining(b: &mut MeshBuilder, u: &Underground, i: usize, town: &TownWorld) {
             let mid = at((x0 + x1) * 0.5, (y0 + y1) * 0.5);
             let f = v.floor_at(mid);
             // One floor where voids overlap: the first one's.
-            let owned = !u.at(mid).any(|(j, o)| {
-                j < i && (o.floor_at(mid) - f).abs() < 0.6 && o.kind != VoidKind::Shaft
-            });
-            if owned {
+            if owns_floor(mid, f) {
                 b.tex = Some(if cavern {
                     GroundLayer::Cobble.into()
                 } else {
@@ -259,7 +285,7 @@ fn lining(b: &mut MeshBuilder, u: &Underground, i: usize, town: &TownWorld) {
                 continue;
             }
             if let Some(c) = v.ceiling_at(mid) {
-                if !open_elsewhere(u, i, v3(mid, c + 0.4)) {
+                if !elsewhere(v3(mid, c + 0.4)) {
                     let pts = corners.map(|p| v3(p, v.ceiling_at(p).unwrap_or(c)));
                     b.quad(pts, -DVec3::Y, rgb(150, 148, 144));
                 }
@@ -285,7 +311,7 @@ fn lining(b: &mut MeshBuilder, u: &Underground, i: usize, town: &TownWorld) {
             let p1 = v.world(a.lerp(c, (k + 1) as f64 / n as f64));
             let m = (p0 + p1) * 0.5;
             let f = v.floor_at(m);
-            if open_elsewhere(u, i, v3(m + out * 0.4, f + 1.2)) {
+            if elsewhere(v3(m + out * 0.4, f + 1.2)) {
                 continue;
             }
             let top = |p: DVec2| match v.ceiling_at(p) {
@@ -328,7 +354,7 @@ fn lining(b: &mut MeshBuilder, u: &Underground, i: usize, town: &TownWorld) {
 
 /// A round pipe from `a` to `c`, open at the ends, in the builder's
 /// current surface.
-fn tube(b: &mut MeshBuilder, a: DVec3, c: DVec3, r: f64, col: Color) {
+pub(crate) fn tube(b: &mut MeshBuilder, a: DVec3, c: DVec3, r: f64, col: Color) {
     let len = (c - a).length();
     if len < 1e-6 {
         return;
@@ -447,7 +473,7 @@ fn tunnel_fittings(b: &mut MeshBuilder, u: &Underground, i: usize) {
 
 /// Paving round a lift's opening in the street, with a chrome rail on the
 /// three sides away from the door.
-fn collar(b: &mut MeshBuilder, c: DVec2, door: DVec2, town: &TownWorld) {
+pub(crate) fn collar(b: &mut MeshBuilder, c: DVec2, door: DVec2, town: &TownWorld) {
     let inner = hw_gen::urban::underground::SHAFT_HALF;
     let outer = inner + 2.4;
     let side = door.perp();
@@ -485,7 +511,7 @@ fn collar(b: &mut MeshBuilder, c: DVec2, door: DVec2, town: &TownWorld) {
 }
 
 /// A glowing ring on a lift's floor (and at the top of the shaft).
-fn lift_ring(b: &mut MeshBuilder, c: DVec2, y: f64, col: Color) {
+pub(crate) fn lift_ring(b: &mut MeshBuilder, c: DVec2, y: f64, col: Color) {
     b.surf = Surf::Glow;
     let seg = 24;
     let (r0, r1) = (1.0, 1.25);
@@ -504,18 +530,25 @@ fn lift_ring(b: &mut MeshBuilder, c: DVec2, y: f64, col: Color) {
 /// canopy with a glowing front edge, and a glowing atomic sign on a mast
 /// (amber for Molehaven, Aether blue for the tunnels).
 fn pavilion(b: &mut MeshBuilder, c: DVec2, door: DVec2, top: f64, molehaven: bool) {
+    let (roof, glow) = if molehaven {
+        (rgb(206, 92, 58), rgb(255, 170, 90))
+    } else {
+        (rgb(46, 150, 156), rgb(130, 230, 255))
+    };
+    pavilion_in(b, c, door, top, roof, glow);
+}
+
+/// [`pavilion`] in any colours: the canopy's paint and the lit edge and sign.
+pub(crate) fn pavilion_in(
+    b: &mut MeshBuilder,
+    c: DVec2,
+    door: DVec2,
+    top: f64,
+    roof: Color,
+    glow: Color,
+) {
     let h = hw_gen::urban::underground::SHAFT_HALF + 0.35;
     let side = door.perp();
-    let roof = if molehaven {
-        rgb(206, 92, 58)
-    } else {
-        rgb(46, 150, 156)
-    };
-    let glow = if molehaven {
-        rgb(255, 170, 90)
-    } else {
-        rgb(130, 230, 255)
-    };
     let chrome = rgb(220, 224, 230);
     let w = h + 0.9;
     let (front, back) = (top + 3.6, top + 3.0);
@@ -623,7 +656,7 @@ fn pavilion(b: &mut MeshBuilder, c: DVec2, door: DVec2, top: f64, molehaven: boo
 }
 
 /// A smooth ball in the builder's current surface.
-fn sphere(b: &mut MeshBuilder, c: DVec3, r: f64, col: Color) {
+pub(crate) fn sphere(b: &mut MeshBuilder, c: DVec3, r: f64, col: Color) {
     let rings = 12;
     let prof: Vec<(f64, f64)> = (0..=rings)
         .map(|k| {
@@ -638,7 +671,7 @@ fn sphere(b: &mut MeshBuilder, c: DVec3, r: f64, col: Color) {
 /// A mushroom: a swelling stem with a flared foot, a domed cap with a
 /// curled lip and pale spots, and `glow` in the gills underneath.
 #[allow(clippy::too_many_arguments)]
-fn mushroom(
+pub(crate) fn mushroom(
     b: &mut MeshBuilder,
     p: DVec2,
     y: f64,
@@ -964,7 +997,7 @@ fn stall(b: &mut MeshBuilder, p: DVec2, d: DVec2, f: f64, stripe: Color) {
     });
 }
 
-fn disc(b: &mut MeshBuilder, c: DVec3, n: DVec3, r: f64, col: Color) {
+pub(crate) fn disc(b: &mut MeshBuilder, c: DVec3, n: DVec3, r: f64, col: Color) {
     let s = n.cross(DVec3::Y).normalize_or(DVec3::X);
     let pts: Vec<DVec3> = (0..32)
         .map(|k| {
@@ -988,7 +1021,7 @@ fn disc(b: &mut MeshBuilder, c: DVec3, n: DVec3, r: f64, col: Color) {
 
 /// A crystal: a leaning hexagonal prism with a pointed tip, and two
 /// smaller ones at its foot.
-fn crystal(b: &mut MeshBuilder, p: DVec2, y: f64, h: f64, col: Color) {
+pub(crate) fn crystal(b: &mut MeshBuilder, p: DVec2, y: f64, h: f64, col: Color) {
     for (k, (dx, dz, f, lean)) in [
         (0.0, 0.0, 1.0, 0.12),
         (0.35, 0.2, 0.5, 0.35),

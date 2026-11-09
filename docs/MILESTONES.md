@@ -563,7 +563,8 @@ the `openrouter` skill). No text to speech: characters don't speak aloud; speech
   planet and region layers in `hw-gen` placing cities where rivers meet coasts, roads between
   them, travel speed rising with height, many cities with their own looks.
 - **More of everything:** levels to 20 and tiers 4 to 7, more factions (mole people, sky
-  pirates, the iron-masked empire), NPC heroes at Hero Hall, more underground layers.
+  pirates, the iron-masked empire), NPC heroes at Hero Hall, more underground layers (begun in 0.079: the Aether Tube with
+  rides between stations, the Doctor's lab, buried ruins and the Deeps, streamed per tile).
   **Levels to 20 and tiers 4 to 7: built (0.077).** Eight new powers, two per tier, each in
   two themes: super speed and mend (tier 4), beam and vitality (5), meteor and invulnerable
   (6), nova and rally (7). Keys 7 to 0 for mend, beam, meteor and nova; the rest are passive.

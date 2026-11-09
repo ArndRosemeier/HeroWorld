@@ -250,6 +250,8 @@ pub enum EntityKind {
     /// An Iron-Masked praetorian: a crested helm, armour and a shock lance;
     /// a lieutenant.
     Praetorian,
+    /// An Aether Tube capsule; its `owner` is the passenger.
+    Capsule,
 }
 
 impl EntityKind {
@@ -274,6 +276,7 @@ impl EntityKind {
             EntityKind::Captain => 16,
             EntityKind::Legionary => 17,
             EntityKind::Praetorian => 18,
+            EntityKind::Capsule => 19,
         }
     }
 
@@ -298,6 +301,7 @@ impl EntityKind {
             16 => Ok(EntityKind::Captain),
             17 => Ok(EntityKind::Legionary),
             18 => Ok(EntityKind::Praetorian),
+            19 => Ok(EntityKind::Capsule),
             _ => Err(WireError),
         }
     }
@@ -1035,6 +1039,10 @@ pub enum ToServer {
     Taxi {
         dest: u8,
     },
+    /// Ride the Aether Tube to a station (its index), or 65535: get out.
+    Tube {
+        dest: u16,
+    },
     /// The hero file this player plays with (sent once on joining).
     Sheet(Sheet),
     /// Buy a power, in a theme.
@@ -1400,6 +1408,7 @@ impl ToServer {
         match self {
             ToServer::Chat { text } => 2 + text.len().min(255),
             ToServer::Taxi { .. } => 2,
+            ToServer::Tube { .. } => 3,
             ToServer::Sheet(s) => 1 + s.wire_size(),
             ToServer::Buy { .. } => 3,
             ToServer::GiveUp { .. } => 2,
@@ -1428,6 +1437,9 @@ impl ToServer {
             ToServer::Look { part, parts, bytes } => {
                 w.u8(6).u8(*part).u8(*parts).bytes(bytes);
             }
+            ToServer::Tube { dest } => {
+                w.u8(7).u16(*dest);
+            }
         }
     }
 
@@ -1448,6 +1460,7 @@ impl ToServer {
             5 => ToServer::GiveUp {
                 power: Power::from_code(r.u8()?).ok_or(WireError)?,
             },
+            7 => ToServer::Tube { dest: r.u16()? },
             _ => return Err(WireError),
         })
     }
@@ -1878,6 +1891,7 @@ mod tests {
                             bytes: b"{\"hair\":null}".to_vec(),
                         },
                     ),
+                    (8, ToServer::Tube { dest: 513 }),
                 ],
             },
             ClientMsg::Bye,

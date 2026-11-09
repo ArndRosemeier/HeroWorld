@@ -275,6 +275,11 @@ impl Connection {
         self.rel_out.push(ToServer::Taxi { dest });
     }
 
+    /// Rides the Aether Tube to station `dest`, or (65535) gets out.
+    pub fn ride_tube(&mut self, dest: u16) {
+        self.rel_out.push(ToServer::Tube { dest });
+    }
+
     /// Reliable news that arrived since the last call, in order.
     pub fn take_news(&mut self) -> Vec<ToClient> {
         std::mem::take(&mut self.news)

@@ -11,6 +11,7 @@
 //! heights are metres above the water. All water stands at
 //! [`WATER_LEVEL`]; the land rises from it.
 
+use super::deep::Deep;
 use super::growth::CentreKind;
 use super::land::{distance_to, Grid};
 use super::landmarks::{plan_landmarks, Landmark};
@@ -147,6 +148,8 @@ pub struct TownWorld {
     pub main_bridges: Vec<Bridge>,
     /// The Aether Spire and, by the sea, a lighthouse.
     pub landmarks: Vec<Landmark>,
+    /// The deep underground, planned tile by tile.
+    deep: Deep,
     /// Ground heights, river beds and sea floor included.
     terrain: Grid<f32>,
     /// Bounding boxes of the town's pieces, and the pieces by grid cell.
@@ -206,6 +209,7 @@ impl TownWorld {
             main_roads: Vec::new(),
             main_bridges: Vec::new(),
             landmarks: Vec::new(),
+            deep: Deep::new(),
             terrain,
             piece_boxes,
             piece_grid,
@@ -267,6 +271,16 @@ impl TownWorld {
         if run.len() >= 2 {
             out.push(road(DetailId::default(), run, cur, Some(class), None));
         }
+    }
+
+    /// The deep underground's tile cache and network.
+    pub(crate) fn deep_state(&self) -> &Deep {
+        &self.deep
+    }
+
+    /// The shallow underground: utility tunnels, lifts, Molehaven.
+    pub fn core_underground(&self) -> &Underground {
+        self.underground()
     }
 
     /// Ground height at a point (below [`WATER_LEVEL`] under water).

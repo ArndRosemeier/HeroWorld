@@ -54,7 +54,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven` or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto` or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -281,6 +281,11 @@ fn main() -> EngineResult<()> {
     let mut taxi_menu = false;
     let mut taxi_dest: Option<usize> = None;
     let mut taxi_seen = false;
+    // The Aether Tube's "Where to?" list (T, in a station), and where we
+    // asked to go.
+    let mut tube_menu: Option<(usize, Vec<usize>)> = None;
+    let mut tube_dest: Option<usize> = None;
+    let mut tube_seen = false;
     // HW_TAXI=<stand> hails a taxi at the start and HW_TAXI_SECS runs the
     // world on that far (for screenshots of a ride).
     let mut taxi_demo =
@@ -755,6 +760,20 @@ fn main() -> EngineResult<()> {
                 ),
             }
         }
+        "station" | "tubeline" | "ruin" | "lab" | "grotto" | "kiosk" | "tube" | "capsule" => {
+            // The deep underground: a tube station's hall, a tube stretch from
+            // inside, a buried ruin, the villain's lab, a grotto in the Deeps,
+            // the lab's street kiosk, or a station's street pavilion.
+            hw_client::deepview::view_camera(&generated.world, view.as_str(), spawn).unwrap_or_else(
+                || {
+                    FlyCamera::new(
+                        (spawn.x as f32, ground(spawn) as f32 + 6.0, spawn.y as f32),
+                        0.0,
+                        -10.0,
+                    )
+                },
+            )
+        }
         "cutaway" => {
             let f = town.cut_focus;
             let h = ground(f) as f32;
@@ -954,6 +973,19 @@ fn main() -> EngineResult<()> {
                     town.build_all(world, eye);
                     extras = spawn_extras(world, &generated, town.green.clone())?;
                     extras_loaded = true;
+                    // `HW_VIEW=capsule`: a tube capsule standing at the
+                    // nearest platform, for a close-up.
+                    if view == "capsule" {
+                        if let Some((p, d)) = hw_client::deepview::capsule_spot(
+                            &generated.world,
+                            generated.world.spawn_line().0,
+                        ) {
+                            let place = Place::new(p.x as f32, p.y as f32, p.z as f32)
+                                .with_yaw_deg(d.x.atan2(d.y).to_degrees() as f32);
+                            let e = world.place(hw_client::deepview::capsule_mesh(), place)?;
+                            extras.entities.push(e);
+                        }
+                    }
                     if let Some(v) = extras.props.as_mut() {
                         v.update(eye, f64::INFINITY);
                         v.flush(world)?;
@@ -1382,6 +1414,9 @@ fn main() -> EngineResult<()> {
             if let Some(under) = extras.under.as_mut() {
                 under.update(world, world.camera().eye(), &generated.world)?;
             }
+            if let Some(deep) = extras.deep.as_mut() {
+                deep.update(world, world.camera().eye())?;
+            }
             if let Some(g) = extras.grass.as_mut() {
                 g.update(world, world.camera().eye())?;
             }
@@ -1438,7 +1473,19 @@ fn main() -> EngineResult<()> {
                 taxi_dest = Some(dest);
                 session.fast_forward(secs as u32 * hw_sim::TICK_HZ);
             }
-            let ride_yaw: Option<f32>;
+            let mut ride_yaw: Option<f32>;
+            let mut ride_close = false;
+            // In a tube station or a capsule, G is for the tube, not a taxi.
+            let tube_here = {
+                let my_id = session.my_hero();
+                drawn.iter().find(|e| Some(e.id) == my_id).is_some_and(|m| {
+                    hw_sim::tube::station_at(generated.world.tube(), DVec3::from_array(m.pos))
+                        .is_some()
+                        || drawn
+                            .iter()
+                            .any(|t| t.kind == hw_net::EntityKind::Capsule && t.owner == m.owner)
+                })
+            };
             // G: a taxi. "Where to?", or out of the one you are in (sending
             // a coming one away).
             {
@@ -1455,7 +1502,7 @@ fn main() -> EngineResult<()> {
                     let (y, _, _) = glam::Quat::from_array(t.rot).to_euler(glam::EulerRot::YXZ);
                     y.to_degrees()
                 });
-                if !flying && input.pressed(Key::G) {
+                if !flying && !tube_here && input.pressed(Key::G) {
                     if cab.is_some() {
                         session.hail_taxi(hw_sim::taxi::HOP_OUT);
                         taxi_dest = None;
@@ -1481,6 +1528,54 @@ fn main() -> EngineResult<()> {
                     .and_then(|i| stands.get(i))
                     .map(|s| s.name.as_str());
                 taxi_status(&frame.ui, cab.is_some(), riding, to);
+            }
+            // G in a tube station: the Aether Tube's "Where to?"; in a capsule
+            // (or waiting for one), out.
+            {
+                let net = generated.world.tube();
+                let my_id = session.my_hero();
+                let me = drawn.iter().find(|e| Some(e.id) == my_id);
+                let capsule = me.and_then(|m| {
+                    drawn
+                        .iter()
+                        .find(|t| t.kind == hw_net::EntityKind::Capsule && t.owner == m.owner)
+                });
+                let riding = me.is_some_and(|m| hw_sim::tube::riding(m, &drawn));
+                if let Some(t) = capsule.filter(|_| riding) {
+                    let (y, _, _) = glam::Quat::from_array(t.rot).to_euler(glam::EulerRot::YXZ);
+                    ride_yaw = Some(y.to_degrees());
+                    ride_close = true;
+                }
+                let here = me.and_then(|m| hw_sim::tube::station_at(net, DVec3::from_array(m.pos)));
+                if !flying && tube_here && input.pressed(Key::G) {
+                    if capsule.is_some() {
+                        session.ride_tube(hw_sim::tube::HOP_OUT);
+                        tube_dest = None;
+                    } else if tube_menu.is_some() {
+                        tube_menu = None;
+                    } else if let Some(s) = here {
+                        tube_menu = Some((s, hw_sim::tube::reachable(net, s)));
+                        world.set_pointer_lock(false);
+                    }
+                }
+                // Walked out of the station: the list goes.
+                if tube_menu.as_ref().is_some_and(|(s, _)| here != Some(*s)) {
+                    tube_menu = None;
+                }
+                if let Some(i) = tube_panel(&frame.ui, &mut tube_menu, net) {
+                    session.ride_tube(i as u16);
+                    tube_dest = Some(i);
+                }
+                if capsule.is_some() {
+                    tube_seen = true;
+                } else if tube_seen {
+                    tube_seen = false;
+                    tube_dest = None;
+                }
+                let to = tube_dest
+                    .and_then(|i| net.stations.get(i))
+                    .map(|s| s.name.as_str());
+                tube_status(&frame.ui, capsule.is_some(), riding, to, here.is_some());
             }
 
             // Cut-open view.
@@ -1857,9 +1952,12 @@ fn main() -> EngineResult<()> {
             for h in &heroes {
                 let vel = Vec3::from_array(h.vel);
                 if h.kind == hw_net::EntityKind::Taxi
-                    || (h.kind == hw_net::EntityKind::Hero && hw_sim::taxi::riding(h, &heroes))
+                    || h.kind == hw_net::EntityKind::Capsule
+                    || (h.kind == hw_net::EntityKind::Hero
+                        && (hw_sim::taxi::riding(h, &heroes) || hw_sim::tube::riding(h, &heroes)))
                 {
-                    // A taxi, and its fare out of sight inside.
+                    // A taxi or a tube capsule, and its passenger out of
+                    // sight inside.
                     let (y, _, _) = glam::Quat::from_array(h.rot).to_euler(glam::EulerRot::YXZ);
                     let hidden = h.kind == hw_net::EntityKind::Hero;
                     let place = Place::new(
@@ -1871,17 +1969,21 @@ fn main() -> EngineResult<()> {
                     match hero_entities.get(&h.id) {
                         Some(&(e, _)) => world.set_place(e, place)?,
                         None if !hidden => {
-                            let mesh = hw_client::propview::taxi_open_levels()
-                                .into_iter()
-                                .next()
-                                .map(|l| l.mesh)
-                                .expect("taxi model");
+                            let mesh = if h.kind == hw_net::EntityKind::Capsule {
+                                hw_client::deepview::capsule_mesh()
+                            } else {
+                                hw_client::propview::taxi_open_levels()
+                                    .into_iter()
+                                    .next()
+                                    .map(|l| l.mesh)
+                                    .expect("taxi model")
+                            };
                             let e = world.place(mesh, place)?;
                             hero_entities.insert(h.id, (e, false));
                         }
                         None => {}
                     }
-                    if !hidden {
+                    if !hidden && h.kind == hw_net::EntityKind::Taxi {
                         // The canopy swings up on its front hinge while the
                         // taxi is parked for a fare (the server's
                         // `grounded`), and shuts before it flies.
@@ -2352,7 +2454,13 @@ fn main() -> EngineResult<()> {
                             let turn = (y - hero_cam.yaw + 540.0).rem_euclid(360.0) - 180.0;
                             hero_cam.yaw += turn * (1.0 - 0.3f32.powf(frame.dt));
                         }
-                        hero_cam.distance = hero_cam.distance.max(10.0);
+                        // Behind the taxi, well back; close behind a
+                        // capsule, in the tube.
+                        hero_cam.distance = if ride_close {
+                            5.5
+                        } else {
+                            hero_cam.distance.max(10.0)
+                        };
                     }
                     hero_cam.update(world, frame, p.as_vec3(), &solids, open_above);
                     let shake = fight.shake();
@@ -2594,8 +2702,8 @@ fn set_town_stream(
     let settings = StreamSettings {
         water_window: 1536.0,
         water_cell: 4.0,
-        // Deep enough for Molehaven under the streets.
-        voxel_below: (hw_gen::urban::underground::CAVERN_DEPTH + 8.0) as f32,
+        // Deep enough for the Deeps, the lowest caves under the town.
+        voxel_below: hw_gen::urban::deep::VOXEL_DEPTH as f32,
         ..StreamSettings::default()
     };
     let ground = TownGround {
@@ -2619,6 +2727,7 @@ struct TownExtras {
     signals: Option<hw_client::signalview::SignalView>,
     props: Option<hw_client::propview::PropView>,
     under: Option<hw_client::undergroundview::UndergroundView>,
+    deep: Option<hw_client::deepview::DeepView>,
     dystopia: Option<hw_client::dystopiaview::DystopiaView>,
     grass: Option<hw_client::grassview::GrassView>,
     waterfront: Option<hw_client::waterfrontview::WaterfrontView>,
@@ -2646,6 +2755,9 @@ impl TownExtras {
         }
         if let Some(mut u) = self.under.take() {
             u.clear(world);
+        }
+        if let Some(mut d) = self.deep.take() {
+            d.clear(world);
         }
         if let Some(mut d) = self.dystopia.take() {
             d.clear(world);
@@ -2685,6 +2797,8 @@ fn spawn_extras(
     let (roost_lods, roost_entities) =
         hw_client::factionview::spawn_roost(world, &generated.world)?;
     lods.extend(roost_lods);
+    let mut deep = hw_client::deepview::DeepView::new(generated.world.clone());
+    deep.prime(world, world.camera().eye())?;
     Ok(TownExtras {
         grass: Some(grass),
         lods,
@@ -2698,6 +2812,7 @@ fn spawn_extras(
         signals: Some(hw_client::signalview::SignalView::new()),
         props: Some(props),
         under: Some(under),
+        deep: Some(deep),
         dystopia: Some(hw_client::dystopiaview::DystopiaView::new(&generated.world)),
     })
 }
@@ -2750,6 +2865,105 @@ fn taxi_panel(
         *open = false;
     }
     picked
+}
+
+/// "Aether Tube: where to?": the stations the lines reach from this one.
+/// Returns the one picked.
+fn tube_panel(
+    ui: &engine::ui::UiFrame,
+    menu: &mut Option<(usize, Vec<usize>)>,
+    net: &hw_gen::urban::deep::TubeNet,
+) -> Option<usize> {
+    use engine::ui::egui;
+    let (from, list) = menu.as_ref()?;
+    let mut picked = None;
+    let mut close = false;
+    egui::Area::new(egui::Id::new("tube"))
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_unmultiplied(24, 32, 30, 235))
+                .stroke(egui::Stroke::new(
+                    2.0_f32,
+                    egui::Color32::from_rgb(200, 60, 50),
+                ))
+                .corner_radius(8.0)
+                .inner_margin(egui::Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_min_width(300.0);
+                    ui.label(
+                        egui::RichText::new("AETHER TUBE")
+                            .color(egui::Color32::from_rgb(232, 196, 96))
+                            .strong()
+                            .size(20.0),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("{}: where to?", net.stations[*from].name))
+                            .color(egui::Color32::from_rgb(236, 228, 206))
+                            .size(14.0),
+                    );
+                    ui.add_space(6.0);
+                    if list.is_empty() {
+                        ui.label("No line runs on from here yet.");
+                    }
+                    egui::ScrollArea::vertical()
+                        .max_height(360.0)
+                        .show(ui, |ui| {
+                            for &i in list {
+                                let s = &net.stations[i];
+                                let d = s.pos.distance(net.stations[*from].pos);
+                                let text = format!("{}  ·  {:.1} km", s.name, d / 1000.0);
+                                let b = egui::Button::new(egui::RichText::new(text).size(15.0))
+                                    .min_size(egui::vec2(280.0, 26.0));
+                                if ui.add(b).clicked() {
+                                    picked = Some(i);
+                                }
+                            }
+                        });
+                    ui.add_space(4.0);
+                    if ui.button("Never mind (G)").clicked() {
+                        close = true;
+                    }
+                });
+        });
+    if picked.is_some() || close {
+        *menu = None;
+    }
+    picked
+}
+
+/// A line at the top in a tube station, and while a capsule comes for you
+/// or takes you somewhere.
+fn tube_status(
+    ui: &engine::ui::UiFrame,
+    capsule: bool,
+    riding: bool,
+    to: Option<&str>,
+    in_station: bool,
+) {
+    use engine::ui::egui;
+    let text = match (capsule, riding, to) {
+        (true, true, Some(to)) => format!("Aether Tube to {to}  ·  G to get out"),
+        (true, true, None) => "In a capsule  ·  G to get out".into(),
+        (true, false, _) => "Your capsule is coming: wait here  ·  G sends it away".into(),
+        (false, _, _) if in_station => "Aether Tube station  ·  G: where to?".into(),
+        _ => return,
+    };
+    egui::Area::new(egui::Id::new("tube status"))
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 44.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_black_alpha(160))
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(10, 5))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(text)
+                            .color(egui::Color32::from_rgb(232, 196, 96))
+                            .size(15.0),
+                    );
+                });
+        });
 }
 
 /// A line at the top while a taxi comes for you or takes you somewhere.

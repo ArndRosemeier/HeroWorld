@@ -3,6 +3,20 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.079 (2026-11-09)
+
+- The town goes deeper. Under the streets runs the **Aether Tube**: cream and brass tubes along
+  the main roads, with vaulted stations every 600 m or so (look for the red-and-gold
+  pavilions with the station's name). In a station, press G and pick where to go: a capsule
+  glides in and whisks you there.
+- Somewhere under the dystopia, a phone kiosk on a back street hides a lift down to the
+  Doctor's secret lab: Tesla coils, bubbling vats, a ray cannon, a reactor and guarded cells.
+- Buried ruins of an older city lie under some districts: colonnaded streets, fallen columns,
+  a giant stone head and a domed vault.
+- Below it all are **the Deeps**: winding caves joining crystal grottos, giant-mushroom forests,
+  glowing lakes and fossil halls, with mole camps here and there. Lifts lead down from some
+  stations, the ruins, the lab and Molehaven.
+
 ## 0.078 (2026-11-09)
 
 - Three new factions. The **mole folk** of Molehaven guard the lift down to their cavern, and

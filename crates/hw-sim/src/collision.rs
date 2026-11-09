@@ -213,6 +213,48 @@ pub struct Obstacles {
     plinths: Vec<hw_gen::urban::landmarks::Landmark>,
     /// The country's woods, made cell by cell where bodies go.
     woods: Option<Woods>,
+    /// The deep underground (tube, lab, ruins, the Deeps) and the solid
+    /// parts of what stands down there, by deep tile.
+    deep: Option<DeepSolids>,
+}
+
+/// The deep underground's fixtures as solids, made for a tile the first
+/// time something moves there.
+struct DeepSolids {
+    town: Arc<TownWorld>,
+    tiles: RwLock<BTreeMap<hw_gen::urban::deep::TileKey, Arc<[Solid]>>>,
+}
+
+impl std::fmt::Debug for DeepSolids {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeepSolids").finish_non_exhaustive()
+    }
+}
+
+impl DeepSolids {
+    fn near(&self, p: DVec2, r: f64) -> Vec<Arc<[Solid]>> {
+        let mut out = Vec::new();
+        for t in self.town.deep_near(p, r) {
+            if let Some(s) = self.tiles.read().expect("deep lock").get(&t.key) {
+                if !s.is_empty() {
+                    out.push(s.clone());
+                }
+                continue;
+            }
+            let solids: Arc<[Solid]> = t.solids().iter().flat_map(solids_of).collect();
+            let mut tiles = self.tiles.write().expect("deep lock");
+            // Cheap to make again: forget them now and then, so travelling
+            // far does not pile them up.
+            if tiles.len() > 256 {
+                tiles.clear();
+            }
+            tiles.insert(t.key, solids.clone());
+            if !solids.is_empty() {
+                out.push(solids);
+            }
+        }
+        out
+    }
 }
 
 /// The trunks of each wood cell made so far.
@@ -584,6 +626,10 @@ impl Obstacles {
         });
         out.terrain = Some(terrain);
         out.under = Some(Arc::new(world.underground().clone()));
+        out.deep = Some(DeepSolids {
+            town: world.clone(),
+            tiles: RwLock::new(BTreeMap::new()),
+        });
         for br in &world.main_bridges {
             if let Some(s) = deck(br) {
                 out.add(s);
@@ -728,6 +774,26 @@ impl Obstacles {
         sets
     }
 
+    /// [`Self::near`] for something at height `y`: with the deep
+    /// underground's fixtures when it is down there (or by a street lift).
+    fn near_at(&self, p: DVec2, r: f64, y: f64) -> Vec<SolidSet<'_>> {
+        let mut sets = self.near(p, r);
+        if let Some(d) = &self.deep {
+            if d.town.deep_matters(p, y) {
+                sets.extend(d.near(p, r).into_iter().map(SolidSet::Shared));
+            }
+        }
+        sets
+    }
+
+    /// The town, when the deep underground is part of these solids.
+    fn deep_town(&self, p: DVec2, y: f64) -> Option<&TownWorld> {
+        self.deep
+            .as_ref()
+            .filter(|d| d.town.deep_matters(p, y))
+            .map(|d| &*d.town)
+    }
+
     /// The moving solids now (street cars near the heroes): heroes bump
     /// into them and can stand on them. Replaces the last set.
     pub fn set_movers(&self, solids: Vec<Solid>) {
@@ -862,11 +928,17 @@ impl Obstacles {
         // Rock round the underground's open spaces.
         if let Some(u) = &self.under {
             let q = DVec2::new(p.x, p.z);
-            if p.y < self.ground_at(q) - 0.2 && !u.near(q, 4.0).is_empty() && !u.open_at(p) {
-                return true;
+            if p.y < self.ground_at(q) - 0.2 {
+                let deep = self.deep_town(q, p.y);
+                let near =
+                    !u.near(q, 4.0).is_empty() || deep.is_some_and(|t| t.deep_voids_near(q, 4.0));
+                let open = u.open_at(p) || deep.is_some_and(|t| t.deep_open_at(p));
+                if near && !open {
+                    return true;
+                }
             }
         }
-        let sets = self.near(DVec2::new(p.x, p.z), 0.0);
+        let sets = self.near_at(DVec2::new(p.x, p.z), 0.0, p.y);
         let found = sets.iter().flat_map(|x| x.iter()).any(|s| {
             let l = s.to_local(DVec2::new(p.x, p.z));
             p.y > s.y0
@@ -926,6 +998,9 @@ impl Obstacles {
                 return true;
             }
         }
+        if self.deep_town(q, p.y).is_some_and(|t| t.deep_in_shaft(p)) {
+            return true;
+        }
         self.near_colliders(q, 0.0).into_iter().any(|(_, c)| {
             let Some(plan) = c.plan() else { return false };
             let Some(core) = plan.core else { return false };
@@ -969,10 +1044,23 @@ impl Obstacles {
     /// a tunnel's or cavern's floor when it is down in one, else the
     /// ground (or water) surface.
     pub fn ground_for(&self, p: DVec2, y: f64) -> f64 {
-        self.under
-            .as_ref()
-            .and_then(|u| u.floor_for(p, y))
-            .unwrap_or_else(|| self.ground_at(p))
+        let shallow = self.under.as_ref().and_then(|u| u.floor_for(p, y));
+        let deep = self.deep_town(p, y).and_then(|t| t.deep_floor_for(p, y));
+        match (shallow, deep) {
+            (Some(a), Some(b)) => a.max(b),
+            (a, b) => a.or(b).unwrap_or_else(|| self.ground_at(p)),
+        }
+    }
+
+    /// The lowest underground ceiling above `y` at `p`, if `y` is down in
+    /// the underground.
+    fn ceiling_for(&self, p: DVec2, y: f64) -> Option<f64> {
+        let shallow = self.under.as_ref().and_then(|u| u.ceiling_for(p, y));
+        let deep = self.deep_town(p, y).and_then(|t| t.deep_ceiling_for(p, y));
+        match (shallow, deep) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
     }
 
     /// The underground, if the town has one.
@@ -983,7 +1071,11 @@ impl Obstacles {
     /// Height of whatever is under `p` (x, z) no higher than `max_y`.
     pub fn floor_under(&self, p: DVec2, max_y: f64) -> f64 {
         let mut best = self.ground_for(p, max_y - STEP);
-        for s in self.near(p, 0.0).iter().flat_map(|x| x.iter()) {
+        for s in self
+            .near_at(p, 0.0, max_y - STEP)
+            .iter()
+            .flat_map(|x| x.iter())
+        {
             let l = s.to_local(p);
             if l.x >= s.min.x && l.x <= s.max.x && l.y >= s.min.y && l.y <= s.max.y && s.y1 <= max_y
             {
@@ -1000,7 +1092,7 @@ impl Obstacles {
         // A few passes settle corners between neighbouring boxes.
         for _ in 0..3 {
             let mut moved = false;
-            let sets = self.near(DVec2::new(pos.x, pos.z), BODY_RADIUS);
+            let sets = self.near_at(DVec2::new(pos.x, pos.z), BODY_RADIUS, pos.y);
             for s in sets.iter().flat_map(|x| x.iter()) {
                 // Only walls: the body overlaps the box vertically, is not
                 // standing on top of it (or stepping up onto it), and it is not a
@@ -1079,7 +1171,11 @@ impl Obstacles {
             if body.vel.y > 0.0 {
                 let head = next.y + BODY_HEIGHT;
                 let q = DVec2::new(next.x, next.z);
-                for s in self.near(q, 0.0).iter().flat_map(|x| x.iter()) {
+                for s in self
+                    .near_at(q, 0.0, body.pos.y)
+                    .iter()
+                    .flat_map(|x| x.iter())
+                {
                     let l = s.to_local(q);
                     let over = l.x >= s.min.x && l.x <= s.max.x && l.y >= s.min.y && l.y <= s.max.y;
                     if over && s.y0 >= body.pos.y + BODY_HEIGHT - 0.6 && head > s.y0 {
@@ -1088,11 +1184,7 @@ impl Obstacles {
                     }
                 }
                 // And so do tunnel and cavern roofs.
-                if let Some(c) = self
-                    .under
-                    .as_ref()
-                    .and_then(|u| u.ceiling_for(q, body.pos.y))
-                {
+                if let Some(c) = self.ceiling_for(q, body.pos.y) {
                     if head > c {
                         next.y = (c - BODY_HEIGHT).max(body.pos.y);
                         body.vel.y = 0.0;

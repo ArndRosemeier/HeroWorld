@@ -37,6 +37,18 @@ pub enum VoidKind {
     Shaft,
     /// A chamber of the mole people's cavern.
     Cavern,
+    /// The Aether Tube's walkway between stations.
+    Tube,
+    /// A tube station's hall.
+    Station,
+    /// A street, hall or vault of the buried city.
+    Ruin,
+    /// A natural gallery of the Deeps.
+    Gallery,
+    /// A cave chamber of the Deeps.
+    Grotto,
+    /// A room of the Doctor's lab.
+    Lair,
 }
 
 /// A box of open space under the ground.
@@ -308,6 +320,20 @@ impl<'a> Ground<'a> {
             .iter()
             .any(|l| l.pos.distance(p) < l.plaza + r + 2.0)
     }
+}
+
+/// The town's main roads.
+pub(crate) fn main_roads(w: &TownWorld) -> impl Iterator<Item = &super::world::WorldRoad> + '_ {
+    w.main_roads.iter()
+}
+
+/// Is a circle of radius `r` at `p` free of roads (and pavements),
+/// buildings, props, landmarks and water? (For lift pavilions planned
+/// after the town.)
+pub(crate) fn spot_free(w: &TownWorld, p: DVec2, r: f64) -> bool {
+    let around = DVec2::splat(r + 40.0);
+    let all = w.roads_in(p - around, p + around);
+    Ground::new(w, &all, p - around, p + around).free(p, r)
 }
 
 /// Plans the town's underground (deterministic: from the town alone).

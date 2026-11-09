@@ -444,6 +444,41 @@ green; neon is broken; dirt and soot everywhere.
   arch, side caves. Its own lift has an amber sign, and a ramp leads there from the
   tunnels. Short, pale mole folk in goggles keep the stalls, run errands, stroll and chat.
 
+### The deep underground (`hw-gen/src/urban/deep/`)
+
+Below the tunnels the town goes on down. It is planned per 256 m tile only when someone
+comes near (`TownWorld::deep_tile`, an LRU cache of 384 tiles), so it streams like the rest
+of the world and costs nothing where nobody goes. Depths are measured from the lowest
+ground nearby, so the layers keep level under hills.
+
+- **The Aether Tube** (about 16 m down): cream enamelled tubes with brass ribs follow the
+  main roads (grade at most 1 in 10), meeting at junctions. Every 620 m or so a **station**:
+  a 52 by 15 m hall with a barrel vault, sputnik chandeliers, starbursts, red and green tile
+  bands, benches, planters and lit destination boards, two gates onto the tube. Most
+  stations have a street lift in a red-and-gold pavilion with the station's name; some have
+  a lift on down to the Deeps. **Riding:** in a station (its hall or the walkway by it),
+  press G and pick a station from the list (those the lines reach, nearest first). A capsule
+  glides in (9 m/s), stops at the platform, takes you in after 2 s and runs the way through
+  the tubes and across junctions (`TubeNet::path`), speeding up at 6 m/s² to 32 m/s and
+  slowing to a stop; you step out in the far station's hall. G on the way gets you out on
+  the walkway (`hw-sim/src/tube.rs`). G works as the taxi key everywhere else.
+- **The Doctor's lab** (about 30 m down, under the dystopia): a phone kiosk on a back street
+  hides the lift. Below: a 44 by 26 m hall with Tesla coils, bubbling vats, consoles, a
+  screen wall and a ray cannon; a reactor room, cells with bars, a control room, and an
+  escape lift to the Deeps. Three lab guards stand watch (spots for the factions).
+- **Buried ruins** (about 34 m down, in about one tile in three, never near a station or
+  the lab): a sandstone colonnaded street with fallen columns, rubble and a giant stone head,
+  side halls behind arches, a domed rotunda with an oculus and a vault door, braziers and
+  glowing glyphs. Two ruin prowlers lurk there; a lift goes on down.
+- **The Deeps** (about 52 m down): winding galleries join grottos from tile to tile. Grottos
+  are crystal caves, giant-mushroom forests, glowing lakes or fossil halls with great skeletons; some
+  hold a mole camp (tents round a fire). Molehaven has a lift down to them.
+
+Everything down there is solid: floors, rock walls and roofs, and every fixture (columns,
+vats, coils, tents, crystals) has a footprint the hero bumps into. Lifts work like the
+Aether lifts (hold Ctrl to sink, jump to rise). The factions place people at
+`TownWorld::deep_spots_in(lo, hi)` (`SpotKind::MoleCamp`, `LairGuard`, `RuinProwler`).
+
 ---
 
 ## 9. Living streets
@@ -619,7 +654,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default 40 000; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `market`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |
@@ -657,7 +692,7 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | World | One town per seed, any size, regions, water, underground, streamed ground and sea | The planet: continents, many cities, roads and rail, wild land, travel speed by height, fast travel (rocket rails, tubes, teleport booths), moons as places |
 | Time | Fixed mid-afternoon; `HW_HOUR` for others | A day/night cycle |
 | Zones | One villain quarter (+2/+3 levels), Jackets' band | Level bands across the world, robot armies, liberation that slips back |
-| Underground | Utility tunnels, Molehaven | Sewers, pneumatic tubes, villain lairs, older ruins and vaults |
+| Underground | Utility tunnels, Molehaven, the Aether Tube with stations, the Doctor's lab, buried ruins, the Deeps | Sewers, more lairs, townsfolk riding the tube |
 | Heroes | 20 levels, 8 powers in 3 tiers, two themes each, 5 origins and affinities | Powers in tiers 4–7, super speed, more themes, power roles and budget balancing; a level-cap/tier thread is working on this now |
 | Looks | Creator with six costumes and sliders | Full costume creator, capes, masks (in progress) |
 | Combat | Minions, lieutenant, boss, colossus, drones, revive, hospital | NPC heroes and Hero Hall, the Doctor in person, more villain groups |

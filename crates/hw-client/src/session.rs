@@ -366,7 +366,8 @@ impl Session {
                         if let (Some(p), Some(h)) = (predictor.as_mut(), hero) {
                             if let Some(me) = entities.iter().find(|e| e.id == h) {
                                 // In a taxi the server moves us: no guessing.
-                                p.riding = hw_sim::taxi::riding(me, &entities);
+                                p.riding = hw_sim::taxi::riding(me, &entities)
+                                    || hw_sim::tube::riding(me, &entities);
                                 p.reconcile(ack, me);
                             }
                         }
@@ -845,6 +846,15 @@ impl Session {
         match self {
             Session::Local { host, me, .. } => host.sim.hail_taxi(*me, dest),
             Session::Remote { conn, .. } => conn.hail_taxi(dest),
+        }
+    }
+
+    /// Rides the Aether Tube to station `dest`, or ([`hw_sim::tube::HOP_OUT`])
+    /// gets out.
+    pub fn ride_tube(&mut self, dest: u16) {
+        match self {
+            Session::Local { host, me, .. } => host.sim.ride_tube(*me, dest),
+            Session::Remote { conn, .. } => conn.ride_tube(dest),
         }
     }
 
