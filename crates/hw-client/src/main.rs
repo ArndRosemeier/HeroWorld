@@ -980,6 +980,8 @@ fn main() -> EngineResult<()> {
 
     // HW_WHATS_NEW=1 opens the list at start (for screenshots).
     let mut whats_new = std::env::var_os("HW_WHATS_NEW").is_some();
+    // A warning about a graphics driver known to draw wrongly, until closed.
+    let mut driver_note = true;
     // A reflection probe over the street around the camera, moved along in
     // steps, so chrome and glass reflect the buildings around them.
     let mut street_probe: Option<(engine::reflections::ReflectionProbeId, (i32, i32))> = None;
@@ -1280,6 +1282,7 @@ fn main() -> EngineResult<()> {
                 session.room_code(),
                 open_at.as_deref(),
             );
+            driver_notice(&frame.ui, world, &mut driver_note);
             if crash_noted != Some(world_seed) {
                 crash_noted = Some(world_seed);
                 hw_client::crash::note("world seed", world_seed);
@@ -3134,6 +3137,33 @@ fn taxi_status(ui: &engine::ui::UiFrame, cab: bool, riding: bool, to: Option<&st
                             .color(egui::Color32::from_rgb(255, 214, 70))
                             .size(15.0),
                     );
+                });
+        });
+}
+
+/// Below the version: Engine's warning when the graphics driver is known to
+/// draw wrongly (an old NVIDIA driver drew far houses over near walls).
+fn driver_notice(ui: &engine::ui::UiFrame, world: &World, open: &mut bool) {
+    use engine::ui::egui;
+    if !*open {
+        return;
+    }
+    let Some(warning) = world.gpu_info().and_then(|g| g.driver_warning()) else {
+        return;
+    };
+    egui::Area::new(egui::Id::new("driver notice"))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 44.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_unmultiplied(120, 20, 20, 220))
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_max_width(360.0);
+                    ui.label(egui::RichText::new(warning).color(egui::Color32::WHITE));
+                    if ui.button("OK").clicked() {
+                        *open = false;
+                    }
                 });
         });
 }

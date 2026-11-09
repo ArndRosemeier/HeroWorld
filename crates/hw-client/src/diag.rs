@@ -54,11 +54,7 @@ impl QualityLog {
             lens: None,
             frame: 0,
         };
-        let only = std::env::var("ENGINE_TUNE_ONLY").unwrap_or_default();
-        log.line(&format!(
-            "--- HeroWorld {} start, ENGINE_TUNE_ONLY={only:?}",
-            hw_core::version()
-        ));
+        log.line(&format!("--- HeroWorld {} start", hw_core::version()));
         log
     }
 
