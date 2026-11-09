@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.099 (2026-11-09)
+
+- The light over a call no longer hangs in mid-air: it is now a glowing column that rises from the trouble itself, with a ring of light on the ground round the spot. Faint at the bottom, so it never blocks your view up close.
+
 ## 0.098 (2026-11-09)
 
 - The underground now comes and goes with you: the tunnels, Molehaven and the deep layers are built only near you and only while you are down there or close to a way down, so the game uses less memory up on the street.

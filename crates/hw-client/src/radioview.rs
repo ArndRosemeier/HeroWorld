@@ -5,7 +5,6 @@
 //! the people still trapped waving for help. The last one out is hurt: an
 //! ambulance pulls up down the street, and the hero carries them there.
 
-use crate::citymesh::{MeshBuilder, Surf};
 use crate::fightview::con_colour;
 use engine::prelude::*;
 use engine::ui::egui;
@@ -15,7 +14,7 @@ use hw_net::ToClient;
 use hw_sim::incidents::{victims, IncidentKind, MEDIC_REACH, RESCUE_REACH};
 use std::collections::BTreeMap;
 
-/// How tall the beam over an incident stands (m).
+/// How tall the light over an incident stands (m).
 const BEAM: f64 = 140.0;
 
 /// One incident the radio has heard of.
@@ -123,6 +122,87 @@ fn beam_colour(kind: IncidentKind) -> Color {
     }
 }
 
+/// The light over a call: a column rising from the spot itself, faint at
+/// the foot (so it never stands in the way up close), full a few storeys
+/// up and fading out high over the rooftops, with a ring of the same light
+/// on the ground round the spot. Glowing and see-through, in the call's
+/// colour; origin on the ground at the call.
+pub fn beacon(kind: IncidentKind) -> Mesh {
+    const SIDES: usize = 32;
+    let colour = beam_colour(kind);
+    let mut m = Mesh::new();
+    let point = |m: &mut Mesh, p: Vec3, n: Vec3, alpha: f32| {
+        let id = m.add_point(p).expect("finite point");
+        let c = Color {
+            a: alpha.clamp(0.0, 1.0),
+            ..colour
+        };
+        m.set_point_color(id, c).expect("point exists");
+        m.set_point_normal(id, n).expect("point exists");
+        id
+    };
+    // The column: a slow taper, its light by height.
+    let rows: [(f32, f32, f32); 7] = [
+        (0.0, 1.5, 0.22),
+        (2.5, 1.35, 0.3),
+        (8.0, 1.15, 0.6),
+        (20.0, 1.0, 0.72),
+        ((BEAM * 0.6) as f32, 0.8, 0.6),
+        ((BEAM * 0.85) as f32, 0.65, 0.3),
+        (BEAM as f32, 0.5, 0.0),
+    ];
+    let rings: Vec<Vec<PointId>> = rows
+        .iter()
+        .map(|&(y, r, alpha)| {
+            (0..SIDES)
+                .map(|i| {
+                    let a = std::f32::consts::TAU * i as f32 / SIDES as f32;
+                    let out = Vec3::new(a.cos(), 0.0, a.sin());
+                    point(&mut m, out * r + Vec3::Y * y, out, alpha)
+                })
+                .collect()
+        })
+        .collect();
+    for w in rings.windows(2) {
+        for i in 0..SIDES {
+            let j = (i + 1) % SIDES;
+            // Counter-clockwise seen from outside.
+            m.add_triangle(w[0][i], w[1][j], w[0][j]).expect("tri");
+            m.add_triangle(w[0][i], w[1][i], w[1][j]).expect("tri");
+        }
+    }
+    // The ring on the ground: bright at its middle, soft at both edges.
+    let lift = 0.12;
+    let band: [(f32, f32); 3] = [(2.6, 0.0), (3.0, 0.85), (3.4, 0.0)];
+    let circles: Vec<Vec<PointId>> = band
+        .iter()
+        .map(|&(r, alpha)| {
+            (0..SIDES * 2)
+                .map(|i| {
+                    let a = std::f32::consts::TAU * i as f32 / (SIDES * 2) as f32;
+                    let p = Vec3::new(a.cos() * r, lift, a.sin() * r);
+                    point(&mut m, p, Vec3::Y, alpha)
+                })
+                .collect()
+        })
+        .collect();
+    let n = SIDES * 2;
+    for w in circles.windows(2) {
+        for i in 0..n {
+            let j = (i + 1) % n;
+            // Facing up.
+            m.add_triangle(w[0][i], w[0][j], w[1][j]).expect("tri");
+            m.add_triangle(w[0][i], w[1][j], w[1][i]).expect("tri");
+        }
+    }
+    m.set_surface_material(SurfaceMaterial {
+        roughness: 0.4,
+        emission: 2.0,
+        ..SurfaceMaterial::DEFAULT
+    });
+    m
+}
+
 impl Radio {
     /// Where rescues' hurt people lie in the open (cars stop for them).
     pub fn lying(&self) -> impl Iterator<Item = Vec3> + '_ {
@@ -200,21 +280,8 @@ impl Radio {
                     casualty: None,
                 },
             );
-            let mut b = MeshBuilder::new();
-            b.surf = Surf::Glow;
-            // It starts over the rooftops: up close it would stand in the way.
-            b.cylinder(
-                DVec3::Y * 16.0,
-                (0.8, 0.4),
-                BEAM,
-                8,
-                false,
-                beam_colour(kind),
-            );
-            for mesh in b.finish_parts() {
-                if let Ok(e) = world.place(mesh, Place::new(at.x, at.y, at.z)) {
-                    self.beams.insert(*id, e);
-                }
+            if let Ok(e) = world.place(beacon(kind), Place::new(at.x, at.y, at.z)) {
+                self.beams.insert(*id, e);
             }
             if kind.trapped() > 0 {
                 self.stage(world, *id);

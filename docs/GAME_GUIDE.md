@@ -373,7 +373,9 @@ hero, up to four). Which kind and where come from the world seed and a running c
 same save gives the same sequence.
 
 Each shows on the **wrist radio** (top left, `radioview.rs`) with its name, distance, a clock
-direction ("at 3 o'clock") and con colour, as a **beam of light** standing over the spot, on
+direction ("at 3 o'clock") and con colour, as a **column of light** in the call's colour
+rising from the spot itself (faint at its foot, brightest a few storeys up, fading out 140 m
+high, with a ring of the same light on the ground round the spot), on
 the **compass** strip at the top of the screen, and on the **map** (M). Rampages, breakouts
 and the colossus also light the **Hero Signal**: a searchlight from the Aether Spire throws a
 star onto the sky above the trouble, visible from anywhere in town.

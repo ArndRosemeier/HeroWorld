@@ -54,7 +54,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `far` (a main road across town, where people and traffic must follow) or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `call` (the light over the first call, with `HW_INCIDENT`), `far` (a main road across town, where people and traffic must follow) or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -2678,6 +2678,18 @@ fn main() -> EngineResult<()> {
                     let a = yaw.to_radians() + 1.1;
                     let p = at + Vec3::new(a.sin(), 0.0, a.cos()) * 38.0 - Vec3::Y * 9.0;
                     let d = at - Vec3::Y * 3.0 - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
+            // `HW_VIEW=call` (with HW_INCIDENT=<kind>): the light over the
+            // first call, from over the rooftops 50 m off.
+            if view == "call" {
+                if let Some(c) = radio.calls.values().next() {
+                    let p = c.at + Vec3::new(35.0, 28.0, 35.0);
+                    let d = c.at + Vec3::Y * 12.0 - p;
                     let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
                         .atan()
                         .to_degrees();
