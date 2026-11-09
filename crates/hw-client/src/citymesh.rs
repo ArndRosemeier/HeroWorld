@@ -154,7 +154,7 @@ pub(crate) fn layer_mean(l: Tex) -> [f32; 3] {
     let t = skins::texture(l);
     let mut sum = [0.0f64; 3];
     let n = (t.albedo.len() / 4).max(1);
-    for px in t.albedo.chunks_exact(4) {
+    for px in t.albedo.as_chunks::<4>().0 {
         let c = Color::rgb(px[0], px[1], px[2]);
         sum[0] += c.r as f64;
         sum[1] += c.g as f64;

@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.095 (2026-11-09)
+
+- Behind the scenes: everyone building the game now uses the same Rust version, so the automatic checks agree again.
+
 ## 0.094 (2026-11-09)
 
 - Running down a sloping street, off a kerb or down stairs no longer flashes the falling pose: your hero keeps their feet on the ground and only falls where the ground really drops away. Jumping downhill works properly too.

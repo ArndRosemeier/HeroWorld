@@ -2437,7 +2437,7 @@ mod tests {
         // Every triangle's winding agrees with its vertices' normals.
         let (pos, nrm, idx) = (&built.positions, &built.normals, &built.indices);
         let mut wrong = 0;
-        for t in idx.chunks_exact(3) {
+        for t in idx.as_chunks::<3>().0 {
             let [a, b2, c] = [t[0], t[1], t[2]].map(|i| i as usize);
             let geo = (pos[b2] - pos[a]).cross(pos[c] - pos[a]);
             if geo.length() < 1e-9 {

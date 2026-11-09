@@ -69,4 +69,10 @@ Measured in a fresh 4-core cloud sandbox:
   The script always builds the whole workspace and picks the test binaries to run itself.
 - **Slow tests** ran on every push. They now run in CI and with `--full`.
 
-Release builds (`start.bat`, the Windows zip) are not affected.
+- **Different Rust in CI.** CI took the newest stable Rust while sandboxes had an older
+  one, so CI went red (from 0.090) on clippy lints nobody saw before pushing.
+  `rust-toolchain.toml` pins one version for everyone (rustup fetches it on first use,
+  about 20 s). Bump it on purpose and fix the new lints in the same push.
+
+Release builds (`start.bat`, the Windows zip) are not affected, apart from using the
+pinned Rust.

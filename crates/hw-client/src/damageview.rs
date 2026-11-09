@@ -320,7 +320,7 @@ fn cut(
     // Triangles per (element, surface).
     let mut surfaces: Vec<engine::mesh::SurfaceMaterial> = Vec::new();
     let mut groups: BTreeMap<(usize, usize), Vec<[u32; 3]>> = BTreeMap::new();
-    for tri in built.indices.chunks_exact(3) {
+    for tri in built.indices.as_chunks::<3>().0 {
         let t = [tri[0], tri[1], tri[2]];
         let c = (pos[t[0] as usize] + pos[t[1] as usize] + pos[t[2] as usize]) / 3.0;
         let near = grid.get(&cell(c)).map(|v| v.as_slice()).unwrap_or(outer);

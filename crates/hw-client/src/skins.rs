@@ -722,7 +722,9 @@ mod tests {
             let t = make(Skin::new(Base::Facade(FacadeLayer::Plaster), w), 64);
             let lum: Vec<f32> = t
                 .albedo
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|p| (p[0] as f32 + p[1] as f32 + p[2] as f32) / 3.0)
                 .collect();
             let mean = lum.iter().sum::<f32>() / lum.len() as f32;

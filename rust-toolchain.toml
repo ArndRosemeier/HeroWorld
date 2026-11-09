@@ -1,0 +1,6 @@
+# The same Rust everywhere: CI, cloud sandboxes and Arnd's PCs. A newer
+# clippy brings new lints, and an unpinned CI went red on them while local
+# checks stayed green. Bump this on purpose, and fix the new lints with it.
+[toolchain]
+channel = "1.99"
+components = ["clippy", "rustfmt"]
