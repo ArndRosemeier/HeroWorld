@@ -5,6 +5,7 @@
 //! The state lives in a `bevy_ecs` world and advances in fixed ticks
 //! ([`TICK_HZ`]). [`host::Host`] puts a network socket around it.
 
+pub mod airships;
 pub mod alarms;
 pub mod balance;
 pub mod bubbles;
@@ -498,6 +499,9 @@ pub struct Sim {
     area_moved: bool,
     /// The rocket port's launches (see [`rocket`]).
     pub rockets: Vec<rocket::Pad>,
+    /// The airships heroes bump into: the liner on its timetable and the
+    /// pirates' moored ship.
+    pub airships: airships::Airships,
 }
 
 impl Sim {
@@ -519,6 +523,7 @@ impl Sim {
         sim.set_spawn(town.world.spawn_line());
         sim.town_population = town.population();
         sim.deep = deepspots::DeepSpots::new(town.world.clone());
+        sim.airships = airships::Airships::new(&town.world);
         sim.street = props::PropDamage::new(town.world.clone()).with_solids(town.obstacles.clone());
         sim.area = Some(town.area.clone());
         sim.taxis = taxi::Taxis::new(town.area.clone());
@@ -806,6 +811,7 @@ impl Sim {
             area_ready: None,
             area_moved: false,
             rockets: Vec::new(),
+            airships: airships::Airships::default(),
         }
     }
 
@@ -921,7 +927,8 @@ impl Sim {
         }));
         let stops = self.alarms.car_stops();
         // Heroes bump into the cars near them (and can stand on them),
-        // and into the rocket and its arms.
+        // into the rocket and its arms, and into the airships, each where
+        // the game clock has it this tick.
         let heroes: Vec<DVec3> = self
             .world
             .query::<(&Motion, &Hero)>()
@@ -930,6 +937,7 @@ impl Sim {
             .collect();
         let now = self.tick as f64 * DT;
         let mut movers = rocket::solids(&self.rockets, now, &heroes, 25.0);
+        movers.extend(self.airships.solids_near(&heroes, now));
         if let Some(t) = self.wrecks.traffic.as_mut() {
             t.set_blockers(&standing, &stops);
             t.advance_to(now);

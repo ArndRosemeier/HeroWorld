@@ -62,6 +62,19 @@ pub const HATCH_BACK: f64 = 14.5;
 /// From the axis down to the passenger deck's floor (its keel).
 pub const DECK_DROP: f64 = SHIP_R + 2.6;
 
+/// The engine pods' middles in the ship's frame (origin at the nose's tip,
+/// nose to +z; starboard pods, port mirrors them), and how far behind a
+/// pod's middle its propeller turns (radius 1.6).
+pub const NACELLES: [DVec3; 2] = [DVec3::new(8.8, -7.4, -34.0), DVec3::new(10.4, -3.4, -58.0)];
+pub const PROP_BACK: f64 = 3.0;
+/// The passenger deck's half width.
+pub const DECK_HALF: f64 = 3.3;
+/// The tail fins: where their roots start (back from the nose), and how
+/// far the upper and side fins and the lower fin reach out from the hull.
+pub const FIN_FROM: f64 = 70.0;
+pub const FIN_SPAN: f64 = 8.0;
+pub const FIN_SPAN_LOW: f64 = 6.0;
+
 /// Radius of the envelope `s` metres back from the nose: an elliptic nose
 /// to its widest at three tenths, then a long taper to a short tail cone.
 pub fn hull_r(s: f64) -> f64 {

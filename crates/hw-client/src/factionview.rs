@@ -39,23 +39,7 @@ fn jitter(a: u32, b: u32) -> f64 {
 
 // ---------------------------------------------------------------- airship
 
-/// The airship's envelope: length and widest radius (m).
-pub const AIRSHIP_LENGTH: f64 = 46.0;
-pub const AIRSHIP_RADIUS: f64 = 7.5;
-/// Where the gondola's deck is below the envelope's axis (m): rope
-/// ladders hang from here.
-pub const GONDOLA_DECK: f64 = AIRSHIP_RADIUS + 2.2;
-
-/// Radius of the envelope at `t` (0 nose to 1 tail): a blunt nose, the
-/// widest a third of the way back, a long taper to the tail.
-fn envelope_r(t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    let nose = (t / 0.33).min(1.0);
-    let tail = ((1.0 - t) / 0.67).min(1.0);
-    let n = (1.0 - (1.0 - nose).powi(2)).max(0.0).sqrt();
-    let k = tail.powf(0.75);
-    AIRSHIP_RADIUS * n * k.max(0.0)
-}
+pub use hw_sim::roosts::{envelope_r, AIRSHIP_LENGTH, AIRSHIP_RADIUS, GONDOLA_DECK};
 
 /// The sky pirates' airship *Cloudcutter*: a patched canvas envelope with
 /// brass ribs and a red tail, a wooden galleon of a gondola slung beneath

@@ -326,6 +326,8 @@ fn main() -> EngineResult<()> {
         };
     let mut solids = generated.obstacles.clone();
     let mut traffic = hw_sim::traffic::Traffic::new(generated.area.clone());
+    // The airships a joined player's hero bumps into (the host sets its own).
+    let airships = hw_sim::airships::Airships::new(&generated.world);
     let mut citizens = hw_sim::citizens::Citizens::new(generated.area.clone(), traffic.signals());
     citizens.set_hour(game_hour() as f64);
     // Taxi stands of the town, the "Where to?" list (G), and where we asked to go.
@@ -3027,14 +3029,16 @@ fn main() -> EngineResult<()> {
                 }
             }
             hw_client::hitch::mark("traffic view");
-            // Joined a friend: our own hero bumps into the cars near it as
-            // the host's does (the host sets them itself when we host).
+            // Joined a friend: our own hero bumps into the cars and airships
+            // near it as the host's does, from the same game clock (the host
+            // sets them itself when we host).
             if matches!(session, Session::Remote { .. }) {
                 if let Some(me) = session.my_position(&heroes) {
                     let mut movers = traffic.car_solids(&[me], 25.0, game_time);
                     if let Some(pad) = extras.rocket.as_ref().and_then(|r| r.pad()) {
                         movers.extend(pad.solids(game_time, &[me], 25.0));
                     }
+                    movers.extend(airships.solids_near(&[me], game_time));
                     solids.set_movers(movers);
                 }
             }

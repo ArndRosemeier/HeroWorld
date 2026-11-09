@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.109 (2026-11-09)
+
+- The airships are solid: you can no longer fly through the liner *Skylark* or the sky pirates' ship over the harbour. Bump into them, or land on their backs (the liner flies on without you).
+
 ## 0.108 (2026-11-09)
 
 - An atomic plant now stands just outside town, beside a main road and by the water where it can: a white reactor dome ringed with blue light, two great cooling towers, a streamlined turbine hall with red fins, a striped stack and a spinning atom on a pylon at the gate.

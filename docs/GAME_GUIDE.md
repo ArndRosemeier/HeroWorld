@@ -493,7 +493,12 @@ away), then its round: up to cruising height (above the town's tallest towers, 1
 least, 90 m over any hill), over the core, out beyond the town and round wide, at 22 m/s,
 turning at most 0.075 rad/s; then a glide in along the mast's axis from 700 m out and
 70 m up, slowing evenly to a stop. A cycle is 12-17 minutes; a session opens with it moored,
-25 s before it casts off. The liner is cosmetic: it does not collide.
+25 s before it casts off. The liner is solid where the timetable has it: its envelope, the
+passenger deck under it, the fins and the engine pods become boxes (at most 4.6 m on a side,
+`hw_sim::airships`) that move with it each tick, for heroes within 30 m of the hull. Heroes
+bump into it, can land on its back and cannot fly through it; it does not carry a hero
+standing on it. The pirates' *Cloudcutter* moored over the harbour is solid the same way
+(envelope, gondola, engines, fins). Raid airships over a street are not solid yet.
 
 While moored: the gangway slides out to the nose door (6-12 s), the lift runs up and down
 twice, two crates come down on the winch from the cargo hatch onto the baggage cart

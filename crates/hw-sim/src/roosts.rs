@@ -11,6 +11,26 @@ use glam::{DVec2, DVec3};
 use hw_gen::urban::underground::Underground;
 use hw_gen::urban::world::TownWorld;
 
+/// The pirates' airship *Cloudcutter* (drawn in the client's
+/// `factionview`): its envelope's length and widest radius (m).
+pub const AIRSHIP_LENGTH: f64 = 46.0;
+pub const AIRSHIP_RADIUS: f64 = 7.5;
+/// Where the gondola's deck is below the envelope's axis (m): rope
+/// ladders hang from here. The gondola's hull is 18 m long, 2 m to each
+/// side, 2.4 m deep under its deck.
+pub const GONDOLA_DECK: f64 = AIRSHIP_RADIUS + 2.2;
+
+/// Radius of the envelope at `t` (0 nose to 1 tail): a blunt nose, the
+/// widest a third of the way back, a long taper to the tail.
+pub fn envelope_r(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    let nose = (t / 0.33).min(1.0);
+    let tail = ((1.0 - t) / 0.67).min(1.0);
+    let n = (1.0 - (1.0 - nose).powi(2)).max(0.0).sqrt();
+    let k = hw_core::det::powf(tail, 0.75);
+    AIRSHIP_RADIUS * n * k.max(0.0)
+}
+
 /// How far out over the water the airship hangs from the quay (m), and how
 /// high above the quay its axis is at least; it keeps [`SHIP_KEEL`] over
 /// any roof under it.

@@ -794,7 +794,7 @@ impl Obstacles {
             .map(|d| &*d.town)
     }
 
-    /// The moving solids now (street cars near the heroes): heroes bump
+    /// The moving solids now (street cars and airships near the heroes): heroes bump
     /// into them and can stand on them. Replaces the last set.
     pub fn set_movers(&self, solids: Vec<Solid>) {
         *self.movers.write().expect("movers lock") = solids.into();

@@ -899,9 +899,7 @@ pub fn cart() -> Mesh {
 // ------------------------------------------------------------------ ship
 
 /// The nacelles' middles in the ship's frame (port side; starboard mirrors).
-pub const NACELLES: [DVec3; 2] = [DVec3::new(8.8, -7.4, -34.0), DVec3::new(10.4, -3.4, -58.0)];
-/// How far behind a nacelle's middle its propeller turns.
-pub const PROP_BACK: f64 = 3.0;
+pub use hw_gen::urban::mast::{NACELLES, PROP_BACK};
 
 /// Every propeller hub in the ship's frame.
 pub fn prop_hubs() -> [DVec3; 4] {
@@ -1079,8 +1077,12 @@ fn fins(b: &mut MeshBuilder, lod: Lod) {
         let out = DVec3::new(a.cos(), a.sin(), 0.0);
         let side = DVec3::new(-a.sin(), a.cos(), 0.0);
         // The lower fin is shorter: a liner moors over people's heads.
-        let span = if k == 3 { 6.0 } else { 8.0 };
-        let (s0, chord) = (70.0, 23.0);
+        let span = if k == 3 {
+            hw_gen::urban::mast::FIN_SPAN_LOW
+        } else {
+            hw_gen::urban::mast::FIN_SPAN
+        };
+        let (s0, chord) = (hw_gen::urban::mast::FIN_FROM, 23.0);
         let n = lod.pick(12, 7, 5);
         let section = |sweep: f64, len: f64, reach: f64, thick: f64| -> Vec<DVec3> {
             let mut pts = Vec::new();
@@ -1134,7 +1136,7 @@ fn deck(b: &mut MeshBuilder, lod: Lod) {
     let mut sec: Vec<(f64, f64)> = half_sec.to_vec();
     sec.extend(half_sec.iter().rev().map(|&(x, y)| (-x, y)));
     let m = sec.len();
-    let width = 3.3;
+    let width = hw_gen::urban::mast::DECK_HALF;
     let ss: Vec<f64> = (0..=rows)
         .map(|i| DECK_FROM + (DECK_TO - DECK_FROM) * i as f64 / rows as f64)
         .collect();
@@ -1308,7 +1310,7 @@ fn emblem(b: &mut MeshBuilder, lod: Lod) {
 fn lights(b: &mut MeshBuilder) {
     let at = DECK_FROM + 3.0;
     let y = -(hull_r(at) + 1.2);
-    let w = 3.3 * deck_shape(3.0 / (DECK_TO - DECK_FROM)).0 + 0.08;
+    let w = hw_gen::urban::mast::DECK_HALF * deck_shape(3.0 / (DECK_TO - DECK_FROM)).0 + 0.08;
     b.surf = Surf::Glow;
     // Port is the left looking forward: -x here (nose to +z, y up).
     b.dome(DVec3::new(-w, y, -at), 0.14, 8, 3, rgb(255, 40, 40));
