@@ -11,6 +11,7 @@ pub mod bubbles;
 pub mod citizens;
 pub mod collision;
 pub mod combat;
+pub mod deepspots;
 pub mod destruction;
 pub mod factions;
 pub mod host;
@@ -448,6 +449,8 @@ pub struct Sim {
     pub alarms: alarms::Alarms,
     /// The alarm each open crime keeps up, by incident.
     crime_alarms: BTreeMap<u32, u32>,
+    /// The factions' places in the deep underground near heroes.
+    pub deep: deepspots::DeepSpots,
 }
 
 impl Sim {
@@ -468,6 +471,7 @@ impl Sim {
         let mut sim = Self::with_solids(seed, town.obstacles.clone());
         sim.set_spawn(town.world.spawn_line());
         sim.town_population = town.population();
+        sim.deep = deepspots::DeepSpots::new(town.world.clone());
         sim.street = props::PropDamage::new(town.world.clone()).with_solids(town.obstacles.clone());
         sim.taxis = taxi::Taxis::new(town.area.clone());
         sim.tubes = tube::Tubes::new(town.world.clone());
@@ -652,6 +656,7 @@ impl Sim {
             incidents: incidents::Incidents::default(),
             alarms: alarms::Alarms::default(),
             crime_alarms: BTreeMap::new(),
+            deep: deepspots::DeepSpots::default(),
         }
     }
 
@@ -800,6 +805,9 @@ impl Sim {
             // The town plans the ground ahead of the heroes in the
             // background, so walking or flying on finds it ready.
             solids.prefetch(&at, PREFETCH_REACH);
+            // Mole camps, lab guards and relic hunters near heroes below.
+            let mut fights = self.world.resource_mut::<Fights>();
+            self.deep.update(&mut fights, &at);
         }
         self.step_physics(&heroes);
         self.tick += 1;

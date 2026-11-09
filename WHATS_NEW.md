@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.082 (2026-11-09)
+
+- The deep underground has people now: mole folk camp in the Deeps, the Doctor's guards keep
+  his secret lab, and Syndicate relic hunters prowl the buried ruins.
+
 ## 0.081 (2026-11-09)
 
 - **Hero Hall** now stands near the Aether Spire: a round glass hall under a flying-saucer

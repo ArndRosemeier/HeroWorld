@@ -331,6 +331,15 @@ It has its own battle march, playing within 260 m of it while it stands. An unan
 colossus goes home after 10 minutes. `tests/colossus.rs` beats it with bots in 2 to 11
 minutes.
 
+### Who lives in the deep underground (`hw-sim/src/deepspots.rs`)
+
+The deep plan leaves places for faction groups. Once a hero is more than 8 m below the
+street, the places within 160 m are taken in, and each gets its group while a hero is within
+45 m: four delvers round a **mole camp** in the Deeps (Molehaven's folk: they leave you be),
+three of the Doctor's brutes and technicians guarding **his lab** (two levels up, they warn you
+off his property), and two Syndicate **relic hunters** prowling each buried ruin. Places more
+than 320 m from every hero are forgotten again.
+
 ### Hero Hall and the town's own heroes (`hw-sim/src/npcheroes.rs`)
 
 Hero Hall stands on its own plaza near the Aether Spire, facing it: a round glass hall
