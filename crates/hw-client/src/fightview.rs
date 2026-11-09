@@ -13,9 +13,10 @@ use engine::ui::egui;
 use glam::{Mat4, Vec3};
 use hw_core::NetId;
 use hw_net::{
-    EntityKind, EntityState, Fx, FxKind, Power, Sheet, Status, EFFECT_HELD, EFFECT_SHIELD,
+    EntityKind, EntityState, Fx, FxKind, Power, Sheet, Status, EFFECT_HELD, EFFECT_RALLIED,
+    EFFECT_SHIELD, EFFECT_SUPER_SPEED,
 };
-use hw_sim::combat::{power_spec, EnemyKind, Kit};
+use hw_sim::combat::{power_spec, EnemyKind, Kit, POWERS};
 use hw_sim::progress::{is_movement, themes};
 use std::collections::BTreeMap;
 
@@ -84,16 +85,44 @@ struct Sounds {
     fanfare: Sound,
 }
 
-/// The power keys: 1 to 6 (Strike and Energy Bolt also on the left mouse
-/// button and Q).
-pub const POWER_KEYS: [(Key, Power); 6] = [
+/// The power keys: 1 to 0 (Strike and Energy Bolt also on the left mouse
+/// button and Q). Movement and passive powers need no key.
+pub const POWER_KEYS: [(Key, Power); 10] = [
     (Key::Digit1, Power::Strike),
     (Key::Digit2, Power::Bolt),
     (Key::Digit3, Power::Hold),
     (Key::Digit4, Power::Shield),
     (Key::Digit5, Power::Lift),
     (Key::Digit6, Power::Shockwave),
+    (Key::Digit7, Power::Mend),
+    (Key::Digit8, Power::Beam),
+    (Key::Digit9, Power::Meteor),
+    (Key::Digit0, Power::Nova),
 ];
+
+/// The label of a power key on the tray.
+pub fn key_label(key: Key) -> &'static str {
+    match key {
+        Key::Digit1 => "1",
+        Key::Digit2 => "2",
+        Key::Digit3 => "3",
+        Key::Digit4 => "4",
+        Key::Digit5 => "5",
+        Key::Digit6 => "6",
+        Key::Digit7 => "7",
+        Key::Digit8 => "8",
+        Key::Digit9 => "9",
+        _ => "0",
+    }
+}
+
+/// Powers aimed at the target (the others work round the hero).
+pub fn aimed(p: Power) -> bool {
+    matches!(
+        p,
+        Power::Strike | Power::Bolt | Power::Hold | Power::Beam | Power::Meteor
+    )
+}
 
 /// The name a hero sees for a power: its theme's name.
 pub fn power_name(p: Power, theme: u8) -> &'static str {
@@ -116,6 +145,22 @@ fn theme_bytes(p: Power, theme: u8) -> ([u8; 3], [u8; 3]) {
         (Power::Lift, _) => ([210, 150, 255], [120, 60, 230]),
         (Power::Shockwave, 0) => ([255, 240, 200], [255, 170, 60]),
         (Power::Shockwave, _) => ([170, 240, 255], [60, 170, 255]),
+        (Power::Mend, 0) => ([150, 255, 170], [40, 200, 110]),
+        (Power::Mend, _) => ([255, 236, 150], [255, 190, 70]),
+        (Power::Beam, 0) => ([255, 120, 200], [230, 40, 120]),
+        (Power::Beam, _) => ([210, 240, 255], [120, 170, 255]),
+        (Power::Meteor, 0) => ([255, 255, 235], [140, 220, 255]),
+        (Power::Meteor, _) => ([255, 190, 110], [255, 90, 40]),
+        (Power::Nova, 0) => ([255, 250, 200], [255, 140, 40]),
+        (Power::Nova, _) => ([230, 200, 150], [170, 110, 60]),
+        (Power::Rally, 0) => ([255, 120, 100], [230, 50, 50]),
+        (Power::Rally, _) => ([255, 225, 140], [240, 180, 60]),
+        (Power::Vitality, 0) => ([200, 160, 255], [120, 80, 230]),
+        (Power::Vitality, _) => ([255, 170, 130], [220, 100, 70]),
+        (Power::Invulnerable, 0) => ([220, 230, 240], [150, 165, 185]),
+        (Power::Invulnerable, _) => ([140, 190, 255], [60, 110, 230]),
+        (Power::SuperSpeed, 0) => ([255, 240, 120], [255, 200, 40]),
+        (Power::SuperSpeed, _) => ([255, 150, 90], [230, 80, 40]),
         _ => ([255, 236, 170], [255, 200, 120]),
     }
 }
@@ -162,9 +207,11 @@ pub struct FightView {
     marker: Option<(DecalId, Vec3, NetId)>,
     /// Seconds until each power is ready (our estimate; the server decides),
     /// by [`Power::code`] - 1.
-    cooldown: [f32; 8],
+    cooldown: [f32; POWERS],
     /// Glowing rings under held villains.
     holds: BTreeMap<NetId, DecalId>,
+    /// Our hero stands in a Rally aura (powers recharge sooner).
+    rallied: bool,
     /// Seconds to the next sparkle of each shield.
     sparkle: f32,
     /// A short line in the middle of the screen ("Out of range").
@@ -199,8 +246,9 @@ impl FightView {
             statuses: BTreeMap::new(),
             cuffs: BTreeMap::new(),
             marker: None,
-            cooldown: [0.0; 8],
+            cooldown: [0.0; POWERS],
             holds: BTreeMap::new(),
+            rallied: false,
             sparkle: 0.0,
             note: None,
             hums: BTreeMap::new(),
@@ -242,6 +290,9 @@ impl FightView {
         let down = me
             .and_then(|m| m.combat)
             .is_some_and(|c| matches!(c.status, Status::Down | Status::Carried));
+        self.rallied = me
+            .and_then(|m| m.combat)
+            .is_some_and(|c| c.effects & EFFECT_RALLIED != 0);
         for (key, power) in POWER_KEYS {
             let alt = match power {
                 Power::Strike => input.mouse_clicked(MouseButton::Left),
@@ -264,8 +315,7 @@ impl FightView {
             let carrying = me
                 .and_then(|m| m.combat)
                 .is_some_and(|c| c.effects & hw_net::EFFECT_CARRYING != 0);
-            let aimed = matches!(power, Power::Strike | Power::Bolt | Power::Hold)
-                || (power == Power::Lift && carrying);
+            let aimed = aimed(power) || (power == Power::Lift && carrying);
             // No target yet: take the one nearest the crosshair.
             if aimed && self.target.is_none() {
                 self.target = pick_target(all, eye, look, None);
@@ -480,6 +530,116 @@ impl FightView {
                     self.play(world, |s| &s.punch, at, 1.0, 0.7);
                     self.blow(e, at, mine, on_me, theme_ui_colour(Power::Lift, e.theme));
                 }
+                FxKind::Mend => {
+                    let (core, edge) = theme_colours(Power::Mend, e.theme);
+                    let feet = all.iter().find(|x| x.id == e.to).map_or(at, pos);
+                    rise(world, feet + Vec3::Y * 0.9, core);
+                    glow_at(world, at, edge, 0.6);
+                    if e.from == e.to {
+                        self.act(e.from, "spell cast", 0.6);
+                        self.play(world, |s| &s.chime, at, 1.0, 0.85);
+                        if mine {
+                            self.recharging(Power::Mend);
+                        }
+                    } else {
+                        beam(world, origin, at, core, edge);
+                    }
+                    if (on_me || mine) && e.amount > 0 {
+                        self.float(
+                            at + Vec3::Y * 0.7,
+                            format!("+{}", e.amount),
+                            theme_ui_colour(Power::Mend, e.theme),
+                            false,
+                        );
+                    }
+                }
+                FxKind::Beam => {
+                    let (core, edge) = theme_colours(Power::Beam, e.theme);
+                    if e.from == e.to {
+                        // The beam itself, out to where it stopped: a thick
+                        // core inside a wider sheath, and a flash at the end.
+                        self.act(e.from, "spell cast", 0.7);
+                        beam(world, origin, at, core, edge);
+                        let side = (at - origin).normalize_or_zero().cross(Vec3::Y) * 0.12;
+                        beam(world, origin + side, at + side, edge, core);
+                        beam(world, origin - side, at - side, edge, core);
+                        impact(world, at, core, 1.0);
+                        let pitch = if e.theme == 1 { 0.6 } else { 0.75 };
+                        self.play(world, |s| &s.bolt, origin, 1.0, pitch);
+                        if mine {
+                            self.shake = self.shake.max(0.3);
+                            self.recharging(Power::Beam);
+                        }
+                    } else {
+                        impact(world, at, core, 1.1);
+                        scorch(world, at, all, e.to);
+                        self.blow(e, at, mine, on_me, theme_ui_colour(Power::Beam, e.theme));
+                    }
+                }
+                FxKind::MeteorCall => {
+                    // A target ring on the ground and a glint high above.
+                    let (core, edge) = theme_colours(Power::Meteor, e.theme);
+                    self.act(e.from, "spell cast", 0.6);
+                    let r = power_spec(Power::Meteor).area as f32;
+                    let ring = Decal::new(DecalKind::Power, at + Vec3::Y * 0.2, Vec3::Y, r * 2.0)
+                        .tint(edge)
+                        .emission(3.0)
+                        .depth(1.5)
+                        .lifetime(power_spec(Power::Meteor).lasts as f32 + 0.2)
+                        .fade(0.1, 0.2);
+                    let _ = world.spawn_decal(ring);
+                    rings(world, at + Vec3::Y * 0.4, core, r / 2.0);
+                    glow_at(world, at + Vec3::Y * 40.0, core, 1.5);
+                    self.play(world, |s| &s.charge, at, 1.0, 0.6);
+                    if mine {
+                        self.recharging(Power::Meteor);
+                    }
+                }
+                FxKind::Meteor => {
+                    let (core, edge) = theme_colours(Power::Meteor, e.theme);
+                    if e.from == e.to {
+                        // The strike: a column from the sky, a ring over the
+                        // ground and a crater.
+                        let top = at + Vec3::Y * 45.0;
+                        beam(world, top, at, core, edge);
+                        for k in 0..4 {
+                            let a = k as f32 * std::f32::consts::FRAC_PI_2;
+                            let off = Vec3::new(a.cos(), 0.0, a.sin()) * 0.35;
+                            beam(world, top + off, at + off, edge, core);
+                        }
+                        shockwave(world, at, core, edge, power_spec(Power::Meteor).area as f32);
+                        impact(world, at + Vec3::Y * 0.5, core, 2.4);
+                        self.play(world, |s| &s.boom, at, 1.0, 0.7);
+                        self.shake = self.shake.max(if mine { 1.0 } else { 0.5 });
+                    } else {
+                        impact(world, at, core, 0.9);
+                        self.blow(e, at, mine, on_me, theme_ui_colour(Power::Meteor, e.theme));
+                    }
+                }
+                FxKind::Nova => {
+                    let (core, edge) = theme_colours(Power::Nova, e.theme);
+                    if e.from == e.to {
+                        let feet = all.iter().find(|x| x.id == e.from).map_or(at, pos);
+                        let r = power_spec(Power::Nova).area as f32;
+                        // A small sun, then two rings racing out.
+                        impact(world, feet + Vec3::Y * 1.2, core, 4.0);
+                        level_burst(world, feet);
+                        shockwave(world, feet, core, edge, r);
+                        shockwave(world, feet, edge, core, r * 0.6);
+                        self.act(e.from, "spell cast", 0.9);
+                        self.play(world, |s| &s.boom, feet, 1.0, 0.55);
+                        self.play(world, |s| &s.boom, feet, 0.7, 0.8);
+                        if mine {
+                            self.shake = self.shake.max(1.2);
+                            self.recharging(Power::Nova);
+                        } else {
+                            self.shake = self.shake.max(0.5);
+                        }
+                    } else {
+                        impact(world, at, core, 1.0);
+                        self.blow(e, at, mine, on_me, theme_ui_colour(Power::Nova, e.theme));
+                    }
+                }
                 FxKind::Warn => {
                     // A gang warns a hero off its turf: everyone near hears it.
                     let lines = hw_sim::combat::EnemyKind::from_entity(
@@ -644,7 +804,12 @@ impl FightView {
     }
 
     fn recharging(&mut self, p: Power) {
-        self.cooldown[(p.code() - 1) as usize] = power_spec(p).recharge as f32;
+        let haste = if self.rallied {
+            hw_sim::combat::RALLY_HASTE
+        } else {
+            1.0
+        };
+        self.cooldown[(p.code() - 1) as usize] = (power_spec(p).recharge / haste) as f32;
     }
 
     fn act(&mut self, id: NetId, clip: &'static str, seconds: f32) {
@@ -919,6 +1084,23 @@ impl FightView {
             if c.effects & EFFECT_SHIELD != 0 && sparkle {
                 shell(world, pos(e) + Vec3::Y * 1.0, rgb(140, 220, 255), 14);
             }
+            // A Rally aura: warm motes circling the feet of everyone in it.
+            if c.effects & EFFECT_RALLIED != 0 && sparkle {
+                rings(world, pos(e) + Vec3::Y * 0.15, rgb(255, 190, 110), 0.45);
+            }
+            // A speedster at full tilt leaves a crackling trail.
+            if c.effects & EFFECT_SUPER_SPEED != 0 {
+                let v = Vec3::new(e.vel[0], 0.0, e.vel[2]);
+                if v.length() > hw_sim::RUN_SPEED as f32 * 1.6 {
+                    sparks(
+                        world,
+                        pos(e) + Vec3::Y * 0.9,
+                        -v.normalize(),
+                        4,
+                        rgb(255, 230, 120),
+                    );
+                }
+            }
         }
         let freed: Vec<NetId> = self
             .holds
@@ -1117,13 +1299,14 @@ impl FightView {
 
         // Our hero: health, energy and the power tray, bottom centre.
         if let Some(c) = me.and_then(|m| m.combat) {
-            let tray: Vec<(usize, Power)> = POWER_KEYS
+            let tray: Vec<(Key, Power)> = POWER_KEYS
                 .iter()
-                .enumerate()
-                .filter(|(_, (_, p))| kit.has(*p))
-                .map(|(k, (_, p))| (k, *p))
+                .filter(|(_, p)| kit.has(*p))
+                .copied()
                 .collect();
-            let slot_w = 104.0;
+            // Ten powers still fit a narrow window: the slots shrink.
+            let room = (screen.width() - 40.0 - 18.0) / tray.len().max(1) as f32 - 6.0;
+            let slot_w = room.clamp(70.0, 104.0);
             let w = (12.0 + tray.len() as f32 * (slot_w + 6.0) + 6.0).max(340.0);
             let base = egui::pos2(screen.center().x - w * 0.5, screen.bottom() - 112.0);
             let panel = egui::Rect::from_min_size(base, egui::vec2(w, 98.0));
@@ -1198,7 +1381,7 @@ impl FightView {
                 painter.text(
                     slot.min + egui::vec2(8.0, 6.0),
                     egui::Align2::LEFT_TOP,
-                    format!("{}", k + 1),
+                    key_label(k),
                     font(12.0),
                     egui::Color32::from_rgb(255, 214, 90),
                 );
@@ -1232,15 +1415,13 @@ impl FightView {
                 egui::Align2::CENTER_BOTTOM,
                 &{
                     let mut hint = String::from("Tab: target   Left mouse / 1   Q / 2   B: powers");
-                    let moves: Vec<&str> = [Power::SuperJump, Power::Flight]
+                    let moves: Vec<&str> = [Power::SuperJump, Power::Flight, Power::SuperSpeed]
                         .into_iter()
                         .filter(|p| kit.has(*p) && is_movement(*p))
-                        .map(|p| {
-                            if p == Power::Flight {
-                                "V: fly"
-                            } else {
-                                "Space: super jump"
-                            }
+                        .map(|p| match p {
+                            Power::Flight => "V: fly",
+                            Power::SuperSpeed => "Shift: super speed",
+                            _ => "Space: super jump",
                         })
                         .collect();
                     for m in moves {

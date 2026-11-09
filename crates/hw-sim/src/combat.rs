@@ -12,7 +12,7 @@
 
 use crate::collision::{Body, Obstacles, BODY_HEIGHT};
 use crate::factions;
-use crate::progress::{is_movement, themes, Affinity};
+use crate::progress::{is_passive, themes, Affinity};
 use crate::robots::{self, Colossus, Mount};
 use crate::{
     nav, step_hero, Control, Hero, Ids, LastChange, Motion, Net, Orientation, Progress, Prop,
@@ -23,8 +23,8 @@ use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
 use hw_net::{
     CombatState, EntityKind, Fx, FxKind, InputState, PlayerId, Power, Sheet, Status,
-    EFFECT_ARMOURED, EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_HELD, EFFECT_SHIELD,
-    EFFECT_SUPER_JUMP,
+    EFFECT_ARMOURED, EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_HELD, EFFECT_RALLIED, EFFECT_SHIELD,
+    EFFECT_SUPER_JUMP, EFFECT_SUPER_SPEED, EFFECT_TOUGH,
 };
 use std::collections::BTreeMap;
 
@@ -171,8 +171,83 @@ pub fn power_spec(p: Power) -> PowerSpec {
             area: 8.0,
             ..none
         },
+        Power::SuperSpeed => PowerSpec {
+            name: "Super Speed",
+            ..none
+        },
+        // Damage is health given back.
+        Power::Mend => PowerSpec {
+            name: "Mend",
+            damage: 30.0,
+            cost: 18.0,
+            recharge: 20.0,
+            area: 14.0,
+            ..none
+        },
+        // Area is the beam's half width.
+        Power::Beam => PowerSpec {
+            name: "Beam",
+            damage: 50.0,
+            cost: 22.0,
+            recharge: 7.0,
+            range: 36.0,
+            knock: true,
+            area: 1.4,
+            ..none
+        },
+        Power::Vitality => PowerSpec {
+            name: "Vitality",
+            ..none
+        },
+        // Lasts is the delay before it lands.
+        Power::Meteor => PowerSpec {
+            name: "Meteor",
+            damage: 32.0,
+            cost: 30.0,
+            recharge: 18.0,
+            range: 45.0,
+            area: 5.5,
+            lasts: METEOR_DELAY,
+            ..none
+        },
+        Power::Invulnerable => PowerSpec {
+            name: "Invulnerable",
+            ..none
+        },
+        Power::Nova => PowerSpec {
+            name: "Nova",
+            damage: 120.0,
+            cost: 60.0,
+            recharge: 40.0,
+            knock: true,
+            area: 16.0,
+            ..none
+        },
+        Power::Rally => PowerSpec {
+            name: "Rally",
+            area: RALLY_RADIUS,
+            ..none
+        },
     }
 }
+
+/// Seconds between calling a meteor down and its landing.
+pub const METEOR_DELAY: f64 = 1.2;
+/// Rally reaches friends this near (m), who then hit this much harder, get
+/// energy back this much faster and their powers recharge sooner.
+pub const RALLY_RADIUS: f64 = 20.0;
+pub const RALLY_DAMAGE: f32 = 1.35;
+pub const RALLY_ENERGY: f32 = 1.5;
+/// Powers recharge this much faster in a Rally aura.
+pub const RALLY_HASTE: f64 = 1.4;
+/// Invulnerable lets this share of every blow through.
+pub const TOUGH_LETS_THROUGH: f32 = 0.5;
+/// Vitality gives back this share of the hero's health every second, in a
+/// fight or not.
+pub const VITALITY_REGEN: f32 = 0.02;
+
+/// How many powers there are.
+pub const POWERS: usize = Power::ALL.len();
 
 fn slot(p: Power) -> usize {
     (p.code() - 1) as usize
@@ -182,8 +257,8 @@ fn slot(p: Power) -> usize {
 /// about every tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Kit {
-    owned: u16,
-    themes: u16,
+    owned: u32,
+    themes: u32,
 }
 
 impl Kit {
@@ -191,7 +266,7 @@ impl Kit {
         let mut k = Kit::default();
         for p in &sheet.powers {
             k.owned |= 1 << p.power.code();
-            k.themes |= ((p.theme & 1) as u16) << p.power.code();
+            k.themes |= ((p.theme & 1) as u32) << p.power.code();
         }
         k
     }
@@ -199,7 +274,7 @@ impl Kit {
     /// Every power (villain-free tests, a cheat).
     pub fn everything() -> Self {
         Kit {
-            owned: u16::MAX,
+            owned: u32::MAX,
             themes: 0,
         }
     }
@@ -421,7 +496,7 @@ pub struct Fighter {
     /// No power before this tick (the last one still plays out).
     pub busy_until: u64,
     /// Tick each power is ready again (by [`Power::code`] - 1).
-    pub ready: [u64; 8],
+    pub ready: [u64; POWERS],
     /// A power waiting to fire, and when it was asked for.
     pub queued: Option<(Power, u64)>,
     /// The hero's picked target, or the villain's foe.
@@ -440,7 +515,9 @@ pub struct Fighter {
     /// What it holds over its head to throw.
     pub carrying: Option<NetId>,
     /// Effects a robot's state adds ([`EFFECT_ARMOURED`] and the like).
-    pub marks: u8,
+    pub marks: u16,
+    /// Inside a Rally aura this tick (a hero's own counts).
+    pub rallied: bool,
 }
 
 impl Fighter {
@@ -455,7 +532,7 @@ impl Fighter {
             until: 0,
             last_combat: 0,
             busy_until: 0,
-            ready: [0; 8],
+            ready: [0; POWERS],
             queued: None,
             target: None,
             revive: 0.0,
@@ -465,6 +542,7 @@ impl Fighter {
             shield_until: 0,
             carrying: None,
             marks: 0,
+            rallied: false,
         }
     }
 
@@ -542,11 +620,14 @@ impl Fighter {
             status: self.status,
             level: self.level,
             target: self.target,
-            effects: (self.held(tick) as u8 * EFFECT_HELD)
-                | (self.shielded(tick) as u8 * EFFECT_SHIELD)
-                | (self.carrying.is_some() as u8 * EFFECT_CARRYING)
-                | (self.kit.has(Power::Flight) as u8 * EFFECT_CAN_FLY)
-                | (self.kit.has(Power::SuperJump) as u8 * EFFECT_SUPER_JUMP)
+            effects: (self.held(tick) as u16 * EFFECT_HELD)
+                | (self.shielded(tick) as u16 * EFFECT_SHIELD)
+                | (self.carrying.is_some() as u16 * EFFECT_CARRYING)
+                | (self.kit.has(Power::Flight) as u16 * EFFECT_CAN_FLY)
+                | (self.kit.has(Power::SuperJump) as u16 * EFFECT_SUPER_JUMP)
+                | (self.kit.has(Power::SuperSpeed) as u16 * EFFECT_SUPER_SPEED)
+                | (self.kit.has(Power::Invulnerable) as u16 * EFFECT_TOUGH)
+                | (self.rallied as u16 * EFFECT_RALLIED)
                 | self.marks,
         }
     }
@@ -706,6 +787,20 @@ pub struct Throw {
     pub theme: u8,
 }
 
+/// A strike called down from the sky (Meteor), on its way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkyStrike {
+    /// The tick it lands.
+    pub land: u64,
+    pub from: NetId,
+    /// Where it lands (on the ground).
+    pub at: DVec3,
+    pub damage: f32,
+    pub theme: u8,
+    /// The hero's level (how hard it hits the city).
+    pub level: u8,
+}
+
 /// A villain's way round walls: where it is going and the corners to it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Path {
@@ -729,6 +824,8 @@ pub struct Fights {
     pub deeds: Vec<Deed>,
     /// Throws in the air.
     pub throws: Vec<Throw>,
+    /// Meteors on their way down.
+    pub sky: Vec<SkyStrike>,
     /// Villains' paths round walls.
     pub paths: BTreeMap<NetId, Path>,
     /// Blows at the city this tick (the colossus's feet and shells):
@@ -750,6 +847,7 @@ impl Default for Fights {
             rewards: Vec::new(),
             deeds: Vec::new(),
             throws: Vec::new(),
+            sky: Vec::new(),
             paths: BTreeMap::new(),
             city: Vec::new(),
             streets: None,
@@ -969,6 +1067,10 @@ struct Out {
     tosses: Vec<(NetId, DVec3)>,
     /// New throws in the air.
     throws: Vec<Throw>,
+    /// New meteors called down.
+    sky: Vec<SkyStrike>,
+    /// Blows at the city (where, radius, power).
+    city: Vec<(DVec3, f32, f32)>,
     rewards: Vec<Reward>,
     deeds: Vec<Deed>,
 }
@@ -1014,12 +1116,16 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     let mut spawn_drones: Vec<(NetId, DVec3, bool)> = Vec::new();
     let mut paths = std::mem::take(&mut world.resource_mut::<Fights>().paths);
     let mut throws = std::mem::take(&mut world.resource_mut::<Fights>().throws);
+    let mut sky = std::mem::take(&mut world.resource_mut::<Fights>().sky);
 
+    rally(&mut actors);
     heroes_act(&mut actors, &solids, tick, &mut out);
     land_throws(&mut actors, &mut throws, tick, &mut out);
     throws.append(&mut out.throws);
+    land_sky(&mut actors, &mut sky, &solids, tick, &mut out);
+    sky.append(&mut out.sky);
     enemies_act(&mut actors, &solids, tick, &mut out.fx, &mut paths);
-    let mut city = Vec::new();
+    let mut city = std::mem::take(&mut out.city);
     let streets = world.resource::<Fights>().streets.clone();
     let mut routes = std::mem::take(&mut world.resource_mut::<Fights>().routes);
     robots::act(
@@ -1042,6 +1148,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
         let mut f = world.resource_mut::<Fights>();
         f.paths = paths;
         f.throws = throws;
+        f.sky = sky;
     }
     let mut fx = std::mem::take(&mut out.fx);
 
@@ -1417,6 +1524,10 @@ pub(crate) fn hit(
     if t.f.marks & EFFECT_ARMOURED != 0 {
         dealt *= robots::ARMOUR_LETS_THROUGH;
     }
+    // A hero with Invulnerable: blows glance off.
+    if t.hero.is_some() && t.f.kit.has(Power::Invulnerable) {
+        dealt *= TOUGH_LETS_THROUGH;
+    }
     let heavy = t.enemy.is_some_and(|e| e.kind.heavy());
     let knock = knock && !heavy;
     t.f.health = (t.f.health - dealt).max(0.0);
@@ -1503,7 +1614,7 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
         } else if input.smash {
             Some(Power::Strike)
         } else {
-            Power::from_code(input.power).filter(|p| kit.has(*p) && !is_movement(*p))
+            Power::from_code(input.power).filter(|p| kit.has(*p) && !is_passive(*p))
         };
         if input.target.is_some() || asked.is_some() {
             actors[i].f.target = input.target.or(actors[i].f.target);
@@ -1527,7 +1638,10 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
         let spec = power_spec(power);
         let theme = kit.theme(power);
         let throwing = power == Power::Lift && actors[i].f.carrying.is_some();
-        let aimed = matches!(power, Power::Strike | Power::Bolt | Power::Hold) || throwing;
+        let aimed = matches!(
+            power,
+            Power::Strike | Power::Bolt | Power::Hold | Power::Beam | Power::Meteor
+        ) || throwing;
         // The picked target, or else the nearest villain in reach (for a
         // ranged power, one near where the hero aims).
         let pos = actors[i].body.pos;
@@ -1578,7 +1692,9 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
             // once the power is ready.
             actors[i].f.engaged = target.is_some();
         }
-        if power == Power::Shockwave && nearest_enemy(actors, pos, spec.area).is_some() {
+        if matches!(power, Power::Shockwave | Power::Nova)
+            && nearest_enemy(actors, pos, spec.area).is_some()
+        {
             actors[i].f.engaged = true;
         }
         let me = &actors[i].f;
@@ -1594,9 +1710,16 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
         me.energy -= cost;
         me.busy_until = tick + ticks(ACTION_LOCK);
         if power != Power::Lift || throwing {
-            me.ready[slot(power)] = tick + ticks(spec.recharge);
+            let haste = if me.rallied { RALLY_HASTE } else { 1.0 };
+            me.ready[slot(power)] = tick + ticks(spec.recharge / haste);
         }
-        let damage = spec.damage * level_scale(me.level);
+        let rallied = if me.rallied && power != Power::Mend {
+            RALLY_DAMAGE
+        } else {
+            1.0
+        };
+        let damage = spec.damage * level_scale(me.level) * rallied;
+        let level = me.level;
         let affinity = power_affinity(kit, power);
         match power {
             Power::Strike | Power::Bolt | Power::Hold => {
@@ -1643,34 +1766,119 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
                     }
                 }
             }
-            Power::Shockwave => {
+            Power::Shockwave | Power::Nova => {
+                let kind = if power == Power::Nova {
+                    FxKind::Nova
+                } else {
+                    FxKind::Shockwave
+                };
                 let chest = actors[i].chest();
-                let mut caught = 0;
-                for k in 0..actors.len() {
-                    if !hittable(&actors[k])
-                        || actors[k].body.pos.distance(pos) > spec.area
-                        || !clear_line(solids, chest, actors[k].chest())
-                    {
+                let caught = burst(
+                    actors,
+                    i,
+                    Burst {
+                        centre: pos,
+                        sight: Some(chest),
+                        area: spec.area,
+                        damage,
+                        kind,
+                        theme,
+                        affinity,
+                        knock: spec.knock,
+                    },
+                    solids,
+                    tick,
+                    out,
+                );
+                actors[i].f.last_combat = tick;
+                let mut e = event(tick, kind, me_id, me_id, pos);
+                e.amount = caught;
+                e.theme = theme;
+                out.fx.push(e);
+                if power == Power::Nova {
+                    // The street round the hero takes it too.
+                    let blast = crate::destruction::hero_power(level).blast;
+                    out.city.push((pos + DVec3::Y * 0.5, 4.0, blast * 2.0));
+                }
+            }
+            Power::Mend => {
+                for (k, a) in actors.iter_mut().enumerate() {
+                    if a.hero.is_none() || !a.f.fighting() || a.body.pos.distance(pos) > spec.area {
                         continue;
                     }
+                    let before = a.f.health;
+                    a.f.health = (a.f.health + damage).min(a.f.max_health);
+                    let mut e = event(tick, FxKind::Mend, me_id, a.id, a.chest());
+                    e.amount = (a.f.health - before).round() as u16;
+                    e.theme = theme;
+                    out.fx.push(e);
+                    if k != i {
+                        out.rewards.push(Reward {
+                            hero: me_id,
+                            karma: 0,
+                            deed: Some(Affinity::Guardian),
+                            lean: 5,
+                        });
+                    }
+                }
+            }
+            Power::Beam => {
+                let Some(t) = target else {
+                    continue;
+                };
+                actors[i].f.target = Some(actors[t].id);
+                let from = actors[i].chest();
+                let dir = (actors[t].chest() - from).normalize_or(DVec3::X);
+                // The beam runs on to its full length or the first wall.
+                let mut len = spec.range;
+                let steps = (spec.range / 0.5) as usize;
+                for s in 1..=steps {
+                    let p = from + dir * (s as f64 * 0.5);
+                    if solids.solid_at(p) {
+                        len = s as f64 * 0.5;
+                        break;
+                    }
+                }
+                let mut struck: Vec<(usize, f64)> = (0..actors.len())
+                    .filter(|&k| hittable(&actors[k]))
+                    .filter_map(|k| {
+                        let to = actors[k].chest() - from;
+                        let along = to.dot(dir);
+                        let off = (to - dir * along).length();
+                        (along > 0.0 && along <= len && off <= spec.area).then_some((k, along))
+                    })
+                    .collect();
+                struck.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+                for (k, _) in struck {
                     let (knock, defeat, dealt) = hit(actors, i, k, damage, true, tick, affinity);
-                    let mut e = event(
-                        tick,
-                        FxKind::Shockwave,
-                        me_id,
-                        actors[k].id,
-                        actors[k].chest(),
-                    );
+                    let mut e = event(tick, FxKind::Beam, me_id, actors[k].id, actors[k].chest());
                     e.amount = dealt.round() as u16;
                     e.knock = knock;
                     e.defeat = defeat;
                     e.theme = theme;
                     out.fx.push(e);
-                    caught += 1;
                 }
                 actors[i].f.last_combat = tick;
-                let mut e = event(tick, FxKind::Shockwave, me_id, me_id, pos);
-                e.amount = caught;
+                let mut e = event(tick, FxKind::Beam, me_id, me_id, from + dir * len);
+                e.theme = theme;
+                out.fx.push(e);
+            }
+            Power::Meteor => {
+                let Some(t) = target else {
+                    continue;
+                };
+                actors[i].f.target = Some(actors[t].id);
+                let at = actors[t].body.pos;
+                out.sky.push(SkyStrike {
+                    land: tick + ticks(spec.lasts),
+                    from: me_id,
+                    at,
+                    damage,
+                    theme,
+                    level,
+                });
+                actors[i].f.last_combat = tick;
+                let mut e = event(tick, FxKind::MeteorCall, me_id, actors[t].id, at);
                 e.theme = theme;
                 out.fx.push(e);
             }
@@ -1710,8 +1918,118 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
                 e.theme = theme;
                 out.fx.push(e);
             }
-            Power::SuperJump | Power::Flight => {}
+            Power::SuperJump
+            | Power::Flight
+            | Power::SuperSpeed
+            | Power::Vitality
+            | Power::Invulnerable
+            | Power::Rally => {}
         }
+    }
+}
+
+/// A blast all round a point (shockwave, nova, a meteor landing).
+struct Burst {
+    centre: DVec3,
+    /// Where walls are checked from (a blast does not go through them);
+    /// None for a blast from the sky, which nothing shelters from.
+    sight: Option<DVec3>,
+    area: f64,
+    damage: f32,
+    kind: FxKind,
+    theme: u8,
+    affinity: Option<Affinity>,
+    /// Knocks everyone it hits down (not only those it defeats).
+    knock: bool,
+}
+
+/// Hits every villain in `b`'s area that the blast can reach, knocking
+/// them down; returns how many.
+fn burst(
+    actors: &mut [Actor],
+    i: usize,
+    b: Burst,
+    solids: &Obstacles,
+    tick: u64,
+    out: &mut Out,
+) -> u16 {
+    let me_id = actors[i].id;
+    let mut caught = 0;
+    for k in 0..actors.len() {
+        if !hittable(&actors[k])
+            || actors[k].body.pos.distance(b.centre) > b.area
+            || b.sight
+                .is_some_and(|s| !clear_line(solids, s, actors[k].chest()))
+        {
+            continue;
+        }
+        let (knock, defeat, dealt) = hit(actors, i, k, b.damage, b.knock, tick, b.affinity);
+        let mut e = event(tick, b.kind, me_id, actors[k].id, actors[k].chest());
+        e.amount = dealt.round() as u16;
+        e.knock = knock;
+        e.defeat = defeat;
+        e.theme = b.theme;
+        out.fx.push(e);
+        caught += 1;
+    }
+    caught
+}
+
+/// Who stands in a Rally aura this tick: every hero within reach of a
+/// standing hero who owns Rally (their own aura too).
+fn rally(actors: &mut [Actor]) {
+    let auras: Vec<DVec3> = actors
+        .iter()
+        .filter(|a| a.hero.is_some() && a.f.fighting() && a.f.kit.has(Power::Rally))
+        .map(|a| a.body.pos)
+        .collect();
+    for a in actors.iter_mut() {
+        a.f.rallied = a.hero.is_some()
+            && a.f.fighting()
+            && auras.iter().any(|p| p.distance(a.body.pos) <= RALLY_RADIUS);
+    }
+}
+
+/// Meteors that land this tick: a blast where they come down, and a
+/// crater in the street.
+fn land_sky(
+    actors: &mut [Actor],
+    sky: &mut Vec<SkyStrike>,
+    solids: &Obstacles,
+    tick: u64,
+    out: &mut Out,
+) {
+    let due: Vec<SkyStrike> = sky.iter().copied().filter(|m| m.land <= tick).collect();
+    sky.retain(|m| m.land > tick);
+    let spec = power_spec(Power::Meteor);
+    for m in due {
+        let Some(i) = actors.iter().position(|a| a.id == m.from) else {
+            continue;
+        };
+        let affinity = themes(Power::Meteor)[m.theme as usize & 1].affinity;
+        burst(
+            actors,
+            i,
+            Burst {
+                centre: m.at,
+                sight: None,
+                area: spec.area,
+                damage: m.damage,
+                kind: FxKind::Meteor,
+                theme: m.theme,
+                affinity,
+                knock: spec.knock,
+            },
+            solids,
+            tick,
+            out,
+        );
+        actors[i].f.last_combat = tick;
+        let mut e = event(tick, FxKind::Meteor, m.from, m.from, m.at);
+        e.theme = m.theme;
+        out.fx.push(e);
+        let blast = crate::destruction::hero_power(m.level).blast;
+        out.city.push((m.at + DVec3::Y * 0.5, 3.5, blast * 3.0));
     }
 }
 
@@ -2251,9 +2569,20 @@ fn regenerate(actors: &mut [Actor], tick: u64) {
                 0.0,
             )
         } else {
+            // A hero's health comes back in step with how much there is
+            // (so level 20 heals as fast, for its size, as level 1);
+            // Vitality adds a share of it every second, and a Rally aura
+            // brings energy back sooner.
+            let size = a.f.max_health / HERO_HEALTH;
+            let vitality = if a.f.kit.has(Power::Vitality) {
+                VITALITY_REGEN * a.f.max_health
+            } else {
+                0.0
+            };
+            let rally = if a.f.rallied { RALLY_ENERGY } else { 1.0 };
             (
-                [HEALTH_REGEN.0, HEALTH_REGEN.1][k],
-                [ENERGY_REGEN.0, ENERGY_REGEN.1][k],
+                [HEALTH_REGEN.0, HEALTH_REGEN.1][k] * size + vitality,
+                [ENERGY_REGEN.0, ENERGY_REGEN.1][k] * rally,
             )
         };
         a.f.health = (a.f.health + h * DT as f32).min(a.f.max_health);

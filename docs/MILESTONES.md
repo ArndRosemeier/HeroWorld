@@ -564,6 +564,13 @@ the `openrouter` skill). No text to speech: characters don't speak aloud; speech
   them, travel speed rising with height, many cities with their own looks.
 - **More of everything:** levels to 20 and tiers 4 to 7, more factions (mole people, sky
   pirates, the iron-masked empire), NPC heroes at Hero Hall, more underground layers.
+  **Levels to 20 and tiers 4 to 7: built (0.077).** Eight new powers, two per tier, each in
+  two themes: super speed and mend (tier 4), beam and vitality (5), meteor and invulnerable
+  (6), nova and rally (7). Keys 7 to 0 for mend, beam, meteor and nova; the rest are passive.
+  The balance run fights each power at the level its tier opens (green); a headless bot climbs
+  to level 20 in about 9.8 hours (`cargo test --release -p hw-sim --test high_tiers --
+  --ignored`). Levels past 5 cost a little more each (4% per level above 5), tier prices step
+  more gently above tier 3, and a hero's health regeneration now grows with their health.
 - **The full costume creator** on Actors: emblems, materials, capes; non-human races if wanted.
 - **Mac and iPad:** gamepad and touch input, low presets.
 

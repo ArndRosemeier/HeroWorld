@@ -135,24 +135,26 @@ One source, two counters: every deed earns karma. **Lifetime karma sets your lev
 - **No power ranks.** Every power grows automatically with your level, so your first power never becomes obsolete. A new power always brings something fresh, never just a bigger number, which also means new powers are not that common.
 - **Levels open tiers.** Each power belongs to a tier, and a tier opens at a fixed level.
 - **Higher tiers cost more and are more potent.** That's the real choice: many cheaper low-tier powers, or fewer, stronger ones.
-- **Each new power costs more than the last** (no hard cap). Proposed price: tier base × (1 + 0.25 × powers owned) × affinity factor, with tier bases rising about 1.5× per tier.
+- **Each new power costs more than the last** (no hard cap). Price: tier base × (1 + 0.25 × powers owned) × affinity factor. Tier bases rise 1.5× per tier up to tier 3, then by smaller steps (×1, 1.5, 2.25, 2.75, 3.25, 3.75, 4.25), so the top tiers stay within reach of the levels that open them.
   - **One level of karma buys about one low-tier power.** Karma needed per level grows at the same rate as the per-power price (1 + 0.25 per level), so a hero can take a new tier-1 power every level, or save two or three levels for a higher tier.
 - **Affinity discount:** powers in your leading affinity cost up to 30% less, scaled by how strongly you lean. Movement powers belong to no affinity.
 - **Strength is computed, not stored:** a power's numbers come from (level, tier). Level syncing in co-op just computes them at the synced level and hides powers above its tier.
 - **No respec.** You can give up a power and get back 90% of the karma you paid for it. Choices have consequences.
 - **Dollars for equipment:** maybe later, if at all.
 
-| Tier | Opens at level | Slice powers |
+| Tier | Opens at level | Powers |
 | --- | --- | --- |
 | 1 | 1 | strike (free, weak), energy bolt, super jump |
 | 2 | 3 | binding hold, force shield, lift and carry |
 | 3 | 5 | flight, shockwave |
-| 4 | 8 | later |
-| 5 | 12 | later |
-| 6 | 16 | later |
-| 7 | 20 | capstones, later |
+| 4 | 8 | super speed (movement), mend (heals you and friends near) |
+| 5 | 12 | beam (pierces a whole line), vitality (passive: fast healing) |
+| 6 | 16 | meteor (a strike called down on a spot), invulnerable (passive: blows do half) |
+| 7 | 20 | capstones: nova (a huge blast all round), rally (passive aura: friends hit harder, recharge faster) |
 
-**Pacing target:** 20 levels in about 10 hours, with early levels fast. Level 2 after about 10 minutes, level 3 after about 25, level 5 (flight) after about an hour.
+Passive powers (vitality, invulnerable, rally) and movement powers need no key; the others sit on keys 1 to 0.
+
+**Pacing target:** 20 levels in about 10 hours, with early levels fast. Level 2 after about 10 minutes, level 3 after about 25, level 5 (flight) after about an hour. From level 6 each level costs 4% more again per level above 5, because a hero with many powers beats villains much faster. A bot plays the whole climb headless (`tests/high_tiers.rs`): level 20 after about 9.8 hours, with powers of tiers 1 to 6, and its first tier-7 power within the next hour.
 
 ## Enemies and factions
 

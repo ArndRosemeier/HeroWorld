@@ -1,7 +1,7 @@
 # HeroWorld game guide
 
 What the game is and does **today**, read from the code on `main` at version 0.069
-(2026-11-08). [DESIGN.md](DESIGN.md) says what HeroWorld is meant to become and
+(2026-11-08; powers and levels updated for 0.077). [DESIGN.md](DESIGN.md) says what HeroWorld is meant to become and
 [MILESTONES.md](MILESTONES.md) how we get there; this guide says what is actually built,
 with the numbers the code uses, and marks what is still only planned. Several threads are
 changing the game in parallel (sounds, autorun and minimap, the level cap, the costume
@@ -92,12 +92,13 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | R | Autorun: the mouse steers, A/D step aside, S or R stops |
 | Space | Jump; climb when flying or in a lift |
 | V | Fly (once you own Flight); V again drops you |
-| Ctrl / Shift | Sink / faster when flying (Ctrl also sinks in a lift) |
+| Ctrl / Shift | Sink / faster when flying (Ctrl also sinks in a lift); Shift also runs at full tilt with Super Speed |
 | Mouse wheel | Zoom in / out (all the way in: first person) |
 | Tab | Target the villain nearest the crosshair (again: the next) |
 | Left mouse / 1 | Strike |
 | Q / 2 | Energy Bolt |
 | 3 / 4 / 5 / 6 | Binding Hold / Force Shield / Lift and Throw / Shockwave |
+| 7 / 8 / 9 / 0 | Mend / Beam / Meteor / Nova (tiers 4 to 7) |
 | B | Powers and karma window (also faction standings) |
 | E (hold) | Revive a downed teammate; help trapped people out; pick up the hurt |
 | H | Call the medical drone when you are down |
@@ -122,24 +123,28 @@ town.
 Karma is the one currency. Everything earned adds to **lifetime karma** (which sets the
 level) and to **unspent karma** (which buys powers). Spending never lowers your level.
 
-- Level 1 → 2 costs 960 karma; each later level costs a quarter of that more
-  (`karma_to_next(l) = 960 × (1 + 0.25 × (l − 1))`). Cap: level 20.
+- Level 1 → 2 costs 960 karma; each later level costs a quarter of that more, and from
+  level 6 another 4% per level above 5 (`karma_to_next(l) = 960 × (1 + 0.25 × (l − 1)) ×
+  (1 + 0.04 × max(0, l − 5))`). Cap: level 20 (karma keeps coming after it, for powers).
 - Each level-up refills health and energy, with a burst of light and a fanfare.
 - Pacing target: level 2 in about ten minutes, level 5 (flight) in about an hour, level 20
-  in about ten hours. `tests/powers.rs` plays it (level 5 ≈ 62 minutes for a bot).
+  in about ten hours. `tests/powers.rs` plays the first hour (level 5 ≈ 62 minutes for a
+  bot); `tests/high_tiers.rs` plays all ten (`cargo test --release -p hw-sim --test
+  high_tiers -- --ignored`): level 20 after about 9.8 hours, the first tier-7 power about an
+  hour later.
 
 | Level | Lifetime karma | Level | Lifetime karma |
 | --- | --- | --- | --- |
-| 1 | 0 | 11 | 20 400 |
-| 2 | 960 | 12 | 23 760 |
-| 3 | 2 160 | 13 | 27 360 |
-| 4 | 3 600 | 14 | 31 200 |
-| 5 | 5 280 | 15 | 35 280 |
-| 6 | 7 200 | 16 | 39 600 |
-| 7 | 9 360 | 17 | 44 160 |
-| 8 | 11 760 | 18 | 48 960 |
-| 9 | 14 400 | 19 | 54 000 |
-| 10 | 17 280 | 20 | 59 280 |
+| 1 | 0 | 11 | 22 080 |
+| 2 | 960 | 12 | 26 246 |
+| 3 | 2 160 | 13 | 30 854 |
+| 4 | 3 600 | 14 | 35 923 |
+| 5 | 5 280 | 15 | 41 472 |
+| 6 | 7 200 | 16 | 47 520 |
+| 7 | 9 446 | 17 | 54 086 |
+| 8 | 12 038 | 18 | 61 190 |
+| 9 | 14 995 | 19 | 68 851 |
+| 10 | 18 336 | 20 | 77 088 |
 
 ### Where karma comes from
 
@@ -167,10 +172,11 @@ harder. Movement powers have no affinity and no discount.
 Press **B**. Each power has two **themes**: the mechanic is the same, the theme changes the
 name, look, sound and the affinity (and so the price).
 
-- **Tiers open by level:** tier 1 at level 1, tier 2 at 3, tier 3 at 5 (tiers 4–7 at
-  8, 12, 16, 20 exist in the rules but have no powers yet).
-- **Price:** `960 × 1.5^(tier − 1) × (1 + 0.25 × powers owned) × (1 − affinity discount)`.
-  So a first tier-1 power costs 960, tier 2 1 440, tier 3 2 160, each before markup.
+- **Tiers open by level:** tier 1 at level 1, tier 2 at 3, tier 3 at 5, tier 4 at 8,
+  tier 5 at 12, tier 6 at 16, tier 7 at 20. Two powers (or more) in each.
+- **Price:** `960 × tier price × (1 + 0.25 × powers owned) × (1 − affinity discount)`, with
+  tier prices 1, 1.5, 2.25, 2.75, 3.25, 3.75, 4.25 (`progress::TIER_PRICES`). So a first
+  tier-1 power costs 960, tier 2 1 440, tier 3 2 160, tier 7 4 080, each before markup.
 - **No power ranks:** a power grows with your level automatically (damage ×
   `1 + 0.1 × (level − 1)`, so ×2.9 at level 20).
 - **No respec**, but giving a power up refunds 90% of what you paid.
@@ -191,9 +197,19 @@ grows with the same ×(1 + 0.1 per level).
 | 5 | **Lift and Throw**: *Mighty Heave* (Might) / *Telekinesis* (Mystic) | 2 | First press picks up a car, bench, prop or torn-up rubble within 6 m; second throws it (60 damage, 30 m, 12 energy, 3 s, knockback). |
 | passive / V | **Flight**: *Jet Pack* / *Soaring Cape* | 3 | Fly at 22 m/s, 60 m/s with Shift, climb 10 m/s, ceiling 900 m. |
 | 6 | **Shockwave**: *Thunderclap* (Might) / *Sonic Boom* (Science) | 3 | 34 damage to everyone within 8 m, knocks them all down; 26 energy, 12 s. |
+| passive / Shift | **Super Speed**: *Lightning Legs* / *Rocket Skates* | 4 | Run at 18 m/s, 32 m/s with Shift; a crackling trail. |
+| 7 | **Mend**: *Vital Ray* (Science) / *Healing Light* (Guardian) | 4 | Heals you and allies within 14 m by 30 (grows with level); 18 energy, 20 s. |
+| 8 | **Beam**: *Disintegrator* (Science) / *Spirit Lance* (Mystic) | 5 | 50 damage to every villain in a 36 m line (to the first wall), knocks them all back; 22 energy, 7 s. |
+| passive | **Vitality**: *Aether Vitality* (Mystic) / *Iron Constitution* (Might) | 5 | 2% of your health back every second, in a fight too. |
+| 9 | **Meteor**: *Orbital Ray* (Science) / *Starfall* (Mystic) | 6 | Marks the target's spot; 1.2 s later a strike from the sky does 32 damage to everyone within 5.5 m (walls give no cover) and cracks the street; 30 energy, 18 s. |
+| passive | **Invulnerable**: *Steel Hide* (Might) / *Unbreakable Will* (Justice) | 6 | Every blow does half. |
+| 0 | **Nova**: *Atomic Nova* (Science) / *Earthshaker* (Might) | 7 | 120 damage to everyone within 16 m, knocks them all down, breaks the street round you; 60 energy, 40 s. |
+| passive | **Rally**: *Rallying Cry* (Justice) / *Heroic Aura* (Guardian) | 7 | You and allies within 20 m hit 35% harder, recharge powers 1.4× as fast and get energy back 1.5× as fast. |
 
-A typical path: Spring Heels or Energy Bolt at the start, the other at level 2, a tier-2
-power at 3, Flight at 5.
+Health comes back faster as it grows: regeneration (1 a second in a fight, 14 out of it at
+level 1) scales with your maximum health. A typical path: Spring Heels or Energy Bolt at the
+start, the other at level 2, a tier-2 power at 3, Flight at 5, then one new power every level
+or two; a bot that buys as it goes owns about a dozen at level 20.
 
 ---
 

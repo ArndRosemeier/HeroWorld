@@ -3,6 +3,16 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.077 (2026-11-09)
+
+- Levels 6 to 20 now have powers to buy: eight new ones, two for each tier, each in two looks.
+- Level 8: Super Speed (run at 65 km/h, Shift for over 110) and Mend (heal yourself and friends near).
+- Level 12: Beam (a ray straight through a whole gang) and Vitality (your health comes back fast, even in a fight).
+- Level 16: Meteor (call a strike down from the sky on your target's spot) and Invulnerable (every blow does half).
+- Level 20: Nova (a huge blast all round you) and Rally (you and friends near hit harder and recharge faster).
+- Keys 7, 8, 9 and 0 fire Mend, Beam, Meteor and Nova; the others work on their own. The powers window lists them by tier.
+- The climb to level 20 takes about ten hours; health comes back faster at higher levels.
+
 ## 0.076 (2026-11-09)
 
 - The title screen no longer stutters in: a comic cover with the logo slamming in shows

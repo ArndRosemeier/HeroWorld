@@ -21,10 +21,17 @@ pub const MAX_LEVEL: u8 = 20;
 pub const TIER_LEVELS: [u8; 7] = [1, 3, 5, 8, 12, 16, 20];
 /// Karma from level 1 to 2; each later level costs a quarter of that more.
 pub const FIRST_LEVEL_KARMA: f64 = 960.0;
-/// A tier-1 power with no others owned costs about one level's karma, and
-/// each tier half again as much as the one below.
+/// Past level 5 each level costs this much more again per level above 5:
+/// a hero with many powers beats villains much faster, and level 20 should
+/// still take about ten hours.
+pub const LATE_LEVEL_STEP: f64 = 0.04;
+/// A tier-1 power with no others owned costs about one level's karma.
 pub const TIER1_PRICE: f64 = FIRST_LEVEL_KARMA;
-pub const TIER_STEP: f64 = 1.5;
+/// Each tier's price in tier-1 prices: half again per tier up to tier 3,
+/// then a smaller step, so the top tiers stay within reach of the levels
+/// that open them (a level costs about five times as much at level 19 as
+/// at level 1, while every owned power adds its markup).
+pub const TIER_PRICES: [f64; 7] = [1.0, 1.5, 2.25, 2.75, 3.25, 3.75, 4.25];
 /// Each power already owned makes the next a quarter dearer.
 pub const OWNED_MARKUP: f64 = 0.25;
 /// A new hero starts with enough karma for one tier-1 power.
@@ -210,6 +217,102 @@ pub fn themes(p: Power) -> [Theme; 2] {
                 Some(Science),
             ),
         ],
+        Power::SuperSpeed => [
+            t(
+                "Lightning Legs",
+                "A blur, a crackle, and you're three blocks on.",
+                None,
+            ),
+            t(
+                "Rocket Skates",
+                "Chrome skates with tail fins. Mind the corners.",
+                None,
+            ),
+        ],
+        Power::Mend => [
+            t(
+                "Vital Ray",
+                "A warm green beam knits wounds while you watch.",
+                Some(Science),
+            ),
+            t(
+                "Healing Light",
+                "A golden glow over you and everyone at your side.",
+                Some(Guardian),
+            ),
+        ],
+        Power::Beam => [
+            t(
+                "Disintegrator",
+                "A ruler-straight ray that goes through the whole gang.",
+                Some(Science),
+            ),
+            t(
+                "Spirit Lance",
+                "A spear of pale fire that pierces every foe in line.",
+                Some(Mystic),
+            ),
+        ],
+        Power::Vitality => [
+            t(
+                "Aether Vitality",
+                "The Aether mends you as fast as they can hurt you.",
+                Some(Mystic),
+            ),
+            t(
+                "Iron Constitution",
+                "Shrug it off. Walk it off. Keep punching.",
+                Some(Might),
+            ),
+        ],
+        Power::Meteor => [
+            t(
+                "Orbital Ray",
+                "Your satellite answers: a white-hot column from the sky.",
+                Some(Science),
+            ),
+            t(
+                "Starfall",
+                "Pull a falling star down on their heads.",
+                Some(Mystic),
+            ),
+        ],
+        Power::Invulnerable => [
+            t(
+                "Steel Hide",
+                "Bullets bounce. Fists bruise themselves.",
+                Some(Might),
+            ),
+            t(
+                "Unbreakable Will",
+                "Justice does not fall down.",
+                Some(Justice),
+            ),
+        ],
+        Power::Nova => [
+            t(
+                "Atomic Nova",
+                "Become a small sun for a moment. Everyone near regrets it.",
+                Some(Science),
+            ),
+            t(
+                "Earthshaker",
+                "Hit the ground so hard the street jumps.",
+                Some(Might),
+            ),
+        ],
+        Power::Rally => [
+            t(
+                "Rallying Cry",
+                "Friends near you fight harder and tire slower.",
+                Some(Justice),
+            ),
+            t(
+                "Heroic Aura",
+                "A glow of pure courage round you and your team.",
+                Some(Guardian),
+            ),
+        ],
     }
 }
 
@@ -219,12 +322,22 @@ pub fn tier(p: Power) -> u8 {
         Power::Strike | Power::Bolt | Power::SuperJump => 1,
         Power::Hold | Power::Shield | Power::Lift => 2,
         Power::Flight | Power::Shockwave => 3,
+        Power::SuperSpeed | Power::Mend => 4,
+        Power::Beam | Power::Vitality => 5,
+        Power::Meteor | Power::Invulnerable => 6,
+        Power::Nova | Power::Rally => 7,
     }
 }
 
-/// Is this power always there (Strike), passive (movement) or used?
+/// A movement power: it changes how the hero moves, and has no key.
 pub fn is_movement(p: Power) -> bool {
-    matches!(p, Power::SuperJump | Power::Flight)
+    matches!(p, Power::SuperJump | Power::Flight | Power::SuperSpeed)
+}
+
+/// Always on once owned: movement powers and the passive ones. Everything
+/// else is used with its key.
+pub fn is_passive(p: Power) -> bool {
+    is_movement(p) || matches!(p, Power::Vitality | Power::Invulnerable | Power::Rally)
 }
 
 /// The level a tier opens at.
@@ -235,7 +348,8 @@ pub fn tier_level(tier: u8) -> u8 {
 /// Karma it takes to go from `level` to the next.
 pub fn karma_to_next(level: u8) -> u32 {
     let l = level.clamp(1, MAX_LEVEL) as f64;
-    (FIRST_LEVEL_KARMA * (1.0 + 0.25 * (l - 1.0))).round() as u32
+    let late = 1.0 + LATE_LEVEL_STEP * (l - 5.0).max(0.0);
+    (FIRST_LEVEL_KARMA * (1.0 + 0.25 * (l - 1.0)) * late).round() as u32
 }
 
 /// Lifetime karma at which a hero reaches `level`.
@@ -261,7 +375,7 @@ pub fn discount(sheet: &Sheet, a: Affinity) -> f64 {
 
 /// What `power` in `theme` costs this hero now.
 pub fn price(sheet: &Sheet, power: Power, theme: u8) -> u32 {
-    let base = TIER1_PRICE * TIER_STEP.powi(tier(power) as i32 - 1);
+    let base = TIER1_PRICE * TIER_PRICES[(tier(power).clamp(1, 7) - 1) as usize];
     let owned = sheet.powers.len() as f64;
     let off = themes(power)[(theme & 1) as usize]
         .affinity
@@ -407,11 +521,13 @@ mod tests {
         assert_eq!(level_of(2159), 2);
         assert_eq!(level_of(2160), 3);
         assert_eq!(level_of(u32::MAX), MAX_LEVEL);
-        // About ten hours to the cap at the pace `tests/powers.rs` measures
-        // for levels 1 to 5 (85 karma a minute); more powers later make it
-        // quicker.
-        let hours = karma_for_level(MAX_LEVEL) as f64 / 85.0 / 60.0;
-        assert!((9.0..13.0).contains(&hours), "{hours:.1} h to the cap");
+        // Levels 1 to 5 keep their pacing (an hour to flight); later ones
+        // grow steeper. `tests/high_tiers.rs` plays the ten hours to 20.
+        assert_eq!(karma_to_next(5), 1920);
+        assert_eq!(karma_to_next(6), 2246);
+        assert!((1..MAX_LEVEL).all(|l| karma_to_next(l + 1) > karma_to_next(l)));
+        let total = karma_for_level(MAX_LEVEL);
+        assert!((75_000..80_000).contains(&total), "{total}");
     }
 
     #[test]
@@ -420,7 +536,7 @@ mod tests {
         assert_eq!(price(&s, Power::SuperJump, 0), karma_to_next(1));
         assert!(can_buy(&s, Power::SuperJump, 0).is_ok());
         // A tier-2 power is half again, tier 3 more.
-        assert_eq!(price(&s, Power::Hold, 1) as f64, TIER1_PRICE * TIER_STEP);
+        assert_eq!(price(&s, Power::Hold, 1) as f64, TIER1_PRICE * 1.5);
         // A Lab Accident hero leans to Science: its themes are cheaper.
         assert!(price(&s, Power::Hold, 0) < price(&s, Power::Hold, 1));
         assert!(price(&s, Power::Flight, 0) > price(&s, Power::Lift, 0));

@@ -256,6 +256,16 @@ pub const SUPER_AIR_ACCEL: f64 = 30.0;
 /// A super jumper's leaps carry them along faster than running.
 pub const SUPER_LEAP_SPEED: f64 = 13.0;
 
+/// Running speed with Super Speed, with Shift held, and how quickly a
+/// speedster gets going and stops.
+pub const SUPER_SPEED: f64 = 18.0;
+pub const SUPER_SPEED_BOOST: f64 = 32.0;
+pub const SUPER_SPEED_ACCEL: f64 = 90.0;
+
+fn horizontal_speed(body: &Body) -> f64 {
+    DVec2::new(body.vel.x, body.vel.z).length()
+}
+
 /// What a hero's movement powers allow.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Moves {
@@ -263,6 +273,8 @@ pub struct Moves {
     pub fly: bool,
     /// Super Jump is owned.
     pub super_jump: bool,
+    /// Super Speed is owned.
+    pub speed: bool,
 }
 
 impl Moves {
@@ -270,18 +282,21 @@ impl Moves {
     pub const ON_FOOT: Moves = Moves {
         fly: false,
         super_jump: false,
+        speed: false,
     };
     /// Flight allowed (tests and tools that fly).
     pub const FLYER: Moves = Moves {
         fly: true,
         super_jump: false,
+        speed: false,
     };
 
     /// From the effect bits a hero's [`hw_net::CombatState`] carries.
-    pub fn from_effects(effects: u8) -> Self {
+    pub fn from_effects(effects: u16) -> Self {
         Self {
             fly: effects & hw_net::EFFECT_CAN_FLY != 0,
             super_jump: effects & hw_net::EFFECT_SUPER_JUMP != 0,
+            speed: effects & hw_net::EFFECT_SUPER_SPEED != 0,
         }
     }
 }
@@ -304,15 +319,26 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
         }
         return;
     }
-    let top = if moves.super_jump && !body.grounded {
+    let top = if moves.speed && body.grounded {
+        if input.boost {
+            SUPER_SPEED_BOOST
+        } else {
+            SUPER_SPEED
+        }
+    } else if moves.super_jump && !body.grounded {
         SUPER_LEAP_SPEED
+    } else if moves.speed {
+        // Off the ground a speedster keeps most of their run.
+        SUPER_SPEED.max(horizontal_speed(body))
     } else {
         RUN_SPEED
     };
     let want = DVec3::new(input.move_x as f64, 0.0, input.move_z as f64) * top;
     let horizontal = DVec3::new(body.vel.x, 0.0, body.vel.z);
     let delta = want - horizontal;
-    let accel = if body.grounded {
+    let accel = if body.grounded && moves.speed {
+        SUPER_SPEED_ACCEL
+    } else if body.grounded {
         RUN_ACCEL
     } else if moves.super_jump {
         SUPER_AIR_ACCEL
@@ -1483,6 +1509,7 @@ fn move_heroes(
         let moves = fighter.map_or(Moves::ON_FOOT, |f| Moves {
             fly: f.kit.has(Power::Flight),
             super_jump: f.kit.has(Power::SuperJump),
+            speed: f.kit.has(Power::SuperSpeed),
         });
         let status = fighter.map_or(Status::Standing, |f| f.status);
         let input = match status {

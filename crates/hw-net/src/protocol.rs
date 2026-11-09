@@ -78,10 +78,27 @@ pub enum Power {
     Flight,
     /// A blast all round that throws villains off their feet.
     Shockwave,
+    /// Tier 4: runs several times as fast on the ground (movement).
+    SuperSpeed,
+    /// Tier 4: heals the hero and friends near.
+    Mend,
+    /// Tier 5: a ray that goes through every villain in its line.
+    Beam,
+    /// Tier 5, passive: health comes back quickly, even in a fight.
+    Vitality,
+    /// Tier 6: calls a strike from the sky down on a spot.
+    Meteor,
+    /// Tier 6, passive: every blow does less.
+    Invulnerable,
+    /// Tier 7: a huge blast all round that spends most of the hero's energy.
+    Nova,
+    /// Tier 7, passive: the hero and friends near hit harder and get their
+    /// energy back sooner.
+    Rally,
 }
 
 impl Power {
-    pub const ALL: [Power; 8] = [
+    pub const ALL: [Power; 16] = [
         Power::Strike,
         Power::Bolt,
         Power::SuperJump,
@@ -90,6 +107,14 @@ impl Power {
         Power::Lift,
         Power::Flight,
         Power::Shockwave,
+        Power::SuperSpeed,
+        Power::Mend,
+        Power::Beam,
+        Power::Vitality,
+        Power::Meteor,
+        Power::Invulnerable,
+        Power::Nova,
+        Power::Rally,
     ];
 
     pub fn code(self) -> u8 {
@@ -102,6 +127,14 @@ impl Power {
             Power::Lift => 6,
             Power::Flight => 7,
             Power::Shockwave => 8,
+            Power::SuperSpeed => 9,
+            Power::Mend => 10,
+            Power::Beam => 11,
+            Power::Vitality => 12,
+            Power::Meteor => 13,
+            Power::Invulnerable => 14,
+            Power::Nova => 15,
+            Power::Rally => 16,
         }
     }
 
@@ -413,28 +446,34 @@ pub struct CombatState {
     /// Who it fights (an enemy's foe, a hero's picked target).
     pub target: Option<NetId>,
     /// What powers do to it now ([`EFFECT_HELD`], [`EFFECT_SHIELD`], ...).
-    pub effects: u8,
+    pub effects: u16,
 }
 
 /// Bound by a binding hold.
-pub const EFFECT_HELD: u8 = 1;
+pub const EFFECT_HELD: u16 = 1;
 /// Behind a force shield.
-pub const EFFECT_SHIELD: u8 = 2;
+pub const EFFECT_SHIELD: u16 = 2;
 /// Carrying something over its head.
-pub const EFFECT_CARRYING: u8 = 4;
+pub const EFFECT_CARRYING: u16 = 4;
 /// Flying is unlocked (heroes with the Flight power).
-pub const EFFECT_CAN_FLY: u8 = 8;
+pub const EFFECT_CAN_FLY: u16 = 8;
 /// Super jump is owned (higher jumps).
-pub const EFFECT_SUPER_JUMP: u8 = 16;
+pub const EFFECT_SUPER_JUMP: u16 = 16;
 /// A robot's armour is shut: blows glance off (the colossus walking).
-pub const EFFECT_ARMOURED: u8 = 32;
+pub const EFFECT_ARMOURED: u16 = 32;
 /// The colossus is down on its belly, its core open.
-pub const EFFECT_KNEELING: u8 = 64;
+pub const EFFECT_KNEELING: u16 = 64;
 /// The colossus is enraged (its second wind).
-pub const EFFECT_ENRAGED: u8 = 128;
+pub const EFFECT_ENRAGED: u16 = 128;
+/// Super speed is owned (fast running on the ground).
+pub const EFFECT_SUPER_SPEED: u16 = 256;
+/// Inside a rallying hero's aura (hits harder; a glow).
+pub const EFFECT_RALLIED: u16 = 512;
+/// Owns Invulnerable (blows glance off; a sheen).
+pub const EFFECT_TOUGH: u16 = 1024;
 
 /// Bytes a [`CombatState`] takes.
-const COMBAT_BYTES: usize = 9;
+const COMBAT_BYTES: usize = 10;
 
 /// No rotation.
 pub const NO_ROTATION: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -544,7 +583,7 @@ impl EntityState {
                 .u8(c.status.code())
                 .u8(c.level)
                 .u32(c.target.map_or(0, |t| t.0))
-                .u8(c.effects);
+                .u16(c.effects);
         }
         if let Some((on, part)) = self.mount {
             w.u32(on.0).u8(part);
@@ -587,7 +626,7 @@ impl EntityState {
                     0 => None,
                     t => Some(NetId(t)),
                 },
-                effects: r.u8()?,
+                effects: r.u16()?,
             })
         } else {
             None
@@ -673,6 +712,17 @@ pub enum FxKind {
     Kneel,
     /// A villain warns a hero off its turf (`from` warns `to`).
     Warn,
+    /// A hero's mend healed `to` (`amount`: health given back).
+    Mend,
+    /// A beam went from `from` toward `at` (its far end); on a villain it
+    /// hit, `to` is that villain.
+    Beam,
+    /// A strike from the sky is called down on `at` (lands in a moment).
+    MeteorCall,
+    /// It landed at `at` (`to`: a villain it hit, or `from` for the blast).
+    Meteor,
+    /// A nova went off round `from` (`to`: a villain it hit, or `from`).
+    Nova,
 }
 
 impl FxKind {
@@ -707,6 +757,11 @@ impl FxKind {
             FxKind::Rise => 27,
             FxKind::Kneel => 28,
             FxKind::Warn => 29,
+            FxKind::Mend => 30,
+            FxKind::Beam => 31,
+            FxKind::MeteorCall => 32,
+            FxKind::Meteor => 33,
+            FxKind::Nova => 34,
         }
     }
 
@@ -741,6 +796,11 @@ impl FxKind {
             27 => FxKind::Rise,
             28 => FxKind::Kneel,
             29 => FxKind::Warn,
+            30 => FxKind::Mend,
+            31 => FxKind::Beam,
+            32 => FxKind::MeteorCall,
+            33 => FxKind::Meteor,
+            34 => FxKind::Nova,
             _ => return Err(WireError),
         })
     }

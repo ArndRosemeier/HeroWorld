@@ -52,8 +52,8 @@ pub enum PowerAction {
     Create(Sheet),
 }
 
-/// The powers a hero can buy, in the order the window lists them.
-pub const SHOP: [Power; 7] = [
+/// The powers a hero can buy, in the order the window lists them (by tier).
+pub const SHOP: [Power; 15] = [
     Power::Bolt,
     Power::SuperJump,
     Power::Hold,
@@ -61,6 +61,14 @@ pub const SHOP: [Power; 7] = [
     Power::Lift,
     Power::Flight,
     Power::Shockwave,
+    Power::SuperSpeed,
+    Power::Mend,
+    Power::Beam,
+    Power::Vitality,
+    Power::Meteor,
+    Power::Invulnerable,
+    Power::Nova,
+    Power::Rally,
 ];
 
 const GOLD: egui::Color32 = egui::Color32::from_rgb(255, 214, 90);
@@ -70,7 +78,7 @@ pub struct PowersView {
     /// The powers window is open.
     pub open: bool,
     /// The theme picked for each power not owned yet (by code).
-    picked: [u8; 9],
+    picked: [u8; Power::ALL.len() + 1],
     /// A give-up click waiting for its second click.
     confirm: Option<Power>,
     /// The level-up banner: level, seconds shown.
@@ -90,7 +98,7 @@ impl PowersView {
     pub fn new() -> Self {
         Self {
             open: false,
-            picked: [0; 9],
+            picked: [0; Power::ALL.len() + 1],
             confirm: None,
             banner: None,
             origin: 0,
@@ -252,9 +260,27 @@ impl PowersView {
                 egui::ScrollArea::vertical()
                     .max_height(ctx.screen_rect().height() * 0.62)
                     .show(ui, |ui| {
-                        for p in SHOP {
-                            self.row(ui, sheet, p, out);
-                            ui.add_space(4.0);
+                        for t in 1..=7u8 {
+                            let opens = tier_level(t);
+                            let head = if level >= opens {
+                                format!("Tier {t}")
+                            } else {
+                                format!("Tier {t} · opens at level {opens}")
+                            };
+                            ui.label(
+                                egui::RichText::new(head)
+                                    .size(14.0)
+                                    .strong()
+                                    .color(if level >= opens {
+                                        GOLD
+                                    } else {
+                                        egui::Color32::from_gray(150)
+                                    }),
+                            );
+                            for p in SHOP.into_iter().filter(|p| tier(*p) == t) {
+                                self.row(ui, sheet, p, out);
+                                ui.add_space(4.0);
+                            }
                         }
                     });
                 ui.separator();
@@ -298,7 +324,7 @@ impl PowersView {
                         .color(theme_ui_colour(p, theme)),
                 );
                 ui.label(
-                    egui::RichText::new(format!("{} · tier {t}", spec.name))
+                    egui::RichText::new(spec.name)
                         .size(13.0)
                         .color(egui::Color32::from_gray(190)),
                 );
@@ -576,6 +602,40 @@ pub fn what_it_does(p: Power) -> String {
         Power::Shockwave => format!(
             "Knocks down every villain within {:.0} m. {:.0} energy.",
             s.area, s.cost
+        ),
+        Power::SuperSpeed => format!(
+            "Passive: run at {:.0} km/h, Shift for {:.0}.",
+            hw_sim::SUPER_SPEED * 3.6,
+            hw_sim::SUPER_SPEED_BOOST * 3.6
+        ),
+        Power::Mend => format!(
+            "Heals you and friends within {:.0} m. {:.0} energy.",
+            s.area, s.cost
+        ),
+        Power::Beam => format!(
+            "Pierces every villain in a {:.0} m line, knocks back. {:.0} energy.",
+            s.range, s.cost
+        ),
+        Power::Vitality => format!(
+            "Passive: {:.0}% of your health back every second, even in a fight.",
+            hw_sim::combat::VITALITY_REGEN * 100.0
+        ),
+        Power::Meteor => format!(
+            "Calls a strike down on your target: hits all within {:.0} m a moment later. {:.0} energy.",
+            s.area, s.cost
+        ),
+        Power::Invulnerable => format!(
+            "Passive: every blow does {:.0}% less.",
+            (1.0 - hw_sim::combat::TOUGH_LETS_THROUGH) * 100.0
+        ),
+        Power::Nova => format!(
+            "Flattens every villain within {:.0} m. {:.0} energy.",
+            s.area, s.cost
+        ),
+        Power::Rally => format!(
+            "Passive: you and friends within {:.0} m hit {:.0}% harder and recharge faster.",
+            s.area,
+            (hw_sim::combat::RALLY_DAMAGE - 1.0) * 100.0
         ),
     }
 }

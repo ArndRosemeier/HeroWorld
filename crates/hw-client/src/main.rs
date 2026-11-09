@@ -368,6 +368,7 @@ fn main() -> EngineResult<()> {
         // second themes).
         if std::env::var_os("HW_POWERS").is_some() {
             let theme = env_num("HW_THEME").unwrap_or(0).min(1) as u8;
+            s.karma = s.karma.max(1_000_000);
             for p in hw_client::powersview::SHOP {
                 let _ = hw_sim::progress::buy(&mut s, p, theme);
             }
@@ -1587,7 +1588,7 @@ fn main() -> EngineResult<()> {
                                 < 2.6
                         });
                     // Every power the hero has, in turn; punches up close.
-                    let turn = [3u8, 2, 6, 2, 5, 2, 4, 2, 5];
+                    let turn = [3u8, 2, 6, 11, 2, 5, 13, 2, 4, 10, 2, 15, 5];
                     let k = (frame.time / 0.75) as usize % turn.len();
                     let want = hw_net::Power::from_code(turn[k]).filter(|p| my_sheet.has(*p));
                     pending_power = match want {

@@ -13,7 +13,7 @@
 //! `tests/powers.rs` keeps it green.
 
 use crate::collision::Obstacles;
-use crate::combat::power_spec;
+use crate::combat::{power_spec, COMBAT_SECONDS, HEALTH_REGEN, HERO_HEALTH};
 use crate::progress::{self, is_movement, tier};
 use crate::{Sim, GROUND_Y, TICK_HZ};
 use glam::{DVec2, DVec3};
@@ -66,10 +66,14 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
     input.aim = aim.as_vec3().to_array();
     let close = foes.iter().filter(|x| x.2.distance(me) < 7.0).count();
     let strike_range = power_spec(Power::Strike).range;
-    let wants_close = ready(sim, hero, Power::Shockwave) && foes.len() >= 2;
+    let wants_close =
+        (ready(sim, hero, Power::Shockwave) || ready(sim, hero, Power::Nova)) && foes.len() >= 2;
     // Holds and shields do no damage of their own: without a ranged
     // attack the hero fights up close.
-    let ranged = f.kit.has(Power::Bolt) || f.kit.has(Power::Lift);
+    // (A meteor calls down a blast but is no way to keep fighting from afar.)
+    let ranged = [Power::Bolt, Power::Lift, Power::Beam]
+        .into_iter()
+        .any(|p| f.kit.has(p));
     // Close in to fighting range; melee-only heroes go right up.
     let keep = if wants_close || !ranged || f.energy < 15.0 {
         strike_range - 0.5
@@ -85,8 +89,18 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
         return input;
     }
     let shielded = f.shielded(tick);
+    let hurt = f.health < f.max_health * 0.6;
+    let nova_close = foes.iter().filter(|x| x.2.distance(me) < 12.0).count();
     if f.carrying.is_some() {
         input.power = Power::Lift.code();
+    } else if ready(sim, hero, Power::Mend) && hurt {
+        input.power = Power::Mend.code();
+    } else if ready(sim, hero, Power::Nova) && nova_close >= 3 {
+        input.power = Power::Nova.code();
+    } else if ready(sim, hero, Power::Meteor) && d <= 40.0 {
+        input.power = Power::Meteor.code();
+    } else if ready(sim, hero, Power::Beam) && d <= 30.0 {
+        input.power = Power::Beam.code();
     } else if ready(sim, hero, Power::Shield) && !shielded && d < 25.0 {
         input.power = Power::Shield.code();
     } else if ready(sim, hero, Power::Shockwave) && close >= 2 {
@@ -154,20 +168,29 @@ pub fn standard_fight(seed: u64, level: u8, powers: &[Power]) -> FightResult {
         let f = sim.fighter(hero).expect("hero");
         if f.health < last {
             hurt += (last - f.health) as f64 / max as f64;
+        } else {
+            // Health a power gave back (Mend, Vitality) makes up for blows
+            // taken; ordinary regeneration does not count.
+            let calm =
+                sim.tick.saturating_sub(f.last_combat) > (COMBAT_SECONDS * TICK_HZ as f64) as u64;
+            let regen = if calm { HEALTH_REGEN.1 } else { HEALTH_REGEN.0 };
+            let natural = regen * f.max_health / HERO_HEALTH * crate::DT as f32;
+            let given = (f.health - last - natural).max(0.0);
+            hurt -= given as f64 / max as f64;
         }
         last = f.health;
         if sim.enemies().is_empty() {
             return FightResult {
                 won: true,
                 seconds: t as f64 / TICK_HZ as f64,
-                hurt,
+                hurt: hurt.max(0.0),
             };
         }
     }
     FightResult {
         won: false,
         seconds: limit as f64 / TICK_HZ as f64,
-        hurt,
+        hurt: hurt.max(0.0),
     }
 }
 
@@ -189,8 +212,14 @@ pub struct PowerResult {
     pub travel: f64,
 }
 
-/// The level the run fights at: every tier of the slice is open.
+/// The lowest level the run fights at (tiers 1 to 4 open); a power of a
+/// higher tier fights at the level its tier opens.
 pub const BALANCE_LEVEL: u8 = 8;
+
+/// The level `p` is measured at.
+pub fn balance_level(p: Power) -> u8 {
+    progress::tier_level(tier(p)).max(BALANCE_LEVEL)
+}
 /// Seeds per power (each a different group).
 pub const BALANCE_SEEDS: u64 = 6;
 
@@ -199,7 +228,11 @@ pub fn budget(tier: u8) -> (f64, f64) {
     match tier {
         1 => (1.15, 2.6),
         2 => (1.25, 3.2),
-        _ => (1.35, 3.8),
+        3 => (1.35, 3.8),
+        4 => (1.45, 4.4),
+        5 => (1.55, 5.0),
+        6 => (1.65, 5.6),
+        _ => (1.75, 6.5),
     }
 }
 
@@ -212,10 +245,11 @@ fn average(results: &[FightResult]) -> (f64, f64, usize) {
     )
 }
 
-/// Seconds Strike alone takes and the health it costs, as the yardstick.
-pub fn baseline() -> (f64, f64) {
+/// Seconds Strike alone takes at `level` and the health it costs, as the
+/// yardstick.
+pub fn baseline(level: u8) -> (f64, f64) {
     let r: Vec<_> = (0..BALANCE_SEEDS)
-        .map(|s| standard_fight(100 + s, BALANCE_LEVEL, &[]))
+        .map(|s| standard_fight(100 + s, level, &[]))
         .collect();
     let (s, h, _) = average(&r);
     (s, h)
@@ -275,9 +309,9 @@ pub fn travel_speed(powers: &[Power]) -> f64 {
     0.0
 }
 
-/// The whole run: every power of the slice.
+/// The whole run: every power.
 pub fn run() -> Vec<PowerResult> {
-    let (base_s, base_h) = baseline();
+    let mut bases: std::collections::BTreeMap<u8, (f64, f64)> = Default::default();
     let walk = travel_speed(&[]);
     Power::ALL
         .into_iter()
@@ -295,8 +329,10 @@ pub fn run() -> Vec<PowerResult> {
                     travel,
                 };
             }
+            let level = balance_level(p);
+            let (base_s, base_h) = *bases.entry(level).or_insert_with(|| baseline(level));
             let r: Vec<_> = (0..BALANCE_SEEDS)
-                .map(|s| standard_fight(100 + s, BALANCE_LEVEL, &[p]))
+                .map(|s| standard_fight(100 + s, level, &[p]))
                 .collect();
             let (seconds, hurt, lost) = average(&r);
             let worth = (base_s / seconds) * ((base_h + 0.1) / (hurt + 0.1));
@@ -351,6 +387,14 @@ pub fn outliers(results: &[PowerResult]) -> Vec<String> {
     ) {
         if f.travel <= j.travel {
             out.push("Flight is no faster than Super Jump".into());
+        }
+    }
+    if let (Some(j), Some(s)) = (
+        results.iter().find(|r| r.power == Power::SuperJump),
+        results.iter().find(|r| r.power == Power::SuperSpeed),
+    ) {
+        if s.travel <= j.travel {
+            out.push("Super Speed is no faster than Super Jump".into());
         }
     }
     out

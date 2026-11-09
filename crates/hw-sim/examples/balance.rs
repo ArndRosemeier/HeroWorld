@@ -5,8 +5,13 @@ use hw_sim::balance;
 use hw_sim::combat::power_spec;
 
 fn main() {
-    let (s, h) = balance::baseline();
-    println!("Strike alone: {s:.1} s, {:.0}% health lost", h * 100.0);
+    for level in [8, 12, 16, 20] {
+        let (s, h) = balance::baseline(level);
+        println!(
+            "Strike alone at level {level}: {s:.1} s, {:.0}% health lost",
+            h * 100.0
+        );
+    }
     let results = balance::run();
     println!("{:<16} tier  seconds  hurt  lost  worth  travel", "power");
     for r in &results {
