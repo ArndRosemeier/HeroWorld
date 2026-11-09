@@ -2,6 +2,7 @@
 //! z-fighting checker that keeps those meshes clean, the title screen, and
 //! people from Actors.
 
+pub mod bench;
 pub mod buildingmesh;
 pub mod carmesh;
 pub mod citymesh;

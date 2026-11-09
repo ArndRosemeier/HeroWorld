@@ -52,6 +52,12 @@ file; when they change, re-export the snapshot here.
   buildings, parked cars and props; people on foot step round props (`citizens.rs`). Extend
   the checks (`street_cars_keep_clear_of_buildings_and_props`, `no_building_stands_on_a_street`,
   `visible_things_are_solid`) for anything new, and never loosen them.
+- **Work that takes time runs on a worker thread by default** (Arnd's standing rule): generation,
+  mesh and texture building, simulation, anything with a loop over many things. The main thread
+  only hands finished results to Engine. Keep something on it only for a strong reason, and say
+  why in a comment; never "on the main thread first, move it out later".
+- Measure before and after a speed change: `scripts/bench.sh` (or `bench.bat`; `HW_BENCH=street|flight`,
+  see `crates/hw-client/src/bench.rs`) writes frame times and the update's sections to `logs/bench-*.txt`.
 - Warnings are errors. Do not silence a lint or skip a test to get green.
 
 ## Visual quality bar

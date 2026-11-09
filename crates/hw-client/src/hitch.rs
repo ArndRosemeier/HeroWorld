@@ -205,6 +205,55 @@ pub fn context(what: &'static str, value: impl Into<String>) {
     });
 }
 
+/// Starts gathering every frame's times and sections (for a benchmark,
+/// see `bench.rs`) until [`take_stats`].
+pub fn start_stats() {
+    with(|g| g.stats = Some(Stats::default()));
+}
+
+/// The frames gathered since [`start_stats`], and stops gathering.
+pub fn take_stats() -> Option<Stats> {
+    let mut out = None;
+    with(|g| out = g.stats.take());
+    out
+}
+
+/// Every frame's times, and the game's sections summed over them.
+#[derive(Clone, Debug, Default)]
+pub struct Stats {
+    /// Whole frames and the game's update in them (ms).
+    pub wall_ms: Vec<f32>,
+    pub update_ms: Vec<f32>,
+    /// Each section: its total over all frames and its worst frame (ms).
+    pub sections: Vec<(&'static str, f64, f32)>,
+    /// What the frames counted, summed.
+    pub counts: Vec<(&'static str, u64)>,
+    pub hitches: u32,
+}
+
+impl Stats {
+    fn add(&mut self, wall_ms: f32, r: &FrameRecord, hitch: bool) {
+        self.wall_ms.push(wall_ms);
+        self.update_ms.push(r.update_ms);
+        for &(name, ms) in &r.sections {
+            match self.sections.iter_mut().find(|(k, _, _)| *k == name) {
+                Some(s) => {
+                    s.1 += f64::from(ms);
+                    s.2 = s.2.max(ms);
+                }
+                None => self.sections.push((name, f64::from(ms), ms)),
+            }
+        }
+        for &(name, n) in &r.counts {
+            match self.counts.iter_mut().find(|(k, _)| *k == name) {
+                Some(c) => c.1 += n,
+                None => self.counts.push((name, n)),
+            }
+        }
+        self.hitches += u32::from(hitch);
+    }
+}
+
 fn with(f: impl FnOnce(&mut Guard)) {
     GUARD.with(|g| {
         if let Some(g) = g.borrow_mut().as_mut() {
@@ -247,6 +296,8 @@ struct Guard {
     /// whether Engine writes into our log now.
     engine_ms: f32,
     engine_log: bool,
+    /// Every frame, while a benchmark runs.
+    stats: Option<Stats>,
 }
 
 /// Frames and hitches since the last summary line.
@@ -287,6 +338,7 @@ impl Guard {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(33.0),
             engine_log: false,
+            stats: None,
         }
     }
 
@@ -347,6 +399,11 @@ impl Guard {
             record.update_ms > self.floor_ms && record.update_ms > usual_update * RATIO;
         let late = !pause && wall_ms > self.floor_ms && wall_ms > usual * RATIO;
         let hitch = late || slow_update;
+        if let Some(st) = self.stats.as_mut() {
+            if !pause {
+                st.add(wall_ms, &record, hitch);
+            }
+        }
         if hitch {
             m.hitches += 1;
         } else if pause {
@@ -528,7 +585,7 @@ impl Guard {
 
 /// The local time of day, from the system clock (UTC: there is no time
 /// zone without a dependency), with milliseconds.
-fn clock_time() -> String {
+pub(crate) fn clock_time() -> String {
     let d = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -722,6 +779,25 @@ mod tests {
         frame_with(&mut g, 430.0, 40.0);
         let log = std::fs::read_to_string(&g.path).unwrap();
         assert!(log.contains("game update 40.0 ms"), "{log}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stats_gather_every_frame_while_on() {
+        let dir = scratch("stats");
+        let mut g = guard(&dir);
+        frame(&mut g, 16.0);
+        g.stats = Some(Stats::default());
+        for _ in 0..60 {
+            frame(&mut g, 16.0);
+        }
+        frame(&mut g, 80.0);
+        let st = g.stats.take().unwrap();
+        assert_eq!(st.wall_ms.len(), 61);
+        assert_eq!(st.hitches, 1);
+        let town = st.sections.iter().find(|s| s.0 == "town").unwrap();
+        assert!((town.2 - 38.4).abs() < 0.01, "{town:?}");
+        assert_eq!(st.counts, vec![("cells built", 122)]);
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -265,6 +265,7 @@ fn main() -> EngineResult<()> {
             || (std::env::var_os("HW_VIEW").is_none()
                 && std::env::var_os("HW_JOIN").is_none()
                 && std::env::var_os("HW_AT").is_none()
+                && std::env::var_os("HW_BENCH").is_none()
                 && std::env::var_os("HW_HOST").is_none()));
     let mut name = std::env::var("HW_NAME").unwrap_or_else(|_| profile.name.clone());
     let auto_walk = std::env::var_os("HW_WALK").is_some();
@@ -455,6 +456,8 @@ fn main() -> EngineResult<()> {
         t0.elapsed().as_secs_f64()
     );
     let (spawn, spawn_dir) = generated.world.spawn_line();
+    // `HW_BENCH=street|flight`: a measured run along the main roads (see `bench.rs`).
+    let mut bench = hw_client::bench::Bench::from_env(&generated.world, spawn);
     let mut hero_cam_yaw = 30.0f32;
     let mut fly = match view.as_str() {
         "street" | "citizen" | "alpha" => {
@@ -1914,6 +1917,66 @@ fn main() -> EngineResult<()> {
                 if down {
                     hero_input.smash = false;
                     hero_input.blast = false;
+                }
+            }
+
+            // `HW_BENCH`: the hero goes the benchmark's way, then the report.
+            if let Some(b) = bench.as_mut() {
+                use hw_client::bench::{Route, Step};
+                match b.step(frame.time) {
+                    Step::Wait => {}
+                    Step::Go { at, dir, height } => {
+                        let floor = generated
+                            .world
+                            .ground(at)
+                            .max(hw_gen::urban::world::WATER_LEVEL);
+                        session.teleport(DVec3::new(at.x, floor + height, at.y));
+                        hero_cam.yaw = dir.x.atan2(dir.y).to_degrees() as f32;
+                        hero_cam.pitch = if b.route == Route::Flight {
+                            -22.0
+                        } else {
+                            -12.0
+                        };
+                        hero_flies = b.route == Route::Flight;
+                        hero_input.fly = hero_flies;
+                    }
+                    Step::Done => {
+                        let gpu = world.gpu_info().map_or("unknown".into(), |g| {
+                            format!("{} ({}, driver {})", g.name, g.backend, g.driver_info)
+                        });
+                        let facts = [
+                            ("GPU", gpu),
+                            (
+                                "picture",
+                                format!(
+                                    "{}x{}, quality {} at the end (setting {}), smooth {}, vsync {}",
+                                    frame.width,
+                                    frame.height,
+                                    world.quality().name(),
+                                    profile.quality,
+                                    profile.smooth,
+                                    profile.vsync
+                                ),
+                            ),
+                            ("world", format!("seed {world_seed}, {world_people} people")),
+                            (
+                                "timings",
+                                if std::env::var_os("ENGINE_GPU_PROFILE_EVERY").is_some() {
+                                    "Engine's GPU timings on: frames are slower than in play".into()
+                                } else {
+                                    "plain".into()
+                                },
+                            ),
+                        ];
+                        let stats = hw_client::hitch::take_stats().unwrap_or_default();
+                        let report = b.report(&stats, &facts);
+                        print!("{report}");
+                        if let Some(path) = b.write(&report) {
+                            println!("benchmark report: {}", path.display());
+                        }
+                        bench = None;
+                        world.request_exit();
+                    }
                 }
             }
 

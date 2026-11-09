@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.097 (2026-11-09)
+
+- A benchmark for checking how smoothly the game runs: `scripts\bench.bat` lets the hero run along the main roads and then fly over the town for a minute each, and writes how long every frame took to the `logs` folder.
+
 ## 0.096 (2026-11-09)
 
 - The mad scientist's Tesla tower has come alive: green arcs crackle from its dome into the yard, flicker and jump about, sparks lick off the ball on top, and a glow pulse climbs the coil.
