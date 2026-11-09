@@ -30,6 +30,9 @@ pub struct Profile {
     pub smooth: bool,
     pub vsync: bool,
     pub fov: f32,
+    /// Share of the window's resolution the scene is drawn at (0.5..1);
+    /// Engine's TAA upscales the rest. Below 1 helps slow graphics cards.
+    pub render_scale: f32,
     /// Mouse: look speed (1 is the default) and inverted up and down.
     pub look_speed: f32,
     pub invert_y: bool,
@@ -57,6 +60,7 @@ impl Default for Profile {
             smooth: true,
             vsync: true,
             fov: 55.0,
+            render_scale: 1.0,
             look_speed: 1.0,
             invert_y: false,
             hero: None,
@@ -123,6 +127,9 @@ impl Profile {
             fov: v["fov"]
                 .as_f64()
                 .map_or(d.fov, |x| (x as f32).clamp(45.0, 90.0)),
+            render_scale: v["render_scale"]
+                .as_f64()
+                .map_or(d.render_scale, |x| (x as f32).clamp(0.5, 1.0)),
             look_speed: v["look_speed"]
                 .as_f64()
                 .map_or(d.look_speed, |x| (x as f32).clamp(0.3, 3.0)),
@@ -146,6 +153,7 @@ impl Profile {
             "smooth": self.smooth,
             "vsync": self.vsync,
             "fov": self.fov,
+            "render_scale": self.render_scale,
             "look_speed": self.look_speed,
             "invert_y": self.invert_y,
             "hero": self.hero.as_ref().map(sheet_to_json),
@@ -259,6 +267,7 @@ mod tests {
             smooth: false,
             vsync: false,
             fov: 70.0,
+            render_scale: 0.75,
             look_speed: 1.6,
             invert_y: true,
             hero: Some(hw_sim::progress::starter()),
@@ -275,7 +284,7 @@ mod tests {
             },
         };
         assert_eq!(Profile::from_json(&p.to_json()), p);
-        let junk = json!({"name": 7, "music": 9.0, "seed": "x", "people": "many", "quality": "max", "fov": 500});
+        let junk = json!({"name": 7, "music": 9.0, "seed": "x", "people": "many", "quality": "max", "fov": 500, "render_scale": 0.1});
         let q = Profile::from_json(&junk);
         assert_eq!(q.name, "Hero");
         assert_eq!(q.music, 1.0);
@@ -283,6 +292,7 @@ mod tests {
         assert_eq!(q.people, hw_sim::DEFAULT_POPULATION);
         assert_eq!(q.quality, "high");
         assert_eq!(q.fov, 90.0);
+        assert_eq!(q.render_scale, 0.5);
         assert_eq!(q.hero, None);
         assert_eq!(q.look, None);
         // A hero file with a power from a later version keeps the rest.

@@ -2343,12 +2343,17 @@ fn main() -> EngineResult<()> {
                                 ),
                             ),
                             (
+                                "render scale",
+                                format!("{:.0}%", world.render_scale() * 100.0),
+                            ),
+                            (
                                 "occlusion",
                                 if world.occlusion_culling() {
                                     let (n, tested, hidden) = bench_occlusion;
                                     let n = n.max(1);
                                     format!(
-                                        "on: {} meshes tested a frame, {} hidden ({:.0}%)",
+                                        "{:?}: {} meshes tested a frame, {} hidden ({:.0}%)",
+                                        world.occlusion_mode(),
                                         tested / n,
                                         hidden / n,
                                         100.0 * hidden as f64 / tested.max(1) as f64

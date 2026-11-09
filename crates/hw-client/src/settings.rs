@@ -46,9 +46,13 @@ pub fn apply_volumes(world: &mut World, p: &Profile) {
 pub fn apply(world: &mut World, p: &Profile) {
     world.set_quality(quality(p));
     crate::lighting::apply_quality(world, quality(p));
-    // Skip what hides behind buildings: from the street most of the town
-    // does (`ENGINE_OCCLUSION=0` compares without).
-    world.set_occlusion_culling(true);
+    // Skip what hides behind buildings where it pays: from the street most
+    // of the town does; Engine switches the test off by itself where it
+    // hides little (high in the air, open country). `ENGINE_OCCLUSION=0|1`
+    // compares.
+    world.set_occlusion_mode(engine::OcclusionMode::Auto);
+    // Draw the scene smaller on slow cards; TAA upscales it to the window.
+    world.set_render_scale(p.render_scale);
     let _ = world.set_target_fps(p.smooth.then_some(SMOOTH_FPS));
     world.set_vsync(p.vsync);
     let near = world.camera().near();
@@ -111,6 +115,29 @@ pub fn settings_ui(ui: &mut egui::Ui, p: &mut Profile, accent: egui::Color32) ->
             .add(egui::Slider::new(&mut p.fov, 45.0..=90.0).suffix("°"))
             .changed();
     });
+    ui.horizontal(|ui| {
+        ui.label("Render resolution");
+        let mut pct = (p.render_scale * 100.0).round();
+        if ui
+            .add(
+                egui::Slider::new(&mut pct, 50.0..=100.0)
+                    .step_by(5.0)
+                    .suffix("%"),
+            )
+            .changed()
+        {
+            p.render_scale = pct / 100.0;
+            changed = true;
+        }
+    });
+    if p.render_scale < 1.0 {
+        ui.label(
+            egui::RichText::new(
+                "Drawn smaller and sharpened up to the window: faster, a little softer.",
+            )
+            .weak(),
+        );
+    }
     ui.add_space(4.0);
     ui.label(egui::RichText::new("Mouse").strong().color(gold));
     ui.horizontal(|ui| {

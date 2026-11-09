@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.118 (2026-11-09)
+
+- Built on the newest Engine (0.023): it sends many buildings to the graphics card in one go, remembers the shadows of things that don't move, draws far sun shadows on alternate frames and turns its hidden-building test on only where it helps. Busy streets should run smoother, with the same picture.
+- New setting: **Render resolution** (Settings, Picture). Below 100% the world is drawn smaller and sharpened up to your window, for laptops and slower graphics cards.
+
 ## 0.117 (2026-11-09)
 
 - Five new powers. **Freeze Ray** (tier 2) sprays a cone of frost: minions freeze in a block of ice, tougher villains slow down, and the next punch shatters the ice for double damage. Spray it at a burning house and the fire dies down.

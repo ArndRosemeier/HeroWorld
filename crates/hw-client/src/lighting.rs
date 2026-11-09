@@ -149,6 +149,19 @@ pub fn bloom(world: &World, hour: f32) -> BloomSettings {
         .unwrap_or(b)
 }
 
+/// Hours per step of the sun. Engine keeps the shadows of things that
+/// don't move in a cache while the sun stays put, but the running day moves
+/// it every frame, which would redraw them every frame. Stepping it a
+/// quarter of a real second at a time keeps the cache for ~15 frames; even
+/// at sunset a long shadow's tip moves less per step than a far shadow
+/// texel.
+pub const SUN_STEP_HOURS: f32 = (0.25 / hw_sim::clock::SECONDS_PER_HOUR) as f32;
+
+/// `hour` rounded to the sun's step.
+pub fn sun_step(hour: f32) -> f32 {
+    (hour / SUN_STEP_HOURS).round() * SUN_STEP_HOURS
+}
+
 /// The sky at `hour`, with the look that goes with it. Use this instead
 /// of `World::set_physical_sky`.
 pub fn set_sky(world: &mut World, hour: f32) {
@@ -158,6 +171,7 @@ pub fn set_sky(world: &mut World, hour: f32) {
 /// The sky at `hour` with the camera `wet` (0..1) under a rain cloud (the
 /// weather tower's): the sky greys over and the sun goes in.
 pub fn set_sky_wet(world: &mut World, hour: f32, wet: f32) {
+    let hour = sun_step(hour);
     let w = wet.clamp(0.0, 1.0);
     let mix = |a: f32, b: f32| a + (b - a) * w;
     let sky = PhysicalSky {
@@ -190,6 +204,18 @@ pub fn set_sky_wet(world: &mut World, hour: f32, wet: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sun_steps_but_keeps_time() {
+        // Frames within one step share the sun (the shadow cache holds)...
+        let a = 15.5;
+        assert_eq!(sun_step(a), sun_step(a + SUN_STEP_HOURS * 0.3));
+        // ...and the stepped hour never strays more than half a step.
+        for i in 0..2400 {
+            let h = i as f32 * 0.01;
+            assert!((sun_step(h) - h).abs() <= SUN_STEP_HOURS * 0.5 + 1e-4);
+        }
+    }
 
     #[test]
     fn grades_are_valid_all_day() {
