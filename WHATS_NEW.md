@@ -3,6 +3,17 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.078 (2026-11-09)
+
+- Three new factions. The **mole folk** of Molehaven guard the lift down to their cavern, and
+  sometimes surface in town, frightened: hold E near them to talk them down and Molehaven
+  will like you better, or fight them.
+- **Sky pirates** moor a patched airship over the harbour with lookouts on the quay, and raid
+  shops from an airship hanging over the street, rope ladders down. Their captain leads.
+- The **Iron-Masked Empire** lands in iron capsules and holds townsfolk captive. The really evil
+  ones: masked legionaries with shock rifles and a gilded praetorian. They wait until your team
+  is strong enough, and never jump an unknown hero.
+
 ## 0.077 (2026-11-09)
 
 - Levels 6 to 20 now have powers to buy: eight new ones, two for each tier, each in two looks.

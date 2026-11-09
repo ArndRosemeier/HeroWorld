@@ -194,7 +194,9 @@ Arnd's direction (2026-11-08): this is a world that goes on without the heroes, 
 | The Doctor's Lab | mutant brutes, ray-gun technicians, robo-sentries, the colossus | the dystopian quarter | unfriendly (warns, then fights) |
 | Chrome Jackets | greasers in leather and denim: muggings, street crime | corners in the band round the quarter | unfriendly |
 | Velvet Syndicate | pinstriped gunsels with ray pistols: robberies, rackets | | neutral |
-| Molehaven | the mole people | the underground | neutral |
+| Molehaven | the mole people: delvers with picks and goggles | the underground; guards by Molehaven's lift | neutral (fight back; can be talked down) |
+| Sky Pirates | buccaneers, deck gunners and a captain from an airship | a moored airship over the harbour, lookouts on the quay | unfriendly (warns on the quay) |
+| Iron-Masked Empire | the Iron Legion: masked legionaries and a praetorian, from beyond the sea | none in town: they land in iron capsules | unfriendly, the really evil one (hates everyone; holds townsfolk captive) |
 
 The world reacts to trouble too: pedestrians back away, run or gawk, and cars brake and queue round a mugging, a fight or a collapse (the crowd and traffic "alarm" system).
 

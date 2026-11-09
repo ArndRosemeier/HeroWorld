@@ -248,7 +248,7 @@ targeting, ragdolls, nobody dies.
 
 ### Factions (`hw-sim/src/factions.rs`)
 
-Six factions with a standing toward each other from −100 to 100: Hostile (≤ −60),
+Eight factions with a standing toward each other from −100 to 100: Hostile (≤ −60),
 Unfriendly (≤ −20), Neutral, Friendly (≥ 20), Allied (≥ 60).
 
 A hero belongs to none. **Each faction starts out regarding a new hero exactly as it regards
@@ -264,7 +264,9 @@ shows where you stand.
 | The Doctor's Lab | the mad scientist's mutants, technicians and robots | Unfriendly (−40) | Hates the Patrol and the Syndicate. |
 | Chrome Jackets | greaser street gang | Unfriendly (−30) | At war with the Syndicate. |
 | Velvet Syndicate | pinstriped gunsels, organised crime | Neutral (−10) | Keeps the peace when it suits business. |
-| Moles | Molehaven's mole folk | Neutral (0) | Hate the Lab's diggers. No fighters. |
+| Moles | Molehaven's mole folk | Neutral (0) | Hate the Lab and the Empire. Delvers guard Molehaven's lift and sometimes surface in town, frightened: hold E near them for 3 s to talk them down (+6 with Molehaven), or fight them (no friends made). |
+| Sky Pirates | an airship crew | Unfriendly (−30) | Moor over the harbour with lookouts on the quay (warn, then fight); raid shops from an airship moored over the street (12 m reach). |
+| Iron-Masked Empire | the Iron Legion, from beyond the sea | Unfriendly (−55) | Hates everyone. Lands in iron capsules and holds two townsfolk captive (20 m reach); only once the team is level 2 and has two heroes, or rarely alone. Never attacks an unknown hero on sight. |
 
 **What a villain does about a hero** (`factions::react`):
 
@@ -292,6 +294,12 @@ Numbers at level 1; health and damage scale with the villain's level like a hero
 | Robo-Sentry | Lab | Lieutenant | 150 | 10 every 2.4 s | 26 m | 20 | A walking robot with a ray cannon; the dish on its back shields every villain within 9 m. Break the dish first (a weak point). |
 | Mutant Alpha | Lab | Boss | 300 | 14 every 2 s | 2.8 m | 45 | Bald, dark, tusked, blazing eyes. Leads rampages and some corners. Every 9 s or so it **crouches (0.9 s) and leaps** 7–24 m onto a hero, hitting everyone within 4.5 m of where it lands. Get out of the way. |
 | The Doctor's Colossus | Lab | Colossus | 1 300 core | 20 | 140 m | 400 | The walking tank (below). |
+| Delver | Moles | Minion | 50 | 6.5 every 2 s | 2.4 m | 6 | Pale, goggled mole miner with a pick. |
+| Buccaneer | Sky Pirates | Minion | 42 | 6.5 every 1.7 s | 2.5 m | 6 | Striped shirt, cutlass. |
+| Deck Gunner | Sky Pirates | Minion | 34 | 6.5 every 2.4 s | 26 m | 6 | Long coat, ray musket. |
+| Sky Captain | Sky Pirates | Lieutenant | 160 | 11 every 1.9 s | 2.7 m | 22 | Wide hat, red beard, gilded cutlass. Leads raids. |
+| Legionary | Empire | Minion | 48 | 7.5 every 2.6 s | 28 m | 8 | Iron mask and cuirass, shock rifle. |
+| Praetorian | Empire | Lieutenant | 190 | 12 every 2.2 s | 3 m | 24 | Gilded mask and cuirass, shock lance. Leads landings. |
 | Weak point | – | Part | 240 | – | – | 25 | A breakable part of a robot: the colossus's knees and cannon, the sentry's dish. Tab to it. |
 
 Brutes, technicians, Jackets and gunsels are knocked down by knockback powers; the sentry,
@@ -653,7 +661,7 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | Heroes | 20 levels, 8 powers in 3 tiers, two themes each, 5 origins and affinities | Powers in tiers 4–7, super speed, more themes, power roles and budget balancing; a level-cap/tier thread is working on this now |
 | Looks | Creator with six costumes and sliders | Full costume creator, capes, masks (in progress) |
 | Combat | Minions, lieutenant, boss, colossus, drones, revive, hospital | NPC heroes and Hero Hall, the Doctor in person, more villain groups |
-| Factions | Six factions, regard, turf warnings | Patrol units, Moles that act, turf changing hands |
+| Factions | Eight factions, regard, turf warnings; mole folk, sky pirates and the Iron Legion with their own incidents and homes | Patrol units, turf changing hands |
 | Co-op | Host's level for all | Per-player sidekick and exemplar levels |
 | Destruction | Buildings, props, cars, self-repair, collateral tally | Collateral cost and careful-hero bonus, digging and craters |
 | Saves | Hero on each PC; world save in `hw-headless` and for host migration | World save for the single-player game |
