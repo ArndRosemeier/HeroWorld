@@ -81,6 +81,8 @@ pub enum DebugAction {
     Map,
     /// Upload every mesh (true) or every texture (false) to the GPU again.
     Reupload(bool),
+    /// Engine's drawing-check flags (`World::set_debug_shading`).
+    Shading(u32),
 }
 
 /// The tab showing.
@@ -105,6 +107,8 @@ pub struct DebugInfo<'a> {
     pub local: bool,
     /// The hero file is no longer saved (debug changes or `HW_LEVEL`).
     pub unsaved: bool,
+    /// Engine's drawing-check flags (`World::set_debug_shading`).
+    pub shading: u32,
 }
 
 /// The debug menu: open or not, its tab and the town's places.
@@ -407,6 +411,16 @@ fn world_tab(ui: &mut egui::Ui, info: &DebugInfo, out: &mut Vec<DebugAction>) {
         }
         if ui.button("Re-upload textures").clicked() {
             out.push(DebugAction::Reupload(false));
+        }
+    });
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new("Drawing checks").strong());
+    ui.horizontal_wrapped(|ui| {
+        for (bit, name) in engine::world::DEBUG_SHADING_FLAGS {
+            let mut on = info.shading & bit != 0;
+            if ui.checkbox(&mut on, name).changed() {
+                out.push(DebugAction::Shading(info.shading ^ bit));
+            }
         }
     });
 }

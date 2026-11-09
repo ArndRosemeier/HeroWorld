@@ -1022,6 +1022,13 @@ fn main() -> EngineResult<()> {
                 p.smooth &= !shooting;
                 hw_client::settings::apply(world, &p);
                 hw_client::settings::apply_volumes(world, &p);
+                // `HW_SHADING=<flags>`: Engine's drawing checks from the start.
+                if let Some(f) = std::env::var("HW_SHADING")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                {
+                    world.set_debug_shading(f);
+                }
                 // `HW_CRASH_TEST=1`: crash at once (tries the crash reporter).
                 if std::env::var_os("HW_CRASH_TEST").is_some() {
                     panic!("HW_CRASH_TEST asked for a crash");
@@ -1314,6 +1321,7 @@ fn main() -> EngineResult<()> {
                     hour: game_hour(),
                     local: !session.joined(),
                     unsaved: cheated,
+                    shading: world.debug_shading(),
                 };
                 let at = me.unwrap_or_else(|| world.camera().eye().as_dvec3());
                 for a in debug.ui(frame.ui.ctx(), &info) {
@@ -1454,6 +1462,10 @@ fn main() -> EngineResult<()> {
                                 "re-upload textures"
                             });
                             world.request_gpu_reupload(meshes, !meshes);
+                        }
+                        A::Shading(flags) => {
+                            quality_log.mark(&format!("drawing checks {flags}"));
+                            world.set_debug_shading(flags);
                         }
                     }
                 }
