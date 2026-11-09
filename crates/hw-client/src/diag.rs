@@ -35,6 +35,7 @@ pub fn load_env_file() {
 pub struct QualityLog {
     file: Option<std::fs::File>,
     last: Option<(f32, bool, bool)>,
+    lens: Option<(f32, f32, f32)>,
     frame: u64,
 }
 
@@ -50,6 +51,7 @@ impl QualityLog {
         let mut log = Self {
             file,
             last: None,
+            lens: None,
             frame: 0,
         };
         let only = std::env::var("ENGINE_TUNE_ONLY").unwrap_or_default();
@@ -79,6 +81,16 @@ impl QualityLog {
     /// Call once per frame.
     pub fn note(&mut self, world: &World, seconds: f32) {
         self.frame += 1;
+        let cam = world.camera();
+        let lens = (cam.near(), cam.far(), cam.fov_y_degrees());
+        if self.lens != Some(lens) {
+            self.lens = Some(lens);
+            let line = format!(
+                "{seconds:7.2} s frame {:6}: camera near {} far {} fov {}",
+                self.frame, lens.0, lens.1, lens.2
+            );
+            self.line(&line);
+        }
         let now = (
             world.lod_bias(),
             world.ambient_occlusion().is_some(),
