@@ -252,6 +252,8 @@ fn main() -> EngineResult<()> {
     let env_num = |name: &str| std::env::var(name).ok().and_then(|s| s.parse::<u64>().ok());
     let view = std::env::var("HW_VIEW").unwrap_or_else(|_| "hero".into());
     let profile = Profile::load();
+    hw_client::diag::load_env_file();
+    let mut quality_log = hw_client::diag::QualityLog::open();
     let title_mode = std::env::var("HW_TITLE").map_or(true, |v| v != "0")
         && (view == "title"
             || (std::env::var_os("HW_VIEW").is_none()
@@ -1012,6 +1014,7 @@ fn main() -> EngineResult<()> {
     let run = Engine::run(
         format!("HeroWorld {}", hw_core::version()),
         move |world, frame| {
+            quality_log.note(world, t0.elapsed().as_secs_f32());
             if frame.first {
                 world.set_view_distance(6000.0)?;
                 // The player's settings (screenshots keep full detail).
@@ -1228,6 +1231,7 @@ fn main() -> EngineResult<()> {
                     // Off we go: the camera swoops down to the hero.
                     let (eye, yaw, pitch) = t.camera(&generated.world, &solids);
                     swoop = Some((frame.time, eye, yaw, pitch));
+                    quality_log.mark("the game starts (title left)");
                     hero_cam.yaw = yaw;
                     music_fade_at = Some(frame.time + 20.0);
                     t.profile.played = true;
