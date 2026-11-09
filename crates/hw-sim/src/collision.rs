@@ -1142,11 +1142,17 @@ impl Obstacles {
 
     /// Moves a body by its velocity for `dt` seconds: walls stop it, roofs
     /// and ledges catch it, gravity is the caller's business.
+    ///
+    /// A body that stands on something and is not rising keeps its feet on
+    /// the ground going down a slope, a kerb or a stair (down to [`STEP`]),
+    /// as it steps up the same height: it only leaves the ground where the
+    /// ground really drops away. Clear `grounded` first to move freely (flight).
     pub fn move_body(&self, body: &mut Body, dt: f64) {
         // Sub-steps keep fast bodies from passing through thin walls.
         let travel = body.vel.length() * dt;
         let steps = ((travel / (BODY_RADIUS * 0.8)).ceil() as usize).clamp(1, 32);
         let h = dt / steps as f64;
+        let mut on_ground = body.grounded;
         body.grounded = false;
         for _ in 0..steps {
             let mut next = body.pos + body.vel * h;
@@ -1193,7 +1199,11 @@ impl Obstacles {
             }
             // Land on whatever is below, stepping up small ledges.
             let floor = self.floor_under(DVec2::new(next.x, next.z), next.y.max(body.pos.y) + STEP);
-            if next.y <= floor {
+            // Stepping down: still on the ground if it is no more than a
+            // step below the feet.
+            let step_down = on_ground && body.vel.y <= 0.0 && next.y - floor <= STEP;
+            on_ground = next.y <= floor || step_down;
+            if on_ground {
                 next.y = floor;
                 body.vel.y = body.vel.y.max(0.0);
                 body.grounded = true;
@@ -1403,6 +1413,136 @@ mod tests {
         assert!(body.pos.y < -3.0, "climbed the quay: {:?}", body.pos);
         let reached = DVec2::new(body.pos.x, body.pos.z).distance(mid);
         assert!(reached < river.width * 0.5 + 1.0, "went {reached} m");
+    }
+
+    /// Runs east for `ticks` ticks with the hero's own movement code;
+    /// returns the ticks it was off the ground and where it ended.
+    fn run_east(o: &Obstacles, moves: crate::Moves, boost: bool, ticks: usize) -> (usize, DVec3) {
+        let x0 = -2.0;
+        let mut b = Body {
+            pos: DVec3::new(x0, o.floor_under(DVec2::new(x0, 0.0), 50.0), 0.0),
+            vel: DVec3::ZERO,
+            grounded: true,
+        };
+        let input = hw_net::InputState {
+            move_x: 1.0,
+            boost,
+            ..Default::default()
+        };
+        let mut air = 0;
+        for _ in 0..ticks {
+            crate::step_moving(&mut b, input, o, moves);
+            if !b.grounded {
+                air += 1;
+            }
+        }
+        (air, b.pos)
+    }
+
+    const SPEEDSTER: crate::Moves = crate::Moves {
+        fly: false,
+        super_jump: false,
+        speed: true,
+    };
+
+    /// A downhill run, a kerb, a flight of stairs down: the hero never
+    /// leaves the ground (the client would show a fall).
+    #[test]
+    fn running_down_slopes_kerbs_and_stairs_stays_grounded() {
+        // Slopes, from a gentle street to a steep hill, on foot and at super speed.
+        for grade in [0.02, 0.05, 0.1, 0.2, 0.35] {
+            let mut o = Obstacles::flat(-1000.0);
+            o.terrain = Some(Terrain(Arc::new(move |p: DVec2| -p.x * grade)));
+            for (moves, boost) in [
+                (crate::Moves::ON_FOOT, false),
+                (SPEEDSTER, false),
+                (SPEEDSTER, true),
+            ] {
+                let (air, end) = run_east(&o, moves, boost, 90);
+                assert_eq!(
+                    air, 0,
+                    "grade {grade}, {moves:?} boost {boost}: {air} ticks off the ground"
+                );
+                assert!(end.x > 15.0, "did not run: {end}");
+                assert!((end.y - o.ground_at(DVec2::new(end.x, end.z))).abs() < 1e-9);
+            }
+        }
+        // A pavement with a kerb down to the road, and a flight of stairs
+        // down from a terrace: 15 cm, then twelve 18 cm steps.
+        let mut o = Obstacles::flat(0.0);
+        let mut slab = |x0: f64, x1: f64, top: f64| {
+            o.add(Solid {
+                origin: DVec2::new(x0, -20.0),
+                along: DVec2::X,
+                inward: DVec2::Y,
+                min: DVec2::ZERO,
+                max: DVec2::new(x1 - x0, 40.0),
+                y0: -1.0,
+                y1: top,
+            })
+        };
+        let top = 12.0 * 0.18;
+        slab(-10.0, 2.0, top);
+        for k in 0..12 {
+            let x = 2.0 + k as f64 * 0.3;
+            slab(x, x + 0.3, top - (k + 1) as f64 * 0.18 + 0.15);
+        }
+        slab(5.6, 10.0, 0.15);
+        for (moves, boost) in [
+            (crate::Moves::ON_FOOT, false),
+            (SPEEDSTER, false),
+            (SPEEDSTER, true),
+        ] {
+            let (air, end) = run_east(&o, moves, boost, 90);
+            assert_eq!(
+                air, 0,
+                "{moves:?} boost {boost}: {air} ticks off the ground"
+            );
+            assert!(
+                end.x > 12.0 && end.y == 0.0,
+                "did not reach the road: {end}"
+            );
+        }
+    }
+
+    /// Stepping down is only for small drops: off a real ledge the hero
+    /// falls, and a jump downhill still leaves the ground.
+    #[test]
+    fn a_ledge_or_a_jump_still_leaves_the_ground() {
+        let mut o = Obstacles::flat(0.0);
+        o.add(Solid {
+            origin: DVec2::new(-10.0, -20.0),
+            along: DVec2::X,
+            inward: DVec2::Y,
+            min: DVec2::ZERO,
+            max: DVec2::new(10.0, 40.0),
+            y0: 0.0,
+            y1: 2.0,
+        });
+        let (air, end) = run_east(&o, crate::Moves::ON_FOOT, false, 30);
+        assert!(
+            air >= 5,
+            "stuck to the ground off a 2 m ledge ({air} ticks in the air)"
+        );
+        assert_eq!(end.y, 0.0);
+
+        let mut o = Obstacles::flat(-1000.0);
+        o.terrain = Some(Terrain(Arc::new(|p: DVec2| -p.x * 0.1)));
+        let mut b = Body {
+            pos: DVec3::new(0.0, 0.0, 0.0),
+            vel: DVec3::new(7.0, 0.0, 0.0),
+            grounded: true,
+        };
+        let jump = hw_net::InputState {
+            move_x: 1.0,
+            jump: true,
+            ..Default::default()
+        };
+        crate::step_moving(&mut b, jump, &o, crate::Moves::ON_FOOT);
+        assert!(
+            !b.grounded && b.vel.y > 0.0,
+            "the jump did not leave the ground"
+        );
     }
 
     fn one_box() -> Obstacles {

@@ -28,6 +28,9 @@ pub struct Drive {
 /// Height of the body's middle above the feet: a flier tips about it.
 pub const PIVOT: f32 = 1.0;
 
+/// Seconds off the ground, not jumping, before the fall loop shows.
+pub const AIR_GRACE: f32 = 0.15;
+
 #[derive(Clone, Debug)]
 pub struct HeroAnim {
     yaw: f32,
@@ -128,12 +131,18 @@ impl HeroAnim {
                 // Hovering: lean a little into the drift.
                 ("hover", 1.0, false, (speed * 4.0).min(15.0), 0.0)
             }
-        } else if grounded {
-            if self.air > 0.45 && speed < 5.0 {
-                self.landing = 0.55;
+        } else if grounded || (self.air + dt < AIR_GRACE && vel.y <= 1.0) {
+            // A moment off the ground without a jump (a missed update, a
+            // drop the server steps down) keeps the run going.
+            if grounded {
+                if self.air > 0.45 && speed < 5.0 {
+                    self.landing = 0.55;
+                }
+                self.air = 0.0;
+                self.rising = 0.0;
+            } else {
+                self.air += dt;
             }
-            self.air = 0.0;
-            self.rising = 0.0;
             if self.landing > 0.0 {
                 self.landing -= dt;
                 ("jump land", 1.0, true, 0.0, 0.0)
@@ -210,6 +219,30 @@ mod tests {
             a.step(Vec3::ZERO, true, Some(false), 0.016).clip,
             "jump land"
         );
+    }
+
+    #[test]
+    fn a_moment_off_the_ground_is_no_fall() {
+        let mut a = HeroAnim::default();
+        let run = Vec3::new(7.0, 0.0, 0.0);
+        a.step(run, true, Some(false), 0.016);
+        // A blip under the grace: still running.
+        for _ in 0..6 {
+            let d = a.step(run - Vec3::Y, false, Some(false), 0.016);
+            assert_eq!(d.clip, "sprint");
+        }
+        a.step(run, true, Some(false), 0.016);
+        // Off a ledge for real: the fall shows once the grace is over.
+        let mut d = a.step(run, false, Some(false), 0.016);
+        for _ in 0..20 {
+            d = a.step(run - Vec3::Y * 3.0, false, Some(false), 0.016);
+        }
+        assert_eq!(d.clip, "jump");
+        // A jump shows at once.
+        let mut b = HeroAnim::default();
+        b.step(run, true, Some(false), 0.016);
+        let d = b.step(run + Vec3::Y * 8.0, false, Some(false), 0.016);
+        assert_eq!(d.clip, "jump start");
     }
 
     #[test]

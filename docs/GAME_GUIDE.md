@@ -109,6 +109,11 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | K | Knock nearby townspeople over (a ragdoll test, still in the game) |
 | Escape | Menu: back, settings, controls, quit; frees a locked mouse first |
 
+On foot the hero steps up and down ledges up to 0.45 m (`collision::STEP`) without
+leaving the ground, so slopes, kerbs and stairs never count as a fall; a bigger drop
+does. The fall pose shows only after 0.15 s off the ground (`heroview::AIR_GRACE`),
+a jump at once.
+
 Without a target, left mouse punches what is in front of you (walls, props, cars) and Q
 fires a blast down the crosshair (up to 90 m), so the same keys fight villains and break the
 town.

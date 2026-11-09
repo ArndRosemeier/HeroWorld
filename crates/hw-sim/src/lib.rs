@@ -328,6 +328,8 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
     input.fly &= moves.fly;
     if input.fly {
         fly_step(body, input);
+        // A flier is not held to the ground (see `move_body`).
+        body.grounded = false;
         solids.move_body(body, DT);
         if body.pos.y > FLY_CEILING {
             body.pos.y = FLY_CEILING;

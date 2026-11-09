@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.094 (2026-11-09)
+
+- Running down a sloping street, off a kerb or down stairs no longer flashes the falling pose: your hero keeps their feet on the ground and only falls where the ground really drops away. Jumping downhill works properly too.
+
 ## 0.093 (2026-11-09)
 
 - Behind the scenes: the checks run before each update are much quicker, so new things reach you sooner. Nothing in the game changes.
