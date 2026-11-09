@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.104 (2026-11-09)
+
+- The game needs less memory: the town's buildings and streets are no longer kept twice (once for the graphics card and once more in the computer's memory). About 0.7 GB less in a test run.
+
 ## 0.103 (2026-11-09)
 
 - Every town now has an airfield just past its last houses: a red-and-white mooring mast with a glass lift, a little terminal under a boomerang roof, and a windsock.

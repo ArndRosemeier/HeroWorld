@@ -761,6 +761,7 @@ run, or put them in a `.bat`.
 | `HW_GAMEHUB_URL` | Another GameHub server. |
 | `HW_CRASH_TEST=1`, `HW_CRASH_DIR` | Crash at once to try the reporter; move its folder. |
 | `HW_PACKS` | Where the Actors packs are. |
+| `HW_KEEP_MESHES=1` | Keep every mesh in RAM as well as on the graphics card (the old way, to compare memory). |
 | `ENGINE_FRAME_STATS=1` | Engine's frame statistics. |
 | `ENGINE_ZFIGHT=1` | Mark z-fighting spots. |
 | `ENGINE_SCREENSHOT=...` | Write a screenshot (with `ENGINE_SCREENSHOT_FRAME`). |

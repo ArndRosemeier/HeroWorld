@@ -1134,6 +1134,13 @@ fn main() -> EngineResult<()> {
                     t0.elapsed().as_secs_f64()
                 ));
                 world.set_view_distance(6000.0)?;
+                // Meshes live on the graphics card only: Engine lets go of
+                // its RAM copy once uploaded (feet still stand on them).
+                // Robot parts are shattered the frame they are made, before
+                // that. `HW_KEEP_MESHES=1` keeps the copies (to compare).
+                if std::env::var_os("HW_KEEP_MESHES").is_none() {
+                    world.set_cpu_meshes(engine::CpuMeshes::Release);
+                }
                 // The player's settings (screenshots keep full detail).
                 let mut p = profile.clone();
                 p.smooth &= !shooting;
@@ -2020,6 +2027,16 @@ fn main() -> EngineResult<()> {
                                 ),
                             ),
                             ("world", format!("seed {world_seed}, {world_people} people")),
+                            (
+                                "meshes in RAM",
+                                format!(
+                                    "{:.0} MB, ground {:.0} MB ({} released after upload, {:?})",
+                                    world.cpu_mesh_bytes() as f64 / 1048576.0,
+                                    world.ground_mesh_bytes() as f64 / 1048576.0,
+                                    world.cpu_mesh_counts().0,
+                                    world.cpu_meshes()
+                                ),
+                            ),
                             (
                                 "timings",
                                 if std::env::var_os("ENGINE_GPU_PROFILE_EVERY").is_some() {
