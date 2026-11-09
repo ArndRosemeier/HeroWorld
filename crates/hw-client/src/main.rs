@@ -81,11 +81,11 @@
 mod session;
 
 use engine::prelude::*;
-use engine::stream::{StreamSettings, WorldStream};
 use glam::{DVec2, DVec3, Vec3};
 use hw_client::citymesh;
 use hw_client::crowdview::CrowdView;
 use hw_client::damageview::DamageView;
+use hw_client::extras::{ExtrasLoad, TownExtras};
 use hw_client::fightview::{self, FightView};
 use hw_client::heroview::{tipped_origin, HeroAnim};
 use hw_client::looks;
@@ -94,7 +94,7 @@ use hw_client::powersview::{PowerAction, PowersView};
 use hw_client::profile::Profile;
 use hw_client::robotview::RobotView;
 use hw_client::title::{self, Choice, Title};
-use hw_client::townmesh::{TownGround, TownView};
+use hw_client::townmesh::TownView;
 use hw_core::Seed;
 use hw_sim::collision::{Obstacles, BODY_HEIGHT};
 use hw_sim::GeneratedTown;
@@ -107,6 +107,8 @@ const BUILD_BUDGET_MS: f64 = 6.0;
 /// Milliseconds per frame for putting cells drawn on worker threads into
 /// the world behind the title (and for its props).
 const TITLE_BUILD_MS: f64 = 5.0;
+/// Milliseconds per frame for putting the town's extras into the world.
+const EXTRAS_MS: f64 = 4.0;
 /// The hour the game is played at: mid-afternoon, a sun low enough to
 /// model the facades and throw long shadows (the title is at golden hour).
 const GAME_HOUR: f32 = hw_sim::clock::START_HOUR as f32;
@@ -1012,6 +1014,7 @@ fn main() -> EngineResult<()> {
     // Behind the title the props, trees and ground come in once the logo
     // has landed (they take a moment), not on the first frame.
     let mut extras_loaded = false;
+    let mut extras_load: Option<ExtrasLoad> = None;
     // From the title down to the hero: (start, eye, yaw, pitch).
     let mut swoop: Option<(f32, Vec3, f32, f32)> = None;
     let mut music_fade_at: Option<f32> = None;
@@ -1044,6 +1047,10 @@ fn main() -> EngineResult<()> {
             quality_log.note(world, t0.elapsed().as_secs_f32());
             if frame.first {
                 hw_client::hitch::mark("first frame");
+                hw_client::hitch::line(format!(
+                    "first frame, {:.1} s after the start (the town was planned before the window opened)",
+                    t0.elapsed().as_secs_f64()
+                ));
                 world.set_view_distance(6000.0)?;
                 // The player's settings (screenshots keep full detail).
                 let mut p = profile.clone();
@@ -1074,7 +1081,11 @@ fn main() -> EngineResult<()> {
                 let all_now = title_screen.is_none() || shooting;
                 if all_now {
                     town.build_all(world, eye);
-                    extras = spawn_extras(world, &generated, town.green.clone())?;
+                    extras = hw_client::extras::spawn_now(
+                        world,
+                        generated.world.clone(),
+                        town.green.clone(),
+                    )?;
                     extras_loaded = true;
                     // `HW_VIEW=capsule`: a tube capsule standing at the
                     // nearest platform, for a close-up.
@@ -1099,6 +1110,26 @@ fn main() -> EngineResult<()> {
                 }
             }
 
+            hw_client::hitch::mark("extras");
+            // The town's extras, made on a worker and put in a few per frame
+            // (see `extras.rs`); on the title and, if it was left early, in
+            // the game.
+            if let Some(l) = extras_load.as_mut() {
+                match l.step(world, EXTRAS_MS)? {
+                    Some(e) => {
+                        hw_client::hitch::event("props, trees and ground are in");
+                        hw_client::hitch::line(format!(
+                            "props, trees and ground are in, {:.1} s after the start",
+                            t0.elapsed().as_secs_f64()
+                        ));
+                        hw_client::hitch::job("town extras", None);
+                        extras = e;
+                        extras_loaded = true;
+                        extras_load = None;
+                    }
+                    None => hw_client::hitch::job("town extras", Some(l.state())),
+                }
+            }
             hw_client::hitch::mark("packs");
             // What heroes can be made of, once the packs are loaded.
             if hero_catalog.is_none() {
@@ -1169,12 +1200,23 @@ fn main() -> EngineResult<()> {
                     radio.clear(world);
                     signal.clear(world);
                     crowd.clear(world);
-                    extras = spawn_extras(world, &generated, town.green.clone())?;
+                    // The new town's extras come in like the first ones.
+                    if let Some(l) = extras_load.take() {
+                        l.abandon(world);
+                    }
+                    extras_loaded = false;
                 }
-                if !extras_loaded && t.wants_heavy() {
-                    hw_client::hitch::event("props, trees and ground spawned behind the title");
-                    extras = spawn_extras(world, &generated, town.green.clone())?;
-                    extras_loaded = true;
+                if !extras_loaded && extras_load.is_none() && t.wants_heavy() {
+                    hw_client::hitch::event(
+                        "props, trees and ground start loading behind the title",
+                    );
+                    hw_client::hitch::line(
+                        "props, trees and ground start loading behind the title",
+                    );
+                    extras_load = Some(ExtrasLoad::start(
+                        generated.world.clone(),
+                        town.green.clone(),
+                    ));
                 }
                 let eye = world.camera().eye();
                 let eye = DVec2::new(eye.x as f64, eye.z as f64);
@@ -3001,133 +3043,6 @@ fn moons() -> Vec<engine::sky::MoonSpec> {
         MoonSpec::new(1.7, 29.5, 0.5).tilt(14.0).brightness(0.65),
         MoonSpec::new(0.7, 9.0, 0.44).tilt(-26.0).brightness(0.45),
     ]
-}
-
-/// Engine streams the town's ground and water.
-fn set_town_stream(
-    world: &mut World,
-    generated: &GeneratedTown,
-    green: std::sync::Arc<hw_gen::urban::greenery::Greenery>,
-    trees: std::collections::BTreeMap<hw_gen::urban::props::PropKind, LodId>,
-) -> EngineResult<()> {
-    // A wide, coarse water window, so rivers and lakes show across the town
-    // and not only around the camera.
-    let settings = StreamSettings {
-        water_window: 1536.0,
-        water_cell: 4.0,
-        // Deep enough for the Deeps, the lowest caves under the town.
-        voxel_below: hw_gen::urban::deep::VOXEL_DEPTH as f32,
-        ..StreamSettings::default()
-    };
-    let ground = TownGround {
-        town: generated.world.clone(),
-        green,
-        trees,
-    };
-    let stream = WorldStream::new(ground, settings).with_terrain(|t| t.with_beach(1.8));
-    world.set_stream(Some(stream))?;
-    world.prepare_stream(20.0);
-    Ok(())
-}
-
-/// What stands in the town besides its roads and buildings, kept so it can
-/// be taken out again when the title switches worlds.
-#[derive(Default)]
-struct TownExtras {
-    lods: Vec<LodId>,
-    entities: Vec<EntityId>,
-    lights: Option<hw_client::nightlights::NightLights>,
-    signals: Option<hw_client::signalview::SignalView>,
-    props: Option<hw_client::propview::PropView>,
-    under: Option<hw_client::undergroundview::UndergroundView>,
-    deep: Option<hw_client::deepview::DeepView>,
-    dystopia: Option<hw_client::dystopiaview::DystopiaView>,
-    grass: Option<hw_client::grassview::GrassView>,
-    waterfront: Option<hw_client::waterfrontview::WaterfrontView>,
-}
-
-impl TownExtras {
-    fn despawn(&mut self, world: &mut World) {
-        // The streamed woods copy tree sets below: out with them first.
-        let _ = world.set_stream(None);
-        for id in self.lods.drain(..) {
-            world.despawn_lod(id);
-        }
-        for e in self.entities.drain(..) {
-            world.despawn(e);
-        }
-        if let Some(mut l) = self.lights.take() {
-            l.clear(world);
-        }
-        if let Some(mut w) = self.waterfront.take() {
-            w.clear(world);
-        }
-        self.props = None;
-        if let Some(mut s) = self.signals.take() {
-            s.clear(world);
-        }
-        if let Some(mut u) = self.under.take() {
-            u.clear(world);
-        }
-        if let Some(mut d) = self.deep.take() {
-            d.clear(world);
-        }
-        if let Some(mut d) = self.dystopia.take() {
-            d.clear(world);
-        }
-        if let Some(g) = self.grass.take() {
-            g.despawn(world);
-        }
-    }
-}
-
-/// The town's props, landmarks and waterfronts.
-fn spawn_extras(
-    world: &mut World,
-    generated: &GeneratedTown,
-    green: std::sync::Arc<hw_gen::urban::greenery::Greenery>,
-) -> EngineResult<TownExtras> {
-    let t = std::time::Instant::now();
-    let props = hw_client::propview::PropView::spawn(world, generated.world.clone())?;
-    eprintln!(
-        "{} prop models in {:.2} s (the props stream in around the camera)",
-        props.sets.len(),
-        t.elapsed().as_secs_f64()
-    );
-    let landmarks = hw_client::landmarkview::LandmarkView::spawn(world, &generated.world)?;
-    let under = hw_client::undergroundview::UndergroundView::spawn(world, &generated.world)?;
-    let grass =
-        hw_client::grassview::GrassView::spawn(world, generated.world.clone(), green.clone())?;
-    // The country's woods stream in around the camera, drawn with the
-    // props' tree sets.
-    let mut lods: Vec<LodId> = props.sets.iter().copied().chain(landmarks.sets).collect();
-    let trees: std::collections::BTreeMap<_, _> = hw_gen::urban::props::PropKind::all()
-        .into_iter()
-        .filter(|k| matches!(k, hw_gen::urban::props::PropKind::Tree(..)))
-        .filter_map(|k| Some((k, props.set_for(k)?)))
-        .collect();
-    set_town_stream(world, generated, green, trees)?;
-    let (roost_lods, roost_entities) =
-        hw_client::factionview::spawn_roost(world, &generated.world)?;
-    lods.extend(roost_lods);
-    let mut deep = hw_client::deepview::DeepView::new(generated.world.clone());
-    deep.prime(world, world.camera().eye())?;
-    Ok(TownExtras {
-        grass: Some(grass),
-        lods,
-        entities: roost_entities,
-        waterfront: Some(hw_client::waterfrontview::WaterfrontView::new(
-            generated.world.clone(),
-        )),
-        lights: Some(hw_client::nightlights::NightLights::new(
-            generated.world.clone(),
-        )),
-        signals: Some(hw_client::signalview::SignalView::new()),
-        props: Some(props),
-        under: Some(under),
-        deep: Some(deep),
-        dystopia: Some(hw_client::dystopiaview::DystopiaView::new(&generated.world)),
-    })
 }
 
 /// "Where to?": the town's taxi stands as buttons. Returns the one picked.

@@ -23,6 +23,16 @@ pub struct LandmarkView {
 impl LandmarkView {
     pub fn spawn(world: &mut World, town: &TownWorld) -> EngineResult<Self> {
         let mut sets = Vec::new();
+        for (lod, place) in Self::models(town) {
+            sets.push(world.spawn_lod_at(lod, &[place])?);
+        }
+        Ok(Self { sets })
+    }
+
+    /// Every landmark's LOD sets and where each stands. Pure data, no
+    /// `World`: the start makes them on a worker thread.
+    pub fn models(town: &TownWorld) -> Vec<(Vec<LodLevel>, Place)> {
+        let mut out = Vec::new();
         for l in &town.landmarks {
             let place = Place::new(l.pos.x as f32, l.base as f32, l.pos.y as f32)
                 .with_yaw_deg(l.dir.x.atan2(l.dir.y).to_degrees() as f32);
@@ -34,10 +44,10 @@ impl LandmarkView {
                 if let Some(f) = far.take() {
                     lod.push(LodLevel::new(f, 6000.0));
                 }
-                sets.push(world.spawn_lod_at(lod, &[place])?);
+                out.push((lod, place));
             }
         }
-        Ok(Self { sets })
+        out
     }
 }
 

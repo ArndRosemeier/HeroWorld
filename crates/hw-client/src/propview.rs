@@ -71,31 +71,54 @@ pub struct PropView {
 
 impl PropView {
     pub fn spawn(world: &mut World, town: Arc<TownWorld>) -> EngineResult<Self> {
-        // Growing trees takes a moment: grow every model at once.
+        let mut sets = Vec::new();
+        let mut bounds = Vec::new();
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        for levels in Self::models(threads)? {
+            bounds.push(model_bounds(&levels));
+            sets.push(world.spawn_lod_at(levels, &[])?);
+        }
+        Ok(Self::with_sets(town, sets, bounds))
+    }
+
+    /// Every kind's model levels, in the order of [`PropKind::all`], grown
+    /// on `threads` threads. Pure data, no `World`: the start makes them on
+    /// a worker thread.
+    pub fn models(threads: usize) -> EngineResult<Vec<Vec<LodLevel>>> {
         let kinds = PropKind::all();
-        let levels: Vec<EngineResult<Vec<LodLevel>>> = std::thread::scope(|s| {
-            let handles: Vec<_> = kinds
-                .iter()
-                .map(|k| s.spawn(move || model_levels(*k)))
+        let threads = threads.clamp(1, kinds.len().max(1));
+        // Thread `t` grows kinds t, t + threads, ...; put back in order after.
+        let mut grown: Vec<Vec<(usize, EngineResult<Vec<LodLevel>>)>> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..threads)
+                .map(|t| {
+                    let kinds = &kinds;
+                    s.spawn(move || {
+                        (t..kinds.len())
+                            .step_by(threads)
+                            .map(|i| (i, model_levels(kinds[i])))
+                            .collect::<Vec<_>>()
+                    })
+                })
                 .collect();
             handles
                 .into_iter()
                 .map(|h| h.join().expect("model thread"))
                 .collect()
         });
-        let mut sets = Vec::new();
-        let mut bounds = Vec::new();
-        for levels in levels {
-            let levels = levels?;
-            bounds.push(
-                levels
-                    .first()
-                    .and_then(|l| l.mesh.bounds())
-                    .unwrap_or((Vec3::ZERO, Vec3::ONE)),
-            );
-            sets.push(world.spawn_lod_at(levels, &[])?);
-        }
-        Ok(Self {
+        let mut all: Vec<(usize, EngineResult<Vec<LodLevel>>)> =
+            grown.iter_mut().flat_map(std::mem::take).collect();
+        all.sort_by_key(|(i, _)| *i);
+        assert_eq!(all.len(), kinds.len(), "a model per prop kind");
+        all.into_iter().map(|(_, l)| l).collect()
+    }
+
+    /// The view over sets already in the world: one per kind of
+    /// [`PropKind::all`], in that order, with each model's bounds.
+    pub fn with_sets(town: Arc<TownWorld>, sets: Vec<LodId>, bounds: Vec<(Vec3, Vec3)>) -> Self {
+        let kinds = PropKind::all();
+        assert_eq!(sets.len(), kinds.len(), "one prop set per kind");
+        assert_eq!(bounds.len(), kinds.len(), "bounds for every prop set");
+        Self {
             world: town,
             sets,
             kinds,
@@ -104,7 +127,7 @@ impl PropView {
             broken: BTreeMap::new(),
             dirty: BTreeSet::new(),
             generation: 0,
-        })
+        }
     }
 
     /// The LOD set drawing `kind`.
@@ -395,6 +418,14 @@ fn species(s: Species) -> TreeSpecies {
 }
 
 /// The detail levels of one kind of prop.
+/// A model's bounds, from its closest level.
+pub fn model_bounds(levels: &[LodLevel]) -> (Vec3, Vec3) {
+    levels
+        .first()
+        .and_then(|l| l.mesh.bounds())
+        .unwrap_or((Vec3::ZERO, Vec3::ONE))
+}
+
 pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
     use crate::propmesh as pm;
     let three = |make: &dyn Fn(Lod) -> Mesh, d: [f32; 3]| {

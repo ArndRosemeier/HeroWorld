@@ -73,20 +73,44 @@ impl GrassView {
         town: Arc<TownWorld>,
         green: Arc<Greenery>,
     ) -> EngineResult<Self> {
-        let region = green.region;
         let mut sets = Vec::new();
+        for levels in Self::models(&green)? {
+            sets.push(Self::install(world, levels)?);
+        }
+        Ok(Self::with_sets(town, green, sets))
+    }
+
+    /// Every clump's levels. Pure data, no `World`: the start makes them on
+    /// a worker thread.
+    pub fn models(green: &Greenery) -> EngineResult<Vec<Vec<LodLevel>>> {
+        let mut out = Vec::new();
         for s in Sward::ALL {
             for v in 0..VARIANTS {
-                let levels = clump_levels(s, v, region)?;
-                let id = world.spawn_lod(levels)?;
-                for e in world.lod_levels(id)? {
-                    world.set_casts_shadow(e, false)?;
-                }
-                sets.push(id);
+                out.push(clump_levels(s, v, green.region)?);
             }
         }
+        Ok(out)
+    }
+
+    /// Puts one of [`GrassView::models`] into the world.
+    pub fn install(world: &mut World, levels: Vec<LodLevel>) -> EngineResult<LodId> {
+        let id = world.spawn_lod(levels)?;
+        for e in world.lod_levels(id)? {
+            world.set_casts_shadow(e, false)?;
+        }
+        Ok(id)
+    }
+
+    /// The view over sets already in the world, in the order of
+    /// [`GrassView::models`].
+    pub fn with_sets(town: Arc<TownWorld>, green: Arc<Greenery>, sets: Vec<LodId>) -> Self {
+        assert_eq!(
+            sets.len(),
+            Sward::ALL.len() * VARIANTS as usize,
+            "one set per clump"
+        );
         let seed = town.seed.child("grass-blades");
-        Ok(Self {
+        Self {
             world: town,
             green,
             sets,
@@ -94,7 +118,7 @@ impl GrassView {
             seed,
             // `HW_GRASS=0` leaves the blades out (to compare frame rates).
             enabled: std::env::var("HW_GRASS").map_or(true, |v| v != "0"),
-        })
+        }
     }
 
     /// Takes the grass out of the world.

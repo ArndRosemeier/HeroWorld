@@ -16,6 +16,7 @@ pub mod diag;
 pub mod dispatchview;
 pub mod dystopiaview;
 pub mod edgeview;
+pub mod extras;
 pub mod facades;
 pub mod factionview;
 pub mod fightview;

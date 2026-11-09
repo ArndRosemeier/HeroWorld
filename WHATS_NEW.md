@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.089 (2026-11-09)
+
+- The title screen no longer freezes while the town loads: props, trees, landmarks, grass and the ground are made in the background and come in a few at a time, so the cover keeps moving and the window can be dragged.
+- The hitch log also notes long stops and when the start reaches the first frame and has the town loaded.
+
 ## 0.088 (2026-11-09)
 
 - Smoother walking and flying through town: a town block coming into view no longer costs a short stutter when it appears (it is made ready in the background now).

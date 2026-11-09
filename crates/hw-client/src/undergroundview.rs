@@ -78,6 +78,16 @@ struct Glow {
     range: f32,
 }
 
+/// The underground's lamps, kept by the view once its meshes are in.
+pub struct UndergroundGlows(Vec<Glow>);
+
+/// What [`UndergroundView::parts`] makes: named meshes and the lamps.
+pub struct UndergroundParts {
+    /// Prepared where they are made, so putting one in is cheap.
+    pub meshes: Vec<(String, PreparedMesh)>,
+    pub glows: UndergroundGlows,
+}
+
 pub struct UndergroundView {
     entities: Vec<EntityId>,
     glows: Vec<Glow>,
@@ -87,6 +97,35 @@ pub struct UndergroundView {
 
 impl UndergroundView {
     pub fn spawn(world: &mut World, town: &TownWorld) -> EngineResult<Self> {
+        let parts = Self::parts(town);
+        let entities = parts
+            .meshes
+            .into_iter()
+            .map(|(name, mesh)| Self::install(world, name, mesh))
+            .collect();
+        Ok(Self::with_entities(entities, parts.glows))
+    }
+
+    /// Puts one of [`UndergroundParts::meshes`] into the world.
+    pub fn install(world: &mut World, name: String, mesh: PreparedMesh) -> EntityId {
+        let id = world.spawn_prepared(mesh);
+        world.set_name(id, name);
+        id
+    }
+
+    /// The view over meshes already in the world.
+    pub fn with_entities(entities: Vec<EntityId>, glows: UndergroundGlows) -> Self {
+        Self {
+            entities,
+            glows: glows.0,
+            lit: Vec::new(),
+            at: None,
+        }
+    }
+
+    /// The tunnels' and caverns' meshes and lamps. Pure data, no `World`:
+    /// the start makes them on a worker thread.
+    pub fn parts(town: &TownWorld) -> UndergroundParts {
         let u = town.underground();
         let chunk = |p: DVec2| ((p.x / CHUNK).floor() as i64, (p.y / CHUNK).floor() as i64);
         let mut builders: BTreeMap<(i64, i64), MeshBuilder> = BTreeMap::new();
@@ -137,20 +176,16 @@ impl UndergroundView {
             let b = builders.entry(chunk(c.centre)).or_default();
             molehaven(b, u, &mut glows);
         }
-        let mut entities = Vec::new();
+        let mut meshes = Vec::new();
         for (k, b) in builders {
             for mesh in b.finish_parts() {
-                let id = world.spawn(mesh);
-                world.set_name(id, format!("underground {} {}", k.0, k.1));
-                entities.push(id);
+                meshes.push((format!("underground {} {}", k.0, k.1), mesh.prepare()));
             }
         }
-        Ok(Self {
-            entities,
-            glows,
-            lit: Vec::new(),
-            at: None,
-        })
+        UndergroundParts {
+            meshes,
+            glows: UndergroundGlows(glows),
+        }
     }
 
     /// Lamps near the camera on while it is below ground or by a lift.

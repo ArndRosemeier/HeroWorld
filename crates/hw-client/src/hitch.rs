@@ -184,6 +184,17 @@ pub fn job(name: &'static str, state: Option<String>) {
     });
 }
 
+/// A line straight into the log (milestones of the start, ...).
+pub fn line(text: impl Into<String>) {
+    let text = text.into();
+    with(|g| {
+        if !g.full {
+            let t = g.started.elapsed().as_secs_f32();
+            g.write(&format!("{t:7.2} s  {text}\n"));
+        }
+    });
+}
+
 /// Facts about the moment (where the hero is, the hour...), kept until
 /// set again. `what` again replaces the old value.
 pub fn context(what: &'static str, value: impl Into<String>) {
@@ -358,6 +369,18 @@ impl Guard {
             m.reported += 1;
             let text = self.report(wall_ms, usual, usual_update, &record, frame_time);
             self.write(&text);
+        } else if pause && m.reported < REPORTS_PER_MINUTE && !self.full {
+            // Usually the window was away, but at the start it is the
+            // window standing still: one line says whose time it was.
+            m.reported += 1;
+            let line = format!(
+                "PAUSE {wall_ms:.0} ms at {} game time {frame_time:.1} s, frame {}: game update {:.1} ms, Engine after it {:.0} ms\n",
+                clock_time(),
+                self.frame_no,
+                record.update_ms,
+                (wall_ms - record.update_ms).max(0.0)
+            );
+            self.write(&line);
         }
         self.recent.push_back((wall_ms, record.update_ms));
         while self.recent.len() > 10 {

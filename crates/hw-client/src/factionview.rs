@@ -400,20 +400,47 @@ pub fn spawn_roost(
     world: &mut World,
     town: &hw_gen::urban::world::TownWorld,
 ) -> EngineResult<(Vec<LodId>, Vec<EntityId>)> {
-    let Some(r) = hw_sim::roosts::pirate_roost(town) else {
-        return Ok((Vec::new(), Vec::new()));
-    };
+    match roost_parts(town) {
+        Some(r) => install_roost(world, r),
+        None => Ok((Vec::new(), Vec::new())),
+    }
+}
+
+/// The airship's levels and the ladder, where they go. Pure data, no
+/// `World`: the start makes them on a worker thread.
+pub struct RoostParts {
+    levels: Vec<LodLevel>,
+    place: Place,
+    ladder: Mesh,
+    ladder_place: Place,
+}
+
+/// The roost's parts, if the town has one.
+pub fn roost_parts(town: &hw_gen::urban::world::TownWorld) -> Option<RoostParts> {
+    let r = hw_sim::roosts::pirate_roost(town)?;
     let ship = r.ship();
     let yaw = r.ship_yaw();
     let place = Place::new(ship.x as f32, ship.y as f32, ship.z as f32)
         .with_yaw_deg(yaw.to_degrees() as f32);
-    let lod = world.spawn_lod_at(airship_levels(), &[place])?;
     // From the gondola's rail on the quay side down to the quay's edge.
     let side = DVec3::new(-r.out.x, 0.0, -r.out.y);
     let top = ship - DVec3::Y * GONDOLA_DECK + side * 1.9;
     let foot = DVec3::new(r.quay.x, r.top + 0.05, r.quay.y) + side * 0.6;
-    let mesh = rope_ladder(DVec3::ZERO, foot - top);
-    let ladder = world.place(mesh, Place::new(top.x as f32, top.y as f32, top.z as f32))?;
+    Some(RoostParts {
+        levels: airship_levels(),
+        place,
+        ladder: rope_ladder(DVec3::ZERO, foot - top),
+        ladder_place: Place::new(top.x as f32, top.y as f32, top.z as f32),
+    })
+}
+
+/// Puts the roost into the world: its LOD set and the ladder.
+pub fn install_roost(
+    world: &mut World,
+    r: RoostParts,
+) -> EngineResult<(Vec<LodId>, Vec<EntityId>)> {
+    let lod = world.spawn_lod_at(r.levels, &[r.place])?;
+    let ladder = world.place(r.ladder, r.ladder_place)?;
     Ok((vec![lod], vec![ladder]))
 }
 
