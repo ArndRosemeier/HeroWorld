@@ -1854,7 +1854,7 @@ fn main() -> EngineResult<()> {
                     && (frame.time / 0.75).floor() != ((frame.time - frame.dt) / 0.75).floor()
                 {
                     if fight.target.is_none() {
-                        fight.target = fightview::pick_target(&drawn, cam.eye(), look, None);
+                        fight.target = fightview::pick_target(&drawn, cam.eye(), look);
                     }
                     let close = me_state
                         .zip(fight.target.and_then(|t| drawn.iter().find(|e| e.id == t)))

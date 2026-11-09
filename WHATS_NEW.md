@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.091 (2026-11-09)
+
+- Tab now cycles through the villains around you: the nearest one in view first, then each press the next nearest you haven't picked yet, round and round. Villains behind you come after the ones you can see.
+
 ## 0.090 (2026-11-09)
 
 - At the very start the window stays hidden while the graphics get ready, and appears once it can respond, so it no longer shows up frozen.

@@ -22,8 +22,13 @@ use std::collections::BTreeMap;
 
 /// Villains further than this cannot be picked with Tab.
 pub const TARGET_RANGE: f32 = 60.0;
-/// Only villains within this angle of the crosshair are picked (degrees).
+/// Villains within this angle of the crosshair count as in view (degrees):
+/// Tab goes through them first, and aimed powers with no target pick only
+/// from them.
 pub const TARGET_CONE: f32 = 55.0;
+/// After this many seconds without Tab, the next Tab starts the cycle again
+/// from the nearest villain.
+const CYCLE_RESET: f32 = 4.0;
 /// Fight events older than this (seconds) are not shown any more.
 const LATE: f64 = 0.6;
 
@@ -189,6 +194,10 @@ pub struct FightInput {
 pub struct FightView {
     /// The villain picked with Tab.
     pub target: Option<NetId>,
+    /// Villains Tab has already gone through in this cycle, and the clock
+    /// time of the last Tab.
+    cycled: Vec<NetId>,
+    last_tab: f32,
     sounds: Option<Sounds>,
     floaters: Vec<Floater>,
     /// Camera shake strength (decays).
@@ -237,6 +246,8 @@ impl FightView {
     pub fn new() -> Self {
         Self {
             target: None,
+            cycled: Vec::new(),
+            last_tab: f32::NEG_INFINITY,
             sounds: None,
             floaters: Vec::new(),
             shake: 0.0,
@@ -259,8 +270,8 @@ impl FightView {
         }
     }
 
-    /// Keys: Tab picks the villain nearest the crosshair (again: the next
-    /// one), 1 or left mouse strikes, 2 or Q fires an energy bolt, 3 to 6
+    /// Keys: Tab picks the nearest villain in view, and each further Tab the
+    /// next nearest one not picked yet in this cycle, 1 or left mouse strikes, 2 or Q fires an energy bolt, 3 to 6
     /// the other powers, E held revives a downed teammate, H calls the
     /// medical drone when you are down.
     pub fn input(
@@ -282,7 +293,12 @@ impl FightView {
             }
         }
         if input.pressed(Key::Tab) {
-            self.target = pick_target(all, eye, look, self.target);
+            if self.clock - self.last_tab > CYCLE_RESET {
+                self.cycled.clear();
+            }
+            self.last_tab = self.clock;
+            let from = me.map_or(eye, pos);
+            self.target = cycle_target(all, from, eye, look, self.target, &mut self.cycled);
             if self.target.is_none() {
                 self.say("No villain in sight");
             }
@@ -318,7 +334,7 @@ impl FightView {
             let aimed = aimed(power) || (power == Power::Lift && carrying);
             // No target yet: take the one nearest the crosshair.
             if aimed && self.target.is_none() {
-                self.target = pick_target(all, eye, look, None);
+                self.target = pick_target(all, eye, look);
             }
             if let Some(m) = me {
                 if let Some(t) = self
@@ -1601,16 +1617,11 @@ pub fn attacker(e: &Fx, me: Option<NetId>, all: &[EntityState]) -> Option<NetId>
 }
 
 /// The villain nearest the crosshair (the line from `eye` along `look`),
-/// within range and in view; with `current` set, the next one after it.
-pub fn pick_target(
-    all: &[EntityState],
-    eye: Vec3,
-    look: Vec3,
-    current: Option<NetId>,
-) -> Option<NetId> {
+/// within range and in view: what an aimed power hits when nothing is
+/// targeted.
+pub fn pick_target(all: &[EntityState], eye: Vec3, look: Vec3) -> Option<NetId> {
     let look = look.normalize_or_zero();
-    let mut list: Vec<(f32, NetId)> = all
-        .iter()
+    all.iter()
         .filter(|e| targetable(e))
         .filter_map(|e| {
             let to = pos(e) + Vec3::Y * 1.1 - eye;
@@ -1623,12 +1634,62 @@ pub fn pick_target(
             // comes before one far off in the middle of the screen.
             (angle <= TARGET_CONE).then_some((angle + d * 0.15, e.id))
         })
+        .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)))
+        .map(|x| x.1)
+}
+
+/// Tab, City of Heroes style: the villains within range of `from` (our
+/// hero), those in view of the camera (`eye` looking along `look`) first,
+/// each group nearest first. Each call picks the first one not yet in
+/// `cycled` (and not `current`) and adds it there; once all have had their
+/// turn the cycle starts over, wrapping round to the nearest again.
+pub fn cycle_target(
+    all: &[EntityState],
+    from: Vec3,
+    eye: Vec3,
+    look: Vec3,
+    current: Option<NetId>,
+    cycled: &mut Vec<NetId>,
+) -> Option<NetId> {
+    let look = look.normalize_or_zero();
+    let mut list: Vec<(bool, f32, NetId)> = all
+        .iter()
+        .filter(|e| targetable(e))
+        .filter_map(|e| {
+            let d = pos(e).distance(from);
+            if d > TARGET_RANGE {
+                return None;
+            }
+            let to = pos(e) + Vec3::Y * 1.1 - eye;
+            let seen = to.length() < 1e-3
+                || look
+                    .dot(to.normalize())
+                    .clamp(-1.0, 1.0)
+                    .acos()
+                    .to_degrees()
+                    <= TARGET_CONE;
+            Some((!seen, d, e.id))
+        })
         .collect();
-    list.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-    match current.and_then(|c| list.iter().position(|(_, id)| *id == c)) {
-        Some(i) if list.len() > 1 => Some(list[(i + 1) % list.len()].1),
-        _ => list.first().map(|x| x.1),
+    list.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
+    // Forget the ones that fell or left; the current target counts as had.
+    cycled.retain(|id| list.iter().any(|x| x.2 == *id));
+    if let Some(c) = current.filter(|c| !cycled.contains(c)) {
+        cycled.push(c);
     }
+    let fresh = |cycled: &[NetId]| {
+        list.iter()
+            .map(|x| x.2)
+            .find(|id| !cycled.contains(id) && Some(*id) != current)
+    };
+    let next = fresh(cycled).or_else(|| {
+        // Everyone had a turn: start over with the nearest (not the one we
+        // are on, unless it is the only one).
+        cycled.clear();
+        fresh(cycled).or_else(|| list.first().map(|x| x.2))
+    })?;
+    cycled.push(next);
+    Some(next)
 }
 
 /// Where a character's right hand is now, if drawn as one.
@@ -2092,20 +2153,93 @@ mod tests {
     }
 
     #[test]
-    fn tab_picks_nearest_the_crosshair_then_cycles() {
+    fn aimed_powers_pick_nearest_the_crosshair() {
         let all = vec![
             villain(1, [10.0, 0.0, 3.0]),
             villain(2, [10.0, 0.0, 0.0]),
             villain(3, [-10.0, 0.0, 0.0]),
         ];
         let eye = Vec3::new(0.0, 1.1, 0.0);
-        let look = Vec3::X;
-        let first = pick_target(&all, eye, look, None);
-        assert_eq!(first, Some(NetId(2)), "dead ahead first");
-        let next = pick_target(&all, eye, look, first);
-        assert_eq!(next, Some(NetId(1)));
-        // Behind the camera is never picked; the cycle wraps.
-        assert_eq!(pick_target(&all, eye, look, next), Some(NetId(2)));
+        assert_eq!(
+            pick_target(&all, eye, Vec3::X),
+            Some(NetId(2)),
+            "dead ahead"
+        );
+        // Behind the camera is never picked.
+        assert_eq!(pick_target(&all[2..], eye, Vec3::X), None);
+    }
+
+    #[test]
+    fn tab_cycles_nearest_first_through_everyone_in_range() {
+        let all = vec![
+            villain(1, [12.0, 0.0, 3.0]),
+            villain(2, [6.0, 0.0, 0.0]),
+            villain(3, [-4.0, 0.0, 0.0]), // nearest, but behind the camera
+            villain(4, [20.0, 0.0, -2.0]),
+            villain(5, [90.0, 0.0, 0.0]), // out of range
+        ];
+        let from = Vec3::ZERO;
+        let eye = Vec3::new(-3.0, 2.0, 0.0);
+        let mut cycled = Vec::new();
+        let mut target = None;
+        let mut seen = Vec::new();
+        for _ in 0..8 {
+            target = cycle_target(&all, from, eye, Vec3::X, target, &mut cycled);
+            seen.push(target.unwrap().0);
+        }
+        // In view nearest first, then the one behind, then round again.
+        assert_eq!(seen, [2, 1, 4, 3, 2, 1, 4, 3]);
+    }
+
+    #[test]
+    fn tab_moves_on_even_when_the_order_shifts() {
+        // The camera turns to the new target after every Tab, which
+        // reorders the list; Tab must still go on to someone new.
+        let all = vec![
+            villain(1, [10.0, 0.0, 0.0]),
+            villain(2, [0.0, 0.0, 11.0]),
+            villain(3, [-12.0, 0.0, 0.0]),
+        ];
+        let mut cycled = Vec::new();
+        let mut target = None;
+        let mut seen = Vec::new();
+        let mut look = Vec3::X;
+        for _ in 0..3 {
+            target = cycle_target(&all, Vec3::ZERO, Vec3::ZERO, look, target, &mut cycled);
+            let t = all.iter().find(|e| Some(e.id) == target).unwrap();
+            look = pos(t).normalize();
+            seen.push(target.unwrap().0);
+        }
+        seen.sort();
+        assert_eq!(seen, [1, 2, 3], "everyone once before any repeats");
+    }
+
+    #[test]
+    fn tab_after_an_auto_target_moves_on() {
+        // The attacker became the target on its own: Tab goes to another.
+        let all = vec![villain(1, [5.0, 0.0, 0.0]), villain(2, [8.0, 0.0, 0.0])];
+        let mut cycled = Vec::new();
+        let next = cycle_target(
+            &all,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::X,
+            Some(NetId(1)),
+            &mut cycled,
+        );
+        assert_eq!(next, Some(NetId(2)));
+        // A lone villain stays the target.
+        let mut cycled = Vec::new();
+        let one = &all[..1];
+        let t = cycle_target(
+            one,
+            Vec3::ZERO,
+            Vec3::ZERO,
+            Vec3::X,
+            Some(NetId(1)),
+            &mut cycled,
+        );
+        assert_eq!(t, Some(NetId(1)));
     }
 
     #[test]
@@ -2145,7 +2279,12 @@ mod tests {
     fn the_beaten_cannot_be_targeted() {
         let mut v = villain(1, [5.0, 0.0, 0.0]);
         v.combat.as_mut().unwrap().status = Status::Down;
-        assert_eq!(pick_target(&[v], Vec3::ZERO, Vec3::X, None), None);
+        assert_eq!(pick_target(&[v], Vec3::ZERO, Vec3::X), None);
+        let mut cycled = Vec::new();
+        assert_eq!(
+            cycle_target(&[v], Vec3::ZERO, Vec3::ZERO, Vec3::X, None, &mut cycled),
+            None
+        );
     }
 
     #[test]
