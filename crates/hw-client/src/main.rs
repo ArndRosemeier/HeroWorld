@@ -1455,6 +1455,14 @@ fn main() -> EngineResult<()> {
                             town.rebuild(world, changed);
                         }
                         A::Map => town_map = !town_map,
+                        A::Rebuild(surface) => {
+                            quality_log.mark(if surface {
+                                "redo window surface"
+                            } else {
+                                "rebuild screen buffers"
+                            });
+                            world.request_renderer_rebuild(surface, !surface);
+                        }
                         A::GpuCheck => {
                             quality_log.mark("GPU mesh check");
                             world.request_gpu_check();

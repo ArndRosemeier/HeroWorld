@@ -83,6 +83,9 @@ pub enum DebugAction {
     Reupload(bool),
     /// Compare every mesh on the GPU with the game's copy (Engine's audit log).
     GpuCheck,
+    /// Configure the window surface again (true) or rebuild the window-sized
+    /// buffers (false), as a resize does.
+    Rebuild(bool),
     /// Engine's drawing-check flags (`World::set_debug_shading`).
     Shading(u32),
 }
@@ -416,6 +419,12 @@ fn world_tab(ui: &mut egui::Ui, info: &DebugInfo, out: &mut Vec<DebugAction>) {
         }
         if ui.button("Check meshes on the GPU").clicked() {
             out.push(DebugAction::GpuCheck);
+        }
+        if ui.button("Redo window surface").clicked() {
+            out.push(DebugAction::Rebuild(true));
+        }
+        if ui.button("Rebuild screen buffers").clicked() {
+            out.push(DebugAction::Rebuild(false));
         }
     });
     ui.add_space(4.0);
