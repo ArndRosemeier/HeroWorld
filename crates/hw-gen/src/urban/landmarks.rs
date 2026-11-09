@@ -1,6 +1,7 @@
 //! The town's landmarks: the Aether Spire on its civic plaza near the old
-//! core, a lighthouse on the shore of a seaside town, and the mad
-//! scientist's Tesla tower in his quarter.
+//! core, Hero Hall (home of the town's own heroes) not far from it, a
+//! lighthouse on the shore of a seaside town, and the mad scientist's Tesla
+//! tower in his quarter.
 //!
 //! Each stands on a round paved plinth cleared of buildings, in a spot no
 //! road crosses. The plinth's top is level; where the ground falls away its
@@ -23,6 +24,9 @@ pub enum LandmarkKind {
     /// The mad scientist's tower: an iron lattice under a crackling dome,
     /// in the middle of his quarter.
     TeslaTower,
+    /// Hero Hall: a round glass hall under a flying-saucer roof and two
+    /// sweeping arches, where the town's own heroes meet newcomers.
+    HeroHall,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -109,6 +113,16 @@ const SPIRE_STEPS: u32 = 16;
 const SPIRE_RUN: f64 = 0.3;
 /// The middle of an octagon's side, per metre to its corners.
 const APOTHEM: f64 = 0.924;
+/// Hero Hall: the glass drum's radius and height, the saucer roof's
+/// radius and top, where its two arches stand (their feet, local x and z),
+/// and the entrance canopy's half width, reach and height.
+pub const HALL_R: f64 = 9.0;
+pub const HALL_WALL: f64 = 6.0;
+pub const HALL_ROOF_R: f64 = 12.5;
+pub const HALL_ROOF_TOP: f64 = 9.4;
+pub const HALL_ARCH_FEET: [(f64, f64); 4] =
+    [(-14.5, 8.0), (14.5, 8.0), (-14.5, -8.0), (14.5, -8.0)];
+pub const HALL_CANOPY: (f64, f64, f64) = (4.5, 4.2, 4.0);
 
 impl Landmark {
     /// From the landmark's own frame (x right, z the way it faces) to the
@@ -163,10 +177,64 @@ impl Landmark {
                 },
             ],
             LandmarkKind::TeslaTower => vec![block(6.5, 6.5, 5.65)],
+            LandmarkKind::HeroHall => {
+                let mut v = vec![
+                    disc(HALL_R, HALL_WALL + 0.4),
+                    Footprint::Disc {
+                        at: DVec2::ZERO,
+                        r: HALL_ROOF_R,
+                        y0: HALL_WALL,
+                        y1: HALL_ROOF_TOP,
+                    },
+                ];
+                // The arches' feet and the canopy's two columns.
+                for (x, z) in HALL_ARCH_FEET {
+                    v.push(Footprint::Disc {
+                        at: DVec2::new(x, z),
+                        r: 0.7,
+                        y0: 0.0,
+                        y1: 3.0,
+                    });
+                }
+                let (hw, reach, h) = HALL_CANOPY;
+                for x in [-hw + 0.4, hw - 0.4] {
+                    v.push(Footprint::Disc {
+                        at: DVec2::new(x, HALL_R + reach - 0.5),
+                        r: 0.2,
+                        y0: 0.0,
+                        y1: h,
+                    });
+                }
+                v.push(Footprint::Box {
+                    at: DVec2::new(0.0, HALL_R + reach * 0.5),
+                    dir: DVec2::Y,
+                    half: DVec2::new(hw, reach * 0.5 + 0.3),
+                    y0: h,
+                    y1: h + 0.35,
+                });
+                v
+            }
         };
         local
             .into_iter()
             .map(|f| f.placed(self.pos, self.dir, self.base))
+            .collect()
+    }
+
+    /// Where Hero Hall's heroes stand to greet newcomers (local frame: in a
+    /// row on the plaza in front of the canopy, facing out), each with the
+    /// way they face, in the town's frame. Empty for other landmarks.
+    pub fn hero_spots(&self) -> Vec<(DVec2, DVec2)> {
+        if self.kind != LandmarkKind::HeroHall {
+            return Vec::new();
+        }
+        let z = (HALL_R + HALL_CANOPY.1 + 3.0).min(self.plaza - 1.5);
+        [-6.0, -3.0, 0.0, 3.0, 6.0]
+            .iter()
+            .map(|&x| {
+                let curve = (x / 6.0f64).powi(2) * 1.2;
+                (self.to_plan(DVec2::new(x, z - curve)), self.dir)
+            })
             .collect()
     }
 
@@ -296,6 +364,28 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
                 ..landmark_at(w, l.0, plaza)
             });
             break;
+        }
+    }
+    // Hero Hall: near the core too, but on its own plaza, facing the spire.
+    if let Some(spire) = out.first().cloned() {
+        for plaza in [24.0, 21.0, 19.0] {
+            let apart = spire.plaza + plaza + 24.0;
+            let spot = best_spot(w, &roads, core, 600.0, 6.0, plaza, 3.0, |p| {
+                if p.distance(spire.pos) < apart {
+                    f64::NEG_INFINITY
+                } else {
+                    -p.distance(core) - (p.distance(spire.pos) - apart) * 0.5
+                }
+            });
+            if let Some((p, _)) = spot {
+                out.push(Landmark {
+                    kind: LandmarkKind::HeroHall,
+                    height: HALL_ROOF_TOP,
+                    dir: (spire.pos - p).normalize_or(DVec2::Y),
+                    ..landmark_at(w, p, plaza)
+                });
+                break;
+            }
         }
     }
     if let Some(d) = &w.town.dystopia {
@@ -464,6 +554,22 @@ mod tests {
                 .iter()
                 .any(|l| l.kind == LandmarkKind::Lighthouse);
             assert_eq!(lh, w.coastal(), "seed {s}: lighthouse {lh}");
+            let hall = w
+                .landmarks
+                .iter()
+                .find(|l| l.kind == LandmarkKind::HeroHall)
+                .expect("Hero Hall");
+            assert!(hall.pos.distance(spire.pos) > spire.plaza + hall.plaza + 20.0);
+            assert_eq!(hall.hero_spots().len(), 5);
+            for (p, _) in hall.hero_spots() {
+                assert!(
+                    hall.on_plinth(p).is_some(),
+                    "seed {s}: a hero off the plaza"
+                );
+                for f in hall.footprints() {
+                    assert!(f.distance(p) > 0.5, "seed {s}: a hero inside the hall");
+                }
+            }
             let d = w.town.dystopia.as_ref().expect("a villain quarter");
             let tesla = w
                 .landmarks

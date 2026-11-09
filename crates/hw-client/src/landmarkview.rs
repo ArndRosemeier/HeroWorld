@@ -58,6 +58,7 @@ pub fn model(l: &Landmark, near: bool) -> Vec<Mesh> {
         }
         LandmarkKind::Lighthouse => lighthouse(&mut b, l.height, near),
         LandmarkKind::TeslaTower => tesla(&mut b, l, near),
+        LandmarkKind::HeroHall => hero_hall(&mut b, near),
     }
     stairs(&mut b, l, near);
     b.finish_parts()
@@ -590,6 +591,293 @@ pub fn nearest(town: &TownWorld, kind: LandmarkKind, from: DVec2) -> Option<&Lan
         .min_by(|a, b| a.pos.distance(from).total_cmp(&b.pos.distance(from)))
 }
 
+/// Hero Hall: a round hall of glass between gold fins under a white
+/// flying-saucer roof, two red arches sweeping over it from the plaza, a
+/// cantilevered canopy over the doors with the heroes' gold star shield,
+/// and a slender pylon on the roof carrying a gold star. Origin on the
+/// plinth's top, the doors towards +z.
+fn hero_hall(b: &mut MeshBuilder, near: bool) {
+    use crate::carmesh::{lathe, tube, Paint};
+    use hw_gen::urban::landmarks::{
+        HALL_ARCH_FEET, HALL_CANOPY, HALL_R, HALL_ROOF_R, HALL_ROOF_TOP, HALL_WALL,
+    };
+    let plain = |c: Color| -> Paint { Some((Surf::Plain, c)) };
+    let metal = |c: Color| -> Paint { Some((Surf::Metal, c)) };
+    let white = rgb(240, 236, 226);
+    let cream = rgb(226, 214, 186);
+    let gold = rgb(222, 176, 70);
+    let red = rgb(196, 40, 40);
+    let glass = rgb(38, 74, 98);
+    let seg = if near { 64 } else { 20 };
+    // A low cream base ring the glass stands on.
+    lathe(
+        b,
+        DVec3::ZERO,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (HALL_R + 0.35, 0.0),
+            (HALL_R + 0.35, 0.45),
+            (HALL_R + 0.1, 0.55),
+            (0.0, 0.55),
+        ],
+        seg,
+        |_| plain(cream),
+    );
+    // The glass drum, with gold fins between the panes and doors in front.
+    let fins = if near { 24 } else { 8 };
+    let door_a = 0.0f64; // local +z is angle 0 (sin, cos)
+    let ring = |r: f64, y: f64, n: usize| -> Vec<DVec3> {
+        (0..n)
+            .map(|j| {
+                let a = TAU * j as f64 / n as f64;
+                DVec3::new(r * a.sin(), y, r * a.cos())
+            })
+            .collect()
+    };
+    let rows = vec![ring(HALL_R, 0.55, seg), ring(HALL_R, HALL_WALL, seg)];
+    b.grid(&rows, true, true, |_, _| Some((Surf::Glass, glass)));
+    // A gold transom ring round the glass at door height.
+    lathe(
+        b,
+        DVec3::Y * 3.3,
+        DVec3::Y,
+        &[
+            (HALL_R + 0.02, 0.0),
+            (HALL_R + 0.12, 0.04),
+            (HALL_R + 0.12, 0.18),
+            (HALL_R + 0.02, 0.22),
+        ],
+        seg,
+        |_| metal(gold),
+    );
+    for k in 0..fins {
+        let a = TAU * (k as f64 + 0.5) / fins as f64;
+        // No fin across the doors.
+        if (a - door_a).abs() < 0.25 || (TAU - a).abs() < 0.25 {
+            continue;
+        }
+        let out = DVec3::new(a.sin(), 0.0, a.cos());
+        let side = DVec3::new(out.z, 0.0, -out.x);
+        let depth = if near { 0.55 } else { 0.4 };
+        b.surf = Surf::Metal;
+        b.oriented_box(
+            out * (HALL_R + depth * 0.5) + DVec3::Y * (HALL_WALL * 0.5 + 0.3),
+            side,
+            DVec3::new(0.09, HALL_WALL * 0.5 - 0.25, depth * 0.5),
+            gold,
+        );
+        b.surf = Surf::Plain;
+    }
+    // The saucer roof: a shallow white dome over a deep overhang, a gold
+    // band round its rim, a pale underside.
+    lathe(
+        b,
+        DVec3::Y * (HALL_WALL - 0.05),
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (HALL_R - 0.1, 0.0),
+            (HALL_ROOF_R - 1.0, 0.25),
+            (HALL_ROOF_R, 0.6),
+            (HALL_ROOF_R + 0.05, 0.85),
+            (HALL_ROOF_R - 0.4, 1.15),
+            (HALL_ROOF_R - 3.0, 1.9),
+            (HALL_ROOF_R - 7.0, 2.9),
+            (2.2, HALL_ROOF_TOP - HALL_WALL - 0.1),
+            (0.0, HALL_ROOF_TOP - HALL_WALL),
+        ],
+        seg,
+        |k| match k {
+            0 | 1 => plain(cream),
+            3 => metal(gold),
+            _ => plain(white),
+        },
+    );
+    // Lights round the underside of the overhang.
+    if near {
+        with(b, Surf::Glow, |b| {
+            for k in 0..32 {
+                let a = TAU * k as f64 / 32.0;
+                let p = DVec3::new(a.sin(), 0.0, a.cos()) * (HALL_ROOF_R - 1.2)
+                    + DVec3::Y * (HALL_WALL + 0.12);
+                b.oriented_box(
+                    p,
+                    DVec3::X,
+                    DVec3::new(0.12, 0.04, 0.12),
+                    rgb(255, 236, 190),
+                );
+            }
+        });
+    }
+    // The pylon and its star.
+    let top = DVec3::Y * HALL_ROOF_TOP;
+    lathe(
+        b,
+        top - DVec3::Y * 0.2,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.7, 0.0),
+            (0.45, 1.0),
+            (0.2, 6.0),
+            (0.12, 7.2),
+            (0.0, 7.3),
+        ],
+        if near { 20 } else { 8 },
+        |_| plain(white),
+    );
+    for (r, y) in [(0.9, 2.2), (0.7, 3.6), (0.5, 5.0)] {
+        lathe(
+            b,
+            top + DVec3::Y * y,
+            DVec3::Y,
+            &[(0.0, 0.0), (r, 0.05), (r, 0.15), (0.0, 0.2)],
+            if near { 20 } else { 8 },
+            |_| metal(gold),
+        );
+    }
+    star_upright(b, top + DVec3::Y * 8.4, 1.3, 0.25, gold);
+    // Two arches sweeping over the roof from the plaza, front to back on
+    // each side, leaning in over it: the hall's Googie signature.
+    let arch_n = if near { 28 } else { 10 };
+    for side in [-1.0, 1.0] {
+        let feet: Vec<(f64, f64)> = HALL_ARCH_FEET
+            .iter()
+            .copied()
+            .filter(|(x, _)| x.signum() == side)
+            .collect();
+        let (f0, f1) = (feet[0], feet[1]);
+        let path: Vec<DVec3> = (0..=arch_n)
+            .map(|i| {
+                let u = i as f64 / arch_n as f64;
+                let z = f0.1 + (f1.1 - f0.1) * u;
+                let lift = (std::f64::consts::PI * u).sin();
+                // In over the roof at the top, out at the feet.
+                let x = f0.0 * (1.0 - 0.45 * lift);
+                DVec3::new(x, lift.powf(0.8) * 15.5 + 0.2, z)
+            })
+            .collect();
+        tube(
+            b,
+            &path,
+            (0.42, 0.42),
+            if near { 16 } else { 6 },
+            plain(red),
+        );
+        if near {
+            for (x, z) in [f0, f1] {
+                lathe(
+                    b,
+                    DVec3::new(x, 0.0, z),
+                    DVec3::Y,
+                    &[(0.0, 0.0), (0.75, 0.0), (0.7, 0.35), (0.5, 0.5), (0.0, 0.5)],
+                    16,
+                    |_| metal(gold),
+                );
+            }
+        }
+    }
+    // The canopy over the doors on two slim columns, the heroes' shield on
+    // its front edge.
+    let (hw, reach, h) = HALL_CANOPY;
+    let front = HALL_R + reach;
+    let slab: Vec<Vec<DVec3>> = [h, h + 0.35]
+        .iter()
+        .map(|&y| {
+            let n = 12;
+            (0..=n)
+                .map(|j| {
+                    let t = j as f64 / n as f64 * 2.0 - 1.0;
+                    // A boomerang edge: swept back at the ends.
+                    let z = front - 0.9 * t * t;
+                    DVec3::new(t * hw, y, z)
+                })
+                .chain(std::iter::once(DVec3::new(hw, y, HALL_R - 0.4)))
+                .chain(std::iter::once(DVec3::new(-hw, y, HALL_R - 0.4)))
+                .collect()
+        })
+        .collect();
+    b.grid(&slab, true, true, |_, _| Some((Surf::Plain, white)));
+    let n = slab[0].len();
+    b.polygon(&slab[1], DVec3::Y, white);
+    b.polygon(&slab[0][..n], -DVec3::Y, cream);
+    for x in [-hw + 0.4, hw - 0.4] {
+        b.cylinder(
+            DVec3::new(x, 0.0, front - 0.5 - 0.9 * (x / hw).powi(2)),
+            (0.16, 0.16),
+            h,
+            if near { 12 } else { 6 },
+            false,
+            gold,
+        );
+    }
+    if near {
+        // Glass doors with gold frames.
+        for x in [-1.1, 1.1] {
+            b.oriented_box(
+                DVec3::new(x, 1.75, HALL_R + 0.05),
+                DVec3::X,
+                DVec3::new(1.0, 1.25, 0.06),
+                gold,
+            );
+            with(b, Surf::Glass, |b| {
+                b.oriented_box(
+                    DVec3::new(x, 1.7, HALL_R + 0.1),
+                    DVec3::X,
+                    DVec3::new(0.85, 1.1, 0.06),
+                    rgb(50, 70, 90),
+                )
+            });
+        }
+        // The shield: a gold disc with a red ring and a white star.
+        let at = DVec3::new(0.0, h + 1.15, front - 0.2);
+        lathe(
+            b,
+            at,
+            DVec3::Z,
+            &[(0.0, 0.0), (1.0, 0.0), (1.0, 0.12), (0.0, 0.16)],
+            32,
+            |_| metal(gold),
+        );
+        lathe(
+            b,
+            at + DVec3::Z * 0.14,
+            DVec3::Z,
+            &[(0.8, 0.0), (0.9, 0.0), (0.9, 0.04), (0.8, 0.04)],
+            32,
+            |_| plain(red),
+        );
+        let mut s = MeshBuilder::new();
+        star_upright(&mut s, DVec3::ZERO, 0.62, 0.06, white);
+        b.append(s, glam::Vec3::new(0.0, (h + 1.15) as f32, front as f32));
+        b.oriented_box(
+            DVec3::new(0.0, h + 0.42, front - 0.6),
+            DVec3::X,
+            DVec3::new(0.12, 0.08, 0.08),
+            gold,
+        );
+    }
+}
+
+/// A five-pointed star standing up (in the x-y plane, facing +z) at `c`.
+fn star_upright(b: &mut MeshBuilder, c: DVec3, r: f64, t: f64, color: Color) {
+    let pts: Vec<DVec3> = (0..10)
+        .map(|k| {
+            let a = TAU * k as f64 / 10.0;
+            let rr = if k % 2 == 0 { r } else { r * 0.42 };
+            c + DVec3::new(rr * a.sin(), rr * a.cos(), 0.0)
+        })
+        .collect();
+    for side in [1.0, -1.0] {
+        let tip = c + DVec3::Z * (t * side);
+        for k in 0..10 {
+            let j = (k + 1) % 10;
+            b.tri([tip, pts[k], pts[j]], DVec3::Z * side, color);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -600,6 +888,7 @@ mod tests {
             LandmarkKind::AetherSpire,
             LandmarkKind::Lighthouse,
             LandmarkKind::TeslaTower,
+            LandmarkKind::HeroHall,
         ] {
             let l = Landmark {
                 kind,

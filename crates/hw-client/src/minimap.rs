@@ -242,6 +242,7 @@ impl Minimap {
                     LandmarkKind::AetherSpire => egui::Color32::from_rgb(120, 200, 255),
                     LandmarkKind::Lighthouse => egui::Color32::from_rgb(250, 250, 250),
                     LandmarkKind::TeslaTower => egui::Color32::from_rgb(140, 220, 90),
+                    LandmarkKind::HeroHall => egui::Color32::from_rgb(240, 190, 70),
                 };
                 painter.circle_filled(p, 4.5, c);
                 painter.circle_stroke(

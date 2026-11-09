@@ -679,6 +679,26 @@ impl FightView {
                         self.note = Some(("Molehaven likes you better now.".into(), 4.0));
                     }
                 }
+                FxKind::Tip => {
+                    // One of Hero Hall's heroes gives a newcomer a tip.
+                    let who = all
+                        .iter()
+                        .find(|x| x.id == e.from)
+                        .and_then(|x| x.mount)
+                        .map_or(0, |m| m.1 as usize);
+                    let name = hw_sim::npcheroes::NAMES[who % hw_sim::npcheroes::NAMES.len()];
+                    let tip =
+                        hw_sim::npcheroes::TIPS[e.amount as usize % hw_sim::npcheroes::TIPS.len()];
+                    let head = all.iter().find(|x| x.id == e.from).map_or(at, pos);
+                    self.speak(
+                        head + Vec3::Y * 2.4,
+                        format!("{name}: {tip}"),
+                        egui::Color32::from_rgb(255, 214, 110),
+                    );
+                    if on_me {
+                        self.note = Some((format!("{name}: {tip}"), 7.0));
+                    }
+                }
                 FxKind::Karma => {
                     if on_me {
                         self.float(

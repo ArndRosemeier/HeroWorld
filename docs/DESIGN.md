@@ -198,6 +198,8 @@ Arnd's direction (2026-11-08): this is a world that goes on without the heroes, 
 | Sky Pirates | buccaneers, deck gunners and a captain from an airship | a moored airship over the harbour, lookouts on the quay | unfriendly (warns on the quay) |
 | Iron-Masked Empire | the Iron Legion: masked legionaries and a praetorian, from beyond the sea | none in town: they land in iron capsules | unfriendly, the really evil one (hates everyone; holds townsfolk captive) |
 
+**Hero Hall:** the town's own heroes live in a round Googie hall near the Aether Spire. Five of them stand on its plaza, greet newcomers with tips, and fly out to fights nobody has answered (never one a player is near). They are never beaten, and villains they beat pay no karma.
+
 The world reacts to trouble too: pedestrians back away, run or gawk, and cars brake and queue round a mugging, a fight or a collapse (the crowd and traffic "alarm" system).
 
 Robots need more than Actors offers today (its robots are human skeletons in robot dress). Non-human robots, from tracked tanks to spider walkers to giant mechs, come from AssetGenerator rigs with breakable parts as Engine prefabs, plus procedural gaits.

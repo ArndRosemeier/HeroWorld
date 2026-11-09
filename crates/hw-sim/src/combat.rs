@@ -987,6 +987,8 @@ pub(crate) struct Actor {
     pub(crate) colossus: Option<Colossus>,
     /// A hero's deeds as factions see them (the sheet's offsets).
     pub(crate) regard: [i8; hw_net::FACTIONS],
+    /// One of the town's own heroes ([`crate::npcheroes`]).
+    pub(crate) npc: bool,
 }
 
 impl Actor {
@@ -1225,21 +1227,29 @@ pub(crate) fn step(world: &mut World, tick: u64) {
             &Fighter,
             Option<&Enemy>,
             Option<(&Hero, &Control)>,
-            (Option<&Mount>, Option<&Colossus>, Option<&Progress>),
+            (
+                Option<&Mount>,
+                Option<&Colossus>,
+                Option<&Progress>,
+                Has<crate::npcheroes::NpcHero>,
+            ),
         )>()
         .iter(world)
-        .map(|(e, n, m, f, en, h, (mount, colossus, progress))| Actor {
-            e,
-            id: n.0,
-            body: m.0,
-            f: *f,
-            enemy: en.copied(),
-            hero: h.map(|(h, c)| (h.owner, c.0)),
-            beaten_by: None,
-            mount: mount.copied(),
-            colossus: colossus.copied(),
-            regard: progress.map_or([0; hw_net::FACTIONS], |p| p.sheet.regard),
-        })
+        .map(
+            |(e, n, m, f, en, h, (mount, colossus, progress, npc))| Actor {
+                e,
+                id: n.0,
+                body: m.0,
+                f: *f,
+                enemy: en.copied(),
+                hero: h.map(|(h, c)| (h.owner, c.0)),
+                beaten_by: None,
+                mount: mount.copied(),
+                colossus: colossus.copied(),
+                regard: progress.map_or([0; hw_net::FACTIONS], |p| p.sheet.regard),
+                npc,
+            },
+        )
         .collect();
     actors.sort_by_key(|a| a.id);
     let mut drones: Vec<(Entity, NetId, Body, Drone)> = world
@@ -1256,6 +1266,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
 
     rally(&mut actors);
     heroes_act(&mut actors, &solids, tick, &mut out);
+    npc_heroes_act(&mut actors, tick, &mut out);
     land_throws(&mut actors, &mut throws, tick, &mut out);
     throws.append(&mut out.throws);
     land_sky(&mut actors, &mut sky, &solids, tick, &mut out);
@@ -1666,7 +1677,9 @@ pub(crate) fn hit(
     }
     let heavy = t.enemy.is_some_and(|e| e.kind.heavy());
     let knock = knock && !heavy;
-    t.f.health = (t.f.health - dealt).max(0.0);
+    // The town's own heroes are never beaten (they go home first).
+    let floor = if t.npc { 1.0 } else { 0.0 };
+    t.f.health = (t.f.health - dealt).max(floor);
     t.f.last_combat = tick;
     let mut push = DVec2::new(t.body.pos.x - from_pos.x, t.body.pos.z - from_pos.z);
     push = push.normalize_or(DVec2::X);
@@ -1712,6 +1725,39 @@ pub(crate) fn hit(
         }
     }
     (knocked, defeated, dealt)
+}
+
+/// The town's own heroes bolt their targets from the air.
+fn npc_heroes_act(actors: &mut [Actor], tick: u64, out: &mut Out) {
+    use crate::npcheroes::{BOLT_DAMAGE, BOLT_EVERY, BOLT_RANGE};
+    for i in 0..actors.len() {
+        if !actors[i].npc || !actors[i].f.standing() || tick < actors[i].f.busy_until {
+            continue;
+        }
+        let Some(j) = actors[i]
+            .f
+            .target
+            .and_then(|t| actors.iter().position(|a| a.id == t))
+            .filter(|&j| hittable(&actors[j]))
+            .filter(|&j| actors[j].body.pos.distance(actors[i].body.pos) <= BOLT_RANGE)
+        else {
+            continue;
+        };
+        let damage = BOLT_DAMAGE * level_scale(actors[i].f.level);
+        let (knocked, defeated, dealt) = hit(actors, i, j, damage, false, tick, None);
+        actors[i].f.busy_until = tick + ticks(BOLT_EVERY);
+        let mut e = event(
+            tick,
+            FxKind::Beam,
+            actors[i].id,
+            actors[j].id,
+            actors[j].chest(),
+        );
+        e.amount = dealt.round() as u16;
+        e.knock = knocked;
+        e.defeat = defeated;
+        out.fx.push(e);
+    }
 }
 
 /// Is `a` (by index) a valid target for heroes?
@@ -2202,6 +2248,10 @@ fn pay_out(actors: &[Actor], out: &mut Out) {
         let (Some((by, affinity)), Some(en)) = (v.beaten_by, v.enemy) else {
             continue;
         };
+        // Beaten by one of the town's heroes: nobody's karma.
+        if actors.iter().any(|a| a.id == by && a.npc) {
+            continue;
+        }
         let base = enemy_spec(en.kind).karma;
         for h in actors.iter().filter(|a| a.hero.is_some()) {
             if h.body.pos.distance(v.body.pos) > REWARD_RADIUS {
@@ -2324,7 +2374,7 @@ fn enemies_act(
             // Who to fight: the foe while it stands and is not led too far
             // from home, else the nearest standing hero it notices.
             let leash = 45.0;
-            let foe_ok = |a: &Actor| a.hero.is_some() && a.f.standing();
+            let foe_ok = |a: &Actor| (a.hero.is_some() || a.npc) && a.f.standing();
             let mut foe = actors[i]
                 .f
                 .target

@@ -537,19 +537,41 @@ fn main() -> EngineResult<()> {
                 .to_degrees() as f32;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
         }
-        "spire" | "lighthouse" | "tesla" => {
+        "townheroes" => {
+            // Hero Hall's own heroes on its plaza, the hall behind them.
+            use hw_gen::urban::landmarks::LandmarkKind;
+            let l =
+                hw_client::landmarkview::nearest(&generated.world, LandmarkKind::HeroHall, spawn);
+            let (c, base, face) = l.map_or((spawn, ground(spawn), spawn_dir), |l| {
+                let spots = l.hero_spots();
+                (spots.get(2).map_or(l.pos, |s| s.0), l.base, l.dir)
+            });
+            let p = c + face * 7.5 + face.perp() * 1.5;
+            let d = c - p;
+            let yaw = d.x.atan2(d.y).to_degrees() as f32;
+            let eye = base + 1.9;
+            FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, 4.0)
+        }
+        "spire" | "lighthouse" | "tesla" | "hall" => {
             // Looking up at a landmark from across its plaza.
             use hw_gen::urban::landmarks::LandmarkKind;
             let kind = match view.as_str() {
                 "spire" => LandmarkKind::AetherSpire,
                 "tesla" => LandmarkKind::TeslaTower,
+                "hall" => LandmarkKind::HeroHall,
                 _ => LandmarkKind::Lighthouse,
             };
             let l = hw_client::landmarkview::nearest(&generated.world, kind, spawn);
             let (c, base, h, face) = l.map_or((spawn, ground(spawn), 30.0, spawn_dir), |l| {
                 // The lighthouse faces the land: look at it from the sea.
                 let face = if view == "lighthouse" { -l.dir } else { l.dir };
-                (l.pos, l.base, l.height, face)
+                // Hero Hall's star stands 8 m over its roof.
+                let h = if view == "hall" {
+                    l.height + 9.0
+                } else {
+                    l.height
+                };
+                (l.pos, l.base, h, face)
             });
             // From above the rooftops, the landmark's whole height in view.
             let back = if view == "tesla" { 1.5 } else { 0.9 };
@@ -2100,7 +2122,7 @@ fn main() -> EngineResult<()> {
                 }
                 // A bystander standing still faces the way the server turned
                 // them (towards the muggers).
-                if bystander && slow {
+                if (bystander || h.kind == hw_net::EntityKind::NpcHero) && slow {
                     let (y, _, _) = glam::Quat::from_array(h.rot).to_euler(glam::EulerRot::YXZ);
                     anim.face(y.to_degrees(), frame.dt);
                     d.yaw = anim.yaw();
@@ -2114,6 +2136,8 @@ fn main() -> EngineResult<()> {
                     }
                     // A townsperson in a crime: one of the citizens' looks.
                     hw_net::EntityKind::Bystander => Who::Citizen(h.id.0 % hw_sim::citizens::LOOKS),
+                    // One of Hero Hall's own heroes.
+                    hw_net::EntityKind::NpcHero => Who::NpcHero(h.mount.map_or(0, |m| m.1)),
                     // A hero in their looks, once they arrived (ours we
                     // know); until then a stand-in, the same on every machine.
                     _ => {

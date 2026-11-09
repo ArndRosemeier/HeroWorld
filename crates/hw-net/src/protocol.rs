@@ -252,6 +252,9 @@ pub enum EntityKind {
     Praetorian,
     /// An Aether Tube capsule; its `owner` is the passenger.
     Capsule,
+    /// One of the town's own heroes from Hero Hall (`mount`: its own ID
+    /// and which of them it is).
+    NpcHero,
 }
 
 impl EntityKind {
@@ -277,6 +280,7 @@ impl EntityKind {
             EntityKind::Legionary => 17,
             EntityKind::Praetorian => 18,
             EntityKind::Capsule => 19,
+            EntityKind::NpcHero => 20,
         }
     }
 
@@ -302,6 +306,7 @@ impl EntityKind {
             17 => Ok(EntityKind::Legionary),
             18 => Ok(EntityKind::Praetorian),
             19 => Ok(EntityKind::Capsule),
+            20 => Ok(EntityKind::NpcHero),
             _ => Err(WireError),
         }
     }
@@ -789,6 +794,9 @@ pub enum FxKind {
     /// Frightened people a hero talked down thank them and go home (`from`
     /// speaks to `to`).
     Calmed,
+    /// One of the town's heroes gives a newcomer a tip (`from` speaks to
+    /// `to`; `amount`: which tip).
+    Tip,
 }
 
 impl FxKind {
@@ -829,6 +837,7 @@ impl FxKind {
             FxKind::Meteor => 33,
             FxKind::Nova => 34,
             FxKind::Calmed => 35,
+            FxKind::Tip => 36,
         }
     }
 
@@ -869,6 +878,7 @@ impl FxKind {
             33 => FxKind::Meteor,
             34 => FxKind::Nova,
             35 => FxKind::Calmed,
+            36 => FxKind::Tip,
             _ => return Err(WireError),
         })
     }

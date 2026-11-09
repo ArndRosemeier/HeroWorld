@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.081 (2026-11-09)
+
+- **Hero Hall** now stands near the Aether Spire: a round glass hall under a flying-saucer
+  roof, with two red arches sweeping over it and a gold star on top. Taxis go there too.
+- The town's own heroes wait on its plaza: Commander Starling, Atomic Annie, the Brass
+  Badger, Lady Lumen and Rocket Rory. Walk up to them for tips.
+- Trouble nobody answers no longer just waits: after a while one of them flies out and
+  deals with it. They leave your fights to you.
+
 ## 0.080 (2026-11-09)
 
 - The Doctor's lab is better lit: green enamel lamps hang from the ceiling, and you can see

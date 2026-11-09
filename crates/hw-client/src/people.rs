@@ -78,6 +78,9 @@ pub enum Who {
     /// One of the mad scientist's villains: its kind and one of
     /// [`VILLAIN_LOOKS`] looks.
     Villain(VillainKind, u32),
+    /// One of the town's own heroes from Hero Hall, by index (see
+    /// [`hw_sim::npcheroes::NAMES`]).
+    NpcHero(u8),
 }
 
 /// Looks per kind of villain.
@@ -617,6 +620,123 @@ fn costumes(catalog: &CharacterCatalog) -> Vec<actors_generator::OutfitPreset> {
         .collect()
 }
 
+/// One of the town's own heroes (by index into
+/// [`hw_sim::npcheroes::NAMES`]): a costume from [`COSTUMES`] in their own
+/// colours, on a heroic build. The same on every machine.
+pub fn npc_hero(builder: &CharacterBuilder, index: u8) -> CharacterConfig {
+    // (costume, female, colours, hair, skin)
+    type Npc = (
+        &'static str,
+        bool,
+        &'static [(&'static str, &'static str)],
+        &'static str,
+        &'static str,
+    );
+    const NPCS: [Npc; 5] = [
+        // Commander Starling: the sky ace, in midnight blue and white.
+        (
+            "hw-aviator",
+            false,
+            &[
+                ("fisherman-sweater", "#f2ece0"),
+                ("wool-pants", "#1e2c5a"),
+                ("riding-boots", "#1a1a22"),
+                ("gloves-medium", "#1e2c5a"),
+            ],
+            "#3a2a1c",
+            "#d9a982",
+        ),
+        // Atomic Annie: a rocket suit in atom teal and gold.
+        (
+            "hw-rocket",
+            true,
+            &[
+                ("future-vest", "#2aa6a0"),
+                ("future-trousers", "#2aa6a0"),
+                ("future-belt", "#e2b23a"),
+                ("gloves-medium", "#e2b23a"),
+                ("leather-boots", "#e2b23a"),
+            ],
+            "#c0392b",
+            "#f0c8a8",
+        ),
+        // The Brass Badger: the strongman, in brass and black.
+        (
+            "hw-strongman",
+            false,
+            &[
+                ("briefs", "#1c1a18"),
+                ("tights", "#b8862c"),
+                ("tank-top", "#1c1a18"),
+                ("gloves-short", "#b8862c"),
+                ("biker-boots", "#1c1a18"),
+            ],
+            "#1c1a18",
+            "#8d5a3c",
+        ),
+        // Lady Lumen: the sleuth, all in white with gold gloves.
+        (
+            "hw-starlet",
+            true,
+            &[
+                ("blouse-pencil-skirt", "#f4f1ea"),
+                ("cloche-hat", "#f4f1ea"),
+                ("gloves-long", "#d9b44a"),
+            ],
+            "#e8d08a",
+            "#e9c3a0",
+        ),
+        // Rocket Rory: a rocket suit in fire-engine red and silver.
+        (
+            "hw-rocket",
+            false,
+            &[
+                ("future-vest", "#c8261c"),
+                ("future-trousers", "#c9cdd6"),
+                ("future-belt", "#c9cdd6"),
+                ("gloves-medium", "#c9cdd6"),
+                ("leather-boots", "#c8261c"),
+            ],
+            "#d98a2c",
+            "#f2d0b4",
+        ),
+    ];
+    let (costume, female, colours, hair, skin) = NPCS[index as usize % NPCS.len()];
+    let name = hw_sim::npcheroes::NAMES[index as usize % hw_sim::npcheroes::NAMES.len()];
+    let catalog = builder.catalog();
+    let mut c = golden_age(catalog, name_seed(name), true);
+    let b = &mut c.body;
+    b.gender = if female { 0.0 } else { 1.0 };
+    b.age_years = 30.0 + 3.0 * index as f64;
+    b.muscle = if female { 0.6 } else { 0.85 };
+    b.weight = if costume == "hw-strongman" { 0.7 } else { 0.5 };
+    b.height = if female { 0.6 } else { 0.85 };
+    c.beard = "none".into();
+    c.hair_color = Some(hair.into());
+    c.skin = actors_generator::SkinKind::Procedural;
+    c.skin_color = Some(skin.into());
+    if costume == "hw-strongman" {
+        // The circus strongman: bald, broad and big.
+        c.hair = None;
+        c.body.muscle = 1.0;
+        c.body.weight = 0.78;
+        c.body.height = 0.95;
+        c.body.proportions = 0.4;
+    }
+    if let Some((_, _, _, garments, _, _)) = COSTUMES.iter().find(|x| x.0 == costume) {
+        c.outfit = garments
+            .iter()
+            .filter(|g| catalog.garment(g).is_some())
+            .map(|g| g.to_string())
+            .collect();
+    }
+    c.garment_colors.clear();
+    for (g, hex) in colours {
+        c.garment_colors.insert(g.to_string(), hex.to_string());
+    }
+    c
+}
+
 /// A random character of `catalog` (what `CharacterBuilder::random` makes).
 pub fn random_person(catalog: &CharacterCatalog, seed: u32) -> CharacterConfig {
     random_config(
@@ -1064,6 +1184,7 @@ pub fn build(
             (hw_core::Seed(seed).child("look").child(*look as u64).0 >> 32) as u32,
         ),
         Who::Villain(..) => (false, 0),
+        Who::NpcHero(i) => (true, 7_000 + *i as u32),
     };
     let mut allowed = allow(hero);
     if let Who::Villain(kind, _) = who {
@@ -1075,6 +1196,7 @@ pub fn build(
     builder.allow(&allowed);
     let config = match (who, config) {
         (Who::Villain(kind, look), _) => villain(builder, *kind, *look),
+        (Who::NpcHero(i), _) => npc_hero(builder, *i),
         (Who::Citizen(look), _) if *look >= hw_sim::citizens::LOOKS => {
             mole_person(builder, *look - hw_sim::citizens::LOOKS)
         }
@@ -1083,7 +1205,7 @@ pub fn build(
         _ => golden_age(builder.catalog(), rseed, hero),
     };
     let clips: &[&str] = match who {
-        Who::Hero(_) | Who::Look(_) => HERO_CLIPS,
+        Who::Hero(_) | Who::Look(_) | Who::NpcHero(_) => HERO_CLIPS,
         Who::Villain(..) => VILLAIN_CLIPS,
         Who::Citizen(_) => CITIZEN_CLIPS,
     };

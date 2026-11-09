@@ -116,6 +116,15 @@ impl NightLights {
                 LandmarkKind::Lighthouse => sources.push(Source {
                     lamp: Lamp::point(at(l.height - 4.5), rgb(255, 236, 170), 45.0, 45.0),
                 }),
+                LandmarkKind::HeroHall => {
+                    // The lobby glowing through the glass, and the star.
+                    sources.push(Source {
+                        lamp: Lamp::point(at(3.0), rgb(255, 222, 170), 35.0, 35.0),
+                    });
+                    sources.push(Source {
+                        lamp: Lamp::point(at(l.height + 8.4), rgb(255, 210, 120), 25.0, 25.0),
+                    });
+                }
                 LandmarkKind::TeslaTower => {
                     let arc = rgb(150, 255, 110);
                     // The dome's rim, and the coil lighting the yard.

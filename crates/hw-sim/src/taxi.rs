@@ -464,6 +464,7 @@ pub fn stands(world: &Area) -> Vec<Stand> {
         let name = match l.kind {
             LandmarkKind::AetherSpire => "Aether Spire plaza",
             LandmarkKind::Lighthouse => "The lighthouse",
+            LandmarkKind::HeroHall => "Hero Hall",
             // No taxi will take you there.
             LandmarkKind::TeslaTower => continue,
         };

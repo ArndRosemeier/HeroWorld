@@ -331,6 +331,21 @@ It has its own battle march, playing within 260 m of it while it stands. An unan
 colossus goes home after 10 minutes. `tests/colossus.rs` beats it with bots in 2 to 11
 minutes.
 
+### Hero Hall and the town's own heroes (`hw-sim/src/npcheroes.rs`)
+
+Hero Hall stands on its own plaza near the Aether Spire, facing it: a round glass hall
+under a white flying-saucer roof, two red arches over it, a gold star on a pylon, and a
+canopy over the doors with the heroes' star shield. A taxi stand is in front.
+
+Five of the town's own heroes stand in a row on its plaza: Commander Starling, Atomic Annie,
+the Brass Badger, Lady Lumen and Rocket Rory (looks in `people::npc_hero`). Come within 7 m
+and they greet you with tips, one at a time and a new one each time (each hero again after
+90 s). When a fight has gone unanswered for 75 s and no player hero is within 120 m of it,
+the nearest one at home flies out (up to 70 m over the roofs, 28 m/s), hovers 3.5 m over the
+fight and bolts the villains (30 m, every 1.5 s). They are never beaten: below 30% health
+they break off and fly home to mend, and they go home when a player hero comes near, so
+they never take a player's fight. Villains they beat pay no one karma.
+
 ---
 
 ## 7. Incidents: trouble comes to you (`hw-sim/src/incidents.rs`)
@@ -654,7 +669,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default 40 000; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |
@@ -695,7 +710,7 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | Underground | Utility tunnels, Molehaven, the Aether Tube with stations, the Doctor's lab, buried ruins, the Deeps | Sewers, more lairs, townsfolk riding the tube |
 | Heroes | 20 levels, 8 powers in 3 tiers, two themes each, 5 origins and affinities | Powers in tiers 4–7, super speed, more themes, power roles and budget balancing; a level-cap/tier thread is working on this now |
 | Looks | Creator with six costumes and sliders | Full costume creator, capes, masks (in progress) |
-| Combat | Minions, lieutenant, boss, colossus, drones, revive, hospital | NPC heroes and Hero Hall, the Doctor in person, more villain groups |
+| Combat | Minions, lieutenant, boss, colossus, drones, revive, hospital; Hero Hall's five heroes give tips and answer ignored fights | Teaming up with the town's heroes, the Doctor in person |
 | Factions | Eight factions, regard, turf warnings; mole folk, sky pirates and the Iron Legion with their own incidents and homes | Patrol units, turf changing hands |
 | Co-op | Host's level for all | Per-player sidekick and exemplar levels |
 | Destruction | Buildings, props, cars, self-repair, collateral tally | Collateral cost and careful-hero bonus, digging and craters |

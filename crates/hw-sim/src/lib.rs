@@ -16,6 +16,7 @@ pub mod factions;
 pub mod host;
 pub mod incidents;
 pub mod nav;
+pub mod npcheroes;
 pub mod physics;
 pub mod predict;
 pub mod progress;
@@ -517,6 +518,21 @@ impl Sim {
         if let Some((at, facing)) = roosts::mole_gate(town.world.underground()) {
             sim.add_mole_gate(at, facing);
         }
+        // The town's own heroes on Hero Hall's plaza.
+        if let Some(hall) = town
+            .world
+            .landmarks
+            .iter()
+            .find(|l| l.kind == hw_gen::urban::landmarks::LandmarkKind::HeroHall)
+        {
+            let spots: Vec<(DVec3, DVec2)> = hall
+                .hero_spots()
+                .into_iter()
+                .map(|(p, f)| (DVec3::new(p.x, hall.base, p.y), f))
+                .collect();
+            let tick = sim.tick;
+            npcheroes::spawn(&mut sim.world, tick, &spots);
+        }
         sim
     }
 
@@ -720,6 +736,7 @@ impl Sim {
     pub fn step(&mut self) {
         self.schedule.run(&mut self.world);
         combat::step(&mut self.world, self.tick);
+        npcheroes::step(&mut self.world, self.tick, &self.incidents.open);
         self.machines_break_the_city();
         self.incidents.step(&mut self.world, self.tick);
         self.raise_crime_alarms();
@@ -1538,11 +1555,12 @@ impl Sim {
                     Option<&robots::Mount>,
                     Has<incidents::Bystander>,
                     Option<&tube::Passenger>,
+                    Option<&npcheroes::NpcHero>,
                 ),
             )>()
             .iter(&self.world)
             .map(
-                |(n, m, h, o, (prop, enemy, drone, view), (c, fare, mount, bystander, rider))| {
+                |(n, m, h, o, (prop, enemy, drone, view), (c, fare, mount, bystander, rider, npc))| {
                     (
                         EntityState {
                             id: n.0,
@@ -1558,6 +1576,8 @@ impl Sim {
                                 EntityKind::Drone
                             } else if bystander {
                                 EntityKind::Bystander
+                            } else if npc.is_some() {
+                                EntityKind::NpcHero
                             } else {
                                 EntityKind::Hero
                             },
@@ -1570,7 +1590,9 @@ impl Sim {
                                 .map(|h| h.owner)
                                 .or(fare.map(|f| f.0))
                                 .or(rider.map(|r| r.0)),
-                            mount: mount.map(|m| (m.on, m.part)),
+                            mount: mount
+                                .map(|m| (m.on, m.part))
+                                .or(npc.map(|h| (n.0, h.index))),
                         },
                         c.0,
                     )
