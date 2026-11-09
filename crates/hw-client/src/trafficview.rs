@@ -146,6 +146,9 @@ pub struct TrafficView {
     /// hinge, axis and how far it opens.
     shells: BTreeMap<VehicleKind, LodId>,
     doors: BTreeMap<VehicleKind, Vec<(LodId, DVec3, DVec3, f64)>>,
+    /// The moving vehicles drawn this frame near enough for the people in
+    /// them to show (see `riderview`), nearest first.
+    riding: Vec<Vehicle>,
 }
 
 impl Default for TrafficView {
@@ -159,6 +162,7 @@ impl Default for TrafficView {
             wrecks: BTreeMap::new(),
             shells: BTreeMap::new(),
             doors: BTreeMap::new(),
+            riding: Vec::new(),
         }
     }
 }
@@ -182,6 +186,7 @@ impl TrafficView {
             let _ = world.set_lod_places(id, &[]);
         }
         self.near.clear();
+        self.riding.clear();
         self.refresh = 0.0;
         for (_, (_, smoke)) in std::mem::take(&mut self.wrecks) {
             if let Some(e) = smoke {
@@ -243,6 +248,17 @@ impl TrafficView {
         self.refresh = 0.0;
     }
 
+    /// The moving vehicles near the camera this frame, nearest first
+    /// (wrecks are not among them).
+    pub fn riding(&self) -> &[Vehicle] {
+        &self.riding
+    }
+
+    /// Wreck `id` as it stands (knocked round and leaning).
+    pub fn wreck_of(&self, id: u64) -> Option<Vehicle> {
+        self.wrecks.get(&id).map(|w| w.0)
+    }
+
     /// How many vehicles are on screen.
     pub fn shown(&self) -> usize {
         self.near.len()
@@ -264,6 +280,7 @@ impl TrafficView {
         }
         let mut bodies: BTreeMap<VehicleKind, Vec<Place>> = BTreeMap::new();
         let mut wheels: BTreeMap<CarModel, Vec<Place>> = BTreeMap::new();
+        let mut riding = Vec::new();
         for &id in &self.near {
             if self.wrecks.contains_key(&id) {
                 continue;
@@ -277,11 +294,15 @@ impl TrafficView {
                     wheel_places(&v, model, wheels.entry(model).or_default());
                 }
             }
+            if DVec2::new(v.pos.x, v.pos.z).distance(eye) < crate::riderview::RIDER_RADIUS {
+                riding.push(v);
+            }
         }
         TrafficPlan {
             eye,
             bodies,
             wheels,
+            riding,
         }
     }
 
@@ -292,6 +313,7 @@ impl TrafficView {
             eye,
             mut bodies,
             mut wheels,
+            riding,
         } = plan;
         let mut shells: BTreeMap<VehicleKind, Vec<Place>> = BTreeMap::new();
         let mut doors: BTreeMap<(VehicleKind, usize), Vec<Place>> = BTreeMap::new();
@@ -342,6 +364,7 @@ impl TrafficView {
                 ));
             }
         }
+        self.riding = riding;
         // Every set gets its places, an empty list when none is near.
         for kind in bodies.keys() {
             spawn_made(world, &mut self.bodies, &mut self.models.bodies, *kind)?;
@@ -379,6 +402,8 @@ pub struct TrafficPlan {
     eye: DVec2,
     bodies: BTreeMap<VehicleKind, Vec<Place>>,
     wheels: BTreeMap<CarModel, Vec<Place>>,
+    /// The vehicles near enough to show who sits in them (`riderview`).
+    riding: Vec<Vehicle>,
 }
 
 /// A wreck is squashed this much (x, y, z).
@@ -401,7 +426,7 @@ fn shell_levels(model: CarModel, paint: u8) -> Vec<LodLevel> {
 
 /// Engine's turn for a vehicle: yaw, then pitch (positive noses down), then
 /// roll (positive lifts the left side, the car's +x).
-fn angles(v: &Vehicle) -> (f64, f64, f64) {
+pub fn angles(v: &Vehicle) -> (f64, f64, f64) {
     let (yaw, pitch) = v.yaw_pitch();
     (yaw, -pitch, v.roll)
 }

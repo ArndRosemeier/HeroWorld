@@ -28,6 +28,8 @@ struct Shown {
 
 pub struct CrowdView {
     crowds: BTreeMap<u32, CrowdId>,
+    /// Looks that fit in a car seat (`Built::sits`).
+    sits: BTreeMap<u32, bool>,
     shown: BTreeMap<u64, Shown>,
     /// Seconds a citizen is behind the town's clock (it spent them lying
     /// on the ground after a knock).
@@ -54,6 +56,7 @@ impl CrowdView {
     pub fn new() -> Self {
         Self {
             crowds: BTreeMap::new(),
+            sits: BTreeMap::new(),
             shown: BTreeMap::new(),
             delay: BTreeMap::new(),
             down: BTreeMap::new(),
@@ -78,6 +81,17 @@ impl CrowdView {
                     .distance(eye)
                     .total_cmp(&b.position.distance(eye))
             })
+    }
+
+    /// The crowd of `look`, once it is ready (people in cars are agents
+    /// of it too, see `riderview`).
+    pub fn crowd_of(&self, look: u32) -> Option<CrowdId> {
+        self.crowds.get(&look).copied()
+    }
+
+    /// Whether look `look` fits in a car seat; `None` until it is ready.
+    pub fn sits(&self, look: u32) -> Option<bool> {
+        self.sits.get(&look).copied()
     }
 
     /// How many looks are ready.
@@ -121,9 +135,12 @@ impl CrowdView {
             .near(NEAR_M, NEAR_MAX / 4)
             .far(SHOW_RADIUS as f32)
             .shadows_within(70.0)
-            .far_detail(0.06);
+            .far_detail(0.06)
+            // Drivers and passengers (see `riderview`).
+            .poses([crate::riderview::DRIVE, crate::riderview::RIDE]);
         let id = world.add_crowd(built.model.clone(), profile)?;
         self.crowds.insert(look, id);
+        self.sits.insert(look, built.sits);
         Ok(())
     }
 

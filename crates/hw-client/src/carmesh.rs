@@ -845,6 +845,156 @@ pub fn wheel_layout(model: CarModel) -> Option<(f64, [f64; 2], f64)> {
     }
 }
 
+/// A seat: where a sitter's hip joint goes (the car's frame: +z forward,
+/// +x its left, y up from the ground under it) and whether it is the
+/// driver's (behind the wheel).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Seat {
+    pub hip: DVec3,
+    pub driver: bool,
+}
+
+/// How high a sitter's hip joint is over the cushion it sits on.
+const HIP_OVER_CUSHION: f64 = 0.09;
+
+/// The seats of `model` (the flying taxi and hover cars in the sky are
+/// [`CarModel::Hover`]), driver first, worked out from the same cushions
+/// and wheels the cabins are built with: hips a hand in front of the
+/// backrest, the driver behind the wheel on the left.
+pub fn seats(model: CarModel) -> Vec<Seat> {
+    let seat = |x: f64, y: f64, z: f64, driver: bool| Seat {
+        hip: DVec3::new(x, y, z),
+        driver,
+    };
+    // Hips a hand in front of the backrest's face.
+    let ahead = 0.1;
+    match model {
+        CarModel::Cruiser => {
+            // Two benches (cruiser_cabin), backrests' faces 0.18 behind
+            // their middles.
+            let y = CRUISER_CUSHION + HIP_OVER_CUSHION;
+            let (front, rear) = (0.12 - 0.18 + ahead, -0.78 - 0.18 + ahead);
+            vec![
+                seat(0.38, y, front, true),
+                seat(-0.38, y, front, false),
+                seat(0.4, y, rear, false),
+                seat(-0.4, y, rear, false),
+            ]
+        }
+        CarModel::Bubble => {
+            // One bench under the bubble (bubble()), its back's face at -0.47.
+            let y = BUBBLE_CUSHION + HIP_OVER_CUSHION;
+            let z = -0.47 + ahead;
+            vec![seat(0.22, y, z, true), seat(-0.24, y, z, false)]
+        }
+        CarModel::Hover => {
+            // A front seat and a rear bench (hover_interior), backs' faces
+            // 0.12 behind their middles.
+            let y = HOVER_CUSHION + HIP_OVER_CUSHION;
+            let [(front, ..), (rear, ..)] = HOVER_SEATS;
+            let (front, rear) = (front - 0.12 + ahead, rear - 0.12 + ahead);
+            vec![
+                seat(0.25, y, front, true),
+                seat(-0.22, y, front, false),
+                seat(0.24, y, rear, false),
+                seat(-0.24, y, rear, false),
+            ]
+        }
+    }
+}
+
+/// The cruiser's hardtop: wraparound glass front and back, a thick
+/// C-pillar.
+fn cruiser_hardtop() -> Cabin<'static> {
+    Cabin {
+        z: [-1.35, 1.0],
+        roof: [-0.95, 0.38],
+        height: CRUISER_ROOF,
+        w_base: 0.88,
+        w_roof: 0.76,
+        n: 4.5,
+        base: &|z| cruiser_section(z).y_at(0.86) - 0.025,
+        ease: 0.9,
+        stations: vec![-0.5, -0.38, 0.36, 0.44],
+        bands: vec![0.05, 0.955, 0.975],
+    }
+}
+
+/// The bubble car's canopy.
+fn bubble_canopy() -> Cabin<'static> {
+    Cabin {
+        z: [-1.0, 1.02],
+        roof: [-0.15, 0.2],
+        height: BUBBLE_CANOPY,
+        w_base: 0.7,
+        w_roof: 0.5,
+        n: 2.4,
+        base: &bubble_base,
+        ease: 0.75,
+        stations: vec![],
+        bands: vec![0.07, 0.99],
+    }
+}
+
+/// Where the hover car's canopy sits on the deck.
+fn hover_canopy_base(z: f64) -> f64 {
+    hover_section(z).y_at(0.6) - 0.03
+}
+
+/// The hover car's (and the taxi's) canopy.
+fn hover_canopy_shape() -> Cabin<'static> {
+    Cabin {
+        z: [-1.0, 1.35],
+        roof: [-0.35, 0.4],
+        height: HOVER_CANOPY,
+        w_base: 0.64,
+        w_roof: 0.46,
+        n: 2.3,
+        base: &hover_canopy_base,
+        ease: 0.7,
+        stations: vec![],
+        bands: vec![0.07, 0.993],
+    }
+}
+
+/// How high the inside of `model`'s roof or canopy is over the point
+/// (`x`, `z`) of the car's plan (its frame, as [`Seat::hip`]); `None`
+/// outside it. For checking that sitters' heads fit.
+pub fn roof_over(model: CarModel, x: f64, z: f64) -> Option<f64> {
+    let cabin = match model {
+        CarModel::Cruiser => cruiser_hardtop(),
+        CarModel::Bubble => bubble_canopy(),
+        CarModel::Hover => hover_canopy_shape(),
+    };
+    let base = (cabin.base)(z);
+    let h = cabin.height_at(z);
+    if h <= 0.0 || cabin.side_x(z, base) < x.abs() {
+        return None;
+    }
+    // The highest height whose side is still out past x (glass ~1 cm).
+    let (mut lo, mut hi) = (base, base + h);
+    for _ in 0..40 {
+        let mid = 0.5 * (lo + hi);
+        if cabin.side_x(z, mid) >= x.abs() {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Some(lo - 0.01)
+}
+
+/// The cabin floor's height under `z` (the body's underside, plus its
+/// skin): sitters' feet stay over it.
+pub fn floor_under(model: CarModel, z: f64) -> f64 {
+    let bot = match model {
+        CarModel::Cruiser => cruiser_section(z).bot,
+        CarModel::Bubble => bubble_section(z).bot,
+        CarModel::Hover => hover_section(z).bot,
+    };
+    bot + 0.02
+}
+
 /// Which part of a car to build: all of it, all but its doors, or one
 /// door (on the side `sx`, +1 or -1 along x).
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -1007,6 +1157,12 @@ fn cruiser_section(z: f64) -> Section {
     }
 }
 
+/// The cruiser's benches' cushion tops, and its hardtop's height over the
+/// deck: room for a grown-up sitting up (about 1.45 m to the roof, like a
+/// 1950s sedan).
+const CRUISER_CUSHION: f64 = 0.46;
+const CRUISER_ROOF: f64 = 0.67;
+
 /// The cruiser's front doors run from `CRUISER_DOOR[0]` to the hinge at
 /// `CRUISER_DOOR[1]` along z.
 const CRUISER_DOOR: [f64; 2] = [-0.38, 0.92];
@@ -1116,19 +1272,8 @@ fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod, part: Part) {
     let deck = |z: f64, x: f64| body.shape(z).y_at(x);
 
     // The hardtop: wraparound glass front and back, a thick C-pillar.
-    let base = |z: f64| deck(z, 0.86) - 0.025;
-    let cabin = Cabin {
-        z: [-1.35, 1.0],
-        roof: [-0.78, 0.38],
-        height: 0.47,
-        w_base: 0.88,
-        w_roof: 0.76,
-        n: 4.5,
-        base: &base,
-        ease: 0.9,
-        stations: vec![-0.5, -0.38, 0.36, 0.44],
-        bands: vec![0.05, 0.955, 0.975],
-    };
+    let _ = deck;
+    let cabin = cruiser_hardtop();
     // The door's window: the side glass between the B and A pillars.
     let window_of =
         |at: At| (at.z > door[0] && at.z < 0.36 && at.s < 0.955).then_some(at.c.signum());
@@ -1313,25 +1458,23 @@ fn cruiser(b: &mut MeshBuilder, kit: &Kit, lod: Lod, part: Part) {
     }
 }
 
-/// The cruiser's cabin: lined inside, closed fore and aft, with a front
-/// and a rear bench in the second tone, a padded dash with dials and a
-/// big white steering wheel on the left (+x).
-fn cruiser_cabin(b: &mut MeshBuilder, body: &Body, k: &Kit, lod: Lod) {
-    let (z0, z1) = (-1.3, 0.95);
+/// A cabin sunk into `body` between `z0` and `z1`: the body's inner face
+/// (coarser than its outside: no one looks at it closely), carpet on the
+/// floor, open where `hole` opens the deck, and closed fore and aft by
+/// bulkheads.
+fn tub(b: &mut MeshBuilder, body: &Body, lod: Lod, z: [f64; 2], hole: impl Fn(&At) -> bool) {
+    let [z0, z1] = z;
     let carpet = rgb(46, 40, 38);
     let lining = rgb(70, 62, 58);
-    // The lining: the body's inner face round the cabin, coarser than its
-    // outside (no one looks at it closely), open where the deck is.
     let coarse = if lod == Lod::Near { Lod::Mid } else { Lod::Far };
     inside(|| {
         body.build(b, coarse, |at| {
-            if at.z < z0 || at.z > z1 || (at.s > 0.84 && at.z > -1.2 && at.z < 0.85) {
+            if at.z < z0 || at.z > z1 || hole(&at) {
                 return None;
             }
             Kit::plain(if at.s < -0.5 { carpet } else { lining })
         })
     });
-    // Bulkheads: the firewall and the back of the rear seat.
     for (z, n) in [(z1, -DVec3::Z), (z0, DVec3::Z)] {
         let sec = body.sec(z);
         let pts: Vec<DVec3> = (0..32)
@@ -1342,19 +1485,33 @@ fn cruiser_cabin(b: &mut MeshBuilder, body: &Body, k: &Kit, lod: Lod) {
             .collect();
         b.polygon(&pts, n, lining);
     }
+}
+
+/// The cruiser's cabin: lined inside, closed fore and aft, with a front
+/// and a rear bench in the second tone, a padded dash with dials and a
+/// big white steering wheel on the left (+x).
+fn cruiser_cabin(b: &mut MeshBuilder, body: &Body, k: &Kit, lod: Lod) {
+    let carpet = rgb(46, 40, 38);
+    // The firewall and the back of the rear seat close it.
+    tub(b, body, lod, [-1.3, 0.95], |at| {
+        at.s > 0.84 && at.z > -1.2 && at.z < 0.85
+    });
     let seat = Kit::plain(k.top);
-    for (z, back) in [(0.12, 0.18), (-0.78, 0.17)] {
+    // Benches low on the floor, with backs up to a sitter's shoulders.
+    let top = CRUISER_CUSHION;
+    for (z, back) in [(0.12, 0.25), (-0.78, 0.24)] {
+        // The bench's base, down to the floor.
         slab(
             b,
-            DVec3::new(0.0, 0.4, z),
+            DVec3::new(0.0, top - 0.11, z),
             [DVec3::X, DVec3::Y],
-            DVec3::new(0.66, 0.1, 0.2),
+            DVec3::new(0.66, 0.06, 0.2),
             carpet,
         );
         cushion(
             b,
             lod,
-            DVec3::new(0.0, 0.55, z),
+            DVec3::new(0.0, top - 0.07, z),
             DVec3::new(0.72, 0.07, 0.24),
             0.0,
             seat,
@@ -1362,7 +1519,7 @@ fn cruiser_cabin(b: &mut MeshBuilder, body: &Body, k: &Kit, lod: Lod) {
         cushion(
             b,
             lod,
-            DVec3::new(0.0, 0.6 + back, z - 0.24),
+            DVec3::new(0.0, top - 0.02 + back, z - 0.24),
             DVec3::new(0.72, back, 0.06),
             -0.22,
             seat,
@@ -1401,7 +1558,7 @@ fn cruiser_cabin(b: &mut MeshBuilder, body: &Body, k: &Kit, lod: Lod) {
             );
             b.surf = Surf::Plain;
         }
-        steering_wheel(b, DVec3::new(0.38, 0.86, 0.55), 0.19, k);
+        steering_wheel(b, DVec3::new(0.38, 0.76, 0.52), 0.19, k);
     }
 }
 
@@ -1799,6 +1956,13 @@ fn bubble_section(z: f64) -> Section {
     }
 }
 
+/// The bubble car's deck opens over its cabin above this height (a sine
+/// round the body: just inside the canopy's foot), and its bench's cushion
+/// top.
+const BUBBLE_HOLE: f64 = 0.68;
+const BUBBLE_CANOPY: f64 = 0.72;
+const BUBBLE_CUSHION: f64 = 0.37;
+
 /// Where the bubble car's canopy sits on the deck.
 fn bubble_base(z: f64) -> f64 {
     bubble_section(z).y_at(0.66) - 0.03
@@ -1832,24 +1996,12 @@ fn bubble(b: &mut MeshBuilder, kit: &Kit, lod: Lod, part: Part) {
                 x_in: 0.48,
             },
         ],
-        stations: vec![-1.4, 1.45],
-        bands: vec![-0.9, -0.2, -0.14, 0.16, 0.22],
+        stations: vec![-1.4, 1.45, -0.95, 0.7],
+        bands: vec![-0.9, -0.2, -0.14, 0.16, 0.22, BUBBLE_HOLE],
     };
     let k = *kit;
     let deck = |z: f64, x: f64| body.shape(z).y_at(x);
-    let base = bubble_base;
-    let canopy = Cabin {
-        z: [-1.0, 1.02],
-        roof: [-0.15, 0.2],
-        height: 0.56,
-        w_base: 0.7,
-        w_roof: 0.5,
-        n: 2.4,
-        base: &base,
-        ease: 0.75,
-        stations: vec![],
-        bands: vec![0.07, 0.99],
-    };
+    let canopy = bubble_canopy();
     let glass = |at: At| {
         if at.s < 0.07 || (lod == Lod::Near && at.s > 0.99) {
             return k.metal();
@@ -1867,7 +2019,13 @@ fn bubble(b: &mut MeshBuilder, kit: &Kit, lod: Lod, part: Part) {
     if matches!(part, Part::Door(_)) {
         return;
     }
+    // Close up the deck is open under the bubble, over a cabin sunk into
+    // the egg; far away it stays shut, with no cabin inside.
+    let hole = |at: &At| lod != Lod::Far && at.s > BUBBLE_HOLE && at.z > -0.95 && at.z < 0.7;
     body.build(b, lod, |at| {
+        if hole(&at) {
+            return None;
+        }
         if at.s < -0.9 || at.well {
             return Kit::plain(k.under);
         }
@@ -1882,13 +2040,15 @@ fn bubble(b: &mut MeshBuilder, kit: &Kit, lod: Lod, part: Part) {
         Kit::plain(k.body)
     });
     if lod != Lod::Far {
-        // The cabin under the bubble: a bench, a dash, a steering wheel.
+        // The cabin under the bubble: a bench low on the floor, a dash, a
+        // steering wheel.
+        tub(b, &body, lod, [-1.0, 0.95], hole);
         let seat = Kit::plain(k.top);
-        let y = deck(-0.3, 0.0);
+        let y = BUBBLE_CUSHION;
         cushion(
             b,
             lod,
-            DVec3::new(0.0, y + 0.07, -0.3),
+            DVec3::new(0.0, y - 0.07, -0.3),
             DVec3::new(0.48, 0.07, 0.2),
             0.0,
             seat,
@@ -1897,8 +2057,8 @@ fn bubble(b: &mut MeshBuilder, kit: &Kit, lod: Lod, part: Part) {
             b,
             lod,
             DVec3::new(0.0, y + 0.2, -0.52),
-            DVec3::new(0.48, 0.15, 0.05),
-            -0.25,
+            DVec3::new(0.48, 0.24, 0.05),
+            -0.22,
             seat,
         );
         let (dz, dy) = (0.62, deck(0.62, 0.0) + 0.08);
@@ -1911,7 +2071,7 @@ fn bubble(b: &mut MeshBuilder, kit: &Kit, lod: Lod, part: Part) {
             Kit::plain(k.body),
         );
         if lod == Lod::Near {
-            steering_wheel(b, DVec3::new(0.22, dy + 0.06, dz - 0.25), 0.15, &k);
+            steering_wheel(b, DVec3::new(0.22, 0.78, 0.14), 0.15, &k);
         }
     }
     // Little fins on the hips.
@@ -2016,22 +2176,25 @@ fn hover_section(z: f64) -> Section {
     }
 }
 
+/// The hover car's (and the taxi's) cabin: the deck opens above this sine
+/// round the hull (inside the canopy's foot) close up; the seats' cushion
+/// tops; each row's (z, half width, backrest height), the front seat first;
+/// the canopy's height over the deck. A grown-up sits up under it.
+const HOVER_HOLE: f64 = 0.83;
+const HOVER_CUSHION: f64 = 0.83;
+const HOVER_SEATS: [(f64, f64, f64); 2] = [(0.42, 0.4, 0.22), (-0.45, 0.38, 0.2)];
+const HOVER_CANOPY: f64 = 0.79;
+
+/// Where the hover car's deck is open over its cabin (close up only).
+fn hover_hole(lod: Lod) -> impl Fn(&At) -> bool {
+    move |at: &At| lod != Lod::Far && at.s > HOVER_HOLE && at.z > -0.95 && at.z < 0.85
+}
+
 /// The hover car's bubble canopy (and the taxi's lamp on it), hinged at
 /// its front foot; returns that hinge point.
 fn hover_canopy(b: &mut MeshBuilder, k: &Kit, lod: Lod, taxi: bool) -> DVec3 {
-    let base = |z: f64| hover_section(z).y_at(0.6) - 0.03;
-    let canopy = Cabin {
-        z: [-0.75, 1.35],
-        roof: [-0.05, 0.4],
-        height: 0.46,
-        w_base: 0.64,
-        w_roof: 0.46,
-        n: 2.3,
-        base: &base,
-        ease: 0.7,
-        stations: vec![],
-        bands: vec![0.07, 0.993],
-    };
+    let base = hover_canopy_base;
+    let canopy = hover_canopy_shape();
     let paint = |at: At| {
         if at.s < 0.07 || (lod == Lod::Near && at.s > 0.993) {
             return k.metal();
@@ -2045,7 +2208,7 @@ fn hover_canopy(b: &mut MeshBuilder, k: &Kit, lod: Lod, taxi: bool) -> DVec3 {
     }
     if taxi {
         // The TAXI lamp on the canopy, on a chrome saddle.
-        let top = base(0.15) + 0.46;
+        let top = base(0.15) + HOVER_CANOPY;
         tube(
             b,
             &[
@@ -2072,35 +2235,22 @@ fn hover_canopy(b: &mut MeshBuilder, k: &Kit, lod: Lod, taxi: bool) -> DVec3 {
 
 /// The hover car's cabin seen through the canopy: leather floor, a rear
 /// bench, a front seat, a chrome-rimmed dash and a steering wheel.
-fn hover_interior(b: &mut MeshBuilder, k: &Kit, lod: Lod) {
+fn hover_interior(b: &mut MeshBuilder, body: &Body, k: &Kit, lod: Lod) {
     if lod == Lod::Far {
         return;
     }
     let leather = rgb(150, 36, 40);
     let deck = |z: f64, x: f64| hover_section(z).y_at(x);
-    // The floor: a dark skin just over the deck, inside the canopy's foot.
-    let (nx, nz) = (lod.pick(8, 4, 2), lod.pick(14, 6, 2));
-    let rows: Vec<Vec<DVec3>> = (0..=nz)
-        .map(|i| {
-            let z = -0.68 + 1.95 * i as f64 / nz as f64;
-            (0..=nx)
-                .map(|j| {
-                    let x = -0.56 + 1.12 * j as f64 / nx as f64;
-                    DVec3::new(x, deck(z, x) + 0.012, z)
-                })
-                .collect()
-        })
-        .collect();
-    b.grid(&rows, false, true, |_, _| Kit::plain(rgb(40, 30, 32)));
-    // (z, half width, backrest height): the rear bench sits under the
-    // canopy's falling tail, so its back is lower.
-    let seats = [(-0.28, 0.36, 0.09), (0.3, 0.4, 0.12)];
-    for (z, w, back) in seats {
-        let y = deck(z, 0.0);
+    // The cabin sunk into the hull under the canopy, the footwell running
+    // on under the cowl.
+    tub(b, body, lod, [-1.05, 1.3], hover_hole(lod));
+    // (z, half width, backrest height): seats low on the cabin floor.
+    for (z, w, back) in HOVER_SEATS {
+        let y = HOVER_CUSHION;
         cushion(
             b,
             lod,
-            DVec3::new(0.0, y + 0.07, z),
+            DVec3::new(0.0, y - 0.07, z),
             DVec3::new(w, 0.07, 0.17),
             0.0,
             Kit::plain(leather),
@@ -2108,9 +2258,9 @@ fn hover_interior(b: &mut MeshBuilder, k: &Kit, lod: Lod) {
         cushion(
             b,
             lod,
-            DVec3::new(0.0, y + 0.06 + back, z - 0.17),
+            DVec3::new(0.0, y - 0.02 + back, z - 0.17),
             DVec3::new(w, back, 0.05),
-            -0.25,
+            -0.22,
             Kit::plain(leather),
         );
     }
@@ -2149,7 +2299,7 @@ fn hover_interior(b: &mut MeshBuilder, k: &Kit, lod: Lod) {
             b.surf = Surf::Plain;
         }
         // The steering wheel, before the left seat.
-        let c = DVec3::new(0.25, y + 0.2, z - 0.2);
+        let c = DVec3::new(0.25, 1.13, 0.74);
         let tilt = 0.5f64;
         let (u, v) = (DVec3::X, DVec3::new(0.0, tilt.cos(), tilt.sin()));
         let ring: Vec<DVec3> = (0..=24)
@@ -2197,7 +2347,8 @@ fn cushion(b: &mut MeshBuilder, lod: Lod, c: DVec3, half: DVec3, tilt: f64, pain
 fn hover(b: &mut MeshBuilder, kit: &Kit, lod: Lod, taxi: bool, canopy: bool) {
     // The checker: cells of a fifth of a metre along the flanks.
     let cells: Vec<f64> = (0..=18).map(|i| -1.9 + 0.2 * i as f64).collect();
-    let mut stations = vec![-2.15, 1.95];
+    // Rows at the ends of the cabin's opening (see `hover_hole`).
+    let mut stations = vec![-2.15, 1.95, -0.95, 0.85];
     if taxi {
         stations.extend(cells.iter().copied());
     }
@@ -2208,14 +2359,18 @@ fn hover(b: &mut MeshBuilder, kit: &Kit, lod: Lod, taxi: bool, canopy: bool) {
         arches: vec![],
         stations,
         bands: if taxi {
-            vec![-0.9, -0.06, 0.0, 0.1, 0.2, 0.26, 0.6, 0.65]
+            vec![-0.9, -0.06, 0.0, 0.1, 0.2, 0.26, 0.6, 0.65, HOVER_HOLE]
         } else {
-            vec![-0.9, -0.06, 0.0, 0.26, 0.32, 0.6, 0.65]
+            vec![-0.9, -0.06, 0.0, 0.26, 0.32, 0.6, 0.65, HOVER_HOLE]
         },
     };
     let k = *kit;
     let glow_blue = rgb(120, 232, 255);
+    let hole = hover_hole(lod);
     body.build(b, lod, |at| {
+        if hole(&at) {
+            return None;
+        }
         if at.s < -0.9 || at.well {
             return Kit::plain(k.under);
         }
@@ -2252,7 +2407,7 @@ fn hover(b: &mut MeshBuilder, kit: &Kit, lod: Lod, taxi: bool, canopy: bool) {
         Kit::plain(k.body)
     });
     let deck = |z: f64, x: f64| body.shape(z).y_at(x);
-    hover_interior(b, &k, lod);
+    hover_interior(b, &body, &k, lod);
     if canopy {
         hover_canopy(b, &k, lod, taxi);
     }

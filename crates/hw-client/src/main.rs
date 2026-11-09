@@ -68,6 +68,9 @@
 //! `HW_VIEW=fight` starts in front of the minions, `HW_AUTOFIGHT=1`
 //! fights them on its own (both for screenshots);
 //! `HW_WRECK=<frames>` wrecks the cars near the camera that many frames in;
+//! `HW_VIEW=riders` looks in at the driver of the nearest car
+//! (`HW_RIDER=cruiser|bubble|hover|taxi` picks the kind, `HW_RIDER_CAM=front`
+//! looks in through the windscreen);
 //! `HW_TAXI=<stand>` hails a taxi at the start and `HW_TAXI_SECS=<s>` runs
 //! the world on that far (screenshots of a ride);
 //! `HW_WAIT_PEOPLE=1` waits at the start until every character is built
@@ -348,6 +351,9 @@ fn main() -> EngineResult<()> {
     let mut taxi_demo =
         env_num("HW_TAXI").map(|d| (d as usize, env_num("HW_TAXI_SECS").unwrap_or(0)));
     let mut traffic_view = hw_client::trafficview::TrafficView::new();
+    let mut riders = hw_client::riderview::RiderView::new();
+    // Hero taxis this frame, for their cabbies.
+    let mut cabs: Vec<hw_sim::traffic::Vehicle> = Vec::new();
     // The square with people and traffic follows the heroes: when the
     // server moves it, the next one is made on a worker thread, and the
     // traffic news for it waits until it is in.
@@ -491,7 +497,7 @@ fn main() -> EngineResult<()> {
     let mut bench_occlusion = (0u64, 0u64, 0u64);
     let mut hero_cam_yaw = 30.0f32;
     let mut fly = match view.as_str() {
-        "street" | "citizen" | "alpha" => {
+        "street" | "citizen" | "alpha" | "riders" => {
             let p = spawn - spawn_dir * 8.0;
             let yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, ground(p) as f32 + 6.0, p.y as f32), yaw, 8.0)
@@ -1475,6 +1481,7 @@ fn main() -> EngineResult<()> {
                     traffic_view.clear(world);
                     radio.clear(world);
                     signal.clear(world);
+                    riders.clear(world, &crowd);
                     crowd.clear(world);
                     // The new town's extras come in like the first ones.
                     if let Some(l) = extras_load.take() {
@@ -2383,6 +2390,7 @@ fn main() -> EngineResult<()> {
                         citizens.set_hour(game_hour() as f64);
                         stands = next_stands;
                         traffic_view.clear(world);
+                        riders.clear(world, &crowd);
                         crowd.clear(world);
                         if let Some(s) = extras.signals.as_mut() {
                             s.clear(world);
@@ -2544,6 +2552,14 @@ fn main() -> EngineResult<()> {
                 hw_net::ToClient::CarsWrecked { cars, live } => {
                     for &(id, _, fell, along) in cars {
                         let _ = traffic_view.wreck(world, &mut traffic, id, fell, along, *live);
+                        // The people in it get out and run (or, wrecked
+                        // before we came, it is empty).
+                        if let Some(v) = traffic_view.wreck_of(id) {
+                            let blow = hw_sim::props::byte_to_yaw(fell);
+                            let eye = world.camera().eye().as_dvec3();
+                            let blow = live.then_some(blow);
+                            let _ = riders.bail_out(world, &crowd, &citizens, &v, blow, eye);
+                        }
                     }
                     false
                 }
@@ -2568,6 +2584,7 @@ fn main() -> EngineResult<()> {
                 hw_net::ToClient::CarsCleared { cars } => {
                     for &id in cars {
                         traffic_view.clear_wreck(world, &mut traffic, id);
+                        riders.towed(id);
                     }
                     false
                 }
@@ -2691,6 +2708,15 @@ fn main() -> EngineResult<()> {
                         None => {}
                     }
                     if !hidden && h.kind == hw_net::EntityKind::Taxi {
+                        cabs.push(hw_sim::traffic::Vehicle {
+                            id: h.id.0 as u64 | hw_client::riderview::CAB_BIT,
+                            kind: hw_sim::traffic::VehicleKind::Taxi,
+                            pos: DVec3::from_array(h.pos),
+                            dir: DVec3::new(y.sin() as f64, 0.0, y.cos() as f64),
+                            roll: 0.0,
+                            speed: 0.0,
+                            odometer: 0.0,
+                        });
                         // The canopy swings up on its front hinge while the
                         // taxi is parked for a fare (the server's
                         // `grounded`), and shuts before it flies.
@@ -3161,6 +3187,48 @@ fn main() -> EngineResult<()> {
                 s.update(world, &traffic, props, eye2, game_time)?;
             }
             traffic_view.apply(world, traffic_plan)?;
+            // Drivers and passengers in the cars near the camera, and the
+            // cabbies of hero taxis.
+            hw_client::hitch::mark("riders");
+            let mut cars = traffic_view.riding().to_vec();
+            cars.append(&mut cabs);
+            riders.update(
+                world,
+                &crowd,
+                &cars,
+                &citizens,
+                eye.as_dvec3(),
+                frame.dt as f64,
+            )?;
+            // `HW_VIEW=riders`: beside the driver of the nearest car (of
+            // `HW_RIDER=cruiser|bubble|hover|taxi`, if given), looking in.
+            if view == "riders" {
+                let want = std::env::var("HW_RIDER").unwrap_or_default();
+                let near = cars.iter().find(|v| {
+                    let name = match v.kind {
+                        hw_sim::traffic::VehicleKind::Car(m, _) => format!("{m:?}"),
+                        hw_sim::traffic::VehicleKind::SkyCar(_) => "Hover".into(),
+                        hw_sim::traffic::VehicleKind::Taxi => "Taxi".into(),
+                    };
+                    want.is_empty() || name.eq_ignore_ascii_case(&want)
+                });
+                if let Some(at) = near.and_then(|v| hw_client::riderview::seat_place(v, 0)) {
+                    let yaw = at.yaw_degrees.to_radians();
+                    let ahead = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+                    let left = Vec3::new(ahead.z, 0.0, -ahead.x);
+                    // `HW_RIDER_CAM=front` looks in through the windscreen.
+                    let p = if std::env::var("HW_RIDER_CAM").is_ok_and(|c| c == "front") {
+                        at.position + ahead * 3.2 + left * 0.4 + Vec3::Y * 0.7
+                    } else {
+                        at.position + left * 1.9 + ahead * 0.6 + Vec3::Y * 0.35
+                    };
+                    let d = at.position + Vec3::Y * 0.35 - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
             // K knocks the people around the hero over (a test of ragdolls).
             if !flying && input.pressed(Key::K) {
                 if let Some(p) = session.my_position(&heroes) {

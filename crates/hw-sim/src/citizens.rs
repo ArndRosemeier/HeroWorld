@@ -73,6 +73,24 @@ pub struct Citizen {
     pub look: u32,
 }
 
+/// A run from trouble: out of the road onto the pavement and along it
+/// (see [`Citizens::escape`]).
+#[derive(Clone, Debug)]
+pub struct Escape {
+    legs: Vec<Leg>,
+}
+
+impl Escape {
+    /// Its length in metres.
+    pub fn len(&self) -> f64 {
+        self.legs.iter().map(Leg::len).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() < 1e-6
+    }
+}
+
 /// One leg of a route: along a street's pavement from one distance to
 /// another (either way), or straight across from one pavement to the next
 /// (waiting for a junction's walk light first, if it crosses traffic).
@@ -192,6 +210,15 @@ impl Walk {
         let o = (self.offset + self.bump_at(s, side)) * side;
         let (ma, mb) = (self.miters[k], self.miters[k + 1]);
         ((a + ma * o).lerp(b + mb * o, t), dir)
+    }
+
+    /// Like [`Self::sample`]'s point, without stepping round anything.
+    fn sample_unbumped(&self, s: f64, side: f64) -> DVec2 {
+        let (k, t) = self.line.locate(s);
+        let (a, b) = (self.line.pts[k], self.line.pts[k + 1]);
+        let o = self.offset * side;
+        let (ma, mb) = (self.miters[k], self.miters[k + 1]);
+        (a + ma * o).lerp(b + mb * o, t)
     }
 
     /// Distance along the line of the point nearest `p` (and how far off).
@@ -500,6 +527,107 @@ impl Citizens {
             speed,
             look,
         })
+    }
+
+    /// The way someone who gets out of a car at `from` runs from trouble at
+    /// `danger`: straight over to the nearest pavement (where the way there
+    /// is clear of parked cars and street furniture), then along it away
+    /// from the trouble, at most `max` metres and never past the corner or
+    /// a side street's mouth. `None` far from any street.
+    pub fn escape(&self, from: DVec2, danger: DVec2, max: f64) -> Option<Escape> {
+        let c = cell_of(from);
+        let mut roads: Vec<u32> = (-1..=1)
+            .flat_map(|dx| (-1..=1).map(move |dz| (c.0 + dx, c.1 + dz)))
+            .filter_map(|k| self.grid.get(&k))
+            .flatten()
+            .copied()
+            .collect();
+        roads.sort_unstable();
+        roads.dedup();
+        let (road, s, _) = roads
+            .into_iter()
+            .map(|r| {
+                let (s, d) = self.walks[r as usize].nearest(from);
+                (r, s, d)
+            })
+            .filter(|x| x.2 < 40.0)
+            .min_by(|a, b| a.2.total_cmp(&b.2).then(a.0.cmp(&b.0)))?;
+        let w = &self.walks[road as usize];
+        let side = [-1.0, 1.0]
+            .into_iter()
+            .min_by(|a, b| {
+                let da = w.sample(s, *a).0.distance(from);
+                let db = w.sample(s, *b).0.distance(from);
+                da.total_cmp(&db)
+            })
+            .unwrap_or(1.0);
+        let (_, d) = w.sample(s, side);
+        let ahead = if (from - danger).dot(d) >= 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
+        // Over to the pavement where nothing stands in the way: straight
+        // across, else a few metres on (or back).
+        let near: Vec<_> = (self.world.props.iter())
+            .filter(|p| p.pos.distance(from) < 30.0)
+            .flat_map(|p| p.footprints())
+            .collect();
+        let clear = |a: DVec2, b: DVec2| {
+            let n = (a.distance(b) / 0.25).ceil().max(1.0) as usize;
+            (0..=n).all(|i| {
+                let q = a.lerp(b, i as f64 / n as f64);
+                near.iter().all(|f| f.distance(q) > WALKER_HALF)
+            })
+        };
+        let start = [0.0, 2.0, -2.0, 4.0, -4.0, 6.0, -6.0, 9.0, -9.0, 12.0]
+            .into_iter()
+            .map(|k| self.place_on(road, side, s + k * ahead))
+            .find(|&x| clear(from, w.sample(x, side).0))
+            .unwrap_or_else(|| self.place_on(road, side, s));
+        // Along the pavement as far as this stretch of it goes.
+        let [e0, e1] = self.ends[road as usize][side_index(side)];
+        let mouths = &self.mouths[road as usize][side_index(side)];
+        let to = if ahead > 0.0 {
+            let stop = (mouths.iter())
+                .map(|m| m.s0)
+                .filter(|&m| m > start)
+                .fold(w.len() - e1, f64::min);
+            (start + max).min(stop).max(start)
+        } else {
+            let stop = (mouths.iter())
+                .map(|m| m.s1)
+                .filter(|&m| m < start)
+                .fold(e0, f64::max);
+            (start - max).max(stop).min(start)
+        };
+        let over = w.sample(start, side).0;
+        Some(Escape {
+            legs: vec![
+                Leg::Cross(from, over, None),
+                Leg::Street {
+                    road,
+                    side,
+                    from: start,
+                    to,
+                },
+            ],
+        })
+    }
+
+    /// Where an escape (see [`Citizens::escape`]) is `x` metres along it:
+    /// feet on the ground and the way it runs. Past its end, at the end.
+    pub fn escape_at(&self, e: &Escape, x: f64) -> (DVec3, DVec2) {
+        let mut x = x.max(0.0);
+        let last = e.legs.len() - 1;
+        for (k, leg) in e.legs.iter().enumerate() {
+            if x <= leg.len() || k == last {
+                let (p, d) = self.leg_at(*leg, x.min(leg.len()));
+                return (DVec3::new(p.x, self.world.surface(p), p.y), d);
+            }
+            x -= leg.len();
+        }
+        unreachable!("an escape has legs")
     }
 
     fn at(&self, id: u64, p: DVec2, facing: DVec2, speed: f64, look: u32) -> Citizen {
@@ -1045,6 +1173,7 @@ fn walk_of(r: &WorldRoad) -> Walk {
 /// pavements: out towards the houses or in towards the kerb, whichever is
 /// nearer and leaves room to pass.
 fn step_round_props(walks: &mut [Walk], grid: &BTreeMap<(i64, i64), Vec<u32>>, world: &Area) {
+    let clear = WALKER_HALF + 0.05;
     for p in &world.props {
         let parts = p.footprints();
         if parts.is_empty() {
@@ -1056,48 +1185,95 @@ fn step_round_props(walks: &mut [Walk], grid: &BTreeMap<(i64, i64), Vec<u32>>, w
         for i in near {
             let r = &world.roads[i as usize];
             let w = &mut walks[i as usize];
-            let (s, off) = w.nearest(p.pos);
-            if off > r.half + r.pavement + 1.0 {
-                continue;
+            // Every stretch of the street that passes the prop (a street
+            // that bends back, or a loop, passes it more than once).
+            for (s, _) in passes(&w.line, p.pos, r.half + r.pavement + 1.0) {
+                for side in [-1.0, 1.0] {
+                    // Where the walking line itself (mitred round bends)
+                    // comes too close: a few metres either way.
+                    let (mut s0, mut s1) = (f64::MAX, f64::MIN);
+                    let mut x = (s - 6.0).max(0.0);
+                    while x <= (s + 6.0).min(w.len()) {
+                        let q = w.sample_unbumped(x, side);
+                        if parts.iter().any(|f| f.distance(q) <= clear) {
+                            (s0, s1) = (s0.min(x), s1.max(x));
+                        }
+                        x += 0.25;
+                    }
+                    if s0 > s1 {
+                        continue;
+                    }
+                    let mid = 0.5 * (s0 + s1);
+                    let (c, d) = w.line.sample(mid);
+                    let n = d.perp() * side;
+                    let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+                    for f in &parts {
+                        let (l, h) = f.extent(c, n);
+                        (lo, hi) = (lo.min(l), hi.max(h));
+                    }
+                    if hi < r.half {
+                        // In the road: none of the pavement's business.
+                        continue;
+                    }
+                    let line = w.offset;
+                    let (kerb, house) = (r.half + WALKER_HALF, r.half + r.pavement - WALKER_HALF);
+                    let inner = lo - clear;
+                    let outer = hi + clear;
+                    let to = match (inner >= kerb, outer <= house) {
+                        (true, true) if line - inner <= outer - line => inner,
+                        (true, true) => outer,
+                        (true, false) => inner,
+                        (false, true) => outer,
+                        // No room either side: squeeze past on the roomier one.
+                        (false, false) if inner - kerb >= house - outer => inner.max(kerb),
+                        (false, false) => outer.min(house),
+                    };
+                    w.bumps[side_index(side)].push(Bump {
+                        s0: s0 - 0.45,
+                        s1: s1 + 0.45,
+                        by: to - line,
+                    });
+                }
             }
-            let (c, d) = w.line.sample(s);
-            let n = d.perp();
-            let side = if n.dot(p.pos - c) >= 0.0 { 1.0 } else { -1.0 };
-            let (mut lo, mut hi, mut a, mut b) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
-            for f in &parts {
-                let (l, h) = f.extent(c, n * side);
-                let (x, y) = f.extent(c, d);
-                (lo, hi, a, b) = (lo.min(l), hi.max(h), a.min(x), b.max(y));
-            }
-            let line = w.offset;
-            let clear = WALKER_HALF + 0.05;
-            if hi < line - clear || lo > line + clear || hi < r.half {
-                continue;
-            }
-            let (kerb, house) = (r.half + WALKER_HALF, r.half + r.pavement - WALKER_HALF);
-            let inner = lo - clear;
-            let outer = hi + clear;
-            let to = match (inner >= kerb, outer <= house) {
-                (true, true) if line - inner <= outer - line => inner,
-                (true, true) => outer,
-                (true, false) => inner,
-                (false, true) => outer,
-                // No room either side: squeeze past on the roomier one.
-                (false, false) if inner - kerb >= house - outer => inner.max(kerb),
-                (false, false) => outer.min(house),
-            };
-            w.bumps[side_index(side)].push(Bump {
-                s0: s + a - 0.2,
-                s1: s + b + 0.2,
-                by: to - line,
-            });
         }
     }
     for w in walks.iter_mut() {
         for list in &mut w.bumps {
             list.sort_by(|x, y| x.s0.total_cmp(&y.s0));
+            // A stretch passed twice is found twice: once is enough.
+            list.dedup_by(|x, y| {
+                (x.s0 - y.s0).abs() < 1e-9 && (x.s1 - y.s1).abs() < 1e-9 && x.by == y.by
+            });
         }
     }
+}
+
+/// Where `line` passes within `reach` of `p`: (distance along it, how far
+/// off) at the nearest point of each stretch that does.
+fn passes(line: &hw_gen::geom::Polyline, p: DVec2, reach: f64) -> Vec<(f64, f64)> {
+    let mut out: Vec<(f64, f64)> = Vec::new();
+    let mut last_hit = false;
+    for k in 0..line.pts.len().saturating_sub(1) {
+        let (a, b) = (line.pts[k], line.pts[k + 1]);
+        let ab = b - a;
+        let t = ((p - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
+        let d = (a + ab * t).distance(p);
+        if d > reach {
+            last_hit = false;
+            continue;
+        }
+        let s = line.at[k] + ab.length() * t;
+        match out.last_mut() {
+            Some(prev) if last_hit => {
+                if d < prev.1 {
+                    *prev = (s, d);
+                }
+            }
+            _ => out.push((s, d)),
+        }
+        last_hit = true;
+    }
+    out
 }
 
 /// Barricades close the pavements too: walking turns back before them.
@@ -1361,6 +1537,59 @@ mod tests {
             }
         }
         assert!(moved > 0, "some of them walk about");
+    }
+
+    #[test]
+    fn people_getting_out_of_cars_run_along_the_pavement_clear_of_things() {
+        let t = GeneratedTown::generate(Seed(1), 20_000.0);
+        let traffic = crate::traffic::Traffic::new(t.area.clone());
+        let c = Citizens::new(t.area.clone(), traffic.signals());
+        let p = c.world.spawn_line().0;
+        let cars: Vec<_> = (traffic.near(p, 400.0, 100.0, 60).into_iter())
+            .filter(|v| !v.flies())
+            .collect();
+        assert!(cars.len() > 20, "only {} cars", cars.len());
+        let things: Vec<_> = c.world.props.iter().flat_map(|p| p.footprints()).collect();
+        let mut found = 0;
+        for v in &cars {
+            let at = v.pos.truncate_xz();
+            let blow = at - DVec2::new(v.dir.x, v.dir.z) * 3.0;
+            let Some(e) = c.escape(at, blow, 40.0) else {
+                continue;
+            };
+            found += 1;
+            assert!(e.len() < 80.0, "a run of {} m", e.len());
+            let (end, _) = c.escape_at(&e, e.len());
+            let end = end.truncate_xz();
+            assert!(
+                end.distance(blow) + 0.5 >= at.distance(blow),
+                "runs towards trouble"
+            );
+            // It ends on a pavement: off every carriageway.
+            for r in &c.world.roads {
+                for w in r.pts.windows(2) {
+                    let off = hw_gen::water::segment_distance(end, w[0], w[1]);
+                    assert!(off > r.half - 0.1, "{end} ends in the road");
+                }
+            }
+            let mut x = 0.0;
+            while x <= e.len() {
+                let (q, _) = c.escape_at(&e, x);
+                let q = q.truncate_xz();
+                for f in things.iter().filter(|f| f.at().distance(q) < 12.0) {
+                    assert!(
+                        f.distance(q) > WALKER_HALF - 0.05,
+                        "{q} runs through a thing"
+                    );
+                }
+                x += 0.5;
+            }
+        }
+        assert!(
+            found * 10 >= cars.len() * 9,
+            "{found} of {} found a way",
+            cars.len()
+        );
     }
 
     #[test]

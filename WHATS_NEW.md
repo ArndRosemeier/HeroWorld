@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.116 (2026-11-09)
+
+- Cars have people in them: a driver at the wheel, and now and then a passenger or a whole family. Taxi drivers carry their fares in the back seat, and the flying taxis have a cabbie too.
+- Wreck a car and the people inside sit stunned for a moment, climb out of their doors and run off along the pavement, then stop and look back.
+- People on the pavement no longer brush through lamp posts where a street bends back on itself.
+
 ## 0.115 (2026-11-09)
 
 - The game no longer draws buildings you cannot see. Your graphics card checks what hides behind the houses in front of you and skips it. From the street that is about three in four buildings, and in a test the picture took about a third less work. Nothing pops in or out: the picture is exactly the same.

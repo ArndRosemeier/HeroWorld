@@ -183,6 +183,8 @@ pub struct Built {
     pub model: Arc<AnimatedModel>,
     /// Its walk clip ("walk" or "walk formal").
     pub walk: String,
+    /// A citizen who fits in a car seat (see `riderview::fits_seats`).
+    pub sits: bool,
 }
 
 /// One character to build.
@@ -1309,6 +1311,8 @@ pub fn build_sharing(
     }
     if matches!(who, Who::Citizen(_)) {
         poses::add_hands_up_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+        // Drivers and passengers (see `riderview`).
+        poses::add_seated_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
     if !hero {
         // Citizens and villains are seen from a few metres at the nearest,
@@ -1329,10 +1333,12 @@ pub fn build_sharing(
             }
         }
     }
+    let sits = matches!(who, Who::Citizen(_)) && crate::riderview::fits_seats(&c.model);
     Ok(Built {
         who: who.clone(),
         model: Arc::new(c.model),
         walk: walk.into(),
+        sits,
     })
 }
 

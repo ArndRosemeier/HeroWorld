@@ -51,6 +51,7 @@ pub fn add_flight_clips(model: &mut AnimatedModel) -> Result<(), String> {
             // The head up to look where it flies (the body lies flat).
             turns: vec![("neck_01", Vec3::X, -0.55), ("head", Vec3::X, -0.35)],
             lift: 0.0,
+            seated: false,
         }
     })?;
     let hover = make_clip(model, "hover", 3.2, |t| {
@@ -73,6 +74,7 @@ pub fn add_flight_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             turns: vec![],
             lift: 0.05 * (t * std::f32::consts::TAU).sin(),
+            seated: false,
         }
     })?;
     model.clips.retain(|c| c.name != "fly" && c.name != "hover");
@@ -107,6 +109,7 @@ pub fn add_heroic_clip(model: &mut AnimatedModel) -> Result<(), String> {
                 ("head", Vec3::X, -0.14),
             ],
             lift: -0.02,
+            seated: false,
         }
     })?;
     model.clips.retain(|c| c.name != "heroic");
@@ -135,6 +138,7 @@ pub fn add_cuffed_clip(model: &mut AnimatedModel) -> Result<(), String> {
             // Head hung low.
             turns: vec![("head", Vec3::X, 0.35)],
             lift: 0.0,
+            seated: false,
         }
     })?;
     model.clips.retain(|c| c.name != "cuffed");
@@ -163,6 +167,7 @@ pub fn add_hands_up_clip(model: &mut AnimatedModel) -> Result<(), String> {
             // Leaning back from the muggers, head turned half away.
             turns: vec![("spine_03", Vec3::X, -0.12), ("head", Vec3::Y, 0.35)],
             lift: -0.04,
+            seated: false,
         }
     })?;
     model.clips.retain(|c| c.name != "hands up");
@@ -170,12 +175,88 @@ pub fn add_hands_up_clip(model: &mut AnimatedModel) -> Result<(), String> {
     Ok(())
 }
 
+/// The seated clips, "drive" (hands on the wheel) and "ride" (hands in the
+/// lap), for people in cars. Their hips are held still at the model's
+/// origin, so a rider is placed by its hip point on the seat (see
+/// [`crate::carmesh::seats`]); thighs and shins run forward, the back
+/// leans into the backrest. Only the head and the hands
+/// move a little.
+pub fn add_seated_clips(model: &mut AnimatedModel) -> Result<(), String> {
+    // Short loops: each is baked for every look's crowd, and a sitter
+    // hardly moves.
+    let legs = || {
+        vec![
+            // Knees a little apart, thighs along the cushion.
+            aim("thigh_l", "calf_l", 0.12, 0.02, 1.0),
+            aim("thigh_r", "calf_r", -0.12, 0.02, 1.0),
+            // Shins stretched out forward to the pedals, low cars' way
+            // (a hover car's floor is a hand under the seat).
+            aim("calf_l", "foot_l", 0.03, -0.15, 0.99),
+            aim("calf_r", "foot_r", -0.03, -0.14, 0.99),
+            aim("foot_l", "ball_l", 0.06, -0.15, 1.0),
+            aim("foot_r", "ball_r", -0.06, -0.15, 1.0),
+        ]
+    };
+    let drive = make_clip(model, "drive", 3.0, |t| {
+        let w = (t * std::f32::consts::TAU).sin();
+        let mut aims = legs();
+        aims.extend([
+            // Forearms out to the wheel at ten to two.
+            aim("upperarm_l", "lowerarm_l", 0.1, -0.62, 0.78),
+            aim("lowerarm_l", "hand_l", -0.22, 0.12 + 0.02 * w, 1.0),
+            aim("upperarm_r", "lowerarm_r", -0.1, -0.62, 0.78),
+            aim("lowerarm_r", "hand_r", 0.22, 0.12 - 0.02 * w, 1.0),
+        ]);
+        Pose {
+            aims,
+            turns: vec![("head", Vec3::Y, 0.06 * w)],
+            lift: 0.0,
+            seated: true,
+        }
+    })?;
+    let ride = make_clip(model, "ride", 3.0, |t| {
+        let w = (t * std::f32::consts::TAU).sin();
+        let mut aims = legs();
+        aims.extend([
+            // Hands resting on the thighs.
+            aim("upperarm_l", "lowerarm_l", 0.14, -0.92, 0.32),
+            aim("lowerarm_l", "hand_l", -0.04, -0.42, 1.0),
+            aim("upperarm_r", "lowerarm_r", -0.14, -0.92, 0.32),
+            aim("lowerarm_r", "hand_r", 0.04, -0.42, 1.0),
+        ]);
+        Pose {
+            aims,
+            // Watching the street go by.
+            turns: vec![("head", Vec3::Y, 0.14 * w)],
+            lift: 0.0,
+            seated: true,
+        }
+    })?;
+    model
+        .clips
+        .retain(|c| c.name != "drive" && c.name != "ride");
+    model.clips.push(drive);
+    model.clips.push(ride);
+    Ok(())
+}
+
+/// How a sitter leans back (bone, radians about its left-right axis; a
+/// negative angle tips it back) and holds its head up again.
+const SEATED_LEAN: [(&str, f32); 4] = [
+    ("spine_01", -0.27),
+    ("spine_02", -0.14),
+    ("neck_01", 0.22),
+    ("head", 0.16),
+];
+
 /// A pose at one moment: aims, then turns of whole joints (axis in model
-/// space, radians), then a lift of the hips.
+/// space, radians), then a lift of the hips. `seated`: the hips are held
+/// still (no shifting of weight) with the pelvis at the model's origin.
 struct Pose {
     aims: Vec<Aim>,
     turns: Vec<(&'static str, Vec3, f32)>,
     lift: f32,
+    seated: bool,
 }
 
 /// Gives the posed clips' capes their swing (Actors simulates the cloth
@@ -245,6 +326,36 @@ fn make_clip(
             })
             .collect();
         let p = pose(t);
+        if p.seated {
+            // Hips still at the origin: the bind pose's pelvis, lowered by
+            // its own height.
+            if let Ok(pelvis) = joint("pelvis") {
+                let (bp, br, _) = model.bind_local[pelvis];
+                locals[pelvis] = (bp, br);
+                let g = globals(sk, &locals);
+                let parent = match sk.parents[pelvis] {
+                    Some(pp) => g[pp].1,
+                    None => sk.root_transforms[pelvis].to_scale_rotation_translation().1,
+                };
+                locals[pelvis].0 += parent.inverse() * Vec3::new(0.0, -g[pelvis].0.y, 0.0);
+            }
+        }
+        if p.seated {
+            // Leaning back into the seat (a car seat's back is tipped
+            // about 20 degrees), the head held up to look ahead. Before
+            // the aims, which then set the limbs in the leaning body.
+            for (name, angle) in SEATED_LEAN {
+                let b = joint(name)?;
+                let g = globals(sk, &locals);
+                turn(
+                    sk,
+                    &mut locals,
+                    &g,
+                    b,
+                    Quat::from_axis_angle(Vec3::X, angle),
+                );
+            }
+        }
         for a in &p.aims {
             let (b, c) = (joint(a.bone)?, joint(a.child)?);
             let g = globals(sk, &locals);

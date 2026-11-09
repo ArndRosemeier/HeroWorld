@@ -142,3 +142,78 @@ fn the_creator_dresses_heroes_for_the_era() {
         );
     }
 }
+
+#[test]
+fn people_in_cars_sit_with_their_heads_under_the_roof() {
+    use hw_client::carmesh::{floor_under, roof_over, seats};
+    use hw_gen::urban::props::CarModel;
+    let Some(mut b) = builder() else { return };
+    let mut least = std::collections::BTreeMap::new();
+    for look in 0..hw_sim::citizens::LOOKS {
+        let c = people::build(&mut b, &Who::Citizen(look), 1, None).expect("citizen");
+        let m = &c.model;
+        for clip in ["drive", "ride"] {
+            for t in [0.0, 0.8, 1.6, 2.4] {
+                // Hips held at the origin: the seat's hip point.
+                let hips = joint_at(m, clip, "pelvis", t);
+                assert!(hips.length() < 0.03, "{look} {clip}: hips at {hips}");
+                // The top of the head is about 0.22 m over the head bone.
+                let head = joint_at(m, clip, "head", t) + glam::Vec3::Y * 0.22;
+                for model in [CarModel::Cruiser, CarModel::Bubble, CarModel::Hover] {
+                    for s in seats(model) {
+                        let (x, z) = (s.hip.x + head.x as f64, s.hip.z + head.z as f64);
+                        let roof = roof_over(model, x, z).expect("a head under the roof") as f32;
+                        let room = roof - (s.hip.y as f32 + head.y);
+                        let k = format!("{model:?} seat {:.2} {clip}", s.hip.z);
+                        let e = least.entry(k).or_insert((f32::MAX, 0));
+                        if room < e.0 {
+                            *e = (room, look);
+                        }
+                    }
+                }
+                // Feet forward, over the floor (a sole is ~6 cm under the
+                // ball joint).
+                for foot in ["ball_l", "ball_r", "foot_l", "foot_r"] {
+                    let f = joint_at(m, clip, foot, t);
+                    for model in [CarModel::Cruiser, CarModel::Bubble, CarModel::Hover] {
+                        for s in seats(model) {
+                            let floor = floor_under(model, s.hip.z + f.z as f64);
+                            let over = s.hip.y + f.y as f64 - 0.06 - floor;
+                            assert!(over > 0.0, "look {look} {clip}: {foot} {f} through the floor of {model:?} at {s:?} ({over} m)");
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (k, (room, look)) in &least {
+        eprintln!("{k}: least headroom {room:.3} m (look {look})");
+    }
+    for (k, (room, look)) in &least {
+        // A little room for hair.
+        assert!(
+            *room > 0.015,
+            "look {look}'s head touches the roof: {k} ({room} m)"
+        );
+    }
+}
+
+#[test]
+fn people_who_ride_in_cars_keep_their_clothes_in_the_car() {
+    // A long skirt hangs off the knees of someone sitting, through the
+    // floor and out under the car: such looks walk, they don't ride.
+    let Some(mut b) = builder() else { return };
+    let mut fits = Vec::new();
+    for look in 0..hw_sim::citizens::LOOKS {
+        let c = people::build(&mut b, &Who::Citizen(look), 1, None).expect("citizen");
+        assert_eq!(c.sits, hw_client::riderview::fits_seats(&c.model));
+        if c.sits {
+            fits.push(look);
+        }
+    }
+    eprintln!("looks that ride: {fits:?}");
+    assert!(
+        fits.len() * 3 >= hw_sim::citizens::LOOKS as usize * 2,
+        "too few looks fit in a car: {fits:?}"
+    );
+}

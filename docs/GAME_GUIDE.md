@@ -715,6 +715,14 @@ Heroes cannot target townsfolk.
   banking into turns.
 - Cars are solid: you bump into them and can stand on their roofs. Knocked-over lights go
   dark. All players see the same traffic.
+- **People in cars** (`hw-client/src/riderview.rs`): every car, hover car and flying taxi
+  within 110 m of the camera has a driver behind the wheel, and some carry passengers: 45%
+  of cars one to three (a taxi's fares sit in the back, 65% of taxis have one or two). Who
+  rides in which car follows from the car, so it is always the same people. They are the
+  townspeople's looks in a seated pose ("drive", "ride"), drawn with the people on foot.
+  A look whose clothes would poke out of the car sitting down (a long skirt hangs through the
+  floor) walks and does not ride (`riderview::fits_seats`, worked out as the look is built).
+  Hero taxis have a cabbie.
 - **Where it runs:** traffic, people on foot, taxi stands and new incidents live in a 6 km
   square (`AREA_HALF` 3000 m) that follows the heroes: when their middle is 1500 m
   (`AREA_SHIFT`) from its centre, the server makes the next square round them (snapped to
@@ -722,7 +730,11 @@ Heroes cannot target townsfolk.
   towed. The "Town centre" taxi stand is always on the list.
 - **Wrecks** (`wrecks.rs`): punch or blast a moving car and it stops dead in a shower of
   sparks, dented, blackened and smoking, its doors springing open; the lane jams behind it
-  until a tow truck you never see clears it once nobody is around.
+  until a tow truck you never see clears it once nobody is around. The people inside sit
+  stunned for up to 1.4 s, climb out of the door on their side and run (2.9 m/s) onto the
+  nearest pavement, where the way is clear of parked cars and street furniture, and along it
+  away from the blow, up to 45 m and never past a corner; then they stop and look back. They
+  go once the wreck is towed and they are 60 m from the camera, or 260 m away.
 
 ### Flying taxis (`hw-sim/src/taxi.rs`)
 
@@ -873,7 +885,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default: the profile's city, 40 000 at first; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |
