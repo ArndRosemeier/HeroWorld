@@ -5,3 +5,4 @@ screenshots/
 /assets/packs
 /reports
 __pycache__/
+/logs/
