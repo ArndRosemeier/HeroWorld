@@ -6,6 +6,9 @@
 //! The map is drawn from tiles of map pixels (`mapraster.rs`) made by a
 //! worker thread round the player and forgotten when far, so it streams
 //! with the world: a megacity's map costs no more memory than a village's.
+//! The round picture itself is painted on a second thread ([`Painter`]):
+//! one picture is asked for at a time, and the markers are drawn with the
+//! same view the picture was painted for, so map and marks always agree.
 
 use crate::fightview::con_colour;
 use crate::mapraster::{self, MapTile, Surroundings, TileKey};
@@ -33,13 +36,31 @@ const MAX_TILES: usize = 160;
 /// The minimap and its tiles.
 pub struct Minimap {
     pub shown: bool,
-    tiles: BTreeMap<TileKey, MapTile>,
+    tiles: BTreeMap<TileKey, Arc<MapTile>>,
     asked: BTreeSet<TileKey>,
     ask: Sender<TileKey>,
     made: Receiver<MapTile>,
     texture: Option<egui::TextureHandle>,
-    image: Vec<u8>,
+    /// Pictures to paint, and painted ones (with the view they show).
+    paint: Sender<Paint>,
+    painted: Receiver<(Paint, egui::ColorImage)>,
+    /// A picture asked for and not back yet.
+    painting: bool,
+    /// The view the shown picture was painted for.
+    showing: Option<Paint>,
     /// The reach shown (m), eased towards the wanted one.
+    reach: f64,
+}
+
+/// One picture of the map: the tiles it is painted from, where it is
+/// centred, which way is up, and its scale.
+#[derive(Clone)]
+struct Paint {
+    tiles: BTreeMap<TileKey, Arc<MapTile>>,
+    side: usize,
+    at: DVec2,
+    fwd: DVec2,
+    right: DVec2,
     reach: f64,
 }
 
@@ -57,6 +78,36 @@ impl Minimap {
                 }
             })
             .expect("minimap thread");
+        let (paint, jobs) = channel::<Paint>();
+        let (done, painted) = channel();
+        std::thread::Builder::new()
+            .name("minimap-paint".into())
+            .spawn(move || {
+                let mut image = Vec::new();
+                while let Ok(job) = jobs.recv() {
+                    let mpp = job.reach / (job.side as f64 * 0.5);
+                    compose(
+                        &job.tiles,
+                        &mut image,
+                        job.side,
+                        job.at,
+                        job.fwd,
+                        job.right,
+                        mpp,
+                        level_for(job.reach),
+                    );
+                    let img = egui::ColorImage::from_rgba_unmultiplied([job.side; 2], &image);
+                    // Tiles are let go here, not on the main thread.
+                    let job = Paint {
+                        tiles: BTreeMap::new(),
+                        ..job
+                    };
+                    if done.send((job, img)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("minimap painter thread");
         Self {
             shown: std::env::var("HW_MINIMAP").map_or(true, |v| v != "0"),
             tiles: BTreeMap::new(),
@@ -64,7 +115,10 @@ impl Minimap {
             ask,
             made,
             texture: None,
-            image: Vec::new(),
+            paint,
+            painted,
+            painting: false,
+            showing: None,
             reach: WALK_REACH,
         }
     }
@@ -74,7 +128,7 @@ impl Minimap {
     fn stream(&mut self, at: DVec2, reach: f64) {
         while let Ok(t) = self.made.try_recv() {
             self.asked.remove(&t.key);
-            self.tiles.insert(t.key, t);
+            self.tiles.insert(t.key, Arc::new(t));
         }
         // Level 0 always (the soundscape reads it), plus the level the
         // map shows at.
@@ -106,7 +160,7 @@ impl Minimap {
     /// What lies within `r` metres of `p`, from the map (None until its
     /// tiles are made).
     pub fn surroundings(&self, p: DVec2, r: f64) -> Option<Surroundings> {
-        mapraster::surroundings(|k| self.tiles.get(&k), p, r)
+        mapraster::surroundings(|k| self.tiles.get(&k).map(|t| &**t), p, r)
     }
 
     /// Streams the tiles and draws the map. `at`: the hero (or camera) on
@@ -158,24 +212,39 @@ impl Minimap {
             .try_normalize()
             .unwrap_or(DVec2::NEG_Y);
         let right = DVec2::new(-fwd.y, fwd.x);
-        let mpp = self.reach / (side as f64 * 0.5);
-        compose(
-            &self.tiles,
-            &mut self.image,
-            side,
-            at,
-            fwd,
-            right,
-            mpp,
-            level_for(self.reach),
-        );
-        let img = egui::ColorImage::from_rgba_unmultiplied([side, side], &self.image);
-        match &mut self.texture {
-            Some(t) => t.set(img, egui::TextureOptions::LINEAR),
-            None => {
-                self.texture = Some(ctx.load_texture("minimap", img, egui::TextureOptions::LINEAR))
+        // The picture painted since: shown from now on, with its view.
+        match self.painted.try_recv() {
+            Ok((view, img)) => {
+                self.painting = false;
+                self.showing = Some(view);
+                match &mut self.texture {
+                    Some(t) => t.set(img, egui::TextureOptions::LINEAR),
+                    None => {
+                        self.texture =
+                            Some(ctx.load_texture("minimap", img, egui::TextureOptions::LINEAR))
+                    }
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                panic!("the minimap painter stopped")
             }
         }
+        // The next picture, of the view now (one at a time).
+        if !self.painting {
+            let job = Paint {
+                tiles: self.tiles.clone(),
+                side,
+                at,
+                fwd,
+                right,
+                reach: self.reach,
+            };
+            self.painting = self.paint.send(job).is_ok();
+        }
+        // Marks go where the shown picture has things.
+        let Some(view) = &self.showing else { return };
+        let (at, fwd, right, reach) = (view.at, view.fwd, view.right, view.reach);
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
             egui::Id::new("minimap"),
@@ -211,7 +280,7 @@ impl Minimap {
             egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(120, 90, 50)),
         );
         // Map metres to the screen.
-        let scale = RADIUS as f64 / self.reach;
+        let scale = RADIUS as f64 / reach;
         let to_screen = |p: DVec2| -> (egui::Pos2, bool) {
             let d = p - at;
             let (u, v) = (d.dot(right) * scale, -d.dot(fwd) * scale);
@@ -313,7 +382,7 @@ fn dist(k: &TileKey, at: DVec2) -> f64 {
 /// Paints the round map into `image` (`side` pixels square, RGBA): each
 /// pixel looks up the map where it falls, the finest tile there first.
 fn compose(
-    tiles: &BTreeMap<TileKey, MapTile>,
+    tiles: &BTreeMap<TileKey, Arc<MapTile>>,
     image: &mut Vec<u8>,
     side: usize,
     at: DVec2,
@@ -342,7 +411,7 @@ fn compose(
                 let byte = match last.filter(|t| covers(t, p)) {
                     Some(t) => Some(t.at(p)),
                     None => (first..3).chain((0..first).rev()).find_map(|l| {
-                        let t = tiles.get(&TileKey::at(l, p))?;
+                        let t: &MapTile = tiles.get(&TileKey::at(l, p))?;
                         last = Some(t);
                         Some(t.at(p))
                     }),

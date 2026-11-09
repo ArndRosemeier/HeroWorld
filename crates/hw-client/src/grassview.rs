@@ -11,6 +11,10 @@
 //! edge) and is drawn instanced; clumps are placed in square tiles that
 //! come and go with the camera, and cast no shadows.
 //!
+//! Which tiles to build, their clumps and each model's list of places are
+//! worked out on a thread of the view's own ([`Planter`]); the main thread
+//! only hands finished lists to Engine.
+//!
 //! The blades use Engine's vegetation surface (the far-canopy profile with
 //! a per-vertex wind weight), so they bend in the world's wind like the
 //! trees.
@@ -22,6 +26,7 @@ use hw_gen::style::Region;
 use hw_gen::urban::greenery::{Greenery, Sward};
 use hw_gen::urban::world::TownWorld;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
 /// Clump models per kind of grass.
@@ -58,13 +63,40 @@ fn model_index(s: Sward, v: u8) -> usize {
 /// The grass blades around the camera.
 pub struct GrassView {
     world: Arc<TownWorld>,
-    green: Arc<Greenery>,
     /// One LOD set per model.
     sets: Vec<LodId>,
+    /// To the planter thread, in order.
+    jobs: Sender<Job>,
+    /// From it: changed models' places.
+    done: Receiver<Planted>,
+    /// Bumped by [`Self::clear`]: lists planted before are dropped.
+    generation: u64,
+    pub enabled: bool,
+}
+
+/// What the planter is asked, in order.
+enum Job {
+    /// Tiles within `reach` of `eye` (metres; 0 keeps none).
+    Around { eye: DVec2, reach: f64 },
+    /// Forget every tile; lists from now on carry `generation`.
+    Clear { generation: u64 },
+}
+
+/// Changed models and all their places, as of `generation`.
+struct Planted {
+    generation: u64,
+    places: Vec<(usize, Vec<Place>)>,
+}
+
+/// Works out the grass tiles around the camera on a thread of its own.
+struct Planter {
+    world: Arc<TownWorld>,
+    green: Arc<Greenery>,
+    models: usize,
     /// Built tiles: per model, the clumps' places.
     tiles: BTreeMap<Tile, Vec<(usize, Place)>>,
     seed: Seed,
-    pub enabled: bool,
+    generation: u64,
 }
 
 impl GrassView {
@@ -112,12 +144,26 @@ impl GrassView {
             "one set per clump"
         );
         let seed = town.seed.child("grass-blades");
-        Self {
-            world: town,
+        let planter = Planter {
+            world: town.clone(),
             green,
-            sets,
+            models: sets.len(),
             tiles: BTreeMap::new(),
             seed,
+            generation: 0,
+        };
+        let (jobs, rx) = channel();
+        let (tx, done) = channel();
+        std::thread::Builder::new()
+            .name("hw-grass".into())
+            .spawn(move || planter.run(rx, tx))
+            .expect("start the grass thread");
+        Self {
+            world: town,
+            sets,
+            jobs,
+            done,
+            generation: 0,
             // `HW_GRASS=0` leaves the blades out (to compare frame rates).
             enabled: std::env::var("HW_GRASS").map_or(true, |v| v != "0"),
         }
@@ -130,8 +176,8 @@ impl GrassView {
         }
     }
 
-    /// Builds the tiles coming into range around `eye` and drops those
-    /// going out of it.
+    /// Asks for the tiles around `eye` (worked out on the planter
+    /// thread) and hands the lists it finished to Engine.
     pub fn update(&mut self, world: &mut World, eye: Vec3) -> EngineResult<()> {
         let reach = if self.enabled {
             (FAR * world.lod_bias().max(0.2)) as f64 + TILE * 0.75
@@ -142,6 +188,103 @@ impl GrassView {
         // High above the ground the blades are too small to see.
         let above = eye.y as f64 - self.world.ground(e);
         let reach = if above > FAR as f64 { 0.0 } else { reach };
+        let eye = e;
+        // The planter takes only the newest ask; a stopped planter means it
+        // panicked, which the next receive reports.
+        let _ = self.jobs.send(Job::Around { eye, reach });
+        loop {
+            match self.done.try_recv() {
+                Ok(p) => {
+                    if p.generation != self.generation {
+                        continue;
+                    }
+                    for (m, places) in p.places {
+                        world.set_lod_places(self.sets[m], &places)?;
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(()),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    panic!("the grass thread stopped")
+                }
+            }
+        }
+    }
+
+    /// Forgets every tile (after the ground changed, or to rebuild).
+    pub fn clear(&mut self, world: &mut World) -> EngineResult<()> {
+        self.generation += 1;
+        let _ = self.jobs.send(Job::Clear {
+            generation: self.generation,
+        });
+        for &id in &self.sets {
+            world.set_lod_places(id, &[])?;
+        }
+        Ok(())
+    }
+}
+
+impl Planter {
+    fn run(mut self, jobs: Receiver<Job>, done: Sender<Planted>) {
+        let mut around: Option<(DVec2, f64)> = None;
+        loop {
+            // Wait for work when all is built; else take what came meanwhile.
+            let next = if around.is_none() {
+                match jobs.recv() {
+                    Ok(j) => Some(j),
+                    Err(_) => return,
+                }
+            } else {
+                match jobs.try_recv() {
+                    Ok(j) => Some(j),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => return,
+                }
+            };
+            match next {
+                Some(Job::Clear { generation }) => {
+                    self.tiles.clear();
+                    self.generation = generation;
+                    continue;
+                }
+                Some(Job::Around { eye, reach }) => {
+                    around = Some((eye, reach));
+                    // Only the newest ask counts: drain first.
+                    continue;
+                }
+                None => {}
+            }
+            let Some((eye, reach)) = around else { continue };
+            let (changed, more) = self.step(eye, reach);
+            if !more {
+                around = None;
+            }
+            if !changed.is_empty() {
+                let mut places: Vec<Vec<Place>> = vec![Vec::new(); self.models];
+                for clumps in self.tiles.values() {
+                    for (m, p) in clumps {
+                        if changed.contains(m) {
+                            places[*m].push(*p);
+                        }
+                    }
+                }
+                let planted = Planted {
+                    generation: self.generation,
+                    places: changed
+                        .into_iter()
+                        .map(|m| (m, std::mem::take(&mut places[m])))
+                        .collect(),
+                };
+                if done.send(planted).is_err() {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Builds some of the tiles coming into range around `e` and drops
+    /// those going out of it. Returns the models changed, and whether
+    /// tiles are still missing.
+    fn step(&mut self, e: DVec2, reach: f64) -> (BTreeSet<usize>, bool) {
         let centre = |t: Tile| DVec2::new((t.0 as f64 + 0.5) * TILE, (t.1 as f64 + 0.5) * TILE);
         let mut changed = BTreeSet::new();
         let gone: Vec<Tile> = self
@@ -166,6 +309,7 @@ impl GrassView {
             .filter(|(d, _)| *d < reach)
             .collect();
         want.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)));
+        let more = want.len() > TILES_PER_UPDATE;
         for (_, t) in want.into_iter().take(TILES_PER_UPDATE) {
             let clumps = self.tile_clumps(t);
             for (m, _) in &clumps {
@@ -173,30 +317,7 @@ impl GrassView {
             }
             self.tiles.insert(t, clumps);
         }
-        if changed.is_empty() {
-            return Ok(());
-        }
-        let mut places: Vec<Vec<Place>> = vec![Vec::new(); self.sets.len()];
-        for clumps in self.tiles.values() {
-            for (m, p) in clumps {
-                if changed.contains(m) {
-                    places[*m].push(*p);
-                }
-            }
-        }
-        for m in changed {
-            world.set_lod_places(self.sets[m], &places[m])?;
-        }
-        Ok(())
-    }
-
-    /// Forgets every tile (after the ground changed, or to rebuild).
-    pub fn clear(&mut self, world: &mut World) -> EngineResult<()> {
-        self.tiles.clear();
-        for &id in &self.sets {
-            world.set_lod_places(id, &[])?;
-        }
-        Ok(())
+        (changed, more)
     }
 
     /// Clumps in one tile.

@@ -16,6 +16,7 @@ pub mod deepspots;
 pub mod destruction;
 pub mod factions;
 pub mod host;
+pub mod hostthread;
 pub mod incidents;
 pub mod nav;
 pub mod npcheroes;

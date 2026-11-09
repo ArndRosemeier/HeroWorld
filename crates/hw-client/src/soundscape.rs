@@ -170,18 +170,20 @@ impl Bank {
 }
 
 /// Where below the ground the listener is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Under {
+    #[default]
     No,
     Tunnel,
     Molehaven,
 }
 
 /// The kind of town round a spot, for the music.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum District {
     Downtown,
     OldTown,
+    #[default]
     Town,
     Country,
 }
@@ -231,6 +233,16 @@ pub fn district(w: &TownWorld, p: DVec2) -> District {
     } else {
         District::Town
     }
+}
+
+/// What the soundscape asks of the town round the camera: looked up on the
+/// traffic worker each frame (see the game's frame loop), as it only reads.
+#[derive(Default)]
+pub struct Survey {
+    /// Vehicles within 90 m, nearest first.
+    pub cars: Vec<Vehicle>,
+    pub under: Under,
+    pub district: District,
 }
 
 /// What the soundscape hears each frame.

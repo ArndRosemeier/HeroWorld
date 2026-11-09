@@ -248,15 +248,10 @@ impl TrafficView {
         self.near.len()
     }
 
-    pub fn update(
-        &mut self,
-        world: &mut World,
-        traffic: &Traffic,
-        eye: DVec2,
-        time: f64,
-        dt: f64,
-    ) -> EngineResult<()> {
-        self.models.collect();
+    /// Works out where the moving vehicles near `eye` stand at `time`:
+    /// no Engine, so it runs on a worker while the main thread does other
+    /// things. [`Self::apply`] hands the result to Engine.
+    pub fn plan(&mut self, traffic: &Traffic, eye: DVec2, time: f64, dt: f64) -> TrafficPlan {
         self.refresh -= dt;
         if self.refresh <= 0.0 {
             self.refresh = 0.5;
@@ -269,6 +264,35 @@ impl TrafficView {
         }
         let mut bodies: BTreeMap<VehicleKind, Vec<Place>> = BTreeMap::new();
         let mut wheels: BTreeMap<CarModel, Vec<Place>> = BTreeMap::new();
+        for &id in &self.near {
+            if self.wrecks.contains_key(&id) {
+                continue;
+            }
+            let Some(v) = traffic.vehicle(id, time) else {
+                continue;
+            };
+            bodies.entry(v.kind).or_default().push(body_place(&v));
+            if let VehicleKind::Car(model, _) = v.kind {
+                if DVec2::new(v.pos.x, v.pos.z).distance(eye) < WHEEL_RADIUS {
+                    wheel_places(&v, model, wheels.entry(model).or_default());
+                }
+            }
+        }
+        TrafficPlan {
+            eye,
+            bodies,
+            wheels,
+        }
+    }
+
+    /// Puts the vehicles of `plan` (and the wrecks) into the world.
+    pub fn apply(&mut self, world: &mut World, plan: TrafficPlan) -> EngineResult<()> {
+        self.models.collect();
+        let TrafficPlan {
+            eye,
+            mut bodies,
+            mut wheels,
+        } = plan;
         let mut shells: BTreeMap<VehicleKind, Vec<Place>> = BTreeMap::new();
         let mut doors: BTreeMap<(VehicleKind, usize), Vec<Place>> = BTreeMap::new();
         for (&id, (v, _)) in &self.wrecks {
@@ -318,20 +342,6 @@ impl TrafficView {
                 ));
             }
         }
-        for &id in &self.near {
-            if self.wrecks.contains_key(&id) {
-                continue;
-            }
-            let Some(v) = traffic.vehicle(id, time) else {
-                continue;
-            };
-            bodies.entry(v.kind).or_default().push(body_place(&v));
-            if let VehicleKind::Car(model, _) = v.kind {
-                if DVec2::new(v.pos.x, v.pos.z).distance(eye) < WHEEL_RADIUS {
-                    wheel_places(&v, model, wheels.entry(model).or_default());
-                }
-            }
-        }
         // Every set gets its places, an empty list when none is near.
         for kind in bodies.keys() {
             spawn_made(world, &mut self.bodies, &mut self.models.bodies, *kind)?;
@@ -362,6 +372,13 @@ impl TrafficView {
         }
         Ok(())
     }
+}
+
+/// Where the moving vehicles stand this frame (see [`TrafficView::plan`]).
+pub struct TrafficPlan {
+    eye: DVec2,
+    bodies: BTreeMap<VehicleKind, Vec<Place>>,
+    wheels: BTreeMap<CarModel, Vec<Place>>,
 }
 
 /// A wreck is squashed this much (x, y, z).

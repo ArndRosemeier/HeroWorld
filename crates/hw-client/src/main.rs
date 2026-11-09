@@ -1547,18 +1547,18 @@ fn main() -> EngineResult<()> {
                         }
                         A::Level(l) => {
                             cheated = true;
-                            session.debug_sheet(|s| dm::at_level(s, l));
+                            session.debug_sheet(move |s| dm::at_level(s, l));
                         }
                         A::Karma(k) => {
                             cheated = true;
-                            session.debug_sheet(|mut s| {
+                            session.debug_sheet(move |mut s| {
                                 s.karma = s.karma.saturating_add(k);
                                 s
                             });
                         }
                         A::BuyAll(theme) => {
                             cheated = true;
-                            session.debug_sheet(|s| dm::buy_all(s, theme));
+                            session.debug_sheet(move |s| dm::buy_all(s, theme));
                         }
                         A::ClearPowers => {
                             cheated = true;
@@ -1566,7 +1566,7 @@ fn main() -> EngineResult<()> {
                         }
                         A::Regard(f, by) => {
                             cheated = true;
-                            session.debug_sheet(|s| dm::regard(s, f, by));
+                            session.debug_sheet(move |s| dm::regard(s, f, by));
                         }
                         A::ResetRegard => {
                             cheated = true;
@@ -2086,6 +2086,15 @@ fn main() -> EngineResult<()> {
             hw_client::hitch::count("server ticks", ticks as u64);
             if ticks == 5 {
                 tick_clock = 0.0;
+            }
+            // Single player: the server runs these ticks on its own thread
+            // while this frame goes on; we draw the world as it stood after
+            // the frame before (waiting here only if it is not there yet).
+            hw_client::hitch::mark("server wait");
+            session.sync();
+            if let Some((busy, _)) = session.server_load() {
+                // The server thread's own time on the frame before's ticks.
+                hw_client::hitch::count("server busy us", (busy * 1e6) as u64);
             }
             hw_client::hitch::mark("news");
             // Damage: broken buildings, repairs, impacts.
@@ -2800,32 +2809,7 @@ fn main() -> EngineResult<()> {
             }
             powers.update(frame.dt);
 
-            hw_client::hitch::mark("crowd");
-            // Citizens around the camera, at the game's time.
-            let eye = world.camera().eye();
-            crowd.update(
-                world,
-                &citizens,
-                &alarms,
-                DVec2::new(eye.x as f64, eye.z as f64),
-                session.time(tick_clock / hw_sim::DT),
-                frame.dt as f64,
-            )?;
-            // `HW_VIEW=citizen`: a close-up of the nearest passer-by.
-            if view == "citizen" {
-                if let Some(at) = crowd.nearest(world, eye) {
-                    let yaw = at.yaw_degrees.to_radians();
-                    let ahead = Vec3::new(yaw.sin(), 0.0, yaw.cos());
-                    let side = Vec3::new(ahead.z, 0.0, -ahead.x);
-                    let p = at.position + ahead * 2.2 + side * 0.6 + Vec3::Y * 1.6;
-                    let d = at.position + Vec3::Y * 1.3 - p;
-                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
-                        .atan()
-                        .to_degrees();
-                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
-                }
-            }
-            hw_client::hitch::mark("traffic");
+            hw_client::hitch::mark("crowd and traffic");
             // Cars on the streets, hover cars and taxis in the sky lanes.
             // Cars stop for anyone in the road (on their feet, knocked down
             // or lying hurt) and short of trouble, as the server's do.
@@ -2841,31 +2825,64 @@ fn main() -> EngineResult<()> {
                 .collect();
             standing.extend(radio.lying().map(|p| p.as_dvec3()));
             traffic.set_blockers(&standing, &alarms.car_stops());
-            traffic.advance_to(session.time(tick_clock / hw_sim::DT));
+            let game_time = session.time(tick_clock / hw_sim::DT);
+            let eye = world.camera().eye();
+            let eye2 = DVec2::new(eye.x as f64, eye.z as f64);
+            let dt = frame.dt as f64;
+            // The traffic drives on and its cars are placed on a worker,
+            // while the citizens go to Engine here; the join below is the
+            // only meeting point (the borrows keep the two apart).
+            let (traffic_plan, survey) = std::thread::scope(|scope| {
+                let (traffic, traffic_view) = (&mut traffic, &mut traffic_view);
+                let town_plan = &generated.world;
+                let job = std::thread::Builder::new()
+                    .name("hw-traffic".into())
+                    .spawn_scoped(scope, move || {
+                        traffic.advance_to(game_time);
+                        let plan = traffic_view.plan(traffic, eye2, game_time, dt);
+                        // What the soundscape asks of the town round the camera.
+                        let survey = hw_client::soundscape::Survey {
+                            cars: traffic.near(eye2, 90.0, game_time, 40),
+                            under: hw_client::soundscape::under(town_plan, eye),
+                            district: hw_client::soundscape::district(town_plan, eye2),
+                        };
+                        (plan, survey)
+                    })
+                    .expect("start the traffic worker");
+                // Citizens around the camera, at the game's time.
+                let crowd_done = crowd.update(world, &citizens, &alarms, eye2, game_time, dt);
+                let plan = match job.join() {
+                    Ok(p) => p,
+                    Err(panic) => std::panic::resume_unwind(panic),
+                };
+                crowd_done.map(|()| plan)
+            })?;
+            // `HW_VIEW=citizen`: a close-up of the nearest passer-by.
+            if view == "citizen" {
+                if let Some(at) = crowd.nearest(world, eye) {
+                    let yaw = at.yaw_degrees.to_radians();
+                    let ahead = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+                    let side = Vec3::new(ahead.z, 0.0, -ahead.x);
+                    let p = at.position + ahead * 2.2 + side * 0.6 + Vec3::Y * 1.6;
+                    let d = at.position + Vec3::Y * 1.3 - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
+            hw_client::hitch::mark("traffic view");
             // Joined a friend: our own hero bumps into the cars near it as
             // the host's does (the host sets them itself when we host).
             if matches!(session, Session::Remote { .. }) {
                 if let Some(me) = session.my_position(&heroes) {
-                    let t = session.time(tick_clock / hw_sim::DT);
-                    solids.set_movers(traffic.car_solids(&[me], 25.0, t));
+                    solids.set_movers(traffic.car_solids(&[me], 25.0, game_time));
                 }
             }
             if let (Some(s), Some(props)) = (extras.signals.as_mut(), extras.props.as_ref()) {
-                s.update(
-                    world,
-                    &traffic,
-                    props,
-                    DVec2::new(eye.x as f64, eye.z as f64),
-                    session.time(tick_clock / hw_sim::DT),
-                )?;
+                s.update(world, &traffic, props, eye2, game_time)?;
             }
-            traffic_view.update(
-                world,
-                &traffic,
-                DVec2::new(eye.x as f64, eye.z as f64),
-                session.time(tick_clock / hw_sim::DT),
-                frame.dt as f64,
-            )?;
+            traffic_view.apply(world, traffic_plan)?;
             // K knocks the people around the hero over (a test of ragdolls).
             if !flying && input.pressed(Key::K) {
                 if let Some(p) = session.my_position(&heroes) {
@@ -2968,6 +2985,7 @@ fn main() -> EngineResult<()> {
                     Some(&my_sheet),
                 );
                 let fighting = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
+                hw_client::hitch::mark("radio");
                 radio.me = mine.map(|m| m.0);
                 radio.update(frame.dt);
                 radio.animate(world, frame.dt);
@@ -2991,6 +3009,7 @@ fn main() -> EngineResult<()> {
                 );
                 let cam = world.camera();
                 let look = cam.target() - cam.eye();
+                hw_client::hitch::mark("compass and map");
                 hw_client::dispatchview::compass(frame.ui.ctx(), cam.eye(), look, &radio, fighting);
                 if frame.input.pressed(Key::M) {
                     town_map = !town_map;
@@ -3005,6 +3024,7 @@ fn main() -> EngineResult<()> {
                     fighting,
                 );
                 // The minimap (N hides it) and the town's sounds.
+                hw_client::hitch::mark("minimap");
                 let eye = cam.eye();
                 let centre = hero_at.unwrap_or(eye);
                 let at2 = DVec2::new(centre.x as f64, centre.z as f64);
@@ -3034,8 +3054,9 @@ fn main() -> EngineResult<()> {
                     }
                     hero_was = Some((h, frame.time));
                 }
-                let game_time = session.time(tick_clock / hw_sim::DT);
-                let cars = traffic.near(eye2, 90.0, game_time, 40);
+                hw_client::hitch::mark("soundscape");
+                // `survey`: asked of the town on the traffic worker above;
+                // people from the crowd.
                 let scene = hw_client::soundscape::Scene {
                     now: frame.time as f64,
                     dt: frame.dt,
@@ -3045,12 +3066,12 @@ fn main() -> EngineResult<()> {
                     speed: hero_speed,
                     height,
                     indoors: town.inside.is_some(),
-                    under: hw_client::soundscape::under(&generated.world, eye),
+                    under: survey.under,
                     hour: game_hour(),
-                    district: hw_client::soundscape::district(&generated.world, eye2),
+                    district: survey.district,
                     around: minimap.surroundings(eye2, 45.0),
-                    people: citizens.near(eye2, 35.0, game_time, 64).len(),
-                    cars: &cars,
+                    people: crowd.within(eye, 35.0),
+                    cars: &survey.cars,
                     alarms: alarms
                         .active()
                         .map(|a| (a.id, a.kind, a.at.as_vec3()))
@@ -3082,7 +3103,9 @@ fn main() -> EngineResult<()> {
                         .unwrap_or_default(),
                     mast: extras.mast.as_mut().map(|m| m.heard()).unwrap_or_default(),
                 };
+                hw_client::hitch::mark("sounds");
                 sounds.update(world, &scene);
+                hw_client::hitch::mark("powers window");
                 for a in powers.ui(frame.ui.ctx(), &my_sheet, fighting, creating) {
                     match a {
                         PowerAction::Buy(p, theme) => session.buy(p, theme),

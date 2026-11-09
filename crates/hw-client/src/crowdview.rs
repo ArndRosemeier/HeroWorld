@@ -40,6 +40,8 @@ pub struct CrowdView {
     /// are worked out every frame).
     near: Vec<u64>,
     refresh: f64,
+    /// Where the citizens shown stood this frame.
+    placed: Vec<glam::DVec3>,
 }
 
 impl Default for CrowdView {
@@ -58,6 +60,7 @@ impl CrowdView {
             running: BTreeMap::new(),
             near: Vec::new(),
             refresh: 0.0,
+            placed: Vec::new(),
         }
     }
 
@@ -86,8 +89,19 @@ impl CrowdView {
         self.shown.len()
     }
 
+    /// How many citizens shown this frame stand within `r` of `p` (the
+    /// soundscape's crowd).
+    pub fn within(&self, p: Vec3, r: f64) -> usize {
+        let p = p.as_dvec3();
+        self.placed
+            .iter()
+            .filter(|c| (DVec2::new(c.x - p.x, c.z - p.z)).length() <= r)
+            .count()
+    }
+
     /// Takes everyone off the streets (another town comes).
     pub fn clear(&mut self, world: &mut World) {
+        self.placed.clear();
         for (_, s) in std::mem::take(&mut self.shown) {
             if let Some(&crowd) = self.crowds.get(&s.look) {
                 world.remove_crowd_agent(crowd, s.agent);
@@ -149,6 +163,7 @@ impl CrowdView {
                 .collect();
         }
         let mut seen = BTreeSet::new();
+        self.placed.clear();
         for id in self.near.clone() {
             let delay = self.delay.get(&id).copied().unwrap_or(0.0);
             let Some(mut c): Option<Citizen> = citizens.citizen(id, time - delay) else {
@@ -163,6 +178,7 @@ impl CrowdView {
                 continue;
             };
             seen.insert(c.id);
+            self.placed.push(c.pos);
             if self.down.contains_key(&c.id) {
                 *self.delay.entry(c.id).or_insert(0.0) += dt;
                 if let Some(s) = self.shown.get(&c.id) {

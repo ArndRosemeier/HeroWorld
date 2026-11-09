@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.105 (2026-11-09)
+
+- Smoother play: in single player the world (fights, physics, people, traffic) now runs on its own processor core instead of sharing one with the picture. The traffic, the minimap, the grass and what the town sounds like are worked out on other cores too, so far less waits on the main one.
+
 ## 0.104 (2026-11-09)
 
 - The game needs less memory: the town's buildings and streets are no longer kept twice (once for the graphics card and once more in the computer's memory). About 0.7 GB less in a test run.
