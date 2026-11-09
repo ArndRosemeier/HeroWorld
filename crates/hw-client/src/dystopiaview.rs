@@ -1,6 +1,7 @@
 //! The mad scientist's quarter as the camera sees it: the air turns a sick
 //! green-grey and thick, the colour drains out of the town, and his Tesla
-//! tower crackles ([`crate::teslaview`]). Around it, walls are tagged and
+//! tower crackles ([`crate::teslaview`]) and his robot works build
+//! robots ([`crate::worksview`]). Around it, walls are tagged and
 //! the streets in are barricaded ([`crate::edgeview`]).
 //!
 //! One fog volume around the camera carries the look; how strongly follows
@@ -39,6 +40,8 @@ pub struct DystopiaView {
     tesla: crate::teslaview::TeslaView,
     /// Graffiti and barricades at its edge.
     edge: crate::edgeview::EdgeView,
+    /// The robot works' line and dock.
+    works: crate::worksview::WorksView,
 }
 
 impl DystopiaView {
@@ -47,6 +50,7 @@ impl DystopiaView {
             volume: None,
             tesla: crate::teslaview::TeslaView::new(town),
             edge: crate::edgeview::EdgeView::new(town),
+            works: crate::worksview::WorksView::new(town),
         }
     }
 
@@ -95,6 +99,7 @@ impl DystopiaView {
         }
         self.edge.update(world, town)?;
         self.tesla.update(world, dt)?;
+        self.works.update(world, dt)?;
         Ok(())
     }
 
@@ -103,8 +108,14 @@ impl DystopiaView {
         self.tesla.heard()
     }
 
+    /// What the soundscape hears of the robot works this frame.
+    pub fn works_heard(&mut self) -> crate::worksview::Heard {
+        self.works.heard()
+    }
+
     pub fn clear(&mut self, world: &mut World) {
         self.tesla.clear(world);
+        self.works.clear(world);
         self.edge.clear(world);
         if let Some(id) = self.volume.take() {
             world.remove_fog_volume(id);

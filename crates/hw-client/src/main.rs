@@ -683,6 +683,13 @@ fn main() -> EngineResult<()> {
             let pitch = ((look_y - eye) / d.length()).atan().to_degrees() as f32;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
         }
+        "works" | "worksline" | "worksdock" | "workshall" => {
+            // The robot works: the yard, the welders, the tank, the hall.
+            match hw_client::worksview::view(&generated.world, &view, spawn) {
+                Some((e, yaw, pitch)) => FlyCamera::new((e.x, e.y, e.z), yaw, pitch),
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
         "tesladome" | "teslayard" => {
             // Close up at the Tesla tower: level with its dome, or up at it
             // from the yard by the lab.
@@ -3363,6 +3370,11 @@ fn main() -> EngineResult<()> {
                         .weather
                         .as_mut()
                         .map(|w| w.heard())
+                        .unwrap_or_default(),
+                    works: extras
+                        .dystopia
+                        .as_mut()
+                        .map(|d| d.works_heard())
                         .unwrap_or_default(),
                 };
                 hw_client::hitch::mark("sounds");

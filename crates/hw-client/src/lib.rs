@@ -60,4 +60,5 @@ pub mod undergroundview;
 pub mod waterfrontview;
 pub mod weathermodel;
 pub mod weatherview;
+pub mod worksview;
 pub mod zfight;

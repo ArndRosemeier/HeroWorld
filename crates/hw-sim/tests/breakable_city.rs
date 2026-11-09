@@ -187,7 +187,9 @@ fn strong_buildings_need_a_stronger_hero() {
         .unwrap();
     let (_, plan, frame) = centre(&t, i);
     assert!(destruction::material_factor(&plan) >= 2.0);
-    let wall = frame.to_world(DVec3::new(plan.site.size.x * 0.5, 2.0, 0.0));
+    // The front wall above the ground floor (its middle at 2 m can be the
+    // entrance's doorway).
+    let wall = frame.to_world(DVec3::new(plan.site.size.x * 0.5, 4.5, 0.0));
     let mut damage = Damage::default();
     let weak = destruction::hero_power(1);
     let r = damage.hit(&t.obstacles, wall, weak.punch_radius, weak.punch, None, 0);

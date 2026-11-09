@@ -482,7 +482,7 @@ pub fn stands(world: &Area) -> Vec<Stand> {
             LandmarkKind::MoleDrill => "The mole drill",
             LandmarkKind::WeatherTower => "The weather tower",
             // No taxi will take you there.
-            LandmarkKind::TeslaTower => continue,
+            LandmarkKind::TeslaTower | LandmarkKind::RobotWorks => continue,
         };
         // On the airfield's apron beside the mast, clear of the ship's
         // cargo square and the terminal.

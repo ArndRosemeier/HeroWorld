@@ -157,8 +157,6 @@ impl NightLights {
                         lamp: Lamp::point(at(d.deck_y), rgb(255, 214, 160), 30.0, 30.0),
                     });
                 }
-                // Its lights pulse with its arcs: see `teslaview`.
-                LandmarkKind::TeslaTower => {}
                 LandmarkKind::RocketGantry => {
                     // Floodlights on the masts, lighting up the rocket.
                     let rocket = hw_gen::urban::gantry::ROCKET_H * 0.45;
@@ -191,6 +189,9 @@ impl NightLights {
                 }
                 // Its beacon and the glow in its bore: see `drillview`.
                 LandmarkKind::MoleDrill => {}
+                // Their lights pulse with what they do: see `teslaview`
+                // and `worksview`.
+                LandmarkKind::TeslaTower | LandmarkKind::RobotWorks => {}
             }
         }
         Self {

@@ -335,7 +335,7 @@ quarter, his tower, his minions and his machines are.
 
 ### The colossus (`hw-sim/src/robots.rs`)
 
-A set piece in three acts, best with friends. It walks out of the Tesla tower once the team
+A set piece in three acts, best with friends. It marches out of the robot works' gate (the Tesla tower's in a town without works) once the team
 is level 3 or more, at most every 25 minutes, and the Hero Signal calls everyone. It keeps
 to main roads at least 11 m wide (A* along road centre lines), and its feet and hull break
 what they walk into. Its health grows with the number of heroes.
@@ -596,6 +596,24 @@ the dome (heard within 320 m, louder and higher as the charge builds), a thunder
 bolt (700 m), a zap for most yard arcs (120 m). Views: `HW_VIEW=tesla`, `tesladome`,
 `teslayard`.
 
+His **robot works** stand in the quarter too (part way out from the middle, at least 30 m
+clear of the tower; just outside where its blocks are too small), on a 22-25 m yard
+(`hw-gen/src/urban/robotworks.rs`, all parts solid), its gate towards the nearest street:
+a streamlined assembly hall under a ribbed copper barrel roof with two smokestacks and a
+turning robot-head sign ringed with atom orbits, an assembly line under a crane runway, a
+dock, a glass foreman's booth on legs, a dispatch shed and a finned gate. It is alive
+within 650 m (`hw-client/src/worksview.rs`): every 12 s (2.5 s moving, 9.5 s standing)
+the line moves one stop. Robo-Sentries ride pallets out of the hall; a crane lifts a dish
+off its rack and lowers it on; two welding arms seam the body in sparks; a second crane
+hangs the gun; on the test arch the dish spins, the gun comes up and the lamp goes amber
+then green; at the end the robot steps down a ramp and marches into the dispatch shed
+(its beacon flashes), and the empty pallet tips over the end drum. In the dock a walking
+tank sits half built on its cradle, thighs chained to the frame, sweeping its turret and
+nodding its cannon while welders spark at its hips. Sound: the hall's machinery (240 m),
+a sizzle per burning torch, clanks, hisses, crane motors, the test's beeps and marching
+feet. The robots are the fighting machines' AssetGenerator parts, loaded on a worker
+thread near the works. Views: `HW_VIEW=works`, `worksline`, `worksdock`, `workshall`.
+
 - **Street corners:** groups of Lab minions **two levels above the team**, three above at
   the tower's gate. Every fourth corner (and the gate) has a Robo-Sentry in front; others a
   Mutant Alpha. They stand there only while a hero is within 220 m.
@@ -855,7 +873,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default: the profile's city, 40 000 at first; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |

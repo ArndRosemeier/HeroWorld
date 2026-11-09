@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.113 (2026-11-09)
+
+- The mad scientist now has a robot works in his quarter. Robo-sentries ride an assembly line out of a streamlined hall: a crane lowers each one's dish, welding arms seam it in a shower of sparks, a second crane hangs its gun, and on the test arch it wakes up, spins its dish and raises its gun before marching off into the dispatch shed.
+- In the works' dock a walking tank sits half built on its cradle, legs chained to the frame, testing its turret and cannon while welders spark at its hips. When the colossus comes for the town, it now marches out of the works' gate.
+- You hear the works as you come near: machinery, sizzling torches, clanks, hisses, crane motors and the robots' cheerful beeps.
+
 ## 0.112 (2026-11-09)
 
 - The Weather Bureau has built its tower: a white Googie mast with swept coral fins, a saucer deck and a crown of cloud cannons round a glowing weather globe, in every town of 5 000 people or more.

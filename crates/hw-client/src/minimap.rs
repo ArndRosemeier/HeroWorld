@@ -317,6 +317,7 @@ impl Minimap {
                     LandmarkKind::AtomicPlant => egui::Color32::from_rgb(90, 175, 255),
                     LandmarkKind::MoleDrill => egui::Color32::from_rgb(200, 120, 60),
                     LandmarkKind::WeatherTower => egui::Color32::from_rgb(110, 180, 235),
+                    LandmarkKind::RobotWorks => egui::Color32::from_rgb(200, 60, 50),
                 };
                 painter.circle_filled(p, 4.5, c);
                 painter.circle_stroke(

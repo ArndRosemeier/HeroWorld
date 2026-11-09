@@ -71,6 +71,13 @@ seam.
 | `wx_puff.ogg` | shot | The sound of a big steam cannon firing a puff of vapour upward, a deep pneumatic whoomp followed by a long rushing hiss |
 | `wx_whirr.ogg` | loop | The sound of a large rotating weather machine on a tower, a steady whirring motor with soft clicking gears and a gentle wind, continuous |
 | `wx_rainbow.ogg` | shot | The sound of a magical sparkling harp glissando rising upward with shimmering bells, bright and happy |
+| `works_hum.ogg` | loop | The sound of a busy robot factory floor, continuous: rhythmic clanking conveyor rollers, distant hydraulic presses thumping, electric motors humming, occasional pneumatic puffs, a big industrial hall ambience |
+| `works_weld.ogg` | loop | The sound of electric arc welding up close, continuous loud crackling and sizzling buzz with spattering sparks |
+| `works_clank.ogg` | shot | The sound of a heavy steel assembly line conveyor stopping, a single deep metallic clunk and rattle of chains |
+| `works_hiss.ogg` | shot | The sound of a pneumatic clamp releasing, a short sharp burst of compressed air hiss |
+| `works_crane.ogg` | shot | The sound of an overhead electric crane hoist motor starting and running for two seconds, a rising whine with gear clatter |
+| `works_boot.ogg` | shot | The sound of a 1950s toy robot powering up: rising electronic warble, three cheerful beeps and a click |
+| `works_step.ogg` | shot | The sound of a single small metal robot foot stepping on a steel floor, a light clank with a servo whirr |
 
 ## From Scale
 

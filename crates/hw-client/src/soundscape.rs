@@ -90,6 +90,13 @@ static CLIPS: &[(&str, &[u8])] = clips![
     "wx_thunder_1",
     "wx_thunder_2",
     "wx_whirr",
+    "works_hum",
+    "works_weld",
+    "works_clank",
+    "works_hiss",
+    "works_crane",
+    "works_boot",
+    "works_step",
 ];
 
 /// The fight's clips (`fightview.rs` plays them).
@@ -306,6 +313,8 @@ pub struct Scene<'a> {
     pub drill: crate::drillview::Heard,
     /// The weather tower's machinery, cannons, rain and thunder.
     pub weather: crate::weatherview::Heard,
+    /// The robot works' machinery, torches and clanks.
+    pub works: crate::worksview::Heard,
 }
 
 /// The ambience layers and how loud each one plays at full share.
@@ -389,6 +398,9 @@ pub struct Soundscape {
     wx_whirr: Option<SoundId>,
     wx_rain: Option<SoundId>,
     wx_thunder: Vec<(f64, Vec3)>,
+    /// The robot works' hall and its burning torches.
+    works_hum: Option<SoundId>,
+    works_weld: Vec<SoundId>,
     pub music: Music,
 }
 
@@ -429,6 +441,8 @@ impl Soundscape {
             wx_whirr: None,
             wx_rain: None,
             wx_thunder: Vec::new(),
+            works_hum: None,
+            works_weld: Vec::new(),
             music: Music::new(),
         }
     }
@@ -459,6 +473,7 @@ impl Soundscape {
         self.atom(world, s);
         self.drill(world, s);
         self.weather(world, s);
+        self.works(world, s);
         self.timed.retain(|(id, until)| {
             if s.now >= *until {
                 world.stop_sound(*id, 2.5);
@@ -511,6 +526,14 @@ impl Soundscape {
             world.stop_sound(v, 0.5);
         }
         self.wx_thunder.clear();
+        for v in self
+            .works_hum
+            .take()
+            .into_iter()
+            .chain(self.works_weld.drain(..))
+        {
+            world.stop_sound(v, 0.5);
+        }
         self.music.stop(world);
     }
 
@@ -1252,6 +1275,117 @@ impl Soundscape {
         }
     }
 
+    /// The robot works: the hall's machinery, a sizzle at every burning
+    /// torch, and the line's clanks, hisses, crane motors and beeps.
+    fn works(&mut self, world: &mut World, s: &Scene) {
+        use crate::worksview::Clank;
+        let muffle = if s.under != Under::No {
+            0.0
+        } else if s.indoors {
+            0.35
+        } else {
+            1.0
+        };
+        let near = s
+            .works
+            .hum
+            .filter(|at| muffle > 0.0 && at.distance(s.eye) < 260.0);
+        match near {
+            Some(at) => {
+                // Keep every clip of the works decoded while it is near, so
+                // the first clank of a visit is heard.
+                for c in [
+                    "works_clank",
+                    "works_hiss",
+                    "works_crane",
+                    "works_boot",
+                    "works_step",
+                ] {
+                    let _ = self.bank.get(c, s.now);
+                }
+                match self.works_hum {
+                    Some(v) => {
+                        let _ = self.bank.get("works_hum", s.now);
+                        let a = world.audio_mut();
+                        a.set_position(v, at);
+                        a.set_volume(v, 0.6 * muffle);
+                    }
+                    None => {
+                        if let Some(c) = self.bank.get("works_hum", s.now) {
+                            let p = PlaySound::at(at)
+                                .looped()
+                                .volume(0.6 * muffle)
+                                .range(15.0, 240.0)
+                                .fade_in(1.5);
+                            self.works_hum = Some(world.play_sound(&c, p));
+                        }
+                    }
+                }
+            }
+            None => {
+                if let Some(v) = self.works_hum.take() {
+                    world.stop_sound(v, 1.5);
+                }
+            }
+        }
+        // One sizzle per burning torch, following it.
+        let torches: &[Vec3] = if near.is_some() {
+            &s.works.welding
+        } else {
+            &[]
+        };
+        while self.works_weld.len() > torches.len() {
+            if let Some(v) = self.works_weld.pop() {
+                world.stop_sound(v, 0.15);
+            }
+        }
+        for (k, &at) in torches.iter().enumerate() {
+            match self.works_weld.get(k) {
+                Some(&v) => {
+                    let _ = self.bank.get("works_weld", s.now);
+                    world.audio_mut().set_position(v, at);
+                }
+                None => {
+                    if let Some(c) = self.bank.get("works_weld", s.now) {
+                        let start = self.rand() as f32;
+                        let p = PlaySound::at(at)
+                            .looped()
+                            .volume(0.5 * muffle)
+                            .pitch(0.9 + 0.2 * start)
+                            .range(4.0, 70.0)
+                            .fade_in(0.08);
+                        self.works_weld.push(world.play_sound(&c, p));
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+        if near.is_none() {
+            return;
+        }
+        for &(at, what) in &s.works.events {
+            let (clip, vol, range) = match what {
+                Clank::Stop => ("works_clank", 0.8, 150.0),
+                Clank::Hiss => ("works_hiss", 0.5, 70.0),
+                Clank::Crane => ("works_crane", 0.45, 90.0),
+                Clank::Boot => ("works_boot", 0.6, 60.0),
+                Clank::Step => ("works_step", 0.35, 35.0),
+            };
+            if at.distance(s.eye) > range {
+                continue;
+            }
+            if let Some(c) = self.bank.get(clip, s.now) {
+                let pitch = 0.92 + 0.16 * self.rand() as f32;
+                let p = PlaySound::at(at)
+                    .volume(vol * muffle)
+                    .pitch(pitch)
+                    .range(6.0, range);
+                world.play_sound(&c, p);
+            }
+        }
+    }
+
     fn footsteps(&mut self, world: &mut World, s: &Scene) {
         let Some(feet) = s.hero else {
             return;
@@ -1696,6 +1830,7 @@ mod tests {
             atom: Default::default(),
             drill: Default::default(),
             weather: Default::default(),
+            works: Default::default(),
         }
     }
 

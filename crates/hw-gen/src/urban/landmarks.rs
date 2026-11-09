@@ -1,7 +1,8 @@
 //! The town's landmarks: the Aether Spire on its civic plaza near the old
 //! core, Hero Hall (home of the town's own heroes) not far from it, a
 //! lighthouse on the shore of a seaside town, the mad scientist's Tesla
-//! tower in his quarter, and the rocket port at the town's edge.
+//! tower and robot works in his quarter, and the rocket port at the town's
+//! edge.
 //!
 //! Each stands on a round paved plinth cleared of buildings, in a spot no
 //! road crosses. The plinth's top is level; where the ground falls away its
@@ -44,6 +45,10 @@ pub enum LandmarkKind {
     /// The Weather Bureau's tower, which makes its own cloud, rain and
     /// rainbow (see [`super::weather_tower`]).
     WeatherTower,
+    /// The mad scientist's robot works: an assembly line of robo-sentries
+    /// under cranes, and the dock his walking tanks come out of (see
+    /// [`super::robotworks`]).
+    RobotWorks,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -224,6 +229,7 @@ impl Landmark {
             }
             LandmarkKind::RocketGantry => super::gantry::footprints(self.plaza),
             LandmarkKind::MoleDrill => super::drillrig::footprints(self.plaza),
+            LandmarkKind::RobotWorks => super::robotworks::footprints(),
             LandmarkKind::HeroHall => {
                 let mut v = vec![
                     disc(HALL_R, HALL_WALL + 0.4),
@@ -394,7 +400,8 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
         hi = hi.max(core + DVec2::splat(r));
     }
     if let Some(d) = &w.town.dystopia {
-        let r = (d.radius * 0.7).min(500.0) + 20.0;
+        // Out to the robot works' reach.
+        let r = (d.radius * 0.9).min(600.0) + 160.0;
         lo = lo.min(d.centre - DVec2::splat(r));
         hi = hi.max(d.centre + DVec2::splat(r));
     }
@@ -493,6 +500,11 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
             }
         }
     }
+    if let Some(d) = &w.town.dystopia {
+        if let Some(l) = robot_works(w, &roads, d, &out) {
+            out.push(l);
+        }
+    }
     if w.coastal() {
         let land = &w.town.land;
         // On the shore, where the sea opens widest, not far from the town.
@@ -551,6 +563,54 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
         out.push(g);
     }
     out
+}
+
+/// The robot works: in the villain quarter (or just outside it where its
+/// blocks are too small for the yard), away from the Tesla tower, its gate
+/// towards the nearest street.
+fn robot_works(
+    w: &TownWorld,
+    roads: &RoadGrid,
+    d: &super::dystopia::Dystopia,
+    placed: &[Landmark],
+) -> Option<Landmark> {
+    let reach = (d.radius * 0.9).min(600.0) + 120.0;
+    for plaza in super::robotworks::WORKS_PLAZAS {
+        let spot = best_spot(w, roads, d.centre, reach, 6.0, plaza, 4.0, |p| {
+            if placed
+                .iter()
+                .any(|l| p.distance(l.pos) < l.plaza + plaza + 30.0)
+            {
+                return f64::NEG_INFINITY;
+            }
+            if d.contains(p) {
+                // Not in the middle (the tower is there): part way out.
+                -(p.distance(d.centre) - d.radius * 0.45).abs() * 0.3
+            } else {
+                -200.0 - d.distance(p) * 3.0
+            }
+        });
+        if let Some((p, _)) = spot {
+            // Towards the street nearest the yard's edge.
+            let dir = (0..32)
+                .filter_map(|k| {
+                    let dir = hw_core::det::dir2(std::f64::consts::TAU * k as f64 / 32.0);
+                    (0..30)
+                        .map(|i| plaza + 1.0 + i as f64 * 3.0)
+                        .find(|t| roads.touches(p + dir * *t, 1.0, None))
+                        .map(|t| (dir, t))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map_or(DVec2::Y, |(dir, _)| dir);
+            return Some(Landmark {
+                kind: LandmarkKind::RobotWorks,
+                height: super::robotworks::SIGN_UP + 2.5,
+                dir,
+                ..landmark_at(w, p, plaza)
+            });
+        }
+    }
+    None
 }
 
 pub(super) fn landmark_at(w: &TownWorld, p: DVec2, plaza: f64) -> Landmark {
@@ -741,6 +801,24 @@ mod tests {
                 );
                 assert!(at.x.abs() < TESLA_LAB && at.y.abs() < TESLA_LAB);
             }
+            // The robot works: in or by the quarter, apart from the tower,
+            // everything solid on its yard.
+            let works = w
+                .landmarks
+                .iter()
+                .find(|l| l.kind == LandmarkKind::RobotWorks)
+                .expect("robot works");
+            assert!(
+                d.distance(works.pos) < 150.0,
+                "seed {s}: the works {:.0} m from the quarter",
+                d.distance(works.pos)
+            );
+            assert!(works.pos.distance(tesla.pos) > works.plaza + tesla.plaza + 29.0);
+            assert!(super::super::robotworks::reach() < works.plaza);
+            assert_eq!(
+                works.footprints().len(),
+                super::super::robotworks::footprints().len()
+            );
         }
     }
 }

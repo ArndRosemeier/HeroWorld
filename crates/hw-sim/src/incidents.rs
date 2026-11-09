@@ -1103,12 +1103,18 @@ impl Incidents {
             (IncidentKind::PirateRaid, if hot { 0.05 } else { 0.1 }),
             (IncidentKind::IronLanding, 0.07),
         ];
-        // The walking tank comes out of the Tesla tower now and then, once
-        // the team can take it, and never two at once.
+        // The walking tank marches out of the robot works' gate (or, in a
+        // town without works, the Tesla tower's) now and then, once the team
+        // can take it, and never two at once.
         let tower = town
             .landmarks
             .iter()
-            .find(|l| l.kind == LandmarkKind::TeslaTower)
+            .find(|l| l.kind == LandmarkKind::RobotWorks)
+            .or_else(|| {
+                town.landmarks
+                    .iter()
+                    .find(|l| l.kind == LandmarkKind::TeslaTower)
+            })
             .map(|l| {
                 // Out onto the nearest street wide enough for it.
                 let front = l.pos + l.dir * (l.plaza + 14.0);

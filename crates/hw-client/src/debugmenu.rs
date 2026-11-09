@@ -682,6 +682,17 @@ pub fn places(world: &Area, solids: &Obstacles) -> Vec<Place> {
             );
         }
     }
+    if let Some(l) = crate::landmarkview::nearest(world, LandmarkKind::RobotWorks, spawn) {
+        // Outside the gate, the line and the dock in view.
+        let p = l.pos + l.dir * (l.plaza + 8.0);
+        add(
+            &mut out,
+            "Villains",
+            "Robot works, at its gate".into(),
+            clear_near(solids, p, None),
+            l.pos,
+        );
+    }
     let corners = hw_sim::quarter::corners(world);
     if let Some(l) = hw_sim::quarter::lookouts(world, &corners).first() {
         if let Some(top) = hw_sim::quarter::perch(solids, l) {
