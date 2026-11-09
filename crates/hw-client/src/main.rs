@@ -54,7 +54,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto` or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `far` (a main road across town, where people and traffic must follow) or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -291,6 +291,11 @@ fn main() -> EngineResult<()> {
     let mut taxi_demo =
         env_num("HW_TAXI").map(|d| (d as usize, env_num("HW_TAXI_SECS").unwrap_or(0)));
     let mut traffic_view = hw_client::trafficview::TrafficView::new();
+    // The square with people and traffic follows the heroes: when the
+    // server moves it, the next one is made on a worker thread, and the
+    // traffic news for it waits until it is in.
+    let mut area_job: Option<std::sync::mpsc::Receiver<NextArea>> = None;
+    let mut area_held: Vec<hw_net::ToClient> = Vec::new();
     // Trouble bystanders notice, as the server tells it.
     let mut alarms = hw_sim::alarms::Alarms::default();
     // HW_WRECK=<frames>: that many frames in, the cars near the camera are
@@ -833,7 +838,7 @@ fn main() -> EngineResult<()> {
     fly.fast = 8.0;
     let mut flying = !matches!(
         view.as_str(),
-        "hero" | "inside" | "sky" | "title" | "fight" | "hangout"
+        "hero" | "inside" | "sky" | "title" | "fight" | "hangout" | "far"
     );
     if view == "inside" {
         // Start in the lobby of the tallest building near the start.
@@ -895,6 +900,26 @@ fn main() -> EngineResult<()> {
             }
         }
     }
+    if view == "far" {
+        // On a main road across town, past where the people and traffic of
+        // the start reach: the square with them must follow.
+        let shift = hw_sim::AREA_SHIFT + 600.0;
+        let far = generated
+            .world
+            .main_roads
+            .iter()
+            .flat_map(|r| r.pts.windows(2).map(|w| (w[0], w[1])))
+            .filter(|(a, _)| (*a - spawn).abs().max_element() > shift)
+            .min_by(|(a, _), (b, _)| a.distance(spawn).total_cmp(&b.distance(spawn)));
+        if let Some((a, b)) = far {
+            let along = (b - a).normalize_or(DVec2::X);
+            let p = a + along * 30.0;
+            if let Some(s) = session.as_mut() {
+                s.teleport(glam::DVec3::new(p.x, ground(p) + 30.0, p.y));
+            }
+            hero_cam_yaw = along.x.atan2(along.y).to_degrees() as f32;
+        }
+    }
     if view == "sky" {
         // Hovering above the town centre (with HW_FLY or V held on).
         let p = spawn + DVec2::new(-40.0, 40.0);
@@ -920,7 +945,7 @@ fn main() -> EngineResult<()> {
         yaw: hero_cam_yaw,
         pitch: match view.as_str() {
             "inside" => -35.0,
-            "sky" => -22.0,
+            "sky" | "far" => -22.0,
             _ => -12.0,
         },
         distance: 7.0,
@@ -931,7 +956,7 @@ fn main() -> EngineResult<()> {
     let mut canopies: BTreeMap<hw_core::NetId, (EntityId, f32)> = BTreeMap::new();
     let mut tick_clock = 0.0f64;
     // The hero's flight toggle (V); sent with every input.
-    let mut hero_flies = std::env::var_os("HW_FLY").is_some() || view == "sky";
+    let mut hero_flies = std::env::var_os("HW_FLY").is_some() || view == "sky" || view == "far";
 
     // HW_WHATS_NEW=1 opens the list at start (for screenshots).
     let mut whats_new = std::env::var_os("HW_WHATS_NEW").is_some();
@@ -1078,6 +1103,8 @@ fn main() -> EngineResult<()> {
                         hw_sim::citizens::Citizens::new(generated.area.clone(), traffic.signals());
                     citizens.set_hour(game_hour() as f64);
                     stands = hw_sim::taxi::stands(&generated.area);
+                    area_job = None;
+                    area_held.clear();
                     traffic_view.clear(world);
                     radio.clear(world);
                     signal.clear(world);
@@ -1767,6 +1794,68 @@ fn main() -> EngineResult<()> {
             // Damage: broken buildings, repairs, impacts.
             let joined = session.joined();
             let mut news = session.take_news();
+            if let Some(rx) = &area_job {
+                match rx.try_recv() {
+                    Ok((area, next, people, next_stands)) => {
+                        area_job = None;
+                        generated.area = area;
+                        traffic = next;
+                        citizens = people;
+                        citizens.set_hour(game_hour() as f64);
+                        stands = next_stands;
+                        traffic_view.clear(world);
+                        crowd.clear(world);
+                        if let Some(s) = extras.signals.as_mut() {
+                            s.clear(world);
+                        }
+                        news.splice(0..0, std::mem::take(&mut area_held));
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => area_job = None,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                }
+            }
+            if area_job.is_some() {
+                // Traffic news belongs to the square still being made.
+                news.retain(|m| {
+                    let traffic_news = matches!(
+                        m,
+                        hw_net::ToClient::Traffic { .. }
+                            | hw_net::ToClient::CarsWrecked { .. }
+                            | hw_net::ToClient::CarsCleared { .. }
+                            | hw_net::ToClient::AreaMoved { .. }
+                    );
+                    if traffic_news {
+                        area_held.push(m.clone());
+                    }
+                    !traffic_news
+                });
+            }
+            if let Some(i) = news
+                .iter()
+                .position(|m| matches!(m, hw_net::ToClient::AreaMoved { .. }))
+            {
+                if let hw_net::ToClient::AreaMoved { x, z } = news[i] {
+                    // What came before it is for the old square; what comes
+                    // after waits for the new one.
+                    area_held.extend(news.drain(i + 1..));
+                    news.truncate(i);
+                    let world_town = generated.world.clone();
+                    let half = (generated.area.hi.x - generated.area.lo.x) * 0.5;
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    std::thread::spawn(move || {
+                        let area = std::sync::Arc::new(hw_gen::urban::area::Area::around(
+                            world_town,
+                            DVec2::new(x, z),
+                            half,
+                        ));
+                        let next = hw_sim::traffic::Traffic::new(area.clone());
+                        let people = hw_sim::citizens::Citizens::new(area.clone(), next.signals());
+                        let next_stands = hw_sim::taxi::stands(&area);
+                        let _ = tx.send((area, next, people, next_stands));
+                    });
+                    area_job = Some(rx);
+                }
+            }
             // Broken and mended street props: their places, and lamps on them.
             radio.solids = Some(solids.clone());
             radio.town = Some(generated.world.clone());
@@ -3083,3 +3172,12 @@ fn version_corner(
         }
     });
 }
+
+/// The next square with people and traffic, made on a worker thread: the
+/// square, its traffic, its people and its taxi stands.
+type NextArea = (
+    std::sync::Arc<hw_gen::urban::area::Area>,
+    hw_sim::traffic::Traffic,
+    hw_sim::citizens::Citizens,
+    Vec<hw_sim::taxi::Stand>,
+);

@@ -178,6 +178,25 @@ impl Wrecks {
             .collect()
     }
 
+    /// Moves to the traffic of another square (the heroes went on): the
+    /// wrecks of the old one are towed, and the news says where the square
+    /// is now and where every car of it stands.
+    pub fn set_traffic(&mut self, traffic: Traffic, centre: DVec2) {
+        let cars: Vec<u64> = std::mem::take(&mut self.cars).into_keys().collect();
+        for chunk in cars.chunks(255) {
+            self.news.push(ToClient::CarsCleared {
+                cars: chunk.to_vec(),
+            });
+        }
+        self.news.push(ToClient::AreaMoved {
+            x: centre.x,
+            z: centre.y,
+        });
+        self.traffic = Some(traffic);
+        let sync = self.traffic_sync();
+        self.news.extend(sync);
+    }
+
     pub fn take_news(&mut self) -> Vec<ToClient> {
         std::mem::take(&mut self.news)
     }

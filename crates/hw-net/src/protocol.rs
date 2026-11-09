@@ -1026,6 +1026,12 @@ pub enum ToClient {
         radius: f32,
         live: bool,
     },
+    /// The square with people and traffic moved to follow the heroes:
+    /// its centre (x, z). Traffic news after it are for the new square.
+    AreaMoved {
+        x: f64,
+        z: f64,
+    },
 }
 
 /// Most broken elements in one [`ToClient::Damage`] (it must fit a packet
@@ -1093,6 +1099,7 @@ impl ToClient {
             ToClient::Sheet(s) => s.wire_size(),
             ToClient::Look { bytes, .. } => 2 + 2 + 2 + bytes.len(),
             ToClient::Alarm { .. } => 4 + 1 + 12 + 4 + 1,
+            ToClient::AreaMoved { .. } => 16,
         }
     }
 
@@ -1250,6 +1257,9 @@ impl ToClient {
                 }
                 w.f32(*radius).bool(*live);
             }
+            ToClient::AreaMoved { x, z } => {
+                w.u8(19).f64(*x).f64(*z);
+            }
         }
     }
 
@@ -1385,6 +1395,10 @@ impl ToClient {
                 state: r.u8()?,
                 carrier: r.u32()?,
                 at: [r.f32()?, r.f32()?, r.f32()?],
+            },
+            19 => ToClient::AreaMoved {
+                x: r.f64()?,
+                z: r.f64()?,
             },
             18 => ToClient::Alarm {
                 id: r.u32()?,
@@ -1964,6 +1978,13 @@ mod tests {
                     },
                 ),
                 (8, ToClient::CarsCleared { cars: vec![65538] }),
+                (
+                    8,
+                    ToClient::AreaMoved {
+                        x: 1500.5,
+                        z: -3000.0,
+                    },
+                ),
                 (
                     9,
                     ToClient::Incident {

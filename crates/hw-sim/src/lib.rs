@@ -223,6 +223,13 @@ impl GeneratedCity {
 /// of time (m).
 pub const PREFETCH_REACH: f64 = 600.0;
 
+/// The square with people and traffic moves when the heroes are this far
+/// from its centre (m, along x or z): they are always at least
+/// `AREA_HALF - AREA_SHIFT` from its edge.
+pub const AREA_SHIFT: f64 = 1500.0;
+/// Its centre snaps to a grid this fine (m).
+const AREA_SNAP: f64 = 250.0;
+
 /// The town every machine generates from the seed and its size, with its
 /// collision.
 pub struct GeneratedTown {
@@ -451,6 +458,15 @@ pub struct Sim {
     crime_alarms: BTreeMap<u32, u32>,
     /// The factions' places in the deep underground near heroes.
     pub deep: deepspots::DeepSpots,
+    /// The square of the town with people, traffic, taxis and incidents now
+    /// (it follows the heroes, see [`Sim::follow_heroes`]).
+    pub area: Option<Arc<Area>>,
+    /// The next square, being made in the background.
+    area_job: Option<std::sync::mpsc::Receiver<(Arc<Area>, traffic::Traffic)>>,
+    /// The next square, made, waiting for the taxis to land.
+    area_ready: Option<(Arc<Area>, traffic::Traffic)>,
+    /// Has the square moved from the one every machine starts with?
+    area_moved: bool,
 }
 
 impl Sim {
@@ -473,6 +489,7 @@ impl Sim {
         sim.town_population = town.population();
         sim.deep = deepspots::DeepSpots::new(town.world.clone());
         sim.street = props::PropDamage::new(town.world.clone()).with_solids(town.obstacles.clone());
+        sim.area = Some(town.area.clone());
         sim.taxis = taxi::Taxis::new(town.area.clone());
         sim.tubes = tube::Tubes::new(town.world.clone());
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.area.clone()));
@@ -482,7 +499,23 @@ impl Sim {
             streets::TANK_STREET,
         )));
         let solids = sim.solids();
-        let corners = quarter::corners(&town.area);
+        // The villain quarter's corners come from a square round the
+        // quarter itself (the heroes' square may not hold all of it).
+        // Its pieces may reach a little past its radius, and the hangouts
+        // stand in the band round it; a huge quarter is capped.
+        let villains = match &town.world.town.dystopia {
+            Some(d) => {
+                let half = (d.radius * 1.3 + 200.0).min(4000.0);
+                let (lo, hi) = (d.centre - DVec2::splat(half), d.centre + DVec2::splat(half));
+                if town.area.contains(lo) && town.area.contains(hi) {
+                    town.area.clone()
+                } else {
+                    Arc::new(Area::around(town.world.clone(), d.centre, half))
+                }
+            }
+            None => town.area.clone(),
+        };
+        let corners = quarter::corners(&villains);
         for (k, c) in corners.iter().enumerate() {
             let y = solids.ground_at(c.at).max(GROUND_Y);
             let i = sim.add_villain_corner(
@@ -500,14 +533,14 @@ impl Sim {
             };
             sim.world.resource_mut::<Fights>().spots[i].lead = lead;
         }
-        for l in quarter::lookouts(&town.area, &corners) {
+        for l in quarter::lookouts(&villains, &corners) {
             if let Some(p) = quarter::perch(&solids, &l) {
                 sim.add_lookout(p, l.facing);
             }
         }
         // The Chrome Jackets' corners in the band round the quarter, never
         // where heroes appear.
-        for c in quarter::hangouts(&town.area, sim.spawn.0, HANGOUT_CLEAR) {
+        for c in quarter::hangouts(&villains, sim.spawn.0, HANGOUT_CLEAR) {
             let y = solids.ground_at(c.at).max(GROUND_Y);
             sim.add_hangout(DVec3::new(c.at.x, y, c.at.y), c.facing);
         }
@@ -538,6 +571,85 @@ impl Sim {
             npcheroes::spawn(&mut sim.world, tick, &spots);
         }
         sim
+    }
+
+    /// Moves the square with people, traffic, taxis and incidents along
+    /// with the heroes: once they are [`AREA_SHIFT`] from its centre the
+    /// next one is made in the background and swapped in when ready (and
+    /// no taxi is out). Clients hear of it ([`ToClient::AreaMoved`]).
+    pub fn follow_heroes(&mut self, heroes: &[DVec3]) {
+        let Some(area) = self.area.clone() else {
+            return;
+        };
+        if let Some(rx) = &self.area_job {
+            match rx.try_recv() {
+                Ok(next) => {
+                    self.area_job = None;
+                    self.area_ready = Some(next);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.area_job = None,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if self.area_ready.is_some() && !self.taxis.busy() {
+            if let Some((next, traffic)) = self.area_ready.take() {
+                self.set_area(next, traffic);
+            }
+            return;
+        }
+        if heroes.is_empty() || self.area_job.is_some() || self.area_ready.is_some() {
+            return;
+        }
+        let c = heroes
+            .iter()
+            .map(|p| DVec2::new(p.x, p.z))
+            .fold(DVec2::ZERO, |a, b| a + b)
+            / heroes.len() as f64;
+        let now = (area.lo + area.hi) * 0.5;
+        if (c - now).abs().max_element() < AREA_SHIFT {
+            return;
+        }
+        let centre = (c / AREA_SNAP).round() * AREA_SNAP;
+        let world = area.world.clone();
+        let half = (area.hi.x - area.lo.x) * 0.5;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let next = Arc::new(Area::around(world, centre, half));
+            let traffic = traffic::Traffic::new(next.clone());
+            let _ = tx.send((next, traffic));
+        });
+        self.area_job = Some(rx);
+    }
+
+    /// Swaps in another square of the town now.
+    pub fn set_area(&mut self, area: Arc<Area>, mut traffic: traffic::Traffic) {
+        traffic.reset_at(self.tick as f64 * DT);
+        let centre = (area.lo + area.hi) * 0.5;
+        self.wrecks.set_traffic(traffic, centre);
+        self.taxis.set_town(area.clone());
+        self.incidents.set_town(area.clone());
+        self.area = Some(area);
+        self.area_moved = true;
+    }
+
+    /// For a late joiner: where the square is, if it is not where it
+    /// started (sent before the traffic in it).
+    pub fn area_news(&self) -> Option<ToClient> {
+        let a = self.area.as_ref().filter(|_| self.area_moved)?;
+        let c = (a.lo + a.hi) * 0.5;
+        Some(ToClient::AreaMoved { x: c.x, z: c.y })
+    }
+
+    /// [`Self::follow_heroes`], waiting for the next square if one is
+    /// made (tests).
+    pub fn finish_area_move(&mut self, heroes: &[DVec3]) {
+        self.follow_heroes(heroes);
+        if let Some(rx) = self.area_job.take() {
+            if let Ok(next) = rx.recv() {
+                self.area_ready = Some(next);
+            }
+        }
+        self.follow_heroes(heroes);
     }
 
     /// A Chrome Jackets hangout: a few greasers on a corner, at the team's
@@ -657,6 +769,10 @@ impl Sim {
             alarms: alarms::Alarms::default(),
             crime_alarms: BTreeMap::new(),
             deep: deepspots::DeepSpots::default(),
+            area: None,
+            area_job: None,
+            area_ready: None,
+            area_moved: false,
         }
     }
 
@@ -805,9 +921,12 @@ impl Sim {
             // The town plans the ground ahead of the heroes in the
             // background, so walking or flying on finds it ready.
             solids.prefetch(&at, PREFETCH_REACH);
-            // Mole camps, lab guards and relic hunters near heroes below.
-            let mut fights = self.world.resource_mut::<Fights>();
-            self.deep.update(&mut fights, &at);
+            {
+                // Mole camps, lab guards and relic hunters near heroes below.
+                let mut fights = self.world.resource_mut::<Fights>();
+                self.deep.update(&mut fights, &at);
+            }
+            self.follow_heroes(&at);
         }
         self.step_physics(&heroes);
         self.tick += 1;

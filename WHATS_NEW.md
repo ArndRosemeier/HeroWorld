@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.083 (2026-11-09)
+
+- Traffic, people on the pavements, taxis and incidents now follow you across the whole
+  city. Fly to the far side of a big city and the streets there fill with cars and
+  passers-by too, instead of lying empty.
+- The villain quarter's gangs and rooftop lookouts are all there even when you start far
+  from it.
+
 ## 0.082 (2026-11-09)
 
 - The deep underground has people now: mole folk camp in the Deeps, the Doctor's guards keep

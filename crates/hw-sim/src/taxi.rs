@@ -112,6 +112,17 @@ impl Taxis {
         }
     }
 
+    /// Any taxi out on a fare (the stands must not change under it)?
+    pub fn busy(&self) -> bool {
+        !self.rides.is_empty()
+    }
+
+    /// The stands of another square of the town.
+    pub fn set_town(&mut self, town: Arc<Area>) {
+        self.stands = stands(&town);
+        self.town = Some(town);
+    }
+
     /// Is `owner` riding, or waiting for, a taxi?
     pub fn has_ride(&self, owner: PlayerId) -> bool {
         self.rides

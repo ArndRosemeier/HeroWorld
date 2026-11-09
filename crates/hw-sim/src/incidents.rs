@@ -520,6 +520,12 @@ impl Incidents {
         }
     }
 
+    /// New incidents come in another square of the town (open ones stay
+    /// where they are).
+    pub fn set_town(&mut self, town: Arc<Area>) {
+        self.town = Some(town);
+    }
+
     /// Every tick: helping people out. Once a second: start, answer,
     /// resolve and time out incidents.
     pub(crate) fn step(&mut self, world: &mut World, tick: u64) {
