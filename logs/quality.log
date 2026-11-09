@@ -1,0 +1,4 @@
+--- HeroWorld 0.085 start, ENGINE_TUNE_ONLY=""
+   4.63 s frame      1: lod bias 1.000, ao true, gi true, quality high, smooth target off
+  54.33 s frame      2: lod bias 0.850, ao true, gi false, quality medium, smooth target off
+frame      5: the game starts (title left)
