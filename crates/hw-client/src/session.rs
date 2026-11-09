@@ -535,7 +535,11 @@ impl Session {
         };
         let solids = host.sim.solids();
         let (spawn, _) = town.world.spawn_line();
-        let mut small: Vec<(f64, usize)> = (0..town.world.buildings.len())
+        let mut small: Vec<(f64, u64)> = town
+            .area
+            .building_ids
+            .iter()
+            .map(|id| id.0)
             .filter_map(|i| {
                 let (plan, _) = solids.building(i)?;
                 let ok = plan.floors.len() >= 2
@@ -549,7 +553,7 @@ impl Session {
         small.sort_by(|a, b| a.0.total_cmp(&b.0));
         let &(_, holed) = small.first()?;
         // The other one: the nearest to it.
-        let centre = |i: usize| {
+        let centre = |i: u64| {
             let (p, _) = solids.building(i).expect("a building");
             let s = &p.site;
             s.origin + s.along * s.size.x * 0.5 + s.inward * s.size.y * 0.5
@@ -610,11 +614,13 @@ impl Session {
         // way, some the other.
         let street = mid + out * (span * 0.45 + 6.0);
         let strong = hero_power(20);
-        let near: Vec<usize> = (0..town.world.props.len())
-            .filter(|&i| town.world.props[i].pos.distance(street) < span * 0.5 + 10.0)
+        let near: Vec<&hw_gen::urban::props::Prop> = town
+            .area
+            .props
+            .iter()
+            .filter(|p| p.pos.distance(street) < span * 0.5 + 10.0)
             .collect();
-        for (k, i) in near.into_iter().enumerate() {
-            let p = town.world.props[i];
+        for (k, p) in near.into_iter().enumerate() {
             let side = DVec2::new(out.y, -out.x) * if k % 2 == 0 { 1.0 } else { -1.0 };
             let dir = (side - out * 0.4).normalize();
             let at = DVec3::new(p.pos.x, p.y + 1.0, p.pos.y);

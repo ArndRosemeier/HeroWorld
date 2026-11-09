@@ -110,7 +110,7 @@ impl DystopiaView {
                 }
             }
         }
-        self.edge.update(world)?;
+        self.edge.update(world, town)?;
         // The tower sparks now and then while anyone is near enough to see.
         if let Some(crown) = self.crown {
             self.clock += dt;

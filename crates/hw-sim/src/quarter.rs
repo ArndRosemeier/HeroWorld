@@ -11,8 +11,8 @@
 use crate::collision::Obstacles;
 use glam::{DVec2, DVec3};
 use hw_gen::style::Roof;
+use hw_gen::urban::area::Area;
 use hw_gen::urban::landmarks::LandmarkKind;
-use hw_gen::urban::world::TownWorld;
 
 /// A corner's group stands there while a hero is this near (m).
 pub const WAKE: f64 = 220.0;
@@ -58,7 +58,7 @@ pub fn perch(solids: &Obstacles, l: &Lookout) -> Option<DVec3> {
 /// Flat roofs in the quarter (the middles of their fronts), low enough to shoot down from (two to six
 /// floors), away from the corners and from each other; nearest the middle
 /// first.
-pub fn lookouts(world: &TownWorld, corners: &[Corner]) -> Vec<Lookout> {
+pub fn lookouts(world: &Area, corners: &[Corner]) -> Vec<Lookout> {
     let Some(d) = &world.town.dystopia else {
         return Vec::new();
     };
@@ -113,7 +113,7 @@ pub struct Corner {
 
 /// The quarter's corners, in a fixed order (none if the town has no
 /// villain quarter).
-pub fn corners(world: &TownWorld) -> Vec<Corner> {
+pub fn corners(world: &Area) -> Vec<Corner> {
     let Some(d) = &world.town.dystopia else {
         return Vec::new();
     };
@@ -175,7 +175,7 @@ pub const HANGOUT_GROUP: u32 = 3;
 /// Where the Chrome Jackets hang out: street ends and crossings in the
 /// band round the quarter, nearest the quarter first, facing out of it.
 /// None near `keep_clear` (where heroes appear) within `clear` m.
-pub fn hangouts(world: &TownWorld, keep_clear: DVec2, clear: f64) -> Vec<Corner> {
+pub fn hangouts(world: &Area, keep_clear: DVec2, clear: f64) -> Vec<Corner> {
     use hw_gen::urban::dystopia::Zone;
     let Some(d) = &world.town.dystopia else {
         return Vec::new();
@@ -227,7 +227,12 @@ mod tests {
 
     #[test]
     fn the_quarter_has_corners_and_a_gate() {
-        let w = TownWorld::generate(Seed(3), TownParams::sample(Seed(3), 20_000.0));
+        let world = std::sync::Arc::new(hw_gen::urban::world::TownWorld::generate(
+            Seed(3),
+            TownParams::sample(Seed(3), 20_000.0),
+        ));
+        let centre = world.town.dystopia.as_ref().unwrap().centre;
+        let w = Area::around(world, centre, hw_gen::urban::area::AREA_HALF);
         let c = corners(&w);
         assert!(c.len() >= 3, "{} corners", c.len());
         assert_eq!(c[0].extra, GATE_EXTRA);

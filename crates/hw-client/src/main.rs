@@ -233,11 +233,11 @@ fn main() -> EngineResult<()> {
             }
         };
     let mut solids = generated.obstacles.clone();
-    let mut traffic = hw_sim::traffic::Traffic::new(generated.world.clone());
-    let mut citizens = hw_sim::citizens::Citizens::new(generated.world.clone(), traffic.signals());
+    let mut traffic = hw_sim::traffic::Traffic::new(generated.area.clone());
+    let mut citizens = hw_sim::citizens::Citizens::new(generated.area.clone(), traffic.signals());
     citizens.set_hour(game_hour() as f64);
     // Taxi stands of the town, the "Where to?" list (G), and where we asked to go.
-    let mut stands = hw_sim::taxi::stands(&generated.world);
+    let mut stands = hw_sim::taxi::stands(&generated.area);
     let mut taxi_menu = false;
     let mut taxi_dest: Option<usize> = None;
     let mut taxi_seen = false;
@@ -365,10 +365,10 @@ fn main() -> EngineResult<()> {
         town.cut_level = level as u32;
     }
     println!(
-        "HeroWorld {}: a town of {:.0} people, {} buildings, planned in {:.1} s. Right mouse to look, WASD to run, Space to jump, V to fly, Tab for the free camera.",
+        "HeroWorld {}: a town of {:.0} people, {} buildings around the start, planned in {:.1} s. Right mouse to look, WASD to run, Space to jump, V to fly, Tab for the free camera.",
         hw_core::version(),
         generated.population(),
-        town.building_count(),
+        generated.area.buildings.len(),
         t0.elapsed().as_secs_f64()
     );
     let (spawn, spawn_dir) = generated.world.spawn_line();
@@ -393,7 +393,7 @@ fn main() -> EngineResult<()> {
                 }
             };
             let target = generated
-                .world
+                .area
                 .props
                 .iter()
                 .filter(|p| want(&p.kind))
@@ -417,7 +417,7 @@ fn main() -> EngineResult<()> {
         "pad" => {
             // Above the nearest rooftop taxi pad.
             let pad = generated
-                .world
+                .area
                 .buildings
                 .iter()
                 .filter(|b| b.site.look().taxi_pad)
@@ -436,8 +436,11 @@ fn main() -> EngineResult<()> {
         }
         "timber" => {
             // Across the street from the nearest half-timbered house.
-            let house = (0..generated.world.buildings.len())
-                .filter_map(|i| generated.obstacles.building(i))
+            let house = generated
+                .area
+                .building_ids
+                .iter()
+                .filter_map(|id| generated.obstacles.building(id.0))
                 .filter(|(p, _)| hw_client::facades::facade(p).timber.is_some())
                 .min_by(|a, b| {
                     a.0.site
@@ -509,7 +512,7 @@ fn main() -> EngineResult<()> {
         "quay" => {
             // Along a quay wall at the nearest steps down to the water.
             let st = generated
-                .world
+                .area
                 .water_steps
                 .iter()
                 .min_by(|a, b| a.pos.distance(spawn).total_cmp(&b.pos.distance(spawn)));
@@ -540,7 +543,7 @@ fn main() -> EngineResult<()> {
             let mut best: Option<(f64, DVec2, DVec2)> = None;
             let sky = view == "skylanes";
             let long = if sky { 60.0 } else { 45.0 };
-            for r in generated.world.roads.iter().filter(|r| r.main) {
+            for r in &generated.world.main_roads {
                 for w in r.pts.windows(2) {
                     let d = w[0].distance(spawn);
                     if w[0].distance(w[1]) > long && best.is_none_or(|b| d < b.0) {
@@ -559,7 +562,7 @@ fn main() -> EngineResult<()> {
             // Up the road at the traffic light nearest the start, its lamps
             // and the junction behind it.
             let lights = generated
-                .world
+                .area
                 .props
                 .iter()
                 .filter(|p| p.kind == hw_gen::urban::props::PropKind::TrafficLight);
@@ -576,7 +579,9 @@ fn main() -> EngineResult<()> {
         "graffiti" => {
             // In front of a tagged wall at the quarter's edge.
             let w = &generated.world;
-            let tags = hw_gen::urban::edge::tags(w);
+            let a = &generated.area;
+            let tags =
+                hw_gen::urban::edge::tags(w, a.building_ids.iter().copied().zip(&a.buildings));
             match tags.iter().find(|t| t.image == 0).or(tags.first()) {
                 Some(t) => {
                     let at = DVec2::new(t.at.x, t.at.z);
@@ -591,7 +596,7 @@ fn main() -> EngineResult<()> {
         "edge" => {
             // Outside the quarter, looking in past its first barricade.
             let w = &generated.world;
-            match hw_gen::urban::edge::barricades(w).first() {
+            match hw_gen::urban::edge::barricades(w, &generated.area.roads).first() {
                 Some(b) => {
                     let p = b.at - b.along * 14.0 + b.along.perp() * (b.half + 1.0);
                     let d = b.at + b.along * 10.0 - p;
@@ -604,7 +609,7 @@ fn main() -> EngineResult<()> {
         "rooftop" => {
             // Across the street from the quarter's first rooftop lookout, a
             // little above its roof.
-            let w = &generated.world;
+            let w = &generated.area;
             let corners = hw_sim::quarter::corners(w);
             match hw_sim::quarter::lookouts(w, &corners).first() {
                 Some(l) => {
@@ -623,7 +628,7 @@ fn main() -> EngineResult<()> {
         "quarter" => {
             // On a street in the mad scientist's quarter, looking at his tower.
             use hw_gen::urban::landmarks::LandmarkKind;
-            let w = &generated.world;
+            let w = &generated.area;
             let tower = hw_client::landmarkview::nearest(w, LandmarkKind::TeslaTower, spawn);
             let (c, h) = tower.map_or((spawn, 40.0), |l| (l.pos, l.height));
             let deep = |p: DVec2| w.town.dystopia.as_ref().is_some_and(|d| d.depth(p) > 0.9);
@@ -643,10 +648,15 @@ fn main() -> EngineResult<()> {
             let pitch = ((h * 0.5 - 3.0) / d.length()).atan().to_degrees() as f32;
             FlyCamera::new((p.x as f32, ground(p) as f32 + 3.0, p.y as f32), yaw, pitch)
         }
-        "market" if generated.world.underground.cavern.is_some() => {
+        "market" if generated.world.underground().cavern.is_some() => {
             // Molehaven's market from above: the well, the stalls and the
             // mole people about them.
-            let c = generated.world.underground.cavern.as_ref().expect("cavern");
+            let c = generated
+                .world
+                .underground()
+                .cavern
+                .as_ref()
+                .expect("cavern");
             let a = 0.6 + std::f64::consts::TAU / 10.0;
             let p = c.centre + DVec2::new(a.cos(), a.sin()) * 14.0;
             let d = c.centre - p;
@@ -656,7 +666,7 @@ fn main() -> EngineResult<()> {
         "lift" | "tunnel" | "molehaven" => {
             // The underground: a lift pavilion on the street, a utility
             // tunnel from inside, or Molehaven's great hall.
-            let u = &generated.world.underground;
+            let u = generated.world.underground();
             let lift = u
                 .entrances
                 .iter()
@@ -741,10 +751,12 @@ fn main() -> EngineResult<()> {
     if view == "inside" {
         // Start in the lobby of the tallest building near the start.
         let tower = town.tallest_near(spawn, 400.0);
-        if let Some(i) = tower {
-            let plan = town.plan(i);
+        if let Some((i, plan)) = tower.and_then(|i| Some((i, town.plan(i)?))) {
             if plan.core.is_some() {
-                let base = generated.world.buildings[i].base;
+                let base = generated
+                    .world
+                    .building(hw_gen::urban::quarter::DetailId(i))
+                    .map_or(0.0, |b| b.base);
                 let lobby = plan.floors[0]
                     .rooms
                     .iter()
@@ -774,7 +786,7 @@ fn main() -> EngineResult<()> {
     }
     if view == "hangout" {
         // Down the street from a Chrome Jackets corner.
-        let w = &generated.world;
+        let w = &generated.area;
         if let Some(c) = hw_sim::quarter::hangouts(w, spawn, hw_sim::HANGOUT_CLEAR).first() {
             // Down their pavement, from the kerb, looking at them.
             let p = c.at + c.facing.perp() * 26.0 + c.facing * 6.0;
@@ -787,7 +799,7 @@ fn main() -> EngineResult<()> {
     }
     if view == "rooftop" {
         // In the street below the quarter's first rooftop lookout.
-        let w = &generated.world;
+        let w = &generated.area;
         let corners = hw_sim::quarter::corners(w);
         if let Some(l) = hw_sim::quarter::lookouts(w, &corners).first() {
             let p = l.at + l.facing * 30.0;
@@ -877,11 +889,27 @@ fn main() -> EngineResult<()> {
                     world.look_first_person(eye, yaw, pitch);
                 }
                 // Behind the title the town builds bit by bit while you look.
-                if title_screen.is_none() || shooting {
-                    let eye = world.camera().eye();
-                    town.build_all(world, DVec2::new(eye.x as f64, eye.z as f64));
+                let eye = world.camera().eye();
+                let eye = DVec2::new(eye.x as f64, eye.z as f64);
+                let all_now = title_screen.is_none() || shooting;
+                if all_now {
+                    town.build_all(world, eye);
                 }
                 extras = spawn_extras(world, &generated, town.green.clone())?;
+                if let Some(v) = extras.props.as_mut() {
+                    v.update(
+                        eye,
+                        if all_now {
+                            f64::INFINITY
+                        } else {
+                            TITLE_BUILD_MS
+                        },
+                    );
+                    v.flush(world)?;
+                }
+                if let Some(w) = extras.waterfront.as_mut() {
+                    w.update(world, eye, !all_now);
+                }
             }
 
             // What heroes can be made of, once the packs are loaded.
@@ -937,11 +965,11 @@ fn main() -> EngineResult<()> {
                     generated = g;
                     solids = generated.obstacles.clone();
                     town = TownView::new(generated.world.clone());
-                    traffic = hw_sim::traffic::Traffic::new(generated.world.clone());
+                    traffic = hw_sim::traffic::Traffic::new(generated.area.clone());
                     citizens =
-                        hw_sim::citizens::Citizens::new(generated.world.clone(), traffic.signals());
+                        hw_sim::citizens::Citizens::new(generated.area.clone(), traffic.signals());
                     citizens.set_hour(game_hour() as f64);
-                    stands = hw_sim::taxi::stands(&generated.world);
+                    stands = hw_sim::taxi::stands(&generated.area);
                     traffic_view.clear(world);
                     radio.clear(world);
                     signal.clear(world);
@@ -951,6 +979,13 @@ fn main() -> EngineResult<()> {
                 let eye = world.camera().eye();
                 let eye = DVec2::new(eye.x as f64, eye.z as f64);
                 town.update(world, eye, TITLE_BUILD_MS);
+                if let Some(v) = extras.props.as_mut() {
+                    v.update(eye, TITLE_BUILD_MS * 0.5);
+                    v.flush(world)?;
+                }
+                if let Some(w) = extras.waterfront.as_mut() {
+                    w.update(world, eye, true);
+                }
                 let (built, wanted) = town.progress(eye);
                 let (done, what) = if switching.is_some() {
                     (0.0, "Building your world...")
@@ -1110,9 +1145,9 @@ fn main() -> EngineResult<()> {
                 }
             }
             let creating = hero_file.is_none();
-            if let Some(lights) = extras.lights.as_mut() {
+            if let (Some(lights), Some(props)) = (extras.lights.as_mut(), extras.props.as_ref()) {
                 let dark = swoop.is_none() && hw_client::nightlights::dark_at(game_hour());
-                lights.update(world, world.camera().eye(), dark)?;
+                lights.update(world, world.camera().eye(), dark, props)?;
             }
             if let Some(under) = extras.under.as_mut() {
                 under.update(world, world.camera().eye(), &generated.world)?;
@@ -1465,15 +1500,17 @@ fn main() -> EngineResult<()> {
                 hw_net::ToClient::PropsBroken { props, .. } => {
                     for &(i, fell) in props {
                         if let Some(v) = extras.props.as_mut() {
-                            v.set_broken(&generated.world, i as usize, Some(fell));
+                            v.set_broken(i, Some(fell));
                         }
                         // A barricade knocked down no longer blocks the way.
-                        generated.obstacles.set_prop_broken(i, true);
+                        generated
+                            .obstacles
+                            .set_prop_broken(hw_gen::urban::quarter::DetailId(i), true);
                         if let Some(l) = extras.lights.as_mut() {
-                            l.set_broken(i, true);
+                            l.refresh();
                         }
                         if let Some(s) = extras.signals.as_mut() {
-                            s.set_broken(i, true);
+                            s.refresh();
                         }
                     }
                     false
@@ -1511,14 +1548,16 @@ fn main() -> EngineResult<()> {
                 hw_net::ToClient::PropsRepaired { props } => {
                     for &i in props {
                         if let Some(v) = extras.props.as_mut() {
-                            v.set_broken(&generated.world, i as usize, None);
+                            v.set_broken(i, None);
                         }
-                        generated.obstacles.set_prop_broken(i, false);
+                        generated
+                            .obstacles
+                            .set_prop_broken(hw_gen::urban::quarter::DetailId(i), false);
                         if let Some(l) = extras.lights.as_mut() {
-                            l.set_broken(i, false);
+                            l.refresh();
                         }
                         if let Some(s) = extras.signals.as_mut() {
-                            s.set_broken(i, false);
+                            s.refresh();
                         }
                     }
                     false
@@ -2001,8 +2040,14 @@ fn main() -> EngineResult<()> {
                     solids.set_movers(traffic.car_solids(&[me], 25.0, t));
                 }
             }
-            if let Some(s) = extras.signals.as_mut() {
-                s.update(world, &traffic, session.time(tick_clock / hw_sim::DT))?;
+            if let (Some(s), Some(props)) = (extras.signals.as_mut(), extras.props.as_ref()) {
+                s.update(
+                    world,
+                    &traffic,
+                    props,
+                    DVec2::new(eye.x as f64, eye.z as f64),
+                    session.time(tick_clock / hw_sim::DT),
+                )?;
             }
             traffic_view.update(
                 world,
@@ -2026,7 +2071,7 @@ fn main() -> EngineResult<()> {
                 let cells: BTreeSet<_> = [town.inside, inside]
                     .into_iter()
                     .flatten()
-                    .map(|i| town.cell_of_building(i.building))
+                    .filter_map(|i| town.cell_of_building(i.building))
                     .collect();
                 town.inside = inside;
                 town.rebuild(world, cells);
@@ -2162,6 +2207,17 @@ fn main() -> EngineResult<()> {
                 DVec2::new(eye.x as f64, eye.z as f64),
                 BUILD_BUDGET_MS,
             );
+            // Street props, trees and hedges around the camera.
+            if let Some(v) = extras.props.as_mut() {
+                v.update(
+                    DVec2::new(eye.x as f64, eye.z as f64),
+                    BUILD_BUDGET_MS * 0.5,
+                );
+                v.flush(world)?;
+            }
+            if let Some(w) = extras.waterfront.as_mut() {
+                w.update(world, DVec2::new(eye.x as f64, eye.z as f64), true);
+            }
             Ok(())
         },
     );
@@ -2227,6 +2283,7 @@ struct TownExtras {
     under: Option<hw_client::undergroundview::UndergroundView>,
     dystopia: Option<hw_client::dystopiaview::DystopiaView>,
     grass: Option<hw_client::grassview::GrassView>,
+    waterfront: Option<hw_client::waterfrontview::WaterfrontView>,
 }
 
 impl TownExtras {
@@ -2241,6 +2298,9 @@ impl TownExtras {
         }
         if let Some(mut l) = self.lights.take() {
             l.clear(world);
+        }
+        if let Some(mut w) = self.waterfront.take() {
+            w.clear(world);
         }
         self.props = None;
         if let Some(mut s) = self.signals.take() {
@@ -2265,49 +2325,36 @@ fn spawn_extras(
     green: std::sync::Arc<hw_gen::urban::greenery::Greenery>,
 ) -> EngineResult<TownExtras> {
     let t = std::time::Instant::now();
-    let props = hw_client::propview::PropView::spawn(world, &generated.world)?;
+    let props = hw_client::propview::PropView::spawn(world, generated.world.clone())?;
     eprintln!(
-        "{} props in {:.2} s",
-        props.count,
+        "{} prop models in {:.2} s (the props stream in around the camera)",
+        props.sets.len(),
         t.elapsed().as_secs_f64()
     );
     let landmarks = hw_client::landmarkview::LandmarkView::spawn(world, &generated.world)?;
-    let waterfront = hw_client::waterfrontview::WaterfrontView::spawn(world, &generated.world)?;
     let under = hw_client::undergroundview::UndergroundView::spawn(world, &generated.world)?;
     let grass =
         hw_client::grassview::GrassView::spawn(world, generated.world.clone(), green.clone())?;
     // The country's woods stream in around the camera, drawn with the
-    // town's tree sets (and a few more kinds only the woods grow).
-    let mut lods: Vec<LodId> = props.sets.iter().copied().chain(landmarks.sets).collect();
-    let h = generated.world.half();
-    let wild = green.wild_trees(&generated.world, DVec2::splat(-h), DVec2::splat(h));
-    let mut trees = std::collections::BTreeMap::new();
-    for kind in wild
-        .iter()
-        .map(|t| t.kind)
-        .collect::<std::collections::BTreeSet<_>>()
-    {
-        let set = match props.set_for(kind) {
-            Some(set) => set,
-            None => {
-                let set = world.spawn_lod(hw_client::propview::model_levels(kind)?)?;
-                lods.push(set);
-                set
-            }
-        };
-        trees.insert(kind, set);
-    }
-    eprintln!(
-        "{} trees in the country around the town (streamed)",
-        wild.len()
-    );
+    // props' tree sets.
+    let lods: Vec<LodId> = props.sets.iter().copied().chain(landmarks.sets).collect();
+    let trees: std::collections::BTreeMap<_, _> = hw_gen::urban::props::PropKind::all()
+        .into_iter()
+        .filter(|k| matches!(k, hw_gen::urban::props::PropKind::Tree(..)))
+        .filter_map(|k| Some((k, props.set_for(k)?)))
+        .collect();
     set_town_stream(world, generated, green, trees)?;
     Ok(TownExtras {
         grass: Some(grass),
         lods,
-        entities: waterfront.entities,
-        lights: Some(hw_client::nightlights::NightLights::new(&generated.world)),
-        signals: Some(hw_client::signalview::SignalView::new(&generated.world)),
+        entities: Vec::new(),
+        waterfront: Some(hw_client::waterfrontview::WaterfrontView::new(
+            generated.world.clone(),
+        )),
+        lights: Some(hw_client::nightlights::NightLights::new(
+            generated.world.clone(),
+        )),
+        signals: Some(hw_client::signalview::SignalView::new()),
         props: Some(props),
         under: Some(under),
         dystopia: Some(hw_client::dystopiaview::DystopiaView::new(&generated.world)),

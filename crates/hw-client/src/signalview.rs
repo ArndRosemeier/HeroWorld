@@ -9,18 +9,20 @@
 use crate::carmesh::{lathe, Lod};
 use crate::citymesh::{MeshBuilder, Surf};
 use crate::propmesh::TRAFFIC_LAMPS;
+use crate::propview::PropView;
 use engine::prelude::*;
 use glam::{DVec2, DVec3};
 use hw_gen::urban::props::PropKind;
-use hw_gen::urban::world::TownWorld;
 use hw_sim::traffic::{Signal, Traffic};
-use std::collections::BTreeSet;
 
 /// How often the lamps are looked at (s).
 const STEP: f64 = 0.25;
 
+/// Lights are lit out to this distance (the light's farthest LOD).
+const REACH: f64 = 520.0;
+
 struct Light {
-    prop: usize,
+    prop: u64,
     place: Place,
     /// Its junction and the phase of the cars it faces; none if it stands
     /// at no junction with lights.
@@ -29,69 +31,84 @@ struct Light {
 }
 
 pub struct SignalView {
+    /// The traffic lights among the props loaded near the camera.
     lights: Vec<Light>,
     /// Red, amber and green lenses.
     sets: Vec<LodId>,
-    broken: BTreeSet<usize>,
-    resolved: bool,
+    /// The props' generation and where the camera was when `lights` was
+    /// gathered.
+    gathered: Option<(u64, (i64, i64))>,
     last: f64,
     dirty: bool,
 }
 
+impl Default for SignalView {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SignalView {
-    pub fn new(town: &TownWorld) -> Self {
-        let lights = town
-            .props
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| p.kind == PropKind::TrafficLight)
-            .map(|(i, p)| Light {
-                prop: i,
-                place: Place::new(p.pos.x as f32, p.y as f32, p.pos.y as f32)
-                    .with_yaw_deg(p.dir.x.atan2(p.dir.y).to_degrees() as f32)
-                    .with_scale(p.scale as f32),
-                of: None,
-                shows: None,
-            })
-            .collect();
+    pub fn new() -> Self {
         Self {
-            lights,
+            lights: Vec::new(),
             sets: Vec::new(),
-            broken: BTreeSet::new(),
-            resolved: false,
+            gathered: None,
             last: f64::NEG_INFINITY,
             dirty: true,
         }
     }
 
-    /// A broken light shows nothing; a repaired one comes back on.
-    pub fn set_broken(&mut self, prop: u32, broken: bool) {
-        let prop = prop as usize;
-        if !self.lights.iter().any(|l| l.prop == prop) {
+    /// A light broke or was put back: show it again next update.
+    pub fn refresh(&mut self) {
+        self.dirty = true;
+    }
+
+    /// The traffic lights near `eye` among the loaded props, keeping what
+    /// is known of the ones already there.
+    fn gather(&mut self, props: &PropView, traffic: &Traffic, eye: DVec2) {
+        let key = (
+            props.generation,
+            ((eye.x / 64.0) as i64, (eye.y / 64.0) as i64),
+        );
+        if self.gathered == Some(key) {
             return;
         }
-        let changed = if broken {
-            self.broken.insert(prop)
-        } else {
-            self.broken.remove(&prop)
-        };
-        self.dirty |= changed;
+        self.gathered = Some(key);
+        let mut old: std::collections::BTreeMap<u64, Light> =
+            self.lights.drain(..).map(|l| (l.prop, l)).collect();
+        for (id, p) in props.near(eye, REACH) {
+            if p.kind != PropKind::TrafficLight {
+                continue;
+            }
+            let light = old.remove(&id.0).unwrap_or_else(|| {
+                let place = Place::new(p.pos.x as f32, p.y as f32, p.pos.y as f32)
+                    .with_yaw_deg(p.dir.x.atan2(p.dir.y).to_degrees() as f32)
+                    .with_scale(p.scale as f32);
+                let yaw = (place.yaw_degrees as f64).to_radians();
+                let facing = DVec2::new(yaw.sin(), yaw.cos());
+                Light {
+                    prop: id.0,
+                    place,
+                    of: traffic.light_of(p.pos, facing),
+                    shows: None,
+                }
+            });
+            self.lights.push(light);
+        }
+        self.dirty = true;
     }
 
     /// Lights the lamps as the junctions' cycles stand at `time`.
-    pub fn update(&mut self, world: &mut World, traffic: &Traffic, time: f64) -> EngineResult<()> {
-        if self.lights.is_empty() {
-            return Ok(());
-        }
-        if !self.resolved {
-            self.resolved = true;
-            for l in &mut self.lights {
-                let p = l.place.position;
-                let yaw = (l.place.yaw_degrees as f64).to_radians();
-                let facing = DVec2::new(yaw.sin(), yaw.cos());
-                l.of = traffic.light_of(DVec2::new(p.x as f64, p.z as f64), facing);
-            }
-        }
+    pub fn update(
+        &mut self,
+        world: &mut World,
+        traffic: &Traffic,
+        props: &PropView,
+        eye: DVec2,
+        time: f64,
+    ) -> EngineResult<()> {
+        self.gather(props, traffic, eye);
         if self.sets.is_empty() {
             for k in 0..3 {
                 self.sets.push(world.spawn_lod_at(lens_levels(k), &[])?);
@@ -113,7 +130,7 @@ impl SignalView {
         }
         let mut places: [Vec<Place>; 3] = Default::default();
         for l in &self.lights {
-            if self.broken.contains(&l.prop) {
+            if props.is_broken(l.prop) {
                 continue;
             }
             let k = match l.shows {
@@ -149,6 +166,8 @@ impl SignalView {
         for s in self.sets.drain(..) {
             world.despawn_lod(s);
         }
+        self.lights.clear();
+        self.gathered = None;
         self.dirty = true;
     }
 }

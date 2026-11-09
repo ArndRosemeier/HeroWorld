@@ -11,7 +11,7 @@ use glam::{DVec2, DVec3, Vec3};
 use hw_gen::building::BuildingPlan;
 use hw_gen::urban::greenery::Greenery;
 use hw_gen::urban::props::PropKind;
-use hw_gen::urban::world::{TownWorld, WorldRoad, WATER_LEVEL};
+use hw_gen::urban::world::{TownWorld, WorldBuilding, WorldRoad, WATER_LEVEL};
 use hw_sim::collision::Inside;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -71,7 +71,7 @@ impl WorldGenerator for TownGround {
 
     /// The utility tunnels, lift shafts and Molehaven carved out of the rock.
     fn density(&self, p: glam::Vec3, ground: f32) -> f32 {
-        crate::undergroundview::density(&self.world().underground, p, ground)
+        crate::undergroundview::density(self.world().underground(), p, ground)
     }
 
     fn sea(&self) -> Option<engine::water::Sea> {
@@ -103,20 +103,32 @@ fn cell_centre(k: CellKey) -> DVec2 {
     DVec2::new((k.0 as f64 + 0.5) * CELL, (k.1 as f64 + 0.5) * CELL)
 }
 
-/// One run of a road inside one cell.
-struct RoadRun {
-    road: usize,
-    pts: Vec<DVec2>,
+fn cell_box(k: CellKey) -> (DVec2, DVec2) {
+    (
+        DVec2::new(k.0 as f64, k.1 as f64) * CELL,
+        DVec2::new(k.0 as f64 + 1.0, k.1 as f64 + 1.0) * CELL,
+    )
 }
 
-/// The roads and buildings around the camera.
+/// How far a building's centre can lie from its district's box (m).
+const BUILDING_MARGIN: f64 = 60.0;
+
+/// Is `id` a building of the town's streamed detail (not a landmark or
+/// another fixed thing)?
+fn town_building(id: u64) -> bool {
+    id >> 32 < hw_sim::collision::FIXED >> 32
+}
+
+/// The roads and buildings around the camera. Nothing is kept for the
+/// whole town: each cell asks the town for the detail on its ground when it
+/// comes into range (the town plans it then, or has it ready), and forgets
+/// it when it leaves.
 pub struct TownView {
     pub world: Arc<TownWorld>,
-    /// Buildings per cell (indices into `world.buildings`).
-    buildings: BTreeMap<CellKey, Vec<usize>>,
-    roads: BTreeMap<CellKey, Vec<RoadRun>>,
-    /// Plans made so far (they take a moment each).
-    plans: BTreeMap<usize, Arc<BuildingPlan>>,
+    /// The buildings of each built cell, by id.
+    buildings: BTreeMap<CellKey, Vec<(u64, WorldBuilding)>>,
+    /// Plans of the buildings in built cells (they take a moment each).
+    plans: BTreeMap<u64, Arc<BuildingPlan>>,
     entities: BTreeMap<CellKey, Vec<EntityId>>,
     /// Detail each built cell was drawn in.
     built: BTreeMap<CellKey, Detail>,
@@ -127,47 +139,17 @@ pub struct TownView {
     pub inside: Option<Inside>,
     /// Damaged buildings: Engine draws them breakable instead (see
     /// `damageview`), so the cells leave them out.
-    hidden: BTreeSet<usize>,
+    hidden: BTreeSet<u64>,
     /// Where grass grows (the lawns drawn in each cell).
     pub green: Arc<Greenery>,
-    /// Cells of open land (no roads or buildings) that still get lawn.
-    land: BTreeSet<CellKey>,
 }
 
 impl TownView {
     pub fn new(world: Arc<TownWorld>) -> Self {
         let green = Arc::new(Greenery::new(&world));
-        let mut buildings: BTreeMap<CellKey, Vec<usize>> = BTreeMap::new();
-        for (i, b) in world.buildings.iter().enumerate() {
-            buildings.entry(cell_of(centre(b))).or_default().push(i);
-        }
-        let mut roads: BTreeMap<CellKey, Vec<RoadRun>> = BTreeMap::new();
-        for (ri, r) in world.roads.iter().enumerate() {
-            // Cut the road where it crosses into another cell, so each cell
-            // draws its own stretch and the stretches meet end to end.
-            let pts = densify(&r.pts, ROAD_STEP);
-            let mut run = vec![pts[0]];
-            let mut key = cell_of(pts[0].lerp(pts[1], 0.5));
-            for w in pts.windows(2) {
-                let k = cell_of(w[0].lerp(w[1], 0.5));
-                if k != key {
-                    roads.entry(key).or_default().push(RoadRun {
-                        road: ri,
-                        pts: std::mem::replace(&mut run, vec![w[0]]),
-                    });
-                    key = k;
-                }
-                run.push(w[1]);
-            }
-            roads
-                .entry(key)
-                .or_default()
-                .push(RoadRun { road: ri, pts: run });
-        }
         let mut v = Self {
             world,
-            buildings,
-            roads,
+            buildings: BTreeMap::new(),
             plans: BTreeMap::new(),
             entities: BTreeMap::new(),
             built: BTreeMap::new(),
@@ -177,50 +159,72 @@ impl TownView {
             inside: None,
             hidden: BTreeSet::new(),
             green,
-            land: BTreeSet::new(),
         };
-        let h = v.world.half();
-        let (a, b) = (cell_of(DVec2::splat(-h)), cell_of(DVec2::splat(h)));
-        for x in a.0..=b.0 {
-            for z in a.1..=b.1 {
-                v.land.insert((x, z));
-            }
-        }
         v.cut_focus = v
             .tallest_near(v.world.spawn_line().0, 300.0)
-            .map_or(DVec2::ZERO, |i| centre(&v.world.buildings[i]));
+            .and_then(|i| v.centre_of(i))
+            .unwrap_or(DVec2::ZERO);
         v
     }
 
+    /// Buildings in the cells built now.
     pub fn building_count(&self) -> usize {
-        self.world.buildings.len()
+        self.buildings.values().map(Vec::len).sum()
+    }
+
+    /// Is `id` a building of this town?
+    pub fn has_building(&self, id: u64) -> bool {
+        town_building(id)
+            && self
+                .world
+                .building(hw_gen::urban::quarter::DetailId(id))
+                .is_some()
     }
 
     /// The tallest building within `r` of `p` (most floors).
-    pub fn tallest_near(&self, p: DVec2, r: f64) -> Option<usize> {
+    pub fn tallest_near(&self, p: DVec2, r: f64) -> Option<u64> {
+        let m = DVec2::splat(r + BUILDING_MARGIN);
         self.world
-            .buildings
+            .quarters_in(p - m, p + m)
             .iter()
-            .enumerate()
-            .filter(|(_, b)| centre(b).distance(p) < r)
-            .max_by_key(|(i, b)| (b.site.floors, std::cmp::Reverse(*i)))
-            .map(|(i, _)| i)
+            .flat_map(|q| {
+                q.buildings_with_ids()
+                    .filter(|(_, b)| centre(b).distance(p) < r)
+                    .map(|(id, b)| (b.site.floors, std::cmp::Reverse(id.0)))
+                    .collect::<Vec<_>>()
+            })
+            .max()
+            .map(|(_, std::cmp::Reverse(id))| id)
     }
 
-    pub fn centre_of(&self, i: usize) -> DVec2 {
-        centre(&self.world.buildings[i])
+    fn building(&self, i: u64) -> Option<WorldBuilding> {
+        if !town_building(i) {
+            return None;
+        }
+        self.world.building(hw_gen::urban::quarter::DetailId(i))
+    }
+
+    pub fn centre_of(&self, i: u64) -> Option<DVec2> {
+        self.building(i).map(|b| centre(&b))
     }
 
     /// The plan of building `i`, made on first use.
-    pub fn plan(&mut self, i: usize) -> Arc<BuildingPlan> {
-        let site = &self.world.buildings[i].site;
+    pub fn plan(&mut self, i: u64) -> Option<Arc<BuildingPlan>> {
+        if let Some(p) = self.plans.get(&i) {
+            return Some(p.clone());
+        }
+        let b = self.building(i)?;
+        Some(self.plan_of(i, &b))
+    }
+
+    fn plan_of(&mut self, i: u64, b: &WorldBuilding) -> Arc<BuildingPlan> {
         self.plans
             .entry(i)
-            .or_insert_with(|| Arc::new(BuildingPlan::generate(site)))
+            .or_insert_with(|| Arc::new(BuildingPlan::generate(&b.site)))
             .clone()
     }
 
-    fn look_of(&self, i: usize) -> Look {
+    fn look_of(&self, i: u64, b: &WorldBuilding) -> Look {
         if let Some(inside) = self.inside {
             if inside.building == i {
                 return Look::Cut {
@@ -228,7 +232,7 @@ impl TownView {
                 };
             }
         }
-        if self.cut_on && self.centre_of(i).distance(self.cut_focus) < CUT_RADIUS {
+        if self.cut_on && centre(b).distance(self.cut_focus) < CUT_RADIUS {
             Look::Cut {
                 level: self.cut_level,
             }
@@ -249,21 +253,23 @@ impl TownView {
         out
     }
 
-    pub fn cell_of_building(&self, i: usize) -> CellKey {
-        cell_of(self.centre_of(i))
+    /// The cell that draws building `i` (none for a landmark).
+    pub fn cell_of_building(&self, i: u64) -> Option<CellKey> {
+        self.centre_of(i).map(cell_of)
     }
 
     /// Leaves building `i` out of its cell (`true`) or draws it again, and
     /// redraws the cell.
-    pub fn set_hidden(&mut self, world: &mut World, i: usize, hidden: bool) {
+    pub fn set_hidden(&mut self, world: &mut World, i: u64, hidden: bool) {
         let changed = if hidden {
             self.hidden.insert(i)
         } else {
             self.hidden.remove(&i)
         };
         if changed {
-            let k = self.cell_of_building(i);
-            self.rebuild(world, [k]);
+            if let Some(k) = self.cell_of_building(i) {
+                self.rebuild(world, [k]);
+            }
         }
     }
 
@@ -276,8 +282,33 @@ impl TownView {
         }
     }
 
+    /// The cells within `r` of `eye` on the town's ground.
+    fn cells_within(&self, eye: DVec2, r: f64) -> Vec<CellKey> {
+        let h = self.world.half();
+        let (lo, hi) = (
+            (eye - DVec2::splat(r)).max(DVec2::splat(-h)),
+            (eye + DVec2::splat(r)).min(DVec2::splat(h)),
+        );
+        if lo.x > hi.x || lo.y > hi.y {
+            return Vec::new();
+        }
+        let (a, b) = (cell_of(lo), cell_of(hi));
+        let mut out = Vec::new();
+        for x in a.0..=b.0 {
+            for z in a.1..=b.1 {
+                if cell_centre((x, z)).distance(eye) < r {
+                    out.push((x, z));
+                }
+            }
+        }
+        out
+    }
+
     /// Builds cells coming into range and drops those out of range, nearest
-    /// first, for at most `budget_ms` per call (at least one cell).
+    /// first, for at most `budget_ms` per call (at least one cell). A cell
+    /// whose detail the town has not planned yet waits a frame or two
+    /// while the town plans it in the background (unless the budget is
+    /// unlimited: then it is planned on the spot).
     pub fn update(&mut self, world: &mut World, eye: DVec2, budget_ms: f64) {
         let gone: Vec<CellKey> = self
             .built
@@ -300,26 +331,37 @@ impl TownView {
             (d, detail)
         };
         let mut todo: Vec<(f64, CellKey, Detail)> = self
-            .buildings
-            .keys()
-            .chain(self.roads.keys())
-            .chain(self.land.iter())
-            .copied()
-            .collect::<BTreeSet<_>>()
+            .cells_within(eye, LOAD)
             .into_iter()
             .filter_map(|k| {
                 let (d, detail) = want(&k);
-                (d < LOAD && self.built.get(&k) != Some(&detail)).then_some((d, k, detail))
+                (self.built.get(&k) != Some(&detail)).then_some((d, k, detail))
             })
             .collect();
         todo.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let wait = budget_ms.is_finite();
         let start = std::time::Instant::now();
+        let mut later = Vec::new();
         for (_, k, detail) in todo {
+            if wait && !self.built.contains_key(&k) && !self.ready(k) {
+                later.push(cell_centre(k));
+                continue;
+            }
             self.build_cell(world, k, detail);
             if start.elapsed().as_secs_f64() * 1000.0 > budget_ms {
                 break;
             }
         }
+        if !later.is_empty() {
+            self.world.prefetch(&later, CELL * 0.5 + BUILDING_MARGIN);
+        }
+    }
+
+    /// Has the town planned what cell `k` shows?
+    fn ready(&self, k: CellKey) -> bool {
+        let (lo, hi) = cell_box(k);
+        let m = DVec2::splat(BUILDING_MARGIN);
+        self.world.quarters_ready(lo - m, hi + m)
     }
 
     /// Builds every cell in range at once (the first frame).
@@ -330,14 +372,7 @@ impl TownView {
     /// How much of the town around `eye` is built: (cells built, cells
     /// wanted), for a loading bar.
     pub fn progress(&self, eye: DVec2) -> (usize, usize) {
-        let wanted: BTreeSet<CellKey> = self
-            .buildings
-            .keys()
-            .chain(self.roads.keys())
-            .chain(self.land.iter())
-            .copied()
-            .filter(|k| cell_centre(*k).distance(eye) < LOAD)
-            .collect();
+        let wanted = self.cells_within(eye, LOAD);
         let built = wanted.iter().filter(|k| self.built.contains_key(k)).count();
         (built, wanted.len())
     }
@@ -354,36 +389,62 @@ impl TownView {
         for e in self.entities.remove(&k).unwrap_or_default() {
             world.despawn(e);
         }
+        for (i, _) in self.buildings.remove(&k).unwrap_or_default() {
+            self.plans.remove(&i);
+        }
         self.built.remove(&k);
+    }
+
+    /// The buildings whose centres stand in cell `k`.
+    fn buildings_of(&self, k: CellKey) -> Vec<(u64, WorldBuilding)> {
+        let (lo, hi) = cell_box(k);
+        let m = DVec2::splat(BUILDING_MARGIN);
+        let mut out: Vec<(u64, WorldBuilding)> = self
+            .world
+            .quarters_in(lo - m, hi + m)
+            .iter()
+            .flat_map(|q| {
+                q.buildings_with_ids()
+                    .filter(|(_, b)| cell_of(centre(b)) == k)
+                    .map(|(id, b)| (id.0, b.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        out.sort_by_key(|(id, _)| *id);
+        out
     }
 
     fn build_cell(&mut self, world: &mut World, k: CellKey, detail: Detail) {
         for e in self.entities.remove(&k).unwrap_or_default() {
             world.despawn(e);
         }
+        let (lo, hi) = cell_box(k);
         let mut ids = Vec::new();
         // Roads first, one mesh for the cell.
         let mut b = MeshBuilder::new();
-        if let Some(runs) = self.roads.get(&k) {
-            for run in runs {
-                draw_road(
-                    &mut b,
-                    &self.world,
-                    &self.world.roads[run.road],
-                    run,
-                    run.road,
-                );
+        for r in self.world.roads_in(lo, hi) {
+            for run in runs_in(&r, k) {
+                draw_road(&mut b, &self.world, &r, &run);
             }
         }
         // Buildings: each drawn at the town's block height, then lifted to
         // its own ground, on a plinth where the ground falls away.
+        if !self.buildings.contains_key(&k) {
+            let list = self.buildings_of(k);
+            self.buildings.insert(k, list);
+        }
         let list = self.buildings.get(&k).cloned().unwrap_or_default();
-        for i in list {
-            let plan = self.plan(i);
-            let wb = &self.world.buildings[i];
-            if !self.hidden.contains(&i) {
+        for (i, wb) in &list {
+            let plan = self.plan_of(*i, wb);
+            if !self.hidden.contains(i) {
                 let mut one = MeshBuilder::new();
-                add_building(&mut one, &plan, wb.site.district, self.look_of(i), detail);
+                add_building(
+                    &mut one,
+                    &plan,
+                    wb.site.district,
+                    self.look_of(*i, wb),
+                    detail,
+                );
                 let lift = Vec3::new(0.0, (wb.base - BLOCK_TOP) as f32, 0.0);
                 b.append(one, lift);
             }
@@ -414,10 +475,6 @@ impl TownView {
             Detail::Far => 5.0,
             Detail::Distant => 0.0,
         };
-        let (lo, hi) = (
-            DVec2::new(k.0 as f64, k.1 as f64) * CELL,
-            DVec2::new(k.0 as f64 + 1.0, k.1 as f64 + 1.0) * CELL,
-        );
         let lawns = if step == 0.0 || std::env::var("HW_LAWN").is_ok_and(|v| v == "0") {
             Vec::new()
         } else {
@@ -516,28 +573,59 @@ fn centre(b: &hw_gen::urban::world::WorldBuilding) -> DVec2 {
     s.origin + s.along * s.size.x * 0.5 + s.inward * s.size.y * 0.5
 }
 
-/// Points along a polyline no more than `step` apart.
-fn densify(pts: &[DVec2], step: f64) -> Vec<DVec2> {
-    let mut out = vec![pts[0]];
-    for w in pts.windows(2) {
-        let n = (w[0].distance(w[1]) / step).ceil().max(1.0) as usize;
-        for k in 1..=n {
-            out.push(w[0].lerp(w[1], k as f64 / n as f64));
+/// The stretches of road `r` drawn by cell `k`: the road cut into steps of
+/// at most [`ROAD_STEP`], each step drawn by the cell holding its middle, so
+/// neighbouring cells' stretches meet end to end.
+fn runs_in(r: &WorldRoad, k: CellKey) -> Vec<Vec<DVec2>> {
+    let (lo, hi) = cell_box(k);
+    let (lo, hi) = (lo - DVec2::ONE, hi + DVec2::ONE);
+    let mut out = Vec::new();
+    let mut run: Vec<DVec2> = Vec::new();
+    let mut flush = |run: &mut Vec<DVec2>| {
+        if run.len() >= 2 {
+            out.push(std::mem::take(run));
+        }
+        run.clear();
+    };
+    for w in r.pts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (s0, s1) = (a.min(b), a.max(b));
+        if s1.x < lo.x || s0.x > hi.x || s1.y < lo.y || s0.y > hi.y {
+            flush(&mut run);
+            continue;
+        }
+        let n = (a.distance(b) / ROAD_STEP).ceil().max(1.0) as usize;
+        for j in 0..n {
+            let p = a.lerp(b, j as f64 / n as f64);
+            let q = a.lerp(b, (j + 1) as f64 / n as f64);
+            if cell_of(p.lerp(q, 0.5)) == k {
+                if run.is_empty() {
+                    run.push(p);
+                }
+                run.push(q);
+            } else {
+                flush(&mut run);
+            }
         }
     }
-    out.dedup_by(|a, b| a.distance(*b) < 1e-6);
+    flush(&mut run);
     out
+}
+
+/// Which of four heights a road is drawn at, so crossing roads never fight.
+fn road_layer(r: &WorldRoad) -> usize {
+    ((r.id.0 ^ (r.id.0 >> 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 62) as usize
 }
 
 /// One road run: pavements, then the carriageway a little higher so it wins
 /// where roads cross. Strips are mitred along the run, so a bend has no
 /// overlap.
-fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &RoadRun, index: usize) {
-    if run.pts.len() < 2 {
+fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &[DVec2]) {
+    if run.len() < 2 {
         return;
     }
     // Crossing roads at slightly different heights never fight.
-    let lift = 0.02 + (index % 4) as f64 * 0.012;
+    let lift = 0.02 + (road_layer(r) % 4) as f64 * 0.012;
     let asphalt = if r.main {
         rgb(58, 58, 62)
     } else {
@@ -546,7 +634,7 @@ fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &RoadRun, i
     let pavement = rgb(165, 160, 150);
     let total = r.half + r.pavement;
     b.tex = Some(GroundLayer::Paving.into());
-    strip(b, w, &run.pts, -total, total, lift, pavement);
+    strip(b, w, run, -total, total, lift, pavement);
     // Old lanes are cobbled.
     let lane = r.style == Some(hw_gen::urban::streets::StreetStyle::Lanes);
     b.tex = Some(if lane {
@@ -555,7 +643,7 @@ fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &RoadRun, i
         GroundLayer::RoadAsphalt.into()
     });
     let asphalt = if lane { rgb(120, 116, 110) } else { asphalt };
-    strip(b, w, &run.pts, -r.half, r.half, lift + 0.05, asphalt);
+    strip(b, w, run, -r.half, r.half, lift + 0.05, asphalt);
     b.tex = None;
 }
 

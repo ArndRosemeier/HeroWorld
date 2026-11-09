@@ -258,7 +258,6 @@ fn plan_stairs(w: &TownWorld, roads: &RoadGrid, l: &Landmark) -> Vec<Stair> {
 
 /// Picks the landmarks' places (buildings are cleared off them afterwards).
 pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
-    let roads = RoadGrid::new(w, 0.0);
     let core = w
         .town
         .growth
@@ -266,6 +265,22 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
         .iter()
         .find(|c| c.kind == CentreKind::Core)
         .map_or(DVec2::ZERO, |c| c.pos);
+    // Only the streets where landmarks may stand: round the core, the
+    // villains' quarter and, by the sea, out to the lighthouse.
+    let mut lo = core - DVec2::splat(450.0);
+    let mut hi = core + DVec2::splat(450.0);
+    if w.coastal() {
+        let r = (w.half() * 0.8).min(1600.0) + 20.0;
+        lo = lo.min(core - DVec2::splat(r));
+        hi = hi.max(core + DVec2::splat(r));
+    }
+    if let Some(d) = &w.town.dystopia {
+        let r = (d.radius * 0.7).min(500.0) + 20.0;
+        lo = lo.min(d.centre - DVec2::splat(r));
+        hi = hi.max(d.centre + DVec2::splat(r));
+    }
+    let all = w.roads_in(lo, hi);
+    let roads = RoadGrid::new(&all, 0.0);
     let mut out = Vec::new();
     // Taller in bigger towns: 35 m in a market town, 90 m in a metropolis.
     let pop = w.town.params.population.max(1000.0);
@@ -433,12 +448,13 @@ mod tests {
                 .find(|l| l.kind == LandmarkKind::AetherSpire)
                 .expect("a spire");
             assert!(spire.height >= 30.0);
-            for b in &w.buildings {
+            let all = w.everything();
+            for (_, b) in &all.buildings {
                 for l in &w.landmarks {
                     assert!(!l.overlaps(&b.site, 0.5), "a building on the {:?}", l.kind);
                 }
             }
-            for p in &w.props {
+            for (_, p) in &all.props {
                 for l in &w.landmarks {
                     assert!(!l.covers(p.pos, 0.0), "{:?} on the {:?}", p.kind, l.kind);
                 }

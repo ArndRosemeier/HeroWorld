@@ -1,7 +1,7 @@
 //! A 32 m grid over the town's ground plane, and the road segments filed in it,
 //! to ask quickly what is near a point.
 
-use super::world::TownWorld;
+use super::world::WorldRoad;
 use crate::water::segment_distance;
 use glam::DVec2;
 use std::collections::BTreeMap;
@@ -24,14 +24,14 @@ pub(super) fn keys_around(p: DVec2, r: f64) -> impl Iterator<Item = Key> {
 /// Road segments by grid cell: each segment is filed under every cell that
 /// its carriageway and pavements, widened by a margin, may reach.
 pub(super) struct RoadGrid<'a> {
-    w: &'a TownWorld,
+    pub(super) roads: &'a [WorldRoad],
     cells: BTreeMap<Key, Vec<(usize, usize)>>,
 }
 
 impl<'a> RoadGrid<'a> {
-    pub(super) fn new(w: &'a TownWorld, margin: f64) -> Self {
+    pub(super) fn new(roads: &'a [WorldRoad], margin: f64) -> Self {
         let mut cells: BTreeMap<Key, Vec<(usize, usize)>> = BTreeMap::new();
-        for (ri, r) in w.roads.iter().enumerate() {
+        for (ri, r) in roads.iter().enumerate() {
             let reach = r.half + r.pavement + margin;
             for (si, s) in r.pts.windows(2).enumerate() {
                 let (a, b) = (
@@ -45,7 +45,7 @@ impl<'a> RoadGrid<'a> {
                 }
             }
         }
-        RoadGrid { w, cells }
+        RoadGrid { roads, cells }
     }
 
     /// The segments filed under cell `k`, as (road, segment).
@@ -58,7 +58,7 @@ impl<'a> RoadGrid<'a> {
     pub(super) fn touches(&self, p: DVec2, r: f64, skip: Option<usize>) -> bool {
         keys_around(p, r).any(|k| {
             self.at(k).iter().any(|&(ri, si)| {
-                let road = &self.w.roads[ri];
+                let road = &self.roads[ri];
                 Some(ri) != skip
                     && segment_distance(p, road.pts[si], road.pts[si + 1])
                         < road.half + road.pavement + r

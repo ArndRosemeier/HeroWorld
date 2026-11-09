@@ -8,34 +8,113 @@ use glam::{DVec2, DVec3};
 use hw_gen::urban::waterfront::{QuayWall, WaterSteps, STEPS_WIDTH};
 use hw_gen::urban::world::{TownWorld, WATER_LEVEL};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Side of the squares the walls are grouped in, one mesh each.
 const CHUNK: f64 = 256.0;
+/// Walls are built out to this distance from the camera, and dropped a bit
+/// beyond it.
+const LOAD: f64 = 1400.0;
+const UNLOAD: f64 = LOAD + 300.0;
 
+type Key = (i64, i64);
+
+fn chunk(p: DVec2) -> Key {
+    ((p.x / CHUNK).floor() as i64, (p.y / CHUNK).floor() as i64)
+}
+
+fn chunk_box(k: Key) -> (DVec2, DVec2) {
+    (
+        DVec2::new(k.0 as f64, k.1 as f64) * CHUNK,
+        DVec2::new(k.0 as f64 + 1.0, k.1 as f64 + 1.0) * CHUNK,
+    )
+}
+
+/// The quay walls and steps around the camera, in square chunks.
 pub struct WaterfrontView {
-    pub entities: Vec<EntityId>,
+    world: Arc<TownWorld>,
+    chunks: BTreeMap<Key, Vec<EntityId>>,
 }
 
 impl WaterfrontView {
-    pub fn spawn(world: &mut World, town: &TownWorld) -> EngineResult<Self> {
-        let chunk = |p: DVec2| ((p.x / CHUNK).floor() as i64, (p.y / CHUNK).floor() as i64);
-        let mut builders: BTreeMap<(i64, i64), MeshBuilder> = BTreeMap::new();
-        for q in &town.quays {
-            let b = builders.entry(chunk(q.pts[q.pts.len() / 2])).or_default();
-            wall(b, q, &town.water_steps);
+    pub fn new(town: Arc<TownWorld>) -> Self {
+        Self {
+            world: town,
+            chunks: BTreeMap::new(),
         }
-        for s in &town.water_steps {
-            steps(builders.entry(chunk(s.pos)).or_default(), s);
-        }
-        let mut entities = Vec::new();
-        for (k, b) in builders {
-            for mesh in b.finish_parts() {
-                let id = world.spawn(mesh);
-                world.set_name(id, format!("quay {} {}", k.0, k.1));
-                entities.push(id);
+    }
+
+    /// Builds chunks coming into range (once the town has planned their
+    /// ground; all at once if `wait` is false) and drops those out of it.
+    pub fn update(&mut self, world: &mut World, eye: DVec2, wait: bool) {
+        let gone: Vec<Key> = self
+            .chunks
+            .keys()
+            .copied()
+            .filter(|k| {
+                let (lo, hi) = chunk_box(*k);
+                ((lo + hi) * 0.5).distance(eye) > UNLOAD
+            })
+            .collect();
+        for k in gone {
+            for e in self.chunks.remove(&k).unwrap_or_default() {
+                world.despawn(e);
             }
         }
-        Ok(Self { entities })
+        let (a, b) = (
+            chunk(eye - DVec2::splat(LOAD)),
+            chunk(eye + DVec2::splat(LOAD)),
+        );
+        for x in a.0..=b.0 {
+            for z in a.1..=b.1 {
+                let k = (x, z);
+                let (lo, hi) = chunk_box(k);
+                if self.chunks.contains_key(&k) || ((lo + hi) * 0.5).distance(eye) > LOAD {
+                    continue;
+                }
+                let m = DVec2::splat(8.0);
+                if wait && !self.world.quarters_ready(lo - m, hi + m) {
+                    continue;
+                }
+                let ids = self.build(world, k);
+                self.chunks.insert(k, ids);
+            }
+        }
+    }
+
+    fn build(&self, world: &mut World, k: Key) -> Vec<EntityId> {
+        let (lo, hi) = chunk_box(k);
+        let m = DVec2::splat(8.0);
+        let quarters = self.world.quarters_in(lo - m, hi + m);
+        let all_steps: Vec<WaterSteps> = quarters
+            .iter()
+            .flat_map(|q| q.water_steps.iter().copied())
+            .collect();
+        let mut b = MeshBuilder::new();
+        for q in quarters.iter().flat_map(|q| q.quays.iter()) {
+            if chunk(q.pts[q.pts.len() / 2]) == k {
+                wall(&mut b, q, &all_steps);
+            }
+        }
+        for s in all_steps.iter().filter(|s| chunk(s.pos) == k) {
+            steps(&mut b, s);
+        }
+        let mut out = Vec::new();
+        for mesh in b.finish_parts() {
+            let id = world.spawn(mesh);
+            world.set_name(id, format!("quay {} {}", k.0, k.1));
+            out.push(id);
+        }
+        out
+    }
+
+    /// Takes every chunk out of the world (before switching towns).
+    pub fn clear(&mut self, world: &mut World) {
+        for (_, ids) in std::mem::take(&mut self.chunks) {
+            for e in ids {
+                world.despawn(e);
+            }
+        }
     }
 }
 

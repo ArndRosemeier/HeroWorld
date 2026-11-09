@@ -97,22 +97,19 @@ struct Edge {
     b: usize,
 }
 
-/// Plans the lane loops on the roads `roads` (indices into `world.roads`),
+/// Plans the lane loops on the roads `roads` (indices into `all`),
 /// a lane each way, `offset(road)` metres right of the centre line. No
 /// lane passes a point of `stops` (a barricade across the road): cars
 /// turn round before it, on either side.
 pub fn plan_lanes(
-    world: &TownWorld,
+    all: &[WorldRoad],
     roads: &[usize],
     offset: impl Fn(&WorldRoad) -> f64,
     stops: &[DVec2],
     seed: Seed,
 ) -> Vec<LaneLoop> {
-    let lines: Vec<Polyline> = roads
-        .iter()
-        .map(|&r| Polyline::new(&world.roads[r].pts))
-        .collect();
-    let half = |i: usize| world.roads[roads[i]].half;
+    let lines: Vec<Polyline> = roads.iter().map(|&r| Polyline::new(&all[r].pts)).collect();
+    let half = |i: usize| all[roads[i]].half;
     // Roads by grid cell.
     let cell = |p: DVec2| ((p.x / CELL).floor() as i64, (p.y / CELL).floor() as i64);
     let mut grid: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
@@ -314,7 +311,7 @@ pub fn plan_lanes(
         .map(|n| {
             ends[n]
                 .iter()
-                .map(|(e, _, _)| world.roads[roads[edges[*e].road]].half)
+                .map(|(e, _, _)| all[roads[edges[*e].road]].half)
                 .fold(0.0, f64::max)
                 + 1.5
         })
@@ -370,7 +367,7 @@ pub fn plan_lanes(
         } else {
             l.slice(ed.s1 - tb, ed.s0 + ta)
         };
-        offset_line(&pts, offset(&world.roads[roads[ed.road]]))
+        offset_line(&pts, offset(&all[roads[ed.road]]))
     };
     // Where each end sits in its junction's list.
     let mut slot: BTreeMap<(usize, bool), (usize, usize)> = BTreeMap::new();
@@ -412,7 +409,7 @@ pub fn plan_lanes(
         for (k, g) in geo.iter().enumerate() {
             let l: f64 = g.windows(2).map(|w| w[0].distance(w[1])).sum();
             all_len += l;
-            if world.roads[roads[edges[order[k] / 2].road]].main {
+            if all[roads[edges[order[k] / 2].road]].main {
                 main_len += l;
             }
             pts.extend(g.iter().copied());
@@ -468,16 +465,16 @@ pub fn plan_lanes(
 /// way, clear of the parked cars, turning round before the barricades.
 /// The same for the traffic and for the street furniture, which keeps out
 /// of their way.
-pub fn street_lanes(world: &TownWorld) -> Vec<LaneLoop> {
+pub fn street_lanes(world: &TownWorld, roads: &[WorldRoad]) -> Vec<LaneLoop> {
     let seed = world.seed.child("traffic").child("ground");
-    let streets: Vec<usize> = (0..world.roads.len())
-        .filter(|&i| world.roads[i].has_traffic())
+    let streets: Vec<usize> = (0..roads.len())
+        .filter(|&i| roads[i].has_traffic())
         .collect();
-    let stops: Vec<DVec2> = super::edge::barricades(world)
+    let stops: Vec<DVec2> = super::edge::barricades(world, roads)
         .iter()
         .map(|b| b.at)
         .collect();
-    plan_lanes(world, &streets, WorldRoad::lane_offset, &stops, seed)
+    plan_lanes(roads, &streets, WorldRoad::lane_offset, &stops, seed)
 }
 
 /// A polyline moved `d` metres to its right (x, y plan; right is `perp`).
@@ -530,15 +527,16 @@ mod tests {
         use std::collections::BTreeMap;
         for s in [1u64, 3] {
             let w = TownWorld::generate(Seed(s), TownParams::sample(Seed(s), 40_000.0));
+            let all = w.everything();
             let key = |p: DVec2| ((p.x / 16.0).floor() as i64, (p.y / 16.0).floor() as i64);
             let mut solids: BTreeMap<(i64, i64), Vec<crate::urban::footprint::Footprint>> =
                 BTreeMap::new();
-            for p in &w.props {
+            for (_, p) in &all.props {
                 for f in p.footprints() {
                     solids.entry(key(f.at())).or_default().push(f);
                 }
             }
-            for b in &w.buildings {
+            for (_, b) in &all.buildings {
                 let st = &b.site;
                 let f = crate::urban::footprint::Footprint::Box {
                     at: st.origin + st.along * st.size.x * 0.5 + st.inward * st.size.y * 0.5,
@@ -557,7 +555,7 @@ mod tests {
                 }
             }
             let (mut samples, mut hits) = (0usize, Vec::new());
-            for l in street_lanes(&w) {
+            for l in street_lanes(&w, &all.roads) {
                 let mut at = 0.0;
                 while at < l.len() {
                     let (p, d) = l.sample(at);
@@ -592,9 +590,9 @@ mod tests {
 
     #[test]
     fn every_lane_is_on_a_loop_and_loops_are_smooth() {
-        let w = town();
+        let w = town().everything();
         let all: Vec<usize> = (0..w.roads.len()).collect();
-        let loops = plan_lanes(&w, &all, |r| r.half * 0.5, &[], Seed(5));
+        let loops = plan_lanes(&w.roads, &all, |r| r.half * 0.5, &[], Seed(5));
         assert!(loops.len() > 10, "{} loops", loops.len());
         let total: f64 = loops.iter().map(|l| l.len()).sum();
         let roads: f64 = w
@@ -633,9 +631,9 @@ mod tests {
     #[test]
     fn same_seed_same_lanes() {
         let (a, b) = (town(), town());
-        let main_a: Vec<usize> = (0..a.roads.len()).filter(|&i| a.roads[i].main).collect();
-        let x = plan_lanes(&a, &main_a, |_| 2.0, &[], Seed(2));
-        let y = plan_lanes(&b, &main_a, |_| 2.0, &[], Seed(2));
+        let main_a: Vec<usize> = (0..a.main_roads.len()).collect();
+        let x = plan_lanes(&a.main_roads, &main_a, |_| 2.0, &[], Seed(2));
+        let y = plan_lanes(&b.main_roads, &main_a, |_| 2.0, &[], Seed(2));
         assert_eq!(x.len(), y.len());
         for (p, q) in x.iter().zip(&y) {
             assert_eq!(p.pts, q.pts);

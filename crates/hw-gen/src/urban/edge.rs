@@ -5,8 +5,9 @@
 //! Pure data from the town; the client draws it.
 
 use super::dystopia::Zone;
+use super::quarter::DetailId;
 use super::roadgrid::RoadGrid;
-use super::world::TownWorld;
+use super::world::{TownWorld, WorldBuilding, WorldRoad};
 use glam::{DVec2, DVec3};
 
 /// How many graffiti images there are to pick from.
@@ -42,12 +43,16 @@ pub struct Barricade {
 }
 
 /// The graffiti on the town's walls, nearest the quarter most.
-pub fn tags(world: &TownWorld) -> Vec<Tag> {
+/// (Of the buildings given, by id.)
+pub fn tags<'a>(
+    world: &TownWorld,
+    buildings: impl IntoIterator<Item = (DetailId, &'a WorldBuilding)>,
+) -> Vec<Tag> {
     let Some(d) = &world.town.dystopia else {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for (i, b) in world.buildings.iter().enumerate() {
+    for (i, b) in buildings {
         let s = &b.site;
         let front = s.origin + s.along * s.size.x * 0.5;
         let p = match d.zone(front) {
@@ -55,7 +60,7 @@ pub fn tags(world: &TownWorld) -> Vec<Tag> {
             Zone::Dystopia => 0.45,
             Zone::Utopia => continue,
         };
-        let mut rng = world.seed.child("graffiti").child(i as u64).rng();
+        let mut rng = world.seed.child("graffiti").child(i.0).rng();
         if !rng.chance(p) || s.size.x < 5.0 {
             continue;
         }
@@ -83,13 +88,14 @@ pub fn tags(world: &TownWorld) -> Vec<Tag> {
 }
 
 /// The barricades where streets run into the quarter.
-pub fn barricades(world: &TownWorld) -> Vec<Barricade> {
+/// (Of the roads `all`: the barricades on them, wherever they are.)
+pub fn barricades(world: &TownWorld, all: &[WorldRoad]) -> Vec<Barricade> {
     let Some(d) = &world.town.dystopia else {
         return Vec::new();
     };
     let mut out: Vec<Barricade> = Vec::new();
-    let roads = RoadGrid::new(world, 0.0);
-    for (ri, r) in world.roads.iter().enumerate() {
+    let roads = RoadGrid::new(all, 0.0);
+    for (ri, r) in all.iter().enumerate() {
         for w in r.pts.windows(2) {
             let (a, b) = (w[0], w[1]);
             let (ia, ib) = (d.contains(a), d.contains(b));
@@ -128,7 +134,7 @@ pub fn barricades(world: &TownWorld) -> Vec<Barricade> {
                 along,
                 half: r.half,
                 pavement: r.pavement,
-                seed: world.seed.child("barricade").child(ri as u64).0,
+                seed: world.seed.child("barricade").child(r.id.0).0,
             });
         }
     }
@@ -145,19 +151,23 @@ mod tests {
     fn the_quarters_edge_is_tagged_and_barricaded() {
         let w = TownWorld::generate(Seed(3), TownParams::sample(Seed(3), 20_000.0));
         let d = w.town.dystopia.as_ref().unwrap();
-        let tags = tags(&w);
+        let all = w.everything();
+        let tags = tags(&w, all.buildings.iter().map(|(i, b)| (*i, b)));
         assert!(tags.len() >= 10, "{} tags", tags.len());
         for t in &tags {
             let p = DVec2::new(t.at.x, t.at.z);
             assert!(d.distance(p) < super::super::dystopia::BAND + 1.0);
             assert!(t.image < TAG_IMAGES);
         }
-        let bars = barricades(&w);
+        let bars = barricades(&w, &all.roads);
         assert!(bars.len() >= 2, "{} barricades", bars.len());
         for b in &bars {
             assert!(d.contains(b.at), "a barricade outside the quarter");
         }
-        assert_eq!(tags, super::tags(&w));
-        assert_eq!(bars, barricades(&w));
+        assert_eq!(
+            tags,
+            super::tags(&w, all.buildings.iter().map(|(i, b)| (*i, b)))
+        );
+        assert_eq!(bars, barricades(&w, &all.roads));
     }
 }

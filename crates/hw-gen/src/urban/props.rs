@@ -15,15 +15,19 @@
 use super::footprint::{block, disc, ring, Footprint};
 use super::growth::Era;
 use super::plots::region_of;
+use super::quarter::DetailId;
 use super::roadgrid::{key, keys_around, Key, RoadGrid};
 use super::roads::RoadClass;
 use super::streets::StreetStyle;
-use super::world::{TownWorld, WorldRoad, CAR_HALF, DECK, PARKED_ROOM, WALKER_HALF};
+use super::waterfront::{QuayWall, WaterSteps};
+use super::world::{
+    Local, TownWorld, WorldBuilding, WorldRoad, CAR_HALF, DECK, PARKED_ROOM, WALKER_HALF,
+};
 use crate::building::BuildingUse;
 use crate::style::Region;
 use crate::water::segment_distance;
 use glam::DVec2;
-use hw_core::{Rng, Seed};
+use hw_core::{det, Rng, Seed};
 use std::collections::BTreeMap;
 
 /// Street lamps, by the age of the quarter.
@@ -96,6 +100,58 @@ pub enum PropKind {
     /// number picks the bushes it is grown from).
     Hedge(u8),
 }
+
+impl PropKind {
+    /// Every kind of prop a town can plan, so whoever draws them can make
+    /// their models before knowing which part of the world comes first.
+    pub fn all() -> Vec<PropKind> {
+        use BarricadePiece::*;
+        use CarModel::*;
+        use LampStyle::*;
+        use Species::*;
+        let mut out: Vec<PropKind> = vec![
+            PropKind::Bench,
+            PropKind::Bin,
+            PropKind::Hydrant,
+            PropKind::Mailbox,
+            PropKind::TrafficLight,
+            PropKind::Fountain,
+            PropKind::Bollard,
+            PropKind::Kiosk,
+            PropKind::AdPillar,
+        ];
+        out.extend([Lantern, Deco, Atomic].map(PropKind::Lamp));
+        for s in [
+            Plane, Linden, Maple, Oak, Birch, Pine, Palm, Cypress, Chestnut, Ginkgo,
+        ] {
+            out.extend((0..TREE_VARIANTS).map(|v| PropKind::Tree(s, v)));
+        }
+        out.extend((0..SHRUB_VARIANTS).map(PropKind::Shrub));
+        for m in [Cruiser, Bubble, Hover] {
+            out.extend((0..CAR_PAINTS).map(|p| PropKind::Car(m, p)));
+        }
+        out.extend((0..STATUE_POSES).map(PropKind::Statue));
+        out.extend([Jersey, Sawhorse, Sandbags, Drum].map(PropKind::Barricade));
+        out.extend((0..HEDGE_VARIANTS).map(PropKind::Hedge));
+        out.sort();
+        out
+    }
+}
+
+/// Where segments a-b and c-d cross (not just touch), if they do.
+fn crossing(a: DVec2, b: DVec2, c: DVec2, d: DVec2) -> Option<DVec2> {
+    let (r, s) = (b - a, d - c);
+    let den = r.perp_dot(s);
+    if den.abs() < 1e-12 {
+        return None;
+    }
+    let t = (c - a).perp_dot(s) / den;
+    let u = (c - a).perp_dot(r) / den;
+    ((1e-6..1.0 - 1e-6).contains(&t) && (1e-6..1.0 - 1e-6).contains(&u)).then(|| a + r * t)
+}
+
+/// Shrub variants.
+pub const SHRUB_VARIANTS: u8 = 8;
 
 /// Length of one piece of hedge (m); its height and depth.
 pub const HEDGE_LEN: f64 = 2.4;
@@ -234,20 +290,30 @@ pub fn car_block(model: CarModel) -> (f64, f64, f64) {
 /// Keep props this far from the ends of a road (the junctions).
 const END_CLEAR: f64 = 12.0;
 
-/// Places the town's props.
-pub fn plan_props(w: &TownWorld) -> Vec<Prop> {
-    let mut p = Placer::new(w);
+/// Places one unit's props: along every road near it, at its junctions,
+/// on its quays, in its parks and front gardens, keeping those that stand
+/// on its own ground.
+pub(super) fn plan_props(l: &Local, quays: &[QuayWall], steps: &[WaterSteps]) -> Vec<Prop> {
+    let w = l.world;
+    let mut p = Placer::new(l);
     let seed = w.seed.child("props");
     let region = region_of(w.seed);
-    for (ri, r) in w.roads.iter().enumerate() {
-        p.road(ri, r, region, seed.child(ri as u32));
+    for (ri, r) in l.roads.iter().enumerate() {
+        // Each road from its own seed: the same props whichever unit asks.
+        if p.near(r) {
+            p.road(ri, r, region, seed.child(r.id.0));
+        }
     }
-    p.quays();
+    p.quays(quays, steps);
     p.junctions(seed.child("junctions"));
     p.parks(region, seed.child("parks"));
     p.gardens(region, seed.child("gardens"));
     // Last, so the props before keep their numbers in towns without them.
-    p.out.extend(barricade_props(w));
+    p.out.extend(
+        barricade_props(w, &l.roads)
+            .into_iter()
+            .filter(|b| l.owner.owns(b.pos)),
+    );
     // Greenery added later goes after everything else, for the same reason.
     p.hedges(region, seed.child("hedges"));
     p.back_gardens(region, seed.child("back-gardens"));
@@ -259,9 +325,9 @@ pub fn plan_props(w: &TownWorld) -> Vec<Prop> {
 /// The pieces of every barricade: jersey barriers in from both kerbs (one
 /// lane left open), a striped sawhorse behind each run, sandbags across the
 /// pavements and a burning drum on one of them.
-fn barricade_props(w: &TownWorld) -> Vec<Prop> {
+fn barricade_props(w: &TownWorld, roads: &[WorldRoad]) -> Vec<Prop> {
     let mut out = Vec::new();
-    for b in super::edge::barricades(w) {
+    for b in super::edge::barricades(w, roads) {
         let across = b.along.perp();
         let mut rng = Seed(b.seed).rng();
         let put = |piece: BarricadePiece, x: f64, z: f64, out: &mut Vec<Prop>| {
@@ -347,6 +413,7 @@ impl<'a> Walk<'a> {
 
 struct Placer<'a> {
     w: &'a TownWorld,
+    l: &'a Local<'a>,
     roads: RoadGrid<'a>,
     /// The street cars' lanes, segment by segment, by grid cell.
     lanes: BTreeMap<Key, Vec<(DVec2, DVec2)>>,
@@ -356,9 +423,9 @@ struct Placer<'a> {
 }
 
 impl<'a> Placer<'a> {
-    fn new(w: &'a TownWorld) -> Self {
+    fn new(l: &'a Local<'a>) -> Self {
         let mut buildings: BTreeMap<Key, Vec<usize>> = BTreeMap::new();
-        for (i, b) in w.buildings.iter().enumerate() {
+        for (i, b) in l.buildings.iter().enumerate() {
             let c = b.site.corners();
             let lo = c.iter().fold(DVec2::MAX, |m, p| m.min(*p));
             let hi = c.iter().fold(DVec2::MIN, |m, p| m.max(*p));
@@ -370,8 +437,8 @@ impl<'a> Placer<'a> {
             }
         }
         let mut lanes: BTreeMap<Key, Vec<(DVec2, DVec2)>> = BTreeMap::new();
-        for l in super::lanes::street_lanes(w) {
-            for s in l.pts.windows(2) {
+        for ln in super::lanes::street_lanes(l.world, &l.roads) {
+            for s in ln.pts.windows(2) {
                 let (a, z) = (key(s[0].min(s[1])), key(s[0].max(s[1])));
                 for x in a.0..=z.0 {
                     for y in a.1..=z.1 {
@@ -381,13 +448,30 @@ impl<'a> Placer<'a> {
             }
         }
         Placer {
-            w,
-            roads: RoadGrid::new(w, 0.0),
+            w: l.world,
+            l,
+            roads: RoadGrid::new(&l.roads, 0.0),
             lanes,
             buildings,
             taken: BTreeMap::new(),
             out: Vec::new(),
         }
+    }
+
+    /// Does a road come near this unit's ground at all?
+    fn near(&self, r: &WorldRoad) -> bool {
+        let reach = r.half + r.pavement + 4.0;
+        let (lo, hi) = (self.l.owner.lo, self.l.owner.hi);
+        r.pts.windows(2).any(|s| {
+            s[0].x.min(s[1].x) - reach <= hi.x
+                && s[0].x.max(s[1].x) + reach >= lo.x
+                && s[0].y.min(s[1].y) - reach <= hi.y
+                && s[0].y.max(s[1].y) + reach >= lo.y
+        })
+    }
+
+    fn building(&self, i: usize) -> &'a WorldBuilding {
+        &self.l.buildings[i]
     }
 
     /// Does a circle of radius `r` at `p` reach onto a carriageway (of any
@@ -397,7 +481,7 @@ impl<'a> Placer<'a> {
             if Some(ri) == own {
                 return false;
             }
-            let road = &self.w.roads[ri];
+            let road = &self.roads.roads[ri];
             let reach = road.half + if pavements { road.pavement } else { 0.0 };
             segment_distance(p, road.pts[si], road.pts[si + 1]) < reach + r
         })
@@ -407,7 +491,7 @@ impl<'a> Placer<'a> {
         keys_around(p, r).any(|k| {
             self.buildings.get(&k).is_some_and(|list| {
                 list.iter().any(|&i| {
-                    let s = &self.w.buildings[i].site;
+                    let s = &self.building(i).site;
                     let d = p - s.origin;
                     let (x, z) = (d.dot(s.along), d.dot(s.inward));
                     x > -r && x < s.size.x + r && z > -r && z < s.size.y + r
@@ -478,7 +562,8 @@ impl<'a> Placer<'a> {
     fn put(&mut self, kind: PropKind, pos: DVec2, dir: DVec2, scale: f64, r: f64) -> bool {
         // Bollards stand on the quay's paving, over the water's edge.
         let quay = kind == PropKind::Bollard;
-        if !(quay || self.dry(pos))
+        if !self.l.owner.owns(pos)
+            || !(quay || self.dry(pos))
             || self.in_building(pos, r)
             || self.crowded(pos, r)
             || self.w.landmarks.iter().any(|l| l.covers(pos, r))
@@ -695,45 +780,126 @@ impl<'a> Placer<'a> {
         }
     }
 
-    /// Traffic lights where three or more main roads meet.
+    /// Traffic lights where main roads (avenues among them) meet: three or
+    /// more ways into the junction, ends, T's and crossings alike.
     fn junctions(&mut self, seed: Seed) {
-        let mut ends: BTreeMap<Key, Vec<(DVec2, DVec2, usize)>> = BTreeMap::new();
-        for (ri, r) in self.w.roads.iter().enumerate().filter(|(_, r)| r.main) {
-            let n = r.pts.len();
-            if n < 2 {
-                continue;
-            }
-            for (p, q) in [(r.pts[0], r.pts[1]), (r.pts[n - 1], r.pts[n - 2])] {
-                let k = ((p.x / 4.0).round() as i64, (p.y / 4.0).round() as i64);
-                ends.entry(k)
-                    .or_default()
-                    .push((p, (q - p).normalize_or_zero(), ri));
+        let roads = &self.roads.roads;
+        let mains: Vec<usize> = (0..roads.len())
+            .filter(|&ri| roads[ri].main && roads[ri].pts.len() >= 2)
+            .collect();
+        let key = |p: DVec2| ((p.x / 4.0).round() as i64, (p.y / 4.0).round() as i64);
+        // Only junctions whose lights could stand on this unit's ground.
+        let m = DVec2::splat(60.0);
+        let (blo, bhi) = (self.l.owner.lo - m, self.l.owner.hi + m);
+        let near = |p: DVec2| p.cmpge(blo).all() && p.cmple(bhi).all();
+        // Each main road's segments near the unit.
+        let segs: Vec<Vec<(DVec2, DVec2)>> = mains
+            .iter()
+            .map(|&ri| {
+                roads[ri]
+                    .pts
+                    .windows(2)
+                    .map(|s| (s[0], s[1]))
+                    .filter(|(a, b)| a.max(*b).cmpge(blo).all() && a.min(*b).cmple(bhi).all())
+                    .collect()
+            })
+            .collect();
+        // Where roads meet: their ends, a road's corner on another road,
+        // and where two cross.
+        let mut points: BTreeMap<Key, DVec2> = BTreeMap::new();
+        for &ri in &mains {
+            let pts = &roads[ri].pts;
+            for p in [pts[0], pts[pts.len() - 1]] {
+                if near(p) {
+                    points.entry(key(p)).or_insert(p);
+                }
             }
         }
-        let mut rng = seed.rng();
-        for list in ends.values().filter(|l| l.len() >= 3) {
-            let clear = list
+        for x in 0..mains.len() {
+            for y in x + 1..mains.len() {
+                for s in segs[x].iter().map(|&(a, b)| [a, b]) {
+                    let (lo, hi) = (s[0].min(s[1]) - DVec2::ONE, s[0].max(s[1]) + DVec2::ONE);
+                    for t in segs[y].iter().map(|&(a, b)| [a, b]) {
+                        if t[0].max(t[1]).cmplt(lo).any() || t[0].min(t[1]).cmpgt(hi).any() {
+                            continue;
+                        }
+                        let hit = crossing(s[0], s[1], t[0], t[1]).or_else(|| {
+                            [s[0], s[1]]
+                                .into_iter()
+                                .find(|&v| segment_distance(v, t[0], t[1]) < 1.0)
+                        });
+                        if let Some(p) = hit.filter(|p| near(*p)) {
+                            points.entry(key(p)).or_insert(p);
+                        }
+                    }
+                }
+            }
+        }
+        let mut lights = Vec::new();
+        for (k, p) in points {
+            // The ways in: one along a road ending here, two along one
+            // running through.
+            let mut ways: Vec<(DetailId, i64, DVec2, usize)> = Vec::new();
+            for &ri in &mains {
+                let pts = &roads[ri].pts;
+                let Some(s) = (0..pts.len() - 1)
+                    .min_by(|&a, &b| {
+                        segment_distance(p, pts[a], pts[a + 1]).total_cmp(&segment_distance(
+                            p,
+                            pts[b],
+                            pts[b + 1],
+                        ))
+                    })
+                    .filter(|&s| segment_distance(p, pts[s], pts[s + 1]) < 4.0)
+                else {
+                    continue;
+                };
+                let n = pts.len();
+                let mut add = |d: DVec2| {
+                    let d = d.normalize_or_zero();
+                    let angle = (det::atan2(d.y, d.x) * 1000.0).round() as i64;
+                    ways.push((roads[ri].id, angle, d, ri));
+                };
+                if pts[0].distance(p) < 8.0 {
+                    add(pts[1] - pts[0]);
+                } else if pts[n - 1].distance(p) < 8.0 {
+                    add(pts[n - 2] - pts[n - 1]);
+                } else {
+                    add(pts[s + 1] - pts[s]);
+                    add(pts[s] - pts[s + 1]);
+                }
+            }
+            if ways.len() < 3 {
+                continue;
+            }
+            ways.sort_by_key(|w| (w.0, w.1));
+            let clear = ways
                 .iter()
-                .map(|&(_, _, ri)| self.w.roads[ri].half + self.w.roads[ri].pavement)
+                .map(|w| roads[w.3].half + roads[w.3].pavement)
                 .fold(0.0, f64::max)
                 + 1.0;
-            for &(p, d, ri) in list {
-                let r = &self.w.roads[ri];
+            // Each junction from its own seed.
+            let mut rng = seed.child(k.0).child(k.1).rng();
+            for &(_, _, d, ri) in &ways {
+                let r = &roads[ri];
                 // On the right of the traffic coming in.
                 let q = p + d * clear + (-d).perp() * -(r.half + 0.6);
                 if !self.on_road(q, 0.4, Some(ri), false) && rng.chance(0.9) {
-                    self.put(PropKind::TrafficLight, q, d, 1.0, 0.5);
+                    lights.push((q, d));
                 }
             }
+        }
+        for (q, d) in lights {
+            self.put(PropKind::TrafficLight, q, d, 1.0, 0.5);
         }
     }
 
     /// Mooring bollards along the quay walls, clear of the steps.
-    fn quays(&mut self) {
-        for q in &self.w.quays {
+    fn quays(&mut self, quays: &[QuayWall], steps: &[WaterSteps]) {
+        for q in quays {
             for k in (2..q.pts.len().saturating_sub(2)).step_by(7) {
                 let p = q.pts[k] - q.out[k] * 0.45;
-                if self.w.water_steps.iter().any(|s| s.pos.distance(p) < 3.5) {
+                if steps.iter().any(|s| s.pos.distance(p) < 3.5) {
                     continue;
                 }
                 self.put(PropKind::Bollard, p, q.out[k], 1.0, 0.3);
@@ -743,12 +909,17 @@ impl<'a> Placer<'a> {
 
     /// Parks: trees in clumps, benches, a fountain in the big ones.
     fn parks(&mut self, region: Region, seed: Seed) {
-        for (pi, piece) in self.w.pieces.iter().enumerate() {
+        let Some(streets) = &self.l.streets else {
+            return;
+        };
+        let piece = &streets.plan;
+        let pi = self.l.owner.unit.0;
+        {
             if piece.style != StreetStyle::Park {
-                continue;
+                return;
             }
             for (bi, block) in piece.blocks.iter().enumerate() {
-                let mut rng = seed.child(pi as u32).child(bi as u32).rng();
+                let mut rng = seed.child(pi).child(bi as u32).rng();
                 let area = super::graph::signed_area(block).abs();
                 let lo = block.iter().fold(DVec2::MAX, |m, p| m.min(*p));
                 let hi = block.iter().fold(DVec2::MIN, |m, p| m.max(*p));
@@ -781,7 +952,7 @@ impl<'a> Placer<'a> {
                             rng.range_int(0, TREE_VARIANTS as i64) as u8,
                         )
                     } else {
-                        PropKind::Shrub(rng.range_int(0, 8) as u8)
+                        PropKind::Shrub(rng.range_int(0, SHRUB_VARIANTS as i64) as u8)
                     };
                     let dir = DVec2::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0))
                         .normalize_or(DVec2::Y);
@@ -801,12 +972,12 @@ impl<'a> Placer<'a> {
 
     /// Front gardens: a tree or a shrub before most houses.
     fn gardens(&mut self, region: Region, seed: Seed) {
-        for i in 0..self.w.buildings.len() {
-            let site = &self.w.buildings[i].site;
+        for i in 0..self.l.buildings.len() {
+            let site = &self.building(i).site;
             if site.usage != BuildingUse::House {
                 continue;
             }
-            let mut rng = seed.child(i as u32).rng();
+            let mut rng = seed.child(self.l.owner.unit.0).child(i as u32).rng();
             if !rng.chance(0.65) {
                 continue;
             }
@@ -822,7 +993,7 @@ impl<'a> Placer<'a> {
                     rng.range_int(0, TREE_VARIANTS as i64) as u8,
                 )
             } else {
-                PropKind::Shrub(rng.range_int(0, 8) as u8)
+                PropKind::Shrub(rng.range_int(0, SHRUB_VARIANTS as i64) as u8)
             };
             let scale = if matches!(kind, PropKind::Tree(..)) {
                 rng.range(0.45, 0.7)
@@ -841,12 +1012,13 @@ impl<'a> Placer<'a> {
             Region::Continental => 0.4,
             Region::Southern => 0.25,
         };
-        for i in 0..self.w.buildings.len() {
-            let site = self.w.buildings[i].site.clone();
+        let unit = self.l.owner.unit.0;
+        for i in 0..self.l.buildings.len() {
+            let site = self.building(i).site.clone();
             if site.usage != BuildingUse::House {
                 continue;
             }
-            let mut rng = seed.child(i as u32).rng();
+            let mut rng = seed.child(unit).child(i as u32).rng();
             if !rng.chance(share) || site.size.x < HEDGE_LEN * 2.0 {
                 continue;
             }
@@ -875,12 +1047,13 @@ impl<'a> Placer<'a> {
                 self.put_hedge(p, site.along, v);
             }
         }
-        for (pi, piece) in self.w.pieces.iter().enumerate() {
+        let streets = self.l.streets.clone();
+        for piece in streets.iter().map(|s| &s.plan) {
             if piece.style != StreetStyle::Park {
                 continue;
             }
             for (bi, block) in piece.blocks.iter().enumerate() {
-                let mut rng = seed.child("park").child(pi as u32).child(bi as u32).rng();
+                let mut rng = seed.child("park").child(unit).child(bi as u32).rng();
                 if !rng.chance(0.45) {
                     continue;
                 }
@@ -925,7 +1098,8 @@ impl<'a> Placer<'a> {
     fn put_hedge(&mut self, p: DVec2, along: DVec2, v: u8) -> bool {
         let half = HEDGE_LEN * 0.5;
         let ends = [p - along * half * 0.9, p + along * half * 0.9];
-        if !self.dry(p)
+        if !self.l.owner.owns(p)
+            || !self.dry(p)
             || ends
                 .iter()
                 .any(|e| self.on_road(*e, 0.2, None, true) || self.in_building(*e, 0.2))
@@ -956,12 +1130,13 @@ impl<'a> Placer<'a> {
 
     /// A tree in many back gardens, behind the houses.
     fn back_gardens(&mut self, region: Region, seed: Seed) {
-        for i in 0..self.w.buildings.len() {
-            let site = self.w.buildings[i].site.clone();
+        let unit = self.l.owner.unit.0;
+        for i in 0..self.l.buildings.len() {
+            let site = self.building(i).site.clone();
             if site.usage != BuildingUse::House {
                 continue;
             }
-            let mut rng = seed.child(i as u32).rng();
+            let mut rng = seed.child(unit).child(i as u32).rng();
             if !rng.chance(0.55) {
                 continue;
             }
@@ -984,8 +1159,12 @@ impl<'a> Placer<'a> {
     /// The old town keeps a few trees: by its squares and churches, where a
     /// street opens out, along its wider lanes.
     fn old_town_trees(&mut self, region: Region, seed: Seed) {
-        for (ri, r) in self.w.roads.iter().enumerate() {
-            let mut rng = seed.child(ri as u32).rng();
+        let roads = self.roads.roads;
+        for r in roads {
+            if !self.near(r) {
+                continue;
+            }
+            let mut rng = seed.child(r.id.0).rng();
             let n = r.pts.len();
             if n < 2 {
                 continue;
@@ -1020,14 +1199,23 @@ impl<'a> Placer<'a> {
         let noise = hw_core::Noise::new(seed.child("groves"));
         let half = self.w.half() - 20.0;
         let step = 9.0;
-        let n = (half * 2.0 / step) as i64;
-        let mut rng = seed.rng();
-        for j in 0..n {
-            for i in 0..n {
+        // One spot per cell of a town-wide lattice, each from its own seed,
+        // so a unit plans only the cells on its ground.
+        let (lo, hi) = (
+            self.l.owner.lo.max(DVec2::splat(-half)),
+            self.l.owner.hi.min(DVec2::splat(half)),
+        );
+        let cell = |v: f64| ((v + half) / step).floor() as i64;
+        for j in cell(lo.y)..=cell(hi.y) {
+            for i in cell(lo.x)..=cell(hi.x) {
+                let mut rng = seed.cell(i, j).rng();
                 let p = DVec2::new(
                     -half + (i as f64 + rng.range(0.15, 0.85)) * step,
                     -half + (j as f64 + rng.range(0.15, 0.85)) * step,
                 );
+                if !self.l.owner.owns(p) {
+                    continue;
+                }
                 let grove = 0.5 + 0.5 * noise.fbm(p.x * 0.02, p.y * 0.02, 3);
                 let take = rng.unit();
                 if take > grove * grove * 0.8 || !super::greenery::built(&self.w.town, p) {
@@ -1125,19 +1313,27 @@ mod tests {
     #[test]
     fn props_stand_clear_of_buildings_and_water() {
         let seed = Seed(1);
-        let w = TownWorld::generate(seed, TownParams::sample(seed, 40_000.0));
-        let p = Placer::new(&w);
+        let tw = TownWorld::generate(seed, TownParams::sample(seed, 40_000.0));
+        let w = tw.everything();
         assert!(w.props.len() > 500, "only {} props", w.props.len());
-        let count = |f: fn(&PropKind) -> bool| w.props.iter().filter(|x| f(&x.kind)).count();
+        let count = |f: fn(&PropKind) -> bool| w.props.iter().filter(|x| f(&x.1.kind)).count();
         assert!(count(|k| matches!(k, PropKind::Lamp(_))) > 100);
         assert!(count(|k| matches!(k, PropKind::Tree(..))) > 100);
         assert!(count(|k| matches!(k, PropKind::Car(..))) > 50);
-        for x in &w.props {
-            assert!(!p.in_building(x.pos, 0.2), "{:?} in a building", x.kind);
-            assert!(w.ground(x.pos) > DECK, "{:?} in the water", x.kind);
+        let in_building = |p: DVec2, r: f64| {
+            w.buildings.iter().any(|(_, b)| {
+                let s = &b.site;
+                let d = p - s.origin;
+                let (x, z) = (d.dot(s.along), d.dot(s.inward));
+                x > -r && x < s.size.x + r && z > -r && z < s.size.y + r
+            })
+        };
+        for (_, x) in &w.props {
+            assert!(!in_building(x.pos, 0.2), "{:?} in a building", x.kind);
+            assert!(tw.ground(x.pos) > DECK, "{:?} in the water", x.kind);
         }
         // Same seed, same props.
-        let again = TownWorld::generate(seed, TownParams::sample(seed, 40_000.0));
+        let again = TownWorld::generate(seed, TownParams::sample(seed, 40_000.0)).everything();
         assert_eq!(w.props, again.props);
     }
 }

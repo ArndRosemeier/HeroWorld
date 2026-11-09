@@ -42,7 +42,7 @@ fn down_the_lift_through_the_tunnels_and_up_again() {
     let mut sim = Sim::for_town(Seed(1), &town);
     let me = PlayerId(1);
     let hero = sim.spawn_hero(me, sim.spawn_point(1));
-    let u = town.world.underground.clone();
+    let u = town.world.underground().clone();
     let e = u.entrances.iter().find(|e| !e.molehaven).expect("a lift");
     // Step in from the pavement side.
     let start = e.pos + e.door * (SHAFT_HALF + 1.5);
@@ -141,7 +141,7 @@ fn molehaven_has_a_floor_and_walls() {
     let mut sim = Sim::for_town(Seed(1), &town);
     let me = PlayerId(1);
     let hero = sim.spawn_hero(me, sim.spawn_point(1));
-    let u = town.world.underground.clone();
+    let u = town.world.underground().clone();
     let c = u.cavern.clone().expect("Molehaven");
     let e = u.entrances.iter().find(|e| e.molehaven).expect("its lift");
     put(&mut sim, hero, DVec3::new(e.pos.x, e.top + 0.2, e.pos.y));

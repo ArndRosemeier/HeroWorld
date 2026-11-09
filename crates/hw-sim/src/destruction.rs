@@ -597,7 +597,7 @@ pub struct HitResult {
     /// Elements that came down with them (unsupported or collapsed).
     pub fell: usize,
     /// Buildings that started to collapse.
-    pub collapsed: Vec<usize>,
+    pub collapsed: Vec<u64>,
 }
 
 /// One damaged building.
@@ -614,8 +614,8 @@ pub struct Damaged {
 /// with [`Damage::apply`] (for its collision; Engine draws its own copy).
 #[derive(Debug, Default)]
 pub struct Damage {
-    plans: BTreeMap<usize, Arc<Breakable>>,
-    pub buildings: BTreeMap<usize, Damaged>,
+    plans: BTreeMap<u64, Arc<Breakable>>,
+    pub buildings: BTreeMap<u64, Damaged>,
     /// News for clients since the last [`Damage::take_news`].
     news: Vec<ToClient>,
     /// Collateral: what the broken elements cost, per player who broke them.
@@ -636,7 +636,7 @@ fn element_cost(kind: ElementKind) -> f64 {
 
 impl Damage {
     /// The breakable plan of building `i` (made on first use).
-    pub fn plan(&mut self, solids: &Obstacles, i: usize) -> Option<(Arc<Breakable>, Frame)> {
+    pub fn plan(&mut self, solids: &Obstacles, i: u64) -> Option<(Arc<Breakable>, Frame)> {
         let (plan, base) = solids.building(i)?;
         let frame = Frame::of(&plan.site, base);
         if let Some(p) = self.plans.get(&i) {
@@ -712,7 +712,7 @@ impl Damage {
             let ids: Vec<u32> = change.broken.iter().map(|e| e.0).collect();
             for chunk in ids.chunks(hw_net::protocol::MAX_DAMAGE_IDS) {
                 self.news.push(ToClient::Damage {
-                    building: i as u32,
+                    building: i,
                     broken: chunk.to_vec(),
                     live: true,
                 });
@@ -723,7 +723,7 @@ impl Damage {
     }
 
     /// Takes over broken elements from the server or a save.
-    pub fn apply(&mut self, solids: &Obstacles, i: usize, broken: &[u32], tick: u64) {
+    pub fn apply(&mut self, solids: &Obstacles, i: u64, broken: &[u32], tick: u64) {
         let Some((bp, frame)) = self.plan(solids, i) else {
             return;
         };
@@ -743,10 +743,11 @@ impl Damage {
     }
 
     /// Makes building `i` whole again.
-    pub fn repair(&mut self, solids: &Obstacles, i: usize) {
+    pub fn repair(&mut self, solids: &Obstacles, i: u64) {
+        self.plans.remove(&i);
         if self.buildings.remove(&i).is_some() {
             solids.set_damage(i, None, true);
-            self.news.push(ToClient::Repaired { building: i as u32 });
+            self.news.push(ToClient::Repaired { building: i });
         }
     }
 
@@ -775,11 +776,20 @@ impl Damage {
         for i in fix {
             self.repair(solids, i);
         }
+        // Breakable plans are kept only for damaged buildings: a blow that
+        // broke nothing, or a building repaired, leaves none behind.
+        let buildings = &self.buildings;
+        self.plans.retain(|i, _| buildings.contains_key(i));
+    }
+
+    /// Breakable plans kept now (for the memory tests).
+    pub fn plans_kept(&self) -> usize {
+        self.plans.len()
     }
 
     /// Collision for what is left of building `i`: its standing elements
     /// and its rubble mounds.
-    fn update_solids(&self, solids: &Obstacles, i: usize) {
+    fn update_solids(&self, solids: &Obstacles, i: u64) {
         let Some(d) = self.buildings.get(&i) else {
             return;
         };
@@ -839,7 +849,7 @@ impl Damage {
             let ids: Vec<u32> = d.state.broken().iter_set().map(|k| k as u32).collect();
             for chunk in ids.chunks(hw_net::protocol::MAX_DAMAGE_IDS) {
                 out.push(ToClient::Damage {
-                    building: *i as u32,
+                    building: *i,
                     broken: chunk.to_vec(),
                     live: false,
                 });
@@ -849,7 +859,7 @@ impl Damage {
     }
 
     /// Broken elements per damaged building (for saves and tests).
-    pub fn broken(&self) -> Vec<(usize, Vec<u32>)> {
+    pub fn broken(&self) -> Vec<(u64, Vec<u32>)> {
         self.buildings
             .iter()
             .map(|(i, d)| (*i, d.state.broken().iter_set().map(|k| k as u32).collect()))
@@ -861,16 +871,17 @@ impl Damage {
         for i in std::mem::take(&mut self.buildings).into_keys() {
             solids.set_damage(i, None, true);
         }
+        self.plans.clear();
         self.news.clear();
     }
 
     /// The broken bits of building `i`, if it is damaged.
-    pub fn bits(&self, i: usize) -> Option<&ElementBits> {
+    pub fn bits(&self, i: u64) -> Option<&ElementBits> {
         self.buildings.get(&i).map(|d| d.state.broken())
     }
 
     /// Is element `id` of building `i` still standing (tests)?
-    pub fn standing(&self, i: usize, id: u32) -> bool {
+    pub fn standing(&self, i: u64, id: u32) -> bool {
         self.buildings
             .get(&i)
             .is_none_or(|d| d.state.is_standing(ElementId(id)))

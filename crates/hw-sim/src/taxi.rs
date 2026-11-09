@@ -18,9 +18,9 @@ use bevy_ecs::prelude::*;
 use glam::{DVec2, DVec3};
 use hw_core::NetId;
 use hw_gen::building::BuildingPlan;
+use hw_gen::urban::area::Area;
 use hw_gen::urban::growth::CentreKind;
 use hw_gen::urban::landmarks::LandmarkKind;
-use hw_gen::urban::world::TownWorld;
 use hw_gen::water::segment_distance;
 use hw_net::PlayerId;
 use std::sync::Arc;
@@ -99,12 +99,12 @@ struct Ride {
 #[derive(Default)]
 pub struct Taxis {
     pub stands: Vec<Stand>,
-    town: Option<Arc<TownWorld>>,
+    town: Option<Arc<Area>>,
     rides: Vec<Ride>,
 }
 
 impl Taxis {
-    pub fn new(town: Arc<TownWorld>) -> Self {
+    pub fn new(town: Arc<Area>) -> Self {
         Self {
             stands: stands(&town),
             town: Some(town),
@@ -429,7 +429,7 @@ fn yaw_quat(yaw: f64) -> [f32; 4] {
 
 /// A height to cross from `a` to `b` above every roof and landmark near
 /// the straight way, in round tens of metres.
-fn express_height(town: Option<&TownWorld>, a: DVec3, b: DVec3) -> f64 {
+fn express_height(town: Option<&Area>, a: DVec3, b: DVec3) -> f64 {
     let mut top = a.y.max(b.y) + 40.0;
     if let Some(t) = town {
         let (a2, b2) = (DVec2::new(a.x, a.z), DVec2::new(b.x, b.z));
@@ -452,7 +452,7 @@ fn express_height(town: Option<&TownWorld>, a: DVec3, b: DVec3) -> f64 {
 /// The town's taxi stands: its centre, landmarks, the waterfront, the old
 /// villages, and rooftop pads spread over the town. Every machine works out
 /// the same list (the client shows it as "Where to?").
-pub fn stands(world: &TownWorld) -> Vec<Stand> {
+pub fn stands(world: &Area) -> Vec<Stand> {
     let mut out: Vec<Stand> = Vec::new();
     let (core, _) = world.spawn_line();
     let street = |p: DVec2| DVec3::new(p.x, world.road_height(p), p.y);
@@ -562,7 +562,7 @@ pub fn stands(world: &TownWorld) -> Vec<Stand> {
     out
 }
 
-fn nearest_street(world: &TownWorld, p: DVec2) -> Option<DVec2> {
+fn nearest_street(world: &Area, p: DVec2) -> Option<DVec2> {
     let mut best: Option<(f64, DVec2)> = None;
     for r in &world.roads {
         for w in r.pts.windows(2) {

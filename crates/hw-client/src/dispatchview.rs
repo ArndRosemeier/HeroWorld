@@ -309,7 +309,7 @@ pub fn map(
             egui::Color32::from_rgb(60, 110, 40),
         );
     }
-    for r in &town.roads {
+    for r in &town.main_roads {
         let pts: Vec<egui::Pos2> = r.pts.iter().map(|p| to_screen(*p)).collect();
         let (w, c) = if r.main {
             (2.5_f32, egui::Color32::from_rgb(150, 120, 90))

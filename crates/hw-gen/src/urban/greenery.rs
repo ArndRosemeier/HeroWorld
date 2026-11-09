@@ -14,13 +14,15 @@
 use super::growth::Era;
 use super::props::{Prop, PropKind};
 use super::streets::StreetStyle;
-use super::world::{TownWorld, DECK};
+use super::world::{Bridge, TownWorld, WorldBuilding, WorldRoad, DECK};
 use super::{contains, Town};
 use crate::style::Region;
 use crate::water::segment_distance;
 use glam::DVec2;
 use hw_core::{Noise, Seed};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// The kinds of grass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -80,24 +82,72 @@ fn clearing(p: &Prop) -> Option<f64> {
     })
 }
 
-/// Where grass grows in a town, with indices to answer quickly.
+/// Side of the tiles the indices are built in (m), one at a time where
+/// grass is asked about.
+const TILE: f64 = 256.0;
+/// How many tiles are kept.
+const KEEP_TILES: usize = 96;
+
+/// Where grass grows in a town, with indices to answer quickly. The indices
+/// are made tile by tile from the town's streamed quarters, where asked.
 pub struct Greenery {
-    /// Road segments (road, segment) by cell, filed with their reach.
-    roads: BTreeMap<Key, Vec<(u32, u32)>>,
-    buildings: BTreeMap<Key, Vec<u32>>,
-    /// Pieces of town (indices) whose outline reaches into a cell.
-    pieces: BTreeMap<Key, Vec<u32>>,
-    /// Discs grass keeps clear of.
-    clear: BTreeMap<Key, Vec<(DVec2, f64)>>,
+    tiles: Mutex<BTreeMap<Key, (Arc<GreenTile>, u64)>>,
+    tick: AtomicU64,
     /// Patches where the grass is thinner or thicker.
     patches: Noise,
     pub region: Region,
 }
 
-impl Greenery {
-    pub fn new(w: &TownWorld) -> Greenery {
-        let mut roads: BTreeMap<Key, Vec<(u32, u32)>> = BTreeMap::new();
-        for (ri, r) in w.roads.iter().enumerate() {
+/// One tile's roads, buildings, districts and clearings.
+struct GreenTile {
+    roads: Vec<WorldRoad>,
+    buildings: Vec<WorldBuilding>,
+    bridges: Vec<Bridge>,
+    /// Districts: outline and street style.
+    districts: Vec<(Vec<DVec2>, StreetStyle)>,
+    /// Road segments (road, segment) by cell, filed with their reach.
+    road_cells: BTreeMap<Key, Vec<(u32, u32)>>,
+    building_cells: BTreeMap<Key, Vec<u32>>,
+    /// Discs grass keeps clear of.
+    clear: BTreeMap<Key, Vec<(DVec2, f64)>>,
+}
+
+fn tile_key(p: DVec2) -> Key {
+    ((p.x / TILE).floor() as i64, (p.y / TILE).floor() as i64)
+}
+
+impl GreenTile {
+    fn new(w: &TownWorld, k: Key) -> GreenTile {
+        let lo = DVec2::new(k.0 as f64, k.1 as f64) * TILE;
+        let hi = lo + DVec2::splat(TILE);
+        let m = DVec2::splat(REACH + 4.0);
+        let (glo, ghi) = (lo - m, hi + m);
+        let roads = w.roads_in(glo, ghi);
+        let bridges = w.bridges_in(glo, ghi);
+        let mut buildings = Vec::new();
+        let mut districts = Vec::new();
+        let mut clear: BTreeMap<Key, Vec<(DVec2, f64)>> = BTreeMap::new();
+        let mut disc = |p: DVec2, r: f64| {
+            for k in keys_around(p, r + REACH) {
+                clear.entry(k).or_default().push((p, r));
+            }
+        };
+        for q in w.quarters_in(glo, ghi) {
+            buildings.extend(q.buildings.iter().cloned());
+            for p in &q.props {
+                if let Some(r) = clearing(p) {
+                    disc(p.pos, r);
+                }
+            }
+            if let Some(st) = &q.streets {
+                districts.push((st.piece.face.pts.clone(), st.plan.style));
+            }
+        }
+        for l in &w.landmarks {
+            disc(l.pos, l.plaza + 0.3);
+        }
+        let mut road_cells: BTreeMap<Key, Vec<(u32, u32)>> = BTreeMap::new();
+        for (ri, r) in roads.iter().enumerate() {
             let reach = r.half + r.pavement + REACH;
             for (si, s) in r.pts.windows(2).enumerate() {
                 let (a, b) = (
@@ -106,7 +156,7 @@ impl Greenery {
                 );
                 for x in a.0..=b.0 {
                     for z in a.1..=b.1 {
-                        roads
+                        road_cells
                             .entry((x, z))
                             .or_default()
                             .push((ri as u32, si as u32));
@@ -114,62 +164,66 @@ impl Greenery {
                 }
             }
         }
-        let mut buildings: BTreeMap<Key, Vec<u32>> = BTreeMap::new();
-        for (i, b) in w.buildings.iter().enumerate() {
+        let mut building_cells: BTreeMap<Key, Vec<u32>> = BTreeMap::new();
+        for (i, b) in buildings.iter().enumerate() {
             let c = b.site.corners();
             let lo = c.iter().fold(DVec2::MAX, |m, p| m.min(*p)) - DVec2::splat(REACH);
             let hi = c.iter().fold(DVec2::MIN, |m, p| m.max(*p)) + DVec2::splat(REACH);
             let (a, z) = (key(lo), key(hi));
             for x in a.0..=z.0 {
                 for y in a.1..=z.1 {
-                    buildings.entry((x, y)).or_default().push(i as u32);
+                    building_cells.entry((x, y)).or_default().push(i as u32);
                 }
             }
         }
-        let mut pieces: BTreeMap<Key, Vec<u32>> = BTreeMap::new();
-        for (i, pc) in w.town.pieces.iter().enumerate() {
-            let pts = &pc.face.pts;
-            if pts.is_empty() {
-                continue;
-            }
-            let lo = pts.iter().fold(DVec2::MAX, |m, p| m.min(*p));
-            let hi = pts.iter().fold(DVec2::MIN, |m, p| m.max(*p));
-            let (a, z) = (key(lo), key(hi));
-            for x in a.0..=z.0 {
-                for y in a.1..=z.1 {
-                    pieces.entry((x, y)).or_default().push(i as u32);
-                }
-            }
-        }
-        let mut clear: BTreeMap<Key, Vec<(DVec2, f64)>> = BTreeMap::new();
-        let mut disc = |p: DVec2, r: f64| {
-            for k in keys_around(p, r + REACH) {
-                clear.entry(k).or_default().push((p, r));
-            }
-        };
-        for p in &w.props {
-            if let Some(r) = clearing(p) {
-                disc(p.pos, r);
-            }
-        }
-        for l in &w.landmarks {
-            disc(l.pos, l.plaza + 0.3);
-        }
-        Greenery {
+        GreenTile {
             roads,
             buildings,
-            pieces,
+            bridges,
+            districts,
+            road_cells,
+            building_cells,
             clear,
+        }
+    }
+}
+
+impl Greenery {
+    pub fn new(w: &TownWorld) -> Greenery {
+        Greenery {
+            tiles: Mutex::new(BTreeMap::new()),
+            tick: AtomicU64::new(0),
             patches: Noise::new(w.seed.child("greenery")),
             region: super::plots::region_of(w.seed),
         }
     }
 
+    /// The tile holding `p`, made if needed.
+    fn tile(&self, w: &TownWorld, p: DVec2) -> Arc<GreenTile> {
+        let k = tile_key(p);
+        let t = self.tick.fetch_add(1, Ordering::Relaxed);
+        if let Some(e) = self.tiles.lock().expect("tiles lock").get_mut(&k) {
+            e.1 = t;
+            return e.0.clone();
+        }
+        let tile = Arc::new(GreenTile::new(w, k));
+        let mut tiles = self.tiles.lock().expect("tiles lock");
+        let tile = tiles.entry(k).or_insert((tile, t)).0.clone();
+        while tiles.len() > KEEP_TILES {
+            let Some(old) = tiles.iter().min_by_key(|e| e.1 .1).map(|e| *e.0) else {
+                break;
+            };
+            tiles.remove(&old);
+        }
+        tile
+    }
+
     /// Is `p` on a road or pavement (within `r` of its edge)?
     pub fn on_road(&self, w: &TownWorld, p: DVec2, r: f64) -> bool {
-        self.roads.get(&key(p)).is_some_and(|l| {
+        let t = self.tile(w, p);
+        t.road_cells.get(&key(p)).is_some_and(|l| {
             l.iter().any(|&(ri, si)| {
-                let road = &w.roads[ri as usize];
+                let road = &t.roads[ri as usize];
                 let (a, b) = (road.pts[si as usize], road.pts[si as usize + 1]);
                 segment_distance(p, a, b) < road.half + road.pavement + r
             })
@@ -178,9 +232,10 @@ impl Greenery {
 
     /// Is `p` within `r` of a building's footprint?
     pub fn in_building(&self, w: &TownWorld, p: DVec2, r: f64) -> bool {
-        self.buildings.get(&key(p)).is_some_and(|l| {
+        let t = self.tile(w, p);
+        t.building_cells.get(&key(p)).is_some_and(|l| {
             l.iter().any(|&i| {
-                let s = &w.buildings[i as usize].site;
+                let s = &t.buildings[i as usize].site;
                 let d = p - s.origin;
                 let (x, z) = (d.dot(s.along), d.dot(s.inward));
                 x > -r && x < s.size.x + r && z > -r && z < s.size.y + r
@@ -200,19 +255,20 @@ impl Greenery {
     /// [`Self::clearance`] in two parts: from the roads' edges, and from
     /// everything else (buildings, fountains, plinths, bridges, sand).
     pub fn clearances(&self, w: &TownWorld, p: DVec2) -> (f64, f64) {
+        let t = self.tile(w, p);
         let mut road = REACH;
         let k = key(p);
-        if let Some(l) = self.roads.get(&k) {
+        if let Some(l) = t.road_cells.get(&k) {
             for &(ri, si) in l {
-                let r = &w.roads[ri as usize];
+                let r = &t.roads[ri as usize];
                 let (a, b) = (r.pts[si as usize], r.pts[si as usize + 1]);
                 road = road.min(segment_distance(p, a, b) - r.half - r.pavement);
             }
         }
         let mut c = REACH;
-        if let Some(l) = self.buildings.get(&k) {
+        if let Some(l) = t.building_cells.get(&k) {
             for &i in l {
-                let s = &w.buildings[i as usize].site;
+                let s = &t.buildings[i as usize].site;
                 let d = p - s.origin;
                 let (x, z) = (d.dot(s.along), d.dot(s.inward));
                 // Signed distance to the footprint rectangle.
@@ -222,29 +278,37 @@ impl Greenery {
                 c = c.min(sd);
             }
         }
-        if let Some(l) = self.clear.get(&k) {
+        if let Some(l) = t.clear.get(&k) {
             for (q, r) in l {
                 c = c.min(q.distance(p) - r);
             }
         }
-        for b in &w.bridges {
+        for b in &t.bridges {
             c = c.min(segment_distance(p, b.a, b.b) - b.half - 1.0);
         }
         (road, c.min(w.ground(p) - SAND_TOP))
     }
 
-    fn cleared(&self, p: DVec2) -> bool {
-        self.clear
+    fn on_bridge(&self, w: &TownWorld, p: DVec2) -> bool {
+        self.tile(w, p)
+            .bridges
+            .iter()
+            .any(|b| segment_distance(p, b.a, b.b) < b.half + 1.0)
+    }
+
+    fn cleared(&self, w: &TownWorld, p: DVec2) -> bool {
+        self.tile(w, p)
+            .clear
             .get(&key(p))
             .is_some_and(|l| l.iter().any(|(q, r)| q.distance(p) < *r))
     }
 
-    /// Which piece of town `p` lies in.
-    fn piece_at(&self, w: &TownWorld, p: DVec2) -> Option<usize> {
-        self.pieces.get(&key(p))?.iter().find_map(|&i| {
-            let pts = &w.town.pieces[i as usize].face.pts;
-            contains(pts, p).then_some(i as usize)
-        })
+    /// The street style of the district `p` lies in.
+    fn style_at(&self, w: &TownWorld, p: DVec2) -> Option<StreetStyle> {
+        self.tile(w, p)
+            .districts
+            .iter()
+            .find_map(|(pts, style)| contains(pts, p).then_some(*style))
     }
 
     /// The kind of grass the land around `p` grows, whether or not this
@@ -254,8 +318,8 @@ impl Greenery {
         if w.town.dystopia.as_ref().is_some_and(|d| d.contains(p)) {
             return Sward::Rough;
         }
-        if let Some(i) = self.piece_at(w, p) {
-            return match w.pieces[i].style {
+        if let Some(style) = self.style_at(w, p) {
+            return match style {
                 StreetStyle::Park => Sward::Park,
                 StreetStyle::Industrial => Sward::Rough,
                 _ if built(&w.town, p) => Sward::Lawn,
@@ -276,13 +340,10 @@ impl Greenery {
         if h < SAND_TOP {
             return None;
         }
-        if self.on_road(w, p, KERB) || self.in_building(w, p, 0.15) || self.cleared(p) {
+        if self.on_road(w, p, KERB) || self.in_building(w, p, 0.15) || self.cleared(w, p) {
             return None;
         }
-        if w.bridges
-            .iter()
-            .any(|b| segment_distance(p, b.a, b.b) < b.half + 1.0)
-        {
+        if self.on_bridge(w, p) {
             return None;
         }
         // Steep banks show earth (Engine's ground shades them so).
@@ -439,7 +500,7 @@ mod tests {
         }
         assert!(grass * 10 > tried, "too little grass: {grass} of {tried}");
         // Every road's centre is bare.
-        for r in &w.roads {
+        for r in &w.everything().roads {
             let p = (r.pts[0] + r.pts[1]) * 0.5;
             assert!(g.grass(&w, p, Sward::Lawn).is_none());
         }

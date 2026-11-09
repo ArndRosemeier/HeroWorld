@@ -794,13 +794,13 @@ pub enum ToClient {
     /// `hw_sim::destruction`). `live`: it happened just now, so play it;
     /// otherwise it is old damage a joining player catches up on.
     Damage {
-        building: u32,
+        building: u64,
         broken: Vec<u32>,
         live: bool,
     },
     /// A building was repaired: it stands whole again.
     Repaired {
-        building: u32,
+        building: u64,
     },
     /// Something was hit (for sparks, dust, marks and sound): where, the
     /// way the blow went, what hit it and whether anything broke.
@@ -810,15 +810,15 @@ pub enum ToClient {
         kind: ImpactKind,
         broke: bool,
     },
-    /// Street props broke: (index into the town's props, which way it fell
+    /// Street props broke: (the prop's id in the town, which way it fell
     /// as a yaw byte). `live` as for [`ToClient::Damage`].
     PropsBroken {
-        props: Vec<(u32, u8)>,
+        props: Vec<(u64, u8)>,
         live: bool,
     },
     /// Props put back.
     PropsRepaired {
-        props: Vec<u32>,
+        props: Vec<u64>,
     },
     /// Moving cars wrecked: (vehicle id, the tick it happened, which way
     /// the blow went as a yaw byte, where along its lane it stands).
@@ -937,11 +937,11 @@ impl ToClient {
             ToClient::Joined { name, .. } | ToClient::Left { name, .. } => 2 + s(name),
             ToClient::Chat { text, .. } => 2 + s(text),
             ToClient::SessionEnd { reason } => s(reason),
-            ToClient::Damage { broken, .. } => 4 + 1 + 1 + 4 * broken.len().min(255),
-            ToClient::Repaired { .. } => 4,
+            ToClient::Damage { broken, .. } => 8 + 1 + 1 + 4 * broken.len().min(255),
+            ToClient::Repaired { .. } => 8,
             ToClient::Impact { .. } => 12 + 6 + 1 + 1,
-            ToClient::PropsBroken { props, .. } => 1 + 1 + 5 * props.len().min(255),
-            ToClient::PropsRepaired { props } => 1 + 4 * props.len().min(255),
+            ToClient::PropsBroken { props, .. } => 1 + 1 + 9 * props.len().min(255),
+            ToClient::PropsRepaired { props } => 1 + 8 * props.len().min(255),
             ToClient::CarsWrecked { cars, .. } => 1 + 1 + 21 * cars.len().min(255),
             ToClient::Traffic { cars, .. } => 8 + 4 + 2 + 1 + 20 * cars.len().min(255),
             ToClient::CarsCleared { cars } => 1 + 8 * cars.len().min(255),
@@ -974,13 +974,13 @@ impl ToClient {
                 live,
             } => {
                 let n = broken.len().min(255);
-                w.u8(5).u32(*building).bool(*live).u8(n as u8);
+                w.u8(5).u64(*building).bool(*live).u8(n as u8);
                 for id in &broken[..n] {
                     w.u32(*id);
                 }
             }
             ToClient::Repaired { building } => {
-                w.u8(6).u32(*building);
+                w.u8(6).u64(*building);
             }
             ToClient::Impact {
                 at,
@@ -1002,14 +1002,14 @@ impl ToClient {
                 let n = props.len().min(255);
                 w.u8(8).bool(*live).u8(n as u8);
                 for (i, fell) in &props[..n] {
-                    w.u32(*i).u8(*fell);
+                    w.u64(*i).u8(*fell);
                 }
             }
             ToClient::PropsRepaired { props } => {
                 let n = props.len().min(255);
                 w.u8(9).u8(n as u8);
                 for i in &props[..n] {
-                    w.u32(*i);
+                    w.u64(*i);
                 }
             }
             ToClient::CarsWrecked { cars, live } => {
@@ -1127,7 +1127,7 @@ impl ToClient {
             },
             4 => ToClient::SessionEnd { reason: r.str()? },
             5 => {
-                let building = r.u32()?;
+                let building = r.u64()?;
                 let live = r.bool()?;
                 let n = r.u8()? as usize;
                 let mut broken = Vec::with_capacity(n);
@@ -1140,7 +1140,7 @@ impl ToClient {
                     live,
                 }
             }
-            6 => ToClient::Repaired { building: r.u32()? },
+            6 => ToClient::Repaired { building: r.u64()? },
             7 => {
                 let at = [r.f32()?, r.f32()?, r.f32()?];
                 if at.iter().any(|v| !v.is_finite()) {
@@ -1167,7 +1167,7 @@ impl ToClient {
                 let n = r.u8()? as usize;
                 let mut props = Vec::with_capacity(n);
                 for _ in 0..n {
-                    props.push((r.u32()?, r.u8()?));
+                    props.push((r.u64()?, r.u8()?));
                 }
                 ToClient::PropsBroken { props, live }
             }
@@ -1175,7 +1175,7 @@ impl ToClient {
                 let n = r.u8()? as usize;
                 let mut props = Vec::with_capacity(n);
                 for _ in 0..n {
-                    props.push(r.u32()?);
+                    props.push(r.u64()?);
                 }
                 ToClient::PropsRepaired { props }
             }

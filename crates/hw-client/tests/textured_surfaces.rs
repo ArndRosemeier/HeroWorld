@@ -42,7 +42,7 @@ fn buildings_are_textured() {
     // Towns of the three regions (the region comes from the seed).
     for seed in [1, 2, 3, 4] {
         let town = GeneratedTown::generate(Seed(seed), 8000.0);
-        for i in (0..town.world.buildings.len()).step_by(11) {
+        for i in town.area.building_ids.iter().step_by(11).map(|id| id.0) {
             let Some((plan, _)) = town.obstacles.building(i) else {
                 continue;
             };

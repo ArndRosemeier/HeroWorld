@@ -32,9 +32,9 @@ const MARK_SECONDS: f32 = 120.0;
 
 pub struct DamageView {
     /// Broken elements per building, as the server said.
-    broken: BTreeMap<usize, BTreeSet<u32>>,
+    broken: BTreeMap<u64, BTreeSet<u32>>,
     /// Buildings drawn breakable, by Engine entity.
-    shown: BTreeMap<usize, (EntityId, Arc<Breakable>)>,
+    shown: BTreeMap<u64, (EntityId, Arc<Breakable>)>,
     /// A joined client's copy of the damage, for collision (None in single
     /// player, where the server's is shared).
     mirror: Option<Damage>,
@@ -70,8 +70,8 @@ impl DamageView {
                     broken,
                     live,
                 } => {
-                    let i = building as usize;
-                    if i >= town.building_count() {
+                    let i = building;
+                    if !town.has_building(i) {
                         continue;
                     }
                     if let Some(m) = self.mirror.as_mut() {
@@ -83,7 +83,7 @@ impl DamageView {
                     }
                 }
                 ToClient::Repaired { building } => {
-                    let i = building as usize;
+                    let i = building;
                     if let Some(m) = self.mirror.as_mut() {
                         m.repair(solids, i);
                         m.take_news();
@@ -92,9 +92,7 @@ impl DamageView {
                     if let Some((e, _)) = self.shown.remove(&i) {
                         world.despawn(e);
                     }
-                    if i < town.building_count() {
-                        town.set_hidden(world, i, false);
-                    }
+                    town.set_hidden(world, i, false);
                 }
                 ToClient::Impact {
                     at,
@@ -122,7 +120,7 @@ impl DamageView {
         world: &mut World,
         town: &mut TownView,
         solids: &Obstacles,
-        i: usize,
+        i: u64,
         animate: bool,
     ) -> EngineResult<()> {
         if let std::collections::btree_map::Entry::Vacant(slot) = self.shown.entry(i) {

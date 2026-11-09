@@ -22,9 +22,9 @@ pub struct WorldSave {
     pub tick: u64,
     pub crates: Vec<PropState>,
     /// Damaged buildings: index and broken elements.
-    pub damage: Vec<(usize, Vec<u32>)>,
+    pub damage: Vec<(u64, Vec<u32>)>,
     /// Broken street props: index and which way each fell (a yaw byte).
-    pub props: Vec<(u32, u8)>,
+    pub props: Vec<(u64, u8)>,
     /// Where each player's hero was, by name (a host taking over, or a
     /// world loaded again, puts them back there).
     pub heroes: Vec<(String, glam::DVec3)>,
@@ -100,9 +100,9 @@ impl WorldSave {
                     });
                 }
                 "damage" => {
-                    let v: Option<Vec<u32>> = rest.iter().map(|w| w.parse().ok()).collect();
-                    let v = v.filter(|v| !v.is_empty()).ok_or_else(bad)?;
-                    damage.push((v[0] as usize, v[1..].to_vec()));
+                    let id: u64 = rest.first().and_then(|w| w.parse().ok()).ok_or_else(bad)?;
+                    let v: Option<Vec<u32>> = rest[1..].iter().map(|w| w.parse().ok()).collect();
+                    damage.push((id, v.ok_or_else(bad)?));
                 }
                 "prop" => {
                     let i = rest.first().and_then(|v| v.parse().ok()).ok_or_else(bad)?;

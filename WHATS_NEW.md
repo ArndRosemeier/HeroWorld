@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.072 (2026-11-09)
+
+- Cities are now built around you as you go, a district at a time, instead of all at once:
+  houses, streets, street lamps, parked cars, trees and hedges appear ahead and are put away
+  behind. Megacities start as fast as small towns and no longer fill the memory.
+- Huge city blocks between the main roads are now divided by avenues into districts.
+- Traffic lights stand at every junction of the main roads and avenues, crossings and T's too.
+- Things you break stay broken while you are away, until they are repaired.
+
 ## 0.071 (2026-11-08)
 
 - When a villain attacks you and you have no target yet, they become your target, so you

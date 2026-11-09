@@ -51,7 +51,8 @@ fn kinds(world: &mut World) -> Option<Vec<DecalKind>> {
 }
 
 pub struct EdgeView {
-    tags: Vec<Tag>,
+    /// Whether the town has a villains' quarter at all.
+    any: bool,
     decals: Vec<DecalId>,
     /// Where the camera was when the near graffiti were last picked.
     picked_at: Option<Vec3>,
@@ -60,14 +61,16 @@ pub struct EdgeView {
 impl EdgeView {
     pub fn new(town: &TownWorld) -> Self {
         Self {
-            tags: edge::tags(town),
+            any: town.town.dystopia.is_some(),
             decals: Vec::new(),
             picked_at: None,
         }
     }
 
-    pub fn update(&mut self, world: &mut World) -> EngineResult<()> {
-        if self.tags.is_empty() {
+    /// Draws the graffiti near the camera, from the buildings the town
+    /// has planned there.
+    pub fn update(&mut self, world: &mut World, town: &TownWorld) -> EngineResult<()> {
+        if !self.any {
             return Ok(());
         }
         let eye = world.camera().eye();
@@ -81,8 +84,11 @@ impl EdgeView {
         for d in self.decals.drain(..) {
             world.remove_decal(d);
         }
-        let mut near: Vec<(f32, &Tag)> = self
-            .tags
+        let c = glam::DVec2::new(eye.x as f64, eye.z as f64);
+        let r = glam::DVec2::splat(TAG_REACH as f64 + 40.0);
+        let quarters = town.quarters_in(c - r, c + r);
+        let tags: Vec<Tag> = edge::tags(town, quarters.iter().flat_map(|q| q.buildings_with_ids()));
+        let mut near: Vec<(f32, &Tag)> = tags
             .iter()
             .map(|t| (t.at.as_vec3().distance(eye), t))
             .filter(|(d, _)| *d < TAG_REACH)

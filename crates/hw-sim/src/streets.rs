@@ -41,7 +41,7 @@ impl Streets {
         let mut s = Streets::default();
         // The road each node lies on.
         let mut road_of: Vec<u32> = Vec::new();
-        for r in world.roads.iter().filter(|r| r.main) {
+        for r in world.main_roads.iter() {
             if (r.half + r.pavement) * 2.0 < width || r.pts.len() < 2 {
                 continue;
             }

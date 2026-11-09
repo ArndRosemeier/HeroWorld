@@ -11,14 +11,36 @@ use hw_gen::city::CityPlan;
 use hw_gen::geom::Rect;
 use hw_gen::urban::footprint::Footprint;
 use hw_gen::urban::greenery::Greenery;
+use hw_gen::urban::quarter::{DetailId, Quarter, UnitKind, PIECE_ROADS};
 use hw_gen::urban::underground::Underground;
 use hw_gen::urban::world::{TownWorld, WATER_LEVEL};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 
 /// Ground grid cell for lookups (m).
 const CELL: f64 = 32.0;
+/// A town's solids are loaded in square tiles of this side (m), where
+/// something comes near, and forgotten when nothing has for a while.
+const TILE: f64 = 128.0;
+/// How many tiles stay loaded (about four square kilometres).
+pub const KEEP_TILES: usize = 256;
+
+/// Names a collider: a town building by its [`DetailId`], a town prop by its
+/// id with [`PROP_BIT`], a side street's bridge with [`BRIDGE_BIT`], and
+/// everything else (fixed colliders) by [`FIXED`] and its number.
+pub type ColliderId = u64;
+/// Set in the ids of props' colliders.
+pub const PROP_BIT: u64 = 1 << 31;
+/// Set in the ids of bridge decks of side streets and district roads.
+pub const BRIDGE_BIT: u64 = 1 << 30;
+/// The ids of fixed colliders: this, plus their number.
+pub const FIXED: u64 = 0xFFFF_FFFE << 32;
+
+/// The collider of a town prop.
+pub fn prop_collider(prop: DetailId) -> ColliderId {
+    prop.0 | PROP_BIT
+}
 /// A moving solid reaches at most this far from its origin (m).
 const MOVER_REACH: f64 = 3.5;
 
@@ -68,7 +90,7 @@ struct Collider {
     plinth: Option<f64>,
     lo: DVec2,
     hi: DVec2,
-    solids: OnceLock<Vec<Solid>>,
+    solids: OnceLock<Arc<[Solid]>>,
     /// A damaged building's solids instead of the plan's (see
     /// [`crate::destruction`]).
     damage: RwLock<Option<Damaged>>,
@@ -115,10 +137,10 @@ impl Collider {
         }
     }
 
-    fn set(&self) -> SolidSet<'_> {
+    fn set(&self) -> SolidSet<'static> {
         match self.damage.read().expect("damage lock").as_ref() {
             Some(d) => SolidSet::Shared(d.solids.clone()),
-            None => SolidSet::Plain(self.solids()),
+            None => SolidSet::Shared(self.solids().clone()),
         }
     }
 
@@ -146,14 +168,14 @@ impl Collider {
             .as_ref()
     }
 
-    fn solids(&self) -> &[Solid] {
+    fn solids(&self) -> &Arc<[Solid]> {
         self.solids.get_or_init(|| match self.plan() {
             Some(p) => {
                 let mut out = building_solids(p, self.base);
                 out.extend(self.plinth_solid());
-                out
+                out.into()
             }
-            None => Vec::new(),
+            None => Vec::new().into(),
         })
     }
 }
@@ -182,9 +204,8 @@ pub struct Obstacles {
     terrain: Option<Terrain>,
     /// Tunnels, lift shafts and caverns below the ground.
     under: Option<Arc<Underground>>,
-    /// Street props that block the way (barricades): prop index to its
-    /// collider.
-    props: BTreeMap<u32, usize>,
+    /// A town's buildings, props and bridges, loaded tile by tile.
+    town: Option<TownSolids>,
     /// Things that move: the street cars near the heroes, set each tick
     /// (see [`Self::set_movers`]).
     movers: RwLock<Arc<[Solid]>>,
@@ -228,10 +249,13 @@ impl Woods {
             .flat_map(|t| t.footprints())
             .flat_map(|f| solids_of(&f))
             .collect();
-        self.cells
-            .write()
-            .expect("woods lock")
-            .insert(k, solids.clone());
+        let mut cells = self.cells.write().expect("woods lock");
+        // Cheap to make again: forget them all now and then, so travelling
+        // far does not pile them up.
+        if cells.len() > 1024 {
+            cells.clear();
+        }
+        cells.insert(k, solids.clone());
         solids
     }
 
@@ -254,6 +278,220 @@ impl Woods {
             }
         }
         out
+    }
+}
+
+/// A town's solids, loaded where needed. What changed (damaged buildings,
+/// broken props) is kept by id, so it outlives its tile.
+struct TownSolids {
+    world: Arc<TownWorld>,
+    tiles: RwLock<BTreeMap<(i64, i64), Arc<Tile>>>,
+    /// Colliders alive in some tile, by id (a building on two tiles is one
+    /// collider).
+    live: Mutex<BTreeMap<ColliderId, Weak<Collider>>>,
+    /// Damage and its version, by id.
+    changed: RwLock<BTreeMap<ColliderId, (Option<Damaged>, u64)>>,
+    tick: AtomicU64,
+}
+
+impl std::fmt::Debug for TownSolids {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TownSolids")
+    }
+}
+
+/// One loaded tile: its colliders and a grid over them.
+struct Tile {
+    colliders: Vec<(ColliderId, Arc<Collider>)>,
+    grid: BTreeMap<(i64, i64), Vec<u32>>,
+    used: AtomicU64,
+}
+
+fn tile_of(p: DVec2) -> (i64, i64) {
+    ((p.x / TILE).floor() as i64, (p.y / TILE).floor() as i64)
+}
+
+impl TownSolids {
+    /// The tile at `k`, loading it if needed.
+    fn tile(&self, k: (i64, i64)) -> Arc<Tile> {
+        let t = self.tick.fetch_add(1, Ordering::Relaxed);
+        if let Some(tile) = self.tiles.read().expect("tiles lock").get(&k) {
+            tile.used.store(t, Ordering::Relaxed);
+            return tile.clone();
+        }
+        let tile = Arc::new(self.load(k, t));
+        let mut tiles = self.tiles.write().expect("tiles lock");
+        let tile = tiles.entry(k).or_insert(tile).clone();
+        if tiles.len() > KEEP_TILES {
+            let mut by_use: Vec<((i64, i64), u64)> = tiles
+                .iter()
+                .map(|(k, v)| (*k, v.used.load(Ordering::Relaxed)))
+                .collect();
+            by_use.sort_by_key(|e| e.1);
+            for (old, _) in by_use.iter().take(tiles.len() - KEEP_TILES * 3 / 4) {
+                if *old != k {
+                    tiles.remove(old);
+                }
+            }
+            drop(tiles);
+            self.live
+                .lock()
+                .expect("live lock")
+                .retain(|_, w| w.strong_count() > 0);
+        }
+        tile
+    }
+
+    /// The collider `id`, alive already or made now.
+    fn collider(&self, id: ColliderId, make: impl FnOnce() -> Collider) -> Arc<Collider> {
+        let mut live = self.live.lock().expect("live lock");
+        if let Some(c) = live.get(&id).and_then(|w| w.upgrade()) {
+            return c;
+        }
+        let c = make();
+        if let Some((d, v)) = self.changed.read().expect("changed lock").get(&id) {
+            *c.damage.write().expect("damage lock") = d.clone();
+            c.version.store(*v, Ordering::Relaxed);
+        }
+        let c = Arc::new(c);
+        live.insert(id, Arc::downgrade(&c));
+        c
+    }
+
+    fn load(&self, k: (i64, i64), t: u64) -> Tile {
+        let lo = DVec2::new(k.0 as f64, k.1 as f64) * TILE;
+        let hi = lo + DVec2::splat(TILE);
+        let inside = |a: DVec2, b: DVec2| a.x <= hi.x && b.x >= lo.x && a.y <= hi.y && b.y >= lo.y;
+        let mut colliders: Vec<(ColliderId, Arc<Collider>)> = Vec::new();
+        let quarters: Vec<Arc<Quarter>> = self.world.quarters_in(lo, hi);
+        for q in &quarters {
+            for (id, b) in q.buildings_with_ids() {
+                let corners = b.site.corners();
+                let (a, z) = (lo_of(&corners), hi_of(&corners));
+                if !inside(a, z) {
+                    continue;
+                }
+                colliders.push((
+                    id.0,
+                    self.collider(id.0, || {
+                        let mut c = Collider::new(Some(b.site.clone()), b.base, a, z);
+                        c.plinth = (b.base - b.low > 0.05).then_some(b.low - 1.0);
+                        c
+                    }),
+                ));
+            }
+            // Street props, one collider each while it stands: lamp posts,
+            // tree trunks, benches, kiosks, statues, fountains, parked cars,
+            // barricades.
+            for (id, p) in q.props_with_ids() {
+                let solids: Vec<Solid> = p.footprints().iter().flat_map(solids_of).collect();
+                if solids.is_empty() {
+                    continue;
+                }
+                let c = fixed_collider(solids);
+                if !inside(c.lo, c.hi) {
+                    continue;
+                }
+                let id = prop_collider(id);
+                colliders.push((id, self.collider(id, || c)));
+            }
+            // Bridge decks of the side streets and district roads.
+            let mut decks: Vec<(ColliderId, &hw_gen::urban::world::Bridge)> = q
+                .bridges()
+                .iter()
+                .enumerate()
+                .map(|(n, b)| (DetailId::new(q.unit, n).0 | BRIDGE_BIT, b))
+                .collect();
+            let split;
+            if let UnitKind::District { piece, .. } = q.unit.kind() {
+                split = self.world.split(piece);
+                let u = hw_gen::urban::quarter::Unit::district(piece, PIECE_ROADS as usize);
+                decks.extend(
+                    split
+                        .bridges
+                        .iter()
+                        .enumerate()
+                        .map(|(n, b)| (DetailId::new(u, n).0 | BRIDGE_BIT, b)),
+                );
+            }
+            for (id, br) in decks {
+                if let Some(s) = deck(br) {
+                    let c = fixed_collider(vec![s]);
+                    if inside(c.lo, c.hi) {
+                        colliders.push((id, self.collider(id, || c)));
+                    }
+                }
+            }
+        }
+        colliders.sort_by_key(|c| c.0);
+        colliders.dedup_by_key(|c| c.0);
+        let mut grid: BTreeMap<(i64, i64), Vec<u32>> = BTreeMap::new();
+        for (i, (_, c)) in colliders.iter().enumerate() {
+            for key in cells_of(c.lo.max(lo), c.hi.min(hi)) {
+                grid.entry(key).or_default().push(i as u32);
+            }
+        }
+        Tile {
+            colliders,
+            grid,
+            used: AtomicU64::new(t),
+        }
+    }
+}
+
+/// The grid cells a box covers.
+fn cells_of(lo: DVec2, hi: DVec2) -> impl Iterator<Item = (i64, i64)> {
+    let (x0, z0) = ((lo.x / CELL).floor() as i64, (lo.y / CELL).floor() as i64);
+    let (x1, z1) = ((hi.x / CELL).floor() as i64, (hi.y / CELL).floor() as i64);
+    (x0..=x1).flat_map(move |x| (z0..=z1).map(move |z| (x, z)))
+}
+
+/// A collider of fixed boxes.
+fn fixed_collider(solids: Vec<Solid>) -> Collider {
+    let (mut lo, mut hi) = (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN));
+    for c in solids.iter().flat_map(|s| s.corners()) {
+        lo = lo.min(c);
+        hi = hi.max(c);
+    }
+    let mut c = Collider::new(None, 0.0, lo, hi);
+    c.plan = OnceLock::from(None);
+    c.solids = OnceLock::from(Arc::from(solids));
+    c
+}
+
+/// A bridge deck's box.
+fn deck(br: &hw_gen::urban::world::Bridge) -> Option<Solid> {
+    let d = br.b - br.a;
+    let len = d.length();
+    if len < 1e-6 {
+        return None;
+    }
+    let along = d / len;
+    let inward = along.perp();
+    Some(Solid {
+        origin: br.a - inward * br.half,
+        along,
+        inward,
+        min: DVec2::ZERO,
+        max: DVec2::new(len, br.half * 2.0),
+        y0: br.deck - 0.6,
+        y1: br.deck,
+    })
+}
+
+/// A collider found near a point: one of the fixed ones, or a town's.
+enum Found<'a> {
+    Fixed(&'a Collider),
+    Town(Arc<Collider>),
+}
+
+impl std::ops::Deref for Found<'_> {
+    type Target = Collider;
+    fn deref(&self) -> &Collider {
+        match self {
+            Found::Fixed(c) => c,
+            Found::Town(c) => c,
+        }
     }
 }
 
@@ -296,8 +534,8 @@ pub const INNER_WALL: f64 = 0.2;
 /// Where a point is inside a building.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Inside {
-    /// Index into the city's buildings.
-    pub building: usize,
+    /// The building's collider id (a town building's [`DetailId`]).
+    pub building: ColliderId,
     pub level: u32,
 }
 
@@ -333,9 +571,10 @@ impl Obstacles {
 
     /// A town on its terrain: open ground follows `terrain` (water stands at
     /// `water`), each building stands at its own base on a plinth, bridge
-    /// decks span the water. Building plans are made when first needed.
-    /// The town's solids; its country's woods are worked out where bodies
-    /// go ([`Woods`]).
+    /// decks span the water. The town's buildings, props and side bridges
+    /// are loaded tile by tile where something comes near, its country's
+    /// woods cell by cell ([`Woods`]); building plans are made when first
+    /// needed.
     pub fn from_town(world: &Arc<TownWorld>, terrain: Terrain) -> Self {
         let mut out = Self::flat(WATER_LEVEL);
         out.woods = Some(Woods {
@@ -344,44 +583,10 @@ impl Obstacles {
             cells: RwLock::new(BTreeMap::new()),
         });
         out.terrain = Some(terrain);
-        out.under = Some(Arc::new(world.underground.clone()));
-        for b in &world.buildings {
-            let corners = b.site.corners();
-            let mut c = Collider::new(
-                Some(b.site.clone()),
-                b.base,
-                lo_of(&corners),
-                hi_of(&corners),
-            );
-            c.plinth = (b.base - b.low > 0.05).then_some(b.low - 1.0);
-            out.insert(c);
-        }
-        for br in &world.bridges {
-            let d = br.b - br.a;
-            let len = d.length();
-            if len < 1e-6 {
-                continue;
-            }
-            let along = d / len;
-            let inward = along.perp();
-            out.add(Solid {
-                origin: br.a - inward * br.half,
-                along,
-                inward,
-                min: DVec2::ZERO,
-                max: DVec2::new(len, br.half * 2.0),
-                y0: br.deck - 0.6,
-                y1: br.deck,
-            });
-        }
-        // Street props, one collider each while it stands: lamp posts, tree
-        // trunks, benches, kiosks, statues, fountains, parked cars,
-        // barricades.
-        for (i, p) in world.props.iter().enumerate() {
-            let solids: Vec<Solid> = p.footprints().iter().flat_map(solids_of).collect();
-            if !solids.is_empty() {
-                out.props.insert(i as u32, out.colliders.len());
-                out.add_all(solids);
+        out.under = Some(Arc::new(world.underground().clone()));
+        for br in &world.main_bridges {
+            if let Some(s) = deck(br) {
+                out.add(s);
             }
         }
         // Landmarks: the plinth is raised ground; the tower, its base, the
@@ -392,14 +597,47 @@ impl Obstacles {
             parts.extend(l.stairs.iter().flat_map(|s| s.treads()));
             out.add_all(parts.iter().flat_map(solids_of).collect());
         }
+        out.town = Some(TownSolids {
+            world: world.clone(),
+            tiles: RwLock::new(BTreeMap::new()),
+            live: Mutex::new(BTreeMap::new()),
+            changed: RwLock::new(BTreeMap::new()),
+            tick: AtomicU64::new(0),
+        });
         out
     }
 
     /// A blocking street prop broken (its box gone) or whole again.
-    pub fn set_prop_broken(&self, prop: u32, broken: bool) {
-        if let Some(&c) = self.props.get(&prop) {
-            self.set_damage(c, broken.then(Vec::new), true);
+    /// Has the town plan its detail within `r` of each point in the
+    /// background (nothing for a city or flat ground).
+    pub fn prefetch(&self, points: &[DVec3], r: f64) {
+        if let Some(t) = &self.town {
+            let at: Vec<DVec2> = points.iter().map(|p| DVec2::new(p.x, p.z)).collect();
+            t.world.prefetch(&at, r);
         }
+    }
+
+    /// What the town's collision holds now: (tiles, live colliders,
+    /// changed buildings); for the memory tests.
+    pub fn kept(&self) -> (usize, usize, usize) {
+        self.town.as_ref().map_or((0, 0, 0), |t| {
+            (
+                t.tiles.read().expect("tiles lock").len(),
+                t.live.lock().expect("live lock").len(),
+                t.changed.read().expect("changed lock").len(),
+            )
+        })
+    }
+
+    pub fn set_prop_broken(&self, prop: DetailId, broken: bool) {
+        self.set_damage(prop_collider(prop), broken.then(Vec::new), true);
+    }
+
+    /// How many town tiles are loaded now.
+    pub fn tiles_loaded(&self) -> usize {
+        self.town
+            .as_ref()
+            .map_or(0, |t| t.tiles.read().expect("tiles lock").len())
     }
 
     /// Adds a free-standing box (tests, props).
@@ -409,14 +647,7 @@ impl Obstacles {
 
     /// Adds boxes that stand and fall together as one collider.
     pub fn add_all(&mut self, solids: Vec<Solid>) {
-        let (mut lo, mut hi) = (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN));
-        for c in solids.iter().flat_map(|s| s.corners()) {
-            lo = lo.min(c);
-            hi = hi.max(c);
-        }
-        let mut c = Collider::new(None, 0.0, lo, hi);
-        c.plan = OnceLock::from(None);
-        c.solids = OnceLock::from(solids);
+        let c = fixed_collider(solids);
         self.insert(c);
     }
 
@@ -438,32 +669,41 @@ impl Obstacles {
         self.colliders.push(c);
     }
 
-    /// Colliders whose boxes come within `r` of `p`, sorted.
-    fn near_colliders(&self, p: DVec2, r: f64) -> Vec<u32> {
+    /// Colliders whose boxes come within `r` of `p`, by id (sorted).
+    fn near_colliders(&self, p: DVec2, r: f64) -> Vec<(ColliderId, Found<'_>)> {
         let mut out = Vec::new();
-        let (x0, z0) = (
-            ((p.x - r) / CELL).floor() as i64,
-            ((p.y - r) / CELL).floor() as i64,
-        );
-        let (x1, z1) = (
-            ((p.x + r) / CELL).floor() as i64,
-            ((p.y + r) / CELL).floor() as i64,
-        );
-        for x in x0..=x1 {
-            for z in z0..=z1 {
-                if let Some(v) = self.grid.get(&(x, z)) {
-                    out.extend(v.iter().copied().filter(|&i| {
-                        let c = &self.colliders[i as usize];
-                        p.x + r >= c.lo.x
-                            && p.x - r <= c.hi.x
-                            && p.y + r >= c.lo.y
-                            && p.y - r <= c.hi.y
-                    }));
+        let close = |c: &Collider| {
+            p.x + r >= c.lo.x && p.x - r <= c.hi.x && p.y + r >= c.lo.y && p.y - r <= c.hi.y
+        };
+        for key in cells_of(p - DVec2::splat(r), p + DVec2::splat(r)) {
+            if let Some(v) = self.grid.get(&key) {
+                out.extend(
+                    v.iter()
+                        .filter(|&&i| close(&self.colliders[i as usize]))
+                        .map(|&i| (FIXED | i as u64, Found::Fixed(&self.colliders[i as usize]))),
+                );
+            }
+        }
+        if let Some(town) = &self.town {
+            let (a, b) = (tile_of(p - DVec2::splat(r)), tile_of(p + DVec2::splat(r)));
+            for tx in a.0..=b.0 {
+                for tz in a.1..=b.1 {
+                    let tile = town.tile((tx, tz));
+                    for key in cells_of(p - DVec2::splat(r), p + DVec2::splat(r)) {
+                        if let Some(v) = tile.grid.get(&key) {
+                            for &i in v {
+                                let (id, c) = &tile.colliders[i as usize];
+                                if close(c) {
+                                    out.push((*id, Found::Town(c.clone())));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-        out.sort_unstable();
-        out.dedup();
+        out.sort_unstable_by_key(|e| e.0);
+        out.dedup_by_key(|e| e.0);
         out
     }
 
@@ -473,7 +713,7 @@ impl Obstacles {
         let mut sets: Vec<SolidSet<'_>> = self
             .near_colliders(p, r)
             .into_iter()
-            .map(|i| self.colliders[i as usize].set())
+            .map(|(_, c)| c.set())
             .collect();
         let movers = self.movers.read().expect("movers lock").clone();
         if movers
@@ -494,57 +734,122 @@ impl Obstacles {
         *self.movers.write().expect("movers lock") = solids.into();
     }
 
-    /// The solids of every collider within `r` of `p`, by collider index
+    /// The solids of every collider within `r` of `p`, by collider id
     /// (building colliders are made on first touch). For the physics world.
-    pub fn solids_near(&self, p: DVec2, r: f64) -> Vec<(u32, SolidSet<'_>)> {
+    pub fn solids_near(&self, p: DVec2, r: f64) -> Vec<(ColliderId, SolidSet<'_>)> {
         self.near_colliders(p, r)
             .into_iter()
-            .map(|i| (i, self.colliders[i as usize].set()))
+            .map(|(i, c)| (i, c.set()))
             .collect()
     }
 
-    /// Buildings (by index, as [`Inside::building`] counts) whose ground
-    /// boxes come within `r` of `p`.
-    pub fn buildings_near(&self, p: DVec2, r: f64) -> Vec<usize> {
+    /// Buildings (by collider id, as [`Inside::building`] names them) whose
+    /// ground boxes come within `r` of `p`.
+    pub fn buildings_near(&self, p: DVec2, r: f64) -> Vec<ColliderId> {
         self.near_colliders(p, r)
             .into_iter()
-            .filter(|&i| {
-                let c = &self.colliders[i as usize];
-                c.site.is_some() || c.plan.get().is_some_and(|p| p.is_some())
-            })
-            .map(|i| i as usize)
+            .filter(|(_, c)| c.site.is_some() || c.plan.get().is_some_and(|p| p.is_some()))
+            .map(|(i, _)| i)
             .collect()
+    }
+
+    /// A fixed collider by id.
+    fn fixed(&self, i: ColliderId) -> Option<&Collider> {
+        if i & FIXED != FIXED {
+            return None;
+        }
+        self.colliders.get((i & 0xFFFF_FFFF) as usize)
+    }
+
+    /// The collider `i`: a fixed one, a loaded town one, or (for a town
+    /// building nobody is near) one made for the asking.
+    fn find(&self, i: ColliderId) -> Option<Found<'_>> {
+        if let Some(c) = self.fixed(i) {
+            return Some(Found::Fixed(c));
+        }
+        let town = self.town.as_ref()?;
+        if let Some(c) = town
+            .live
+            .lock()
+            .expect("live lock")
+            .get(&i)
+            .and_then(|w| w.upgrade())
+        {
+            return Some(Found::Town(c));
+        }
+        if i & (PROP_BIT | BRIDGE_BIT) != 0 {
+            return None;
+        }
+        let b = town.world.building(DetailId(i))?;
+        let corners = b.site.corners();
+        let mut c = Collider::new(
+            Some(b.site.clone()),
+            b.base,
+            lo_of(&corners),
+            hi_of(&corners),
+        );
+        c.plinth = (b.base - b.low > 0.05).then_some(b.low - 1.0);
+        Some(Found::Town(town.collider(i, || c)))
     }
 
     /// Replaces building `i`'s solids with what is left of it after damage
     /// (`None`: whole again). `lift`: its lift still works. Its plinth stays.
-    pub fn set_damage(&self, i: usize, solids: Option<Vec<Solid>>, lift: bool) {
-        let Some(c) = self.colliders.get(i) else {
-            return;
-        };
+    pub fn set_damage(&self, i: ColliderId, solids: Option<Vec<Solid>>, lift: bool) {
+        let c = self.find(i);
         let d = solids.map(|mut s| {
-            s.extend(c.plinth_solid());
+            if let Some(c) = &c {
+                s.extend(c.plinth_solid());
+            }
             Damaged {
                 solids: s.into(),
                 lift,
             }
         });
-        *c.damage.write().expect("damage lock") = d;
-        c.version.fetch_add(1, Ordering::Relaxed);
+        if let Some(town) = self.town.as_ref().filter(|_| i & FIXED != FIXED) {
+            let mut changed = town.changed.write().expect("changed lock");
+            if d.is_none() {
+                // Whole again: nothing to remember (a version going back to
+                // 0 still reads as a change to whoever saw it damaged).
+                changed.remove(&i);
+            } else {
+                // Versions come from one counter, so a building damaged,
+                // repaired and damaged again never repeats one.
+                let v = town.tick.fetch_add(1, Ordering::Relaxed) + 1;
+                changed.insert(i, (d.clone(), v));
+            }
+        }
+        if let Some(c) = c {
+            *c.damage.write().expect("damage lock") = d;
+            c.version.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Is building `i` damaged?
-    pub fn is_damaged(&self, i: usize) -> bool {
-        self.colliders
-            .get(i)
-            .is_some_and(|c| c.damage.read().expect("damage lock").is_some())
+    pub fn is_damaged(&self, i: ColliderId) -> bool {
+        if let Some(c) = self.fixed(i) {
+            return c.damage.read().expect("damage lock").is_some();
+        }
+        self.town.as_ref().is_some_and(|t| {
+            t.changed
+                .read()
+                .expect("changed lock")
+                .get(&i)
+                .is_some_and(|e| e.0.is_some())
+        })
     }
 
     /// Changes whenever collider `i`'s solids change.
-    pub fn version(&self, i: u32) -> u64 {
-        self.colliders
-            .get(i as usize)
-            .map_or(0, |c| c.version.load(Ordering::Relaxed))
+    pub fn version(&self, i: ColliderId) -> u64 {
+        if let Some(c) = self.fixed(i) {
+            return c.version.load(Ordering::Relaxed);
+        }
+        self.town.as_ref().map_or(0, |t| {
+            t.changed
+                .read()
+                .expect("changed lock")
+                .get(&i)
+                .map_or(0, |e| e.1)
+        })
     }
 
     /// Does open ground follow terrain or water (not one flat height)?
@@ -577,8 +882,7 @@ impl Obstacles {
     /// The building and floor a point is in, if any.
     pub fn inside(&self, p: DVec3) -> Option<Inside> {
         let q = DVec2::new(p.x, p.z);
-        for i in self.near_colliders(q, 0.0) {
-            let c = &self.colliders[i as usize];
+        for (i, c) in self.near_colliders(q, 0.0) {
             let Some(plan) = c.plan() else { continue };
             let s = &plan.site;
             let d = q - s.origin;
@@ -598,7 +902,7 @@ impl Obstacles {
                     && l.y <= f.outline.max.y
                 {
                     return Some(Inside {
-                        building: i as usize,
+                        building: i,
                         level: f.level,
                     });
                 }
@@ -609,8 +913,8 @@ impl Obstacles {
 
     /// The plan of building `i` (as [`Inside::building`] counts), made on
     /// first use, and the height it stands at.
-    pub fn building(&self, i: usize) -> Option<(Arc<BuildingPlan>, f64)> {
-        let c = self.colliders.get(i)?;
+    pub fn building(&self, i: ColliderId) -> Option<(Arc<BuildingPlan>, f64)> {
+        let c = self.find(i)?;
         c.plan().map(|p| (p.clone(), c.base))
     }
 
@@ -622,8 +926,7 @@ impl Obstacles {
                 return true;
             }
         }
-        self.near_colliders(q, 0.0).into_iter().any(|i| {
-            let c = &self.colliders[i as usize];
+        self.near_colliders(q, 0.0).into_iter().any(|(_, c)| {
             let Some(plan) = c.plan() else { return false };
             let Some(core) = plan.core else { return false };
             if c.damage
@@ -1104,7 +1407,7 @@ mod tests {
         let ground = w.clone();
         let o = Obstacles::from_town(&w, Terrain(Arc::new(move |p| ground.ground(p))));
         let mut solid = 0;
-        for p in &w.props {
+        for (_, p) in &w.everything().props {
             for f in p.footprints() {
                 let c = f.at();
                 assert!(

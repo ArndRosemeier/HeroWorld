@@ -17,8 +17,9 @@ use glam::{DVec2, DVec3};
 use hw_core::Seed;
 use hw_gen::building::BuildingUse;
 use hw_gen::geom::Polyline;
+use hw_gen::urban::area::Area;
 use hw_gen::urban::underground::{molehaven_layout, Underground};
-use hw_gen::urban::world::{TownWorld, WorldRoad, WALKER_HALF};
+use hw_gen::urban::world::{WorldRoad, WALKER_HALF};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -246,7 +247,7 @@ pub struct Citizens {
     signals: Arc<Signals>,
     /// Streets by grid cell (each street in every cell it passes).
     grid: BTreeMap<(i64, i64), Vec<u32>>,
-    world: Arc<TownWorld>,
+    world: Arc<Area>,
     /// Molehaven's people: its floor, its middle, and each one's way.
     moles: (f64, DVec2, Vec<MoleWay>),
     /// The hour of day (0 to 24): who is out.
@@ -257,7 +258,7 @@ impl Citizens {
     /// Plans where the town's people walk (streets, joins, how many per
     /// street), crossing by the town's traffic lights (see
     /// [`crate::traffic::Traffic::signals`]). Takes a few milliseconds.
-    pub fn new(world: Arc<TownWorld>, signals: Arc<Signals>) -> Self {
+    pub fn new(world: Arc<Area>, signals: Arc<Signals>) -> Self {
         let seed = world.seed.child("citizens");
         let mut walks = Vec::with_capacity(world.roads.len());
         for r in world.roads.iter() {
@@ -289,7 +290,7 @@ impl Citizens {
         stop_at_barricades(&walks, &grid, &world, &mut mouths);
         let joins = turns(&walks, &met, &ends, &ways, &world, &signals);
         people_from_buildings(&mut walks, &grid, &world, seed);
-        let moles = plan_moles(&world.underground);
+        let moles = plan_moles(world.underground());
         Self {
             seed,
             walks,
@@ -746,7 +747,7 @@ fn end_point(w: &Walk, e: usize) -> DVec2 {
     }
 }
 
-fn streets_met(walks: &[Walk], grid: &BTreeMap<(i64, i64), Vec<u32>>, world: &TownWorld) -> Met {
+fn streets_met(walks: &[Walk], grid: &BTreeMap<(i64, i64), Vec<u32>>, world: &Area) -> Met {
     let mut met = Vec::with_capacity(walks.len());
     for (i, w) in walks.iter().enumerate() {
         let mut ends: [Vec<(u32, f64)>; 2] = [Vec::new(), Vec::new()];
@@ -809,7 +810,7 @@ impl Carriageways {
         )
     }
 
-    fn new(world: &TownWorld) -> Self {
+    fn new(world: &Area) -> Self {
         let mut segs: BTreeMap<(i64, i64), Vec<Segment>> = BTreeMap::new();
         for (i, r) in world.roads.iter().enumerate() {
             for s in r.pts.windows(2) {
@@ -828,7 +829,7 @@ impl Carriageways {
 
     /// Whether `p` is on a carriageway (within its half width plus
     /// `margin(street)`), and if so whether on one with traffic.
-    fn under(&self, p: DVec2, world: &TownWorld, margin: impl Fn(u32) -> f64) -> Option<bool> {
+    fn under(&self, p: DVec2, world: &Area, margin: impl Fn(u32) -> f64) -> Option<bool> {
         let mut found: Option<bool> = None;
         for &(j, a, b) in self.segs.get(&Self::key(p)).into_iter().flatten() {
             let r = &world.roads[j as usize];
@@ -842,13 +843,7 @@ impl Carriageways {
 
 /// How walking straight from `a` to `b` may go: if it steps onto a
 /// carriageway with traffic, by the lights of the junction there.
-fn crossing_wait(
-    a: DVec2,
-    b: DVec2,
-    ways: &Carriageways,
-    world: &TownWorld,
-    signals: &Signals,
-) -> Wait {
+fn crossing_wait(a: DVec2, b: DVec2, ways: &Carriageways, world: &Area, signals: &Signals) -> Wait {
     let n = (a.distance(b) / 0.5).ceil().max(2.0) as usize;
     let traffic =
         (1..n).any(|k| ways.under(a.lerp(b, k as f64 / n as f64), world, |_| -0.3) == Some(true));
@@ -869,7 +864,7 @@ fn turns(
     met: &Met,
     ends: &[Ends],
     ways: &Carriageways,
-    world: &TownWorld,
+    world: &Area,
     signals: &Signals,
 ) -> Vec<[Vec<Turn>; 2]> {
     let mut out = Vec::with_capacity(walks.len());
@@ -948,7 +943,7 @@ fn turns(
 fn pavement_runs(
     walks: &[Walk],
     ways: &Carriageways,
-    world: &TownWorld,
+    world: &Area,
     signals: &Signals,
 ) -> (Vec<Ends>, Vec<[Vec<Mouth>; 2]>) {
     const STEP: f64 = 1.0;
@@ -1049,7 +1044,7 @@ fn walk_of(r: &WorldRoad) -> Walk {
 /// Moves each street's walking line round the props standing on its
 /// pavements: out towards the houses or in towards the kerb, whichever is
 /// nearer and leaves room to pass.
-fn step_round_props(walks: &mut [Walk], grid: &BTreeMap<(i64, i64), Vec<u32>>, world: &TownWorld) {
+fn step_round_props(walks: &mut [Walk], grid: &BTreeMap<(i64, i64), Vec<u32>>, world: &Area) {
     for p in &world.props {
         let parts = p.footprints();
         if parts.is_empty() {
@@ -1109,10 +1104,10 @@ fn step_round_props(walks: &mut [Walk], grid: &BTreeMap<(i64, i64), Vec<u32>>, w
 fn stop_at_barricades(
     walks: &[Walk],
     grid: &BTreeMap<(i64, i64), Vec<u32>>,
-    world: &TownWorld,
+    world: &Area,
     mouths: &mut [[Vec<Mouth>; 2]],
 ) {
-    for b in hw_gen::urban::edge::barricades(world) {
+    for b in hw_gen::urban::edge::barricades(world, &world.roads) {
         let best = grid
             .get(&cell_of(b.at))
             .into_iter()
@@ -1167,7 +1162,7 @@ fn busy_at(hour: f64) -> (f64, f64) {
 fn people_from_buildings(
     walks: &mut [Walk],
     grid: &BTreeMap<(i64, i64), Vec<u32>>,
-    world: &TownWorld,
+    world: &Area,
     seed: Seed,
 ) {
     let mut drawn = vec![(0.0f64, 0.0f64); walks.len()];
@@ -1314,10 +1309,10 @@ mod tests {
 
     fn town() -> Citizens {
         let t = GeneratedTown::generate(Seed(1), 3000.0);
-        people(t.world)
+        people(t.area)
     }
 
-    fn people(world: Arc<TownWorld>) -> Citizens {
+    fn people(world: Arc<Area>) -> Citizens {
         let signals = crate::traffic::Traffic::new(world.clone()).signals();
         Citizens::new(world, signals)
     }
@@ -1325,8 +1320,8 @@ mod tests {
     #[test]
     fn molehaven_has_people_who_keep_clear_of_its_furniture() {
         let t = GeneratedTown::generate(Seed(1), 40_000.0);
-        let l = molehaven_layout(&t.world.underground).expect("the town has Molehaven");
-        let c = people(t.world.clone());
+        let l = molehaven_layout(t.world.underground()).expect("the town has Molehaven");
+        let c = people(t.area.clone());
         let (_, centre, ways) = &c.moles;
         assert!(ways.len() >= 30, "{} mole people", ways.len());
         let mut moved = 0;
@@ -1343,7 +1338,7 @@ mod tests {
                 let p = m.pos.truncate_xz();
                 assert!((m.pos.y - l.floor).abs() < 0.1, "on the cavern floor");
                 assert!(
-                    t.world.underground.at(p).next().is_some(),
+                    t.world.underground().at(p).next().is_some(),
                     "{p} is inside the cavern"
                 );
                 assert!(p.distance(l.well.0) > l.well.1 + 0.5, "{p} in the well");
@@ -1413,8 +1408,8 @@ mod tests {
     #[test]
     fn people_cross_roads_with_traffic_only_while_the_lights_say_walk() {
         let t = GeneratedTown::generate(Seed(1), 20_000.0);
-        let signals = crate::traffic::Traffic::new(t.world.clone()).signals();
-        let c = Citizens::new(t.world, signals.clone());
+        let signals = crate::traffic::Traffic::new(t.area.clone()).signals();
+        let c = Citizens::new(t.area, signals.clone());
         let p = c.world.spawn_line().0;
         let (mut on_road, mut seen, mut unsafe_) = (0, 0, 0);
         for k in 0..60 {
@@ -1453,7 +1448,7 @@ mod tests {
     #[test]
     fn finding_people_near_a_player_is_quick() {
         let t = GeneratedTown::generate(Seed(1), 40_000.0);
-        let c = people(t.world);
+        let c = people(t.area);
         let p = c.world.spawn_line().0;
         let start = std::time::Instant::now();
         let near = c.near(p, 260.0, 100.0, 600);

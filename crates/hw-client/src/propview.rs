@@ -9,39 +9,70 @@
 use crate::citymesh::{MeshBuilder, Surf};
 use engine::prelude::*;
 use engine::vegetation::{shrub_model, tree_model, TreeSpecies};
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use hw_gen::urban::props::{CarModel, Prop, PropKind, Species};
+use hw_gen::urban::quarter::DetailId;
 use hw_gen::urban::world::TownWorld;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::TAU;
+use std::sync::Arc;
 
-/// The props of a town, spawned once for the whole town (Engine's LOD sets
-/// draw only what is near enough).
+/// Edge of one tile of props (m).
+const TILE: f64 = 128.0;
+/// Props are loaded out to this distance from the camera (beyond the
+/// farthest LOD of nearly every model), and dropped a bit beyond it.
+pub const PROP_LOAD: f64 = 1000.0;
+const PROP_UNLOAD: f64 = PROP_LOAD + 160.0;
+
+type TileKey = (i64, i64);
+
+fn tile_of(p: DVec2) -> TileKey {
+    ((p.x / TILE).floor() as i64, (p.y / TILE).floor() as i64)
+}
+
+fn tile_box(k: TileKey) -> (DVec2, DVec2) {
+    (
+        DVec2::new(k.0 as f64, k.1 as f64) * TILE,
+        DVec2::new(k.0 as f64 + 1.0, k.1 as f64 + 1.0) * TILE,
+    )
+}
+
+fn tile_centre(k: TileKey) -> DVec2 {
+    (tile_box(k).0 + tile_box(k).1) * 0.5
+}
+
+/// The props of one tile.
+struct PropTile {
+    props: Vec<(DetailId, Prop)>,
+    /// Per set: the tile's instances (prop id, place as it stands).
+    places: BTreeMap<usize, Vec<(u64, Place)>>,
+}
+
+/// The town's props around the camera, streamed in tiles: one instanced
+/// LOD set per kind of prop (every kind made up front, so any part of the
+/// world can come in), whose instances are the props of the tiles loaded
+/// now. A broken prop is the exception that is remembered after its tile
+/// goes: it lies broken again when the tile comes back.
 pub struct PropView {
+    pub world: Arc<TownWorld>,
     pub sets: Vec<LodId>,
     /// The kind each set draws (sorted).
     kinds: Vec<PropKind>,
-    pub count: usize,
-    /// Per set: every instance's place as it stands, and its model's bounds.
-    places: Vec<Vec<Place>>,
+    /// Each set's model's bounds.
     bounds: Vec<(Vec3, Vec3)>,
-    /// Per prop: its set and instance.
-    slot: Vec<(usize, usize)>,
+    tiles: BTreeMap<TileKey, PropTile>,
+    /// Broken props, and which way each fell.
+    broken: BTreeMap<u64, u8>,
     /// Sets whose places changed since the last [`PropView::flush`].
     dirty: BTreeSet<usize>,
+    /// Goes up whenever tiles come or go (lights and signals follow it).
+    pub generation: u64,
 }
 
 impl PropView {
-    pub fn spawn(world: &mut World, town: &TownWorld) -> EngineResult<Self> {
-        let mut groups: BTreeMap<PropKind, Vec<Place>> = BTreeMap::new();
-        let mut at = Vec::with_capacity(town.props.len());
-        for p in &town.props {
-            let g = groups.entry(p.kind).or_default();
-            at.push(g.len());
-            g.push(prop_place(p));
-        }
+    pub fn spawn(world: &mut World, town: Arc<TownWorld>) -> EngineResult<Self> {
         // Growing trees takes a moment: grow every model at once.
-        let kinds: Vec<PropKind> = groups.keys().copied().collect();
+        let kinds = PropKind::all();
         let levels: Vec<EngineResult<Vec<LodLevel>>> = std::thread::scope(|s| {
             let handles: Vec<_> = kinds
                 .iter()
@@ -54,7 +85,7 @@ impl PropView {
         });
         let mut sets = Vec::new();
         let mut bounds = Vec::new();
-        for (kind, levels) in kinds.iter().zip(levels) {
+        for levels in levels {
             let levels = levels?;
             bounds.push(
                 levels
@@ -62,51 +93,200 @@ impl PropView {
                     .and_then(|l| l.mesh.bounds())
                     .unwrap_or((Vec3::ZERO, Vec3::ONE)),
             );
-            sets.push(world.spawn_lod_at(levels, &groups[kind])?);
+            sets.push(world.spawn_lod_at(levels, &[])?);
         }
-        let slot = town
-            .props
-            .iter()
-            .zip(at)
-            .map(|(p, j)| (kinds.binary_search(&p.kind).unwrap_or(0), j))
-            .collect();
         Ok(Self {
+            world: town,
             sets,
-            kinds: kinds.clone(),
-            count: town.props.len(),
-            places: kinds
-                .iter()
-                .map(|k| groups.remove(k).unwrap_or_default())
-                .collect(),
+            kinds,
             bounds,
-            slot,
+            tiles: BTreeMap::new(),
+            broken: BTreeMap::new(),
             dirty: BTreeSet::new(),
+            generation: 0,
         })
     }
 
-    /// The LOD set drawing `kind`, if the town has any.
+    /// The LOD set drawing `kind`.
     pub fn set_for(&self, kind: PropKind) -> Option<LodId> {
         self.kinds.binary_search(&kind).ok().map(|k| self.sets[k])
     }
 
-    /// Draws prop `i` broken, fallen the way `fell` says (a yaw byte, see
-    /// `hw_sim::props`), or whole again (`None`).
-    pub fn set_broken(&mut self, town: &TownWorld, i: usize, fell: Option<u8>) {
-        let (Some(p), Some(&(k, j))) = (town.props.get(i), self.slot.get(i)) else {
+    /// Props loaded now.
+    pub fn count(&self) -> usize {
+        self.tiles.values().map(|t| t.props.len()).sum()
+    }
+
+    /// The loaded props within `r` of `p`, with their ids.
+    pub fn near(&self, p: DVec2, r: f64) -> impl Iterator<Item = (DetailId, &Prop)> {
+        let (a, b) = (tile_of(p - DVec2::splat(r)), tile_of(p + DVec2::splat(r)));
+        self.tiles
+            .range((a.0, i64::MIN)..=(b.0, i64::MAX))
+            .filter(move |(k, _)| k.1 >= a.1 && k.1 <= b.1)
+            .flat_map(|(_, t)| t.props.iter())
+            .filter(move |(_, q)| q.pos.distance(p) <= r)
+            .map(|(id, q)| (*id, q))
+    }
+
+    /// Is prop `id` broken?
+    pub fn is_broken(&self, id: u64) -> bool {
+        self.broken.contains_key(&id)
+    }
+
+    /// Loads tiles coming into range and drops those out of range, nearest
+    /// first, for at most `budget_ms` (unlimited: everything now). A tile
+    /// whose ground the town has not planned yet waits while it is planned
+    /// in the background.
+    pub fn update(&mut self, eye: DVec2, budget_ms: f64) {
+        let gone: Vec<TileKey> = self
+            .tiles
+            .keys()
+            .copied()
+            .filter(|k| tile_centre(*k).distance(eye) > PROP_UNLOAD)
+            .collect();
+        for k in gone {
+            if let Some(t) = self.tiles.remove(&k) {
+                self.dirty.extend(t.places.keys().copied());
+                self.generation += 1;
+            }
+        }
+        let h = self.world.half() + TILE;
+        let (lo, hi) = (
+            (eye - DVec2::splat(PROP_LOAD)).max(DVec2::splat(-h)),
+            (eye + DVec2::splat(PROP_LOAD)).min(DVec2::splat(h)),
+        );
+        if lo.x > hi.x || lo.y > hi.y {
+            return;
+        }
+        let (a, b) = (tile_of(lo), tile_of(hi));
+        let mut todo: Vec<(f64, TileKey)> = Vec::new();
+        for x in a.0..=b.0 {
+            for z in a.1..=b.1 {
+                let d = tile_centre((x, z)).distance(eye);
+                if d < PROP_LOAD && !self.tiles.contains_key(&(x, z)) {
+                    todo.push((d, (x, z)));
+                }
+            }
+        }
+        todo.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let wait = budget_ms.is_finite();
+        let start = std::time::Instant::now();
+        let mut later = Vec::new();
+        for (_, k) in todo {
+            let (lo, hi) = tile_box(k);
+            if wait && !self.world.quarters_ready(lo, hi) {
+                later.push(tile_centre(k));
+                continue;
+            }
+            self.load(k);
+            if start.elapsed().as_secs_f64() * 1000.0 > budget_ms {
+                break;
+            }
+        }
+        if !later.is_empty() {
+            self.world.prefetch(&later, TILE * 0.5);
+        }
+    }
+
+    /// How much of the props around `eye` is loaded: (tiles loaded, tiles
+    /// wanted).
+    pub fn progress(&self, eye: DVec2) -> (usize, usize) {
+        let r = DVec2::splat(PROP_LOAD);
+        let (a, b) = (tile_of(eye - r), tile_of(eye + r));
+        let (mut want, mut have) = (0, 0);
+        for x in a.0..=b.0 {
+            for z in a.1..=b.1 {
+                if tile_centre((x, z)).distance(eye) < PROP_LOAD {
+                    want += 1;
+                    have += self.tiles.contains_key(&(x, z)) as usize;
+                }
+            }
+        }
+        (have, want)
+    }
+
+    fn load(&mut self, k: TileKey) {
+        let (lo, hi) = tile_box(k);
+        let mut props: Vec<(DetailId, Prop)> = self
+            .world
+            .quarters_in(lo, hi)
+            .iter()
+            .flat_map(|q| {
+                q.props_with_ids()
+                    .filter(|(_, p)| tile_of(p.pos) == k)
+                    .map(|(id, p)| (id, *p))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        props.sort_by_key(|(id, _)| *id);
+        let mut places: BTreeMap<usize, Vec<(u64, Place)>> = BTreeMap::new();
+        for (id, p) in &props {
+            let Ok(set) = self.kinds.binary_search(&p.kind) else {
+                continue;
+            };
+            places
+                .entry(set)
+                .or_default()
+                .push((id.0, self.place_of(set, p, self.broken.get(&id.0).copied())));
+        }
+        self.dirty.extend(places.keys().copied());
+        self.tiles.insert(k, PropTile { props, places });
+        self.generation += 1;
+    }
+
+    fn place_of(&self, set: usize, p: &Prop, fell: Option<u8>) -> Place {
+        let at = prop_place(p);
+        match fell {
+            Some(fell) => broken_place(p, at, self.bounds[set], fell),
+            None => at,
+        }
+    }
+
+    /// Draws prop `id` broken, fallen the way `fell` says (a yaw byte, see
+    /// `hw_sim::props`), or whole again (`None`). Remembered while it is
+    /// broken, also when its tile is not loaded.
+    pub fn set_broken(&mut self, id: u64, fell: Option<u8>) {
+        match fell {
+            Some(f) => self.broken.insert(id, f),
+            None => self.broken.remove(&id),
+        };
+        // Only a loaded prop needs drawing again (one loaded later lies as
+        // `broken` says); a far one is not looked up, which would plan its
+        // ground.
+        let Some((k, p)) = self.tiles.iter().find_map(|(k, t)| {
+            t.props
+                .iter()
+                .find(|(i, _)| i.0 == id)
+                .map(|(_, p)| (*k, *p))
+        }) else {
             return;
         };
-        let mut at = prop_place(p);
-        if let Some(fell) = fell {
-            at = broken_place(p, at, self.bounds[k], fell);
+        let Ok(set) = self.kinds.binary_search(&p.kind) else {
+            return;
+        };
+        let place = self.place_of(set, &p, fell);
+        if let Some(slot) = self
+            .tiles
+            .get_mut(&k)
+            .and_then(|t| t.places.get_mut(&set))
+            .and_then(|v| v.iter_mut().find(|(i, _)| *i == id))
+        {
+            slot.1 = place;
+            self.dirty.insert(set);
         }
-        self.places[k][j] = at;
-        self.dirty.insert(k);
     }
 
     /// Sends changed places to Engine.
     pub fn flush(&mut self, world: &mut World) -> EngineResult<()> {
         for k in std::mem::take(&mut self.dirty) {
-            world.set_lod_places(self.sets[k], &self.places[k])?;
+            let places: Vec<Place> = self
+                .tiles
+                .values()
+                .filter_map(|t| t.places.get(&k))
+                .flatten()
+                .map(|(_, p)| *p)
+                .collect();
+            world.set_lod_places(self.sets[k], &places)?;
         }
         Ok(())
     }

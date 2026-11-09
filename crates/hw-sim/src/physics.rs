@@ -38,7 +38,7 @@ pub struct Physics {
     world: PhysicsWorld,
     solids: Arc<Obstacles>,
     /// Building colliders present, with the version of their solids.
-    statics: BTreeMap<u32, (u64, Vec<BodyId>)>,
+    statics: BTreeMap<u64, (u64, Vec<BodyId>)>,
     heroes: BTreeMap<NetId, BodyId>,
     props: BTreeMap<NetId, BodyId>,
 }
@@ -176,7 +176,7 @@ impl Physics {
     }
 
     fn stream_statics(&mut self) {
-        let mut wanted: BTreeMap<u32, SolidSet<'_>> = BTreeMap::new();
+        let mut wanted: BTreeMap<u64, SolidSet<'_>> = BTreeMap::new();
         for b in self.props.values() {
             let Some(p) = self.world.pose(*b).map(|(p, _)| p) else {
                 continue;
@@ -189,7 +189,7 @@ impl Physics {
             }
         }
         // Gone out of range, or changed (a building took damage or was repaired).
-        let gone: Vec<u32> = self
+        let gone: Vec<u64> = self
             .statics
             .iter()
             .filter(|(i, (v, _))| !wanted.contains_key(i) || *v != self.solids.version(**i))

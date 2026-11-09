@@ -20,9 +20,9 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
+use hw_gen::urban::area::Area;
 use hw_gen::urban::lanes::{plan_lanes, street_lanes, LaneLoop};
 use hw_gen::urban::props::{CarModel, CAR_PAINTS};
-use hw_gen::urban::world::TownWorld;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -356,7 +356,7 @@ pub struct Traffic {
     sky: Vec<Lane>,
     /// Stretches of lane by grid cell: (sky, lane, from, to).
     grid: BTreeMap<(i64, i64), Vec<Span>>,
-    world: Arc<TownWorld>,
+    world: Arc<Area>,
     /// Where each street lane is crossed by others, by `from`.
     zones: Vec<Vec<Zone>>,
     /// The junctions and their lights.
@@ -375,7 +375,7 @@ pub struct Traffic {
 impl Traffic {
     /// Plans the lanes and how many vehicles each carries (a fraction of a
     /// second for a big town).
-    pub fn new(world: Arc<TownWorld>) -> Self {
+    pub fn new(world: Arc<Area>) -> Self {
         let seed = world.seed.child("traffic");
         let core = world.spawn_line().0;
         let reach = world.half().max(200.0) * 0.6;
@@ -386,11 +386,17 @@ impl Traffic {
         };
         // Cars keep to their lane on the right, clear of parked cars; the
         // narrowest streets have no traffic, and none passes a barricade.
-        let ground_loops = street_lanes(&world);
+        let ground_loops = street_lanes(&world, &world.roads);
         let mains: Vec<usize> = (0..world.roads.len())
             .filter(|&i| world.roads[i].main)
             .collect();
-        let sky_loops = plan_lanes(&world, &mains, |r| r.half * 0.4, &[], seed.child("sky"));
+        let sky_loops = plan_lanes(
+            &world.roads,
+            &mains,
+            |r| r.half * 0.4,
+            &[],
+            seed.child("sky"),
+        );
         let make = |path: LaneLoop, sky: bool, i: usize| -> Lane {
             let s = seed
                 .child(if sky { "sky lane" } else { "lane" })
@@ -1491,7 +1497,7 @@ mod tests {
 
     fn traffic() -> Traffic {
         let t = GeneratedTown::generate(Seed(1), 20_000.0);
-        Traffic::new(t.world)
+        Traffic::new(t.area)
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //! the same voids.
 
 use super::roadgrid::{key, keys_around, Key, RoadGrid};
-use super::world::{TownWorld, DECK, WATER_LEVEL};
+use super::world::{TownWorld, WorldBuilding, WorldRoad, DECK, WATER_LEVEL};
 use glam::{DVec2, DVec3};
 use std::collections::BTreeMap;
 
@@ -234,14 +234,23 @@ impl Underground {
 struct Ground<'a> {
     w: &'a TownWorld,
     roads: RoadGrid<'a>,
+    /// What stands round the centre, from its quarters.
+    sites: Vec<WorldBuilding>,
+    spots: Vec<DVec2>,
     buildings: BTreeMap<Key, Vec<usize>>,
     props: BTreeMap<Key, Vec<usize>>,
 }
 
 impl<'a> Ground<'a> {
-    fn new(w: &'a TownWorld) -> Self {
+    fn new(w: &'a TownWorld, all: &'a [WorldRoad], lo: DVec2, hi: DVec2) -> Self {
+        let mut sites = Vec::new();
+        let mut spots = Vec::new();
+        for q in w.quarters_in(lo, hi) {
+            sites.extend(q.buildings.iter().cloned());
+            spots.extend(q.props.iter().map(|p| p.pos));
+        }
         let mut buildings: BTreeMap<Key, Vec<usize>> = BTreeMap::new();
-        for (i, b) in w.buildings.iter().enumerate() {
+        for (i, b) in sites.iter().enumerate() {
             let c = b.site.corners();
             let lo = c.iter().fold(DVec2::splat(f64::MAX), |a, p| a.min(*p));
             let hi = c.iter().fold(DVec2::splat(f64::MIN), |a, p| a.max(*p));
@@ -253,12 +262,14 @@ impl<'a> Ground<'a> {
             }
         }
         let mut props: BTreeMap<Key, Vec<usize>> = BTreeMap::new();
-        for (i, p) in w.props.iter().enumerate() {
-            props.entry(key(p.pos)).or_default().push(i);
+        for (i, p) in spots.iter().enumerate() {
+            props.entry(key(*p)).or_default().push(i);
         }
         Self {
             w,
-            roads: RoadGrid::new(w, 2.0),
+            roads: RoadGrid::new(all, 2.0),
+            sites,
+            spots,
             buildings,
             props,
         }
@@ -276,7 +287,7 @@ impl<'a> Ground<'a> {
         for k in keys_around(p, r) {
             if let Some(list) = self.buildings.get(&k) {
                 for &i in list {
-                    let s = &self.w.buildings[i].site;
+                    let s = &self.sites[i].site;
                     let d = p - s.origin;
                     let (x, z) = (d.dot(s.along), d.dot(s.inward));
                     let q = DVec2::new(x.clamp(0.0, s.size.x), z.clamp(0.0, s.size.y));
@@ -286,10 +297,7 @@ impl<'a> Ground<'a> {
                 }
             }
             if let Some(list) = self.props.get(&k) {
-                if list
-                    .iter()
-                    .any(|&i| self.w.props[i].pos.distance(p) < r + 1.2)
-                {
+                if list.iter().any(|&i| self.spots[i].distance(p) < r + 1.2) {
                     return false;
                 }
             }
@@ -310,7 +318,7 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
     let wet = |p: DVec2| w.ground(p) < DECK + 1.5;
     // Tunnels under the main roads of the centre.
     let mut tunnel_roads = Vec::new();
-    for (ri, r) in w.roads.iter().enumerate().filter(|(_, r)| r.main) {
+    for (ri, r) in w.main_roads.iter().enumerate() {
         let mut any = false;
         for s in r.pts.windows(2) {
             let (a, b) = (s[0], s[1]);
@@ -360,7 +368,10 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
     }
     let tunnels = u.voids.len();
     u.index();
-    let ground = Ground::new(w);
+    // What stands round the centre: the quarters there, planned now.
+    let around = DVec2::splat(reach + 520.0);
+    let all = w.roads_in(core - around, core + around);
+    let ground = Ground::new(w, &all, core - around, core + around);
     // The tunnel point nearest `p`: (point, tunnel floor there).
     let nearest_tunnel = |u: &Underground, p: DVec2| -> Option<(DVec2, f64)> {
         let mut best: Option<(f64, DVec2, f64)> = None;
@@ -381,7 +392,7 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
     // hundred metres apart.
     let mut lifts: Vec<DVec2> = Vec::new();
     for &ri in &tunnel_roads {
-        let r = &w.roads[ri];
+        let r = &w.main_roads[ri];
         let mut since = 1e9;
         for s in r.pts.windows(2) {
             let (a, b) = (s[0], s[1]);
@@ -533,7 +544,7 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
         }
         if let Some(c) = lift {
             let top = w.ground(c);
-            let door = nearest_road_dir(w, c);
+            let door = nearest_road_dir(&all, c);
             u.voids.push(Void {
                 kind: VoidKind::Shaft,
                 origin: c - DVec2::splat(SHAFT_HALF),
@@ -614,9 +625,9 @@ fn add_lift(w: &TownWorld, u: &mut Underground, c: DVec2, q: DVec2, floor: f64) 
     true
 }
 
-fn nearest_road_dir(w: &TownWorld, p: DVec2) -> DVec2 {
+fn nearest_road_dir(roads: &[WorldRoad], p: DVec2) -> DVec2 {
     let mut best: Option<(f64, DVec2)> = None;
-    for r in &w.roads {
+    for r in roads {
         for s in r.pts.windows(2) {
             let ab = s[1] - s[0];
             let t = ((p - s[0]).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
@@ -685,7 +696,7 @@ mod tests {
     fn a_town_has_tunnels_lifts_and_molehaven() {
         for seed in [1u64, 3, 11] {
             let w = TownWorld::generate(Seed(seed), TownParams::sample(Seed(seed), 40_000.0));
-            let u = &w.underground;
+            let u = w.underground();
             let tunnels = u
                 .voids
                 .iter()

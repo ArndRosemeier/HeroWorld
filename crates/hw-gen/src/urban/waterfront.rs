@@ -5,7 +5,7 @@
 //! beyond it, unless another road paves that side or a bridge leaves there.
 
 use super::roadgrid::RoadGrid;
-use super::world::{TownWorld, WATER_LEVEL};
+use super::world::{Local, WATER_LEVEL};
 use crate::water::segment_distance;
 use glam::DVec2;
 
@@ -43,11 +43,14 @@ impl WaterSteps {
     }
 }
 
-pub fn plan_waterfront(w: &TownWorld) -> (Vec<QuayWall>, Vec<WaterSteps>) {
-    let roads = RoadGrid::new(w, 0.0);
+/// The quay walls and steps on one unit's ground: walls along every road
+/// near it, kept where the unit owns the wall's top edge.
+pub(super) fn plan_waterfront(l: &Local) -> (Vec<QuayWall>, Vec<WaterSteps>) {
+    let w = l.world;
+    let roads = RoadGrid::new(&l.roads, 0.0);
     let wet = |p: DVec2| w.ground(p) < WATER_LEVEL + 0.05;
     let mut walls = Vec::new();
-    for (ri, r) in w.roads.iter().enumerate() {
+    for (ri, r) in l.roads.iter().enumerate() {
         let total = r.half + r.pavement;
         let samples = resample(&r.pts, WALL_STEP);
         for side in [1.0, -1.0] {
@@ -79,11 +82,12 @@ pub fn plan_waterfront(w: &TownWorld) -> (Vec<QuayWall>, Vec<WaterSteps>) {
                 let n = d.perp() * side;
                 let e = c + n * total;
                 let beyond = e + n * 1.2;
-                let ok = wet(beyond)
+                let ok = l.owner.owns(e)
+                    && wet(beyond)
                     // On a bridge the street itself is over the water.
                     && !wet(c)
                     && !roads.touches(e + n * 0.6, 0.2, Some(ri))
-                    && !w.bridges.iter().any(|b| {
+                    && !l.bridges.iter().any(|b| {
                         segment_distance(e, b.a, b.b) < b.half + 1.5 && segment_distance(c, b.a, b.b) > 0.5
                     });
                 if !ok {
@@ -158,13 +162,17 @@ mod tests {
 
     #[test]
     fn river_towns_get_quay_walls_and_steps() {
-        let w = TownWorld::generate(Seed(3), TownParams::sample(Seed(3), 40_000.0));
+        let tw = crate::urban::world::TownWorld::generate(
+            Seed(3),
+            TownParams::sample(Seed(3), 40_000.0),
+        );
+        let w = tw.everything();
         assert!(!w.quays.is_empty(), "no quay walls");
         assert!(!w.water_steps.is_empty(), "no steps to the water");
         for q in &w.quays {
             for k in 0..q.pts.len() {
                 assert!(q.top[k] > q.bottom[k] + 1.0);
-                assert!(w.ground(q.pts[k] + q.out[k] * 1.2) < WATER_LEVEL + 0.05);
+                assert!(tw.ground(q.pts[k] + q.out[k] * 1.2) < WATER_LEVEL + 0.05);
             }
         }
         for s in &w.water_steps {

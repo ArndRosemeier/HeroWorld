@@ -8,13 +8,11 @@ use crate::collision::Obstacles;
 use crate::destruction::{REPAIR_DISTANCE, REPAIR_SECONDS};
 use glam::{DVec2, DVec3};
 use hw_gen::urban::props::{BarricadePiece, Prop, PropKind};
+use hw_gen::urban::quarter::DetailId;
 use hw_gen::urban::world::TownWorld;
 use hw_net::{PlayerId, ToClient};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-
-/// Grid cell for finding props near a point (m).
-const CELL: f64 = 16.0;
 
 /// How a prop breaks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,30 +105,24 @@ pub struct Broken {
     pub last_seen: u64,
 }
 
-/// The town's broken props.
+/// The town's broken props, by prop id ([`hw_gen::urban::quarter::DetailId`]).
+/// Only what changed is kept; the props themselves come from the town
+/// where they are needed.
 #[derive(Default)]
 pub struct PropDamage {
     town: Option<Arc<TownWorld>>,
-    grid: BTreeMap<(i64, i64), Vec<u32>>,
-    pub broken: BTreeMap<u32, Broken>,
+    pub broken: BTreeMap<u64, Broken>,
+    /// Where each broken prop stands.
+    at: BTreeMap<u64, DVec2>,
     news: Vec<ToClient>,
     /// The solids blocking props (barricades) stand in, kept in step.
     solids: Option<Arc<Obstacles>>,
 }
 
-fn key(p: DVec2) -> (i64, i64) {
-    ((p.x / CELL).floor() as i64, (p.y / CELL).floor() as i64)
-}
-
 impl PropDamage {
     pub fn new(town: Arc<TownWorld>) -> Self {
-        let mut grid: BTreeMap<(i64, i64), Vec<u32>> = BTreeMap::new();
-        for (i, p) in town.props.iter().enumerate() {
-            grid.entry(key(p.pos)).or_default().push(i as u32);
-        }
         Self {
             town: Some(town),
-            grid,
             ..Default::default()
         }
     }
@@ -142,27 +134,38 @@ impl PropDamage {
         self
     }
 
-    fn sync(&self, i: u32, broken: bool) {
+    fn sync(&self, i: u64, broken: bool) {
         if let Some(s) = &self.solids {
-            s.set_prop_broken(i, broken);
+            s.set_prop_broken(DetailId(i), broken);
         }
     }
 
-    pub fn prop(&self, i: u32) -> Option<&Prop> {
-        self.town.as_ref()?.props.get(i as usize)
+    pub fn prop(&self, i: u64) -> Option<Prop> {
+        self.town.as_ref()?.prop(DetailId(i))
     }
 
-    /// Props whose foot is within `r` of `p` (x, z), in order.
-    fn near(&self, p: DVec2, r: f64) -> Vec<u32> {
-        let (a, b) = (key(p - DVec2::splat(r)), key(p + DVec2::splat(r)));
+    /// Props whose foot is within the box `lo`..`hi` (x, z), by id.
+    fn within(&self, lo: DVec2, hi: DVec2) -> Vec<(u64, Prop)> {
+        let Some(town) = &self.town else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
-        for x in a.0..=b.0 {
-            for z in a.1..=b.1 {
-                out.extend(self.grid.get(&(x, z)).into_iter().flatten().copied());
-            }
+        for q in town.quarters_in(lo, hi) {
+            out.extend(
+                q.props_with_ids()
+                    .filter(|(_, p)| {
+                        p.pos.x >= lo.x && p.pos.y >= lo.y && p.pos.x <= hi.x && p.pos.y <= hi.y
+                    })
+                    .map(|(i, p)| (i.0, *p)),
+            );
         }
-        out.sort_unstable();
+        out.sort_unstable_by_key(|e| e.0);
         out
+    }
+
+    /// Props whose foot is within `r` of `p` (x, z), by id.
+    fn near(&self, p: DVec2, r: f64) -> Vec<(u64, Prop)> {
+        self.within(p - DVec2::splat(r), p + DVec2::splat(r))
     }
 
     /// A blow at `at` going along `dir`: props within `radius` that are
@@ -176,17 +179,13 @@ impl PropDamage {
         power: f32,
         tick: u64,
     ) -> (usize, f64) {
-        let Some(town) = self.town.clone() else {
-            return (0, 0.0);
-        };
         let r = radius as f64;
         let mut fresh = Vec::new();
         let mut spent = 0.0;
-        for i in self.near(DVec2::new(at.x, at.z), r + 4.0) {
+        for (i, p) in self.near(DVec2::new(at.x, at.z), r + 4.0) {
             if self.broken.contains_key(&i) {
                 continue;
             }
-            let p = &town.props[i as usize];
             let Some((strength, _)) = toughness(p.kind) else {
                 continue;
             };
@@ -211,6 +210,7 @@ impl PropDamage {
                 },
             );
             spent += cost(p.kind);
+            self.at.insert(i, p.pos);
             self.sync(i, true);
             fresh.push((i, fell));
         }
@@ -226,13 +226,16 @@ impl PropDamage {
     /// The first standing prop along a ray (from `from` along unit `dir`, at
     /// most `max` m): where the ray meets its trunk.
     pub fn raycast(&self, from: DVec3, dir: DVec3, max: f64) -> Option<DVec3> {
-        let town = self.town.as_ref()?;
+        self.town.as_ref()?;
+        let (a, b) = (from, from + dir * max);
+        let (a, b) = (DVec2::new(a.x, a.z), DVec2::new(b.x, b.z));
+        let props = self.within(a.min(b) - DVec2::splat(4.0), a.max(b) + DVec2::splat(4.0));
         let mut t = 0.0;
         while t < max {
             let at = from + dir * t;
-            for i in self.near(DVec2::new(at.x, at.z), 4.0) {
-                let p = &town.props[i as usize];
-                if self.broken.contains_key(&i) || toughness(p.kind).is_none() {
+            let flat_at = DVec2::new(at.x, at.z);
+            for (i, p) in props.iter().filter(|(_, p)| p.pos.distance(flat_at) < 4.0) {
+                if self.broken.contains_key(i) || toughness(p.kind).is_none() {
                     continue;
                 }
                 let (round, tall) = trunk(p.kind);
@@ -247,9 +250,10 @@ impl PropDamage {
     }
 
     /// Takes over broken props (from the server or a save).
-    pub fn apply(&mut self, props: &[(u32, u8)], tick: u64) {
+    pub fn apply(&mut self, props: &[(u64, u8)], tick: u64) {
         for &(i, fell) in props {
-            if self.prop(i).is_some() {
+            if let Some(p) = self.prop(i) {
+                self.at.insert(i, p.pos);
                 self.sync(i, true);
                 self.broken.insert(
                     i,
@@ -264,13 +268,10 @@ impl PropDamage {
 
     /// Puts back props nobody has been near for [`REPAIR_SECONDS`].
     pub fn repair_unseen(&mut self, watchers: &[DVec3], tick: u64, hz: u32) {
-        let Some(town) = self.town.clone() else {
-            return;
-        };
         let due = (REPAIR_SECONDS * hz as f64) as u64;
         let mut fixed = Vec::new();
         for (i, b) in self.broken.iter_mut() {
-            let p = town.props[*i as usize].pos;
+            let p = self.at.get(i).copied().unwrap_or_default();
             if watchers
                 .iter()
                 .any(|w| DVec2::new(w.x, w.z).distance(p) < REPAIR_DISTANCE)
@@ -282,6 +283,7 @@ impl PropDamage {
         }
         for i in &fixed {
             self.broken.remove(i);
+            self.at.remove(i);
             self.sync(*i, false);
         }
         for chunk in fixed.chunks(hw_net::protocol::MAX_DAMAGE_IDS) {
@@ -293,7 +295,7 @@ impl PropDamage {
 
     /// Every broken prop as messages, for a player who joins.
     pub fn snapshot(&self) -> Vec<ToClient> {
-        let all: Vec<(u32, u8)> = self.broken.iter().map(|(i, b)| (*i, b.fell)).collect();
+        let all: Vec<(u64, u8)> = self.broken.iter().map(|(i, b)| (*i, b.fell)).collect();
         all.chunks(hw_net::protocol::MAX_DAMAGE_IDS)
             .map(|c| ToClient::PropsBroken {
                 props: c.to_vec(),
@@ -311,6 +313,7 @@ impl PropDamage {
             self.sync(i, false);
         }
         self.broken.clear();
+        self.at.clear();
         self.news.clear();
     }
 }

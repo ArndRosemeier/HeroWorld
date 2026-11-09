@@ -165,11 +165,21 @@ fn barricades_block_the_way_until_knocked_down() {
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let mut sim = Sim::for_town(Seed(3), &town);
     let (i, p) = town
-        .world
+        .area
         .props
         .iter()
         .enumerate()
-        .find(|(_, p)| p.kind == PropKind::Barricade(BarricadePiece::Jersey))
+        .filter(|(_, p)| p.kind == PropKind::Barricade(BarricadePiece::Jersey))
+        // One with nothing else breakable in the blow's reach (a lamp or a
+        // traffic light by it would cost karma).
+        .find(|(_, p)| {
+            !town.area.props.iter().any(|q| {
+                !matches!(q.kind, PropKind::Barricade(_))
+                    && q.pos.distance(p.pos) < 6.5
+                    && hw_sim::props::toughness(q.kind).is_some()
+            })
+        })
+        .map(|(k, p)| (town.area.prop_ids[k].0, p))
         .expect("a barricade");
     let solids = sim.solids();
     let top = |s: &hw_sim::collision::Obstacles| s.floor_under(p.pos, p.y + 5.0);
@@ -179,7 +189,7 @@ fn barricades_block_the_way_until_knocked_down() {
     let (n, cost) = sim.street.hit(at, DVec3::X, 2.0, 2000.0, 1);
     assert!(n >= 1);
     assert_eq!(cost, 0.0, "the villains' barricades cost nothing");
-    assert!(sim.street.broken.contains_key(&(i as u32)));
+    assert!(sim.street.broken.contains_key(&i));
     assert!(top(&solids) < p.y + 0.3, "still blocks the way when broken");
     // Put back unseen, it blocks again.
     sim.street.repair_unseen(&[], u64::MAX, TICK_HZ);

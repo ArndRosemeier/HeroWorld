@@ -37,6 +37,7 @@ use glam::{DVec2, DVec3};
 use hw_core::{NetId, NetIdAllocator, Seed};
 use hw_gen::building::BuildingPlan;
 use hw_gen::city::{CityParams, CityPlan};
+use hw_gen::urban::area::{Area, AREA_HALF};
 use hw_gen::urban::world::TownWorld;
 use hw_gen::urban::TownParams;
 use hw_net::{
@@ -210,10 +211,17 @@ impl GeneratedCity {
     }
 }
 
+/// The server has the town plan the ground this far round each hero ahead
+/// of time (m).
+pub const PREFETCH_REACH: f64 = 600.0;
+
 /// The town every machine generates from the seed and its size, with its
 /// collision.
 pub struct GeneratedTown {
     pub world: Arc<TownWorld>,
+    /// The square round the heroes' start with people, traffic, incidents
+    /// and taxis (see [`hw_gen::urban::area`]).
+    pub area: Arc<Area>,
     pub obstacles: Arc<Obstacles>,
 }
 
@@ -226,8 +234,14 @@ impl GeneratedTown {
         ));
         let w = world.clone();
         let terrain = collision::Terrain(Arc::new(move |p| w.ground(p)));
+        let (start, _) = world.spawn_line();
+        let area = Arc::new(Area::around(world.clone(), start, AREA_HALF));
         let obstacles = Arc::new(Obstacles::from_town(&world, terrain));
-        Self { world, obstacles }
+        Self {
+            world,
+            area,
+            obstacles,
+        }
     }
 
     pub fn population(&self) -> f64 {
@@ -420,15 +434,15 @@ impl Sim {
         sim.set_spawn(town.world.spawn_line());
         sim.town_population = town.population();
         sim.street = props::PropDamage::new(town.world.clone()).with_solids(town.obstacles.clone());
-        sim.taxis = taxi::Taxis::new(town.world.clone());
-        sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.world.clone()));
-        sim.incidents = incidents::Incidents::new(town.world.clone());
+        sim.taxis = taxi::Taxis::new(town.area.clone());
+        sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.area.clone()));
+        sim.incidents = incidents::Incidents::new(town.area.clone());
         sim.world.resource_mut::<Fights>().streets = Some(Arc::new(streets::Streets::new(
             &town.world,
             streets::TANK_STREET,
         )));
         let solids = sim.solids();
-        let corners = quarter::corners(&town.world);
+        let corners = quarter::corners(&town.area);
         for (k, c) in corners.iter().enumerate() {
             let y = solids.ground_at(c.at).max(GROUND_Y);
             let i = sim.add_villain_corner(
@@ -446,14 +460,14 @@ impl Sim {
             };
             sim.world.resource_mut::<Fights>().spots[i].lead = lead;
         }
-        for l in quarter::lookouts(&town.world, &corners) {
+        for l in quarter::lookouts(&town.area, &corners) {
             if let Some(p) = quarter::perch(&solids, &l) {
                 sim.add_lookout(p, l.facing);
             }
         }
         // The Chrome Jackets' corners in the band round the quarter, never
         // where heroes appear.
-        for c in quarter::hangouts(&town.world, sim.spawn.0, HANGOUT_CLEAR) {
+        for c in quarter::hangouts(&town.area, sim.spawn.0, HANGOUT_CLEAR) {
             let y = solids.ground_at(c.at).max(GROUND_Y);
             sim.add_hangout(DVec3::new(c.at.x, y, c.at.y), c.facing);
         }
@@ -694,6 +708,9 @@ impl Sim {
             self.damage.repair_unseen(&solids, &at, self.tick, TICK_HZ);
             self.street.repair_unseen(&at, self.tick, TICK_HZ);
             self.wrecks.repair_unseen(&at, self.tick, TICK_HZ);
+            // The town plans the ground ahead of the heroes in the
+            // background, so walking or flying on finds it ready.
+            solids.prefetch(&at, PREFETCH_REACH);
         }
         self.step_physics(&heroes);
         self.tick += 1;

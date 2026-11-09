@@ -11,22 +11,30 @@ use hw_sim::destruction::{self, REPAIR_SECONDS};
 use hw_sim::props::{byte_to_yaw, toughness, PropDamage};
 use hw_sim::{GeneratedTown, Sim, TICK_HZ};
 
-fn nearest(t: &GeneratedTown, want: impl Fn(PropKind) -> bool) -> u32 {
+fn nearest(t: &GeneratedTown, want: impl Fn(PropKind) -> bool) -> u64 {
     let (spawn, _) = t.world.spawn_line();
-    (0..t.world.props.len())
-        .filter(|&i| want(t.world.props[i].kind))
-        .min_by(|&a, &b| {
-            let d = |i: usize| t.world.props[i].pos.distance(spawn);
-            d(a).total_cmp(&d(b))
+    let a = &t.area;
+    let k = (0..a.props.len())
+        .filter(|&i| want(a.props[i].kind))
+        .min_by(|&x, &y| {
+            let d = |i: usize| a.props[i].pos.distance(spawn);
+            d(x).total_cmp(&d(y))
         })
-        .expect("a prop") as u32
+        .expect("a prop");
+    a.prop_ids[k].0
+}
+
+fn prop(t: &GeneratedTown, i: u64) -> hw_gen::urban::props::Prop {
+    t.world
+        .prop(hw_gen::urban::quarter::DetailId(i))
+        .expect("a prop")
 }
 
 #[test]
 fn a_punch_fells_a_lamp_away_from_the_hero_and_everyone_sees_it() {
     let t = GeneratedTown::generate(Seed(1), 6000.0);
     let i = nearest(&t, |k| matches!(k, PropKind::Lamp(_)));
-    let lamp = t.world.props[i as usize];
+    let lamp = prop(&t, i);
     let mut sim = Sim::for_town(Seed(1), &t);
     let me = PlayerId(1);
     let hero = sim.spawn_hero(me, DVec3::ZERO);
@@ -94,7 +102,7 @@ fn cars_flip_and_statues_need_a_stronger_hero() {
     let weak = destruction::hero_power(1);
     let strong = destruction::hero_power(20);
     let car = nearest(&t, |k| matches!(k, PropKind::Car(..)));
-    let c = t.world.props[car as usize];
+    let c = prop(&t, car);
     let side = DVec2::new(c.dir.y, -c.dir.x);
     let fist = DVec3::new(c.pos.x, c.y + 0.9, c.pos.y) + DVec3::new(side.x, 0.0, side.y) * 1.8;
     let (n, cost) = street.hit(
@@ -107,12 +115,13 @@ fn cars_flip_and_statues_need_a_stronger_hero() {
     assert!(n >= 1 && cost > 0.0, "a level 1 punch left the car whole");
     assert!(street.broken.contains_key(&car));
 
-    let Some(statue) = (0..t.world.props.len() as u32)
-        .find(|&i| matches!(t.world.props[i as usize].kind, PropKind::Statue(_)))
+    let Some(statue) = (0..t.area.props.len())
+        .find(|&i| matches!(t.area.props[i].kind, PropKind::Statue(_)))
+        .map(|i| t.area.prop_ids[i].0)
     else {
         return; // a town without a statue: nothing to check
     };
-    let s = t.world.props[statue as usize];
+    let s = prop(&t, statue);
     let at = DVec3::new(s.pos.x, s.y + 1.5, s.pos.y);
     assert!(toughness(s.kind).unwrap().0 > weak.punch);
     street.hit(at, DVec3::X, weak.punch_radius, weak.punch, 0);
@@ -131,7 +140,7 @@ fn cars_flip_and_statues_need_a_stronger_hero() {
 fn a_blast_down_the_street_hits_the_first_lamp_in_the_way() {
     let t = GeneratedTown::generate(Seed(1), 6000.0);
     let i = nearest(&t, |k| matches!(k, PropKind::Lamp(_)));
-    let lamp = t.world.props[i as usize];
+    let lamp = prop(&t, i);
     let street = PropDamage::new(t.world.clone());
     let from = DVec3::new(lamp.pos.x - 20.0, lamp.y + 1.5, lamp.pos.y);
     let hit = street

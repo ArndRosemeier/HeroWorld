@@ -25,8 +25,8 @@ use bevy_ecs::prelude::*;
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
 use hw_gen::building::BuildingUse;
+use hw_gen::urban::area::Area;
 use hw_gen::urban::landmarks::LandmarkKind;
-use hw_gen::urban::world::TownWorld;
 use hw_net::ToClient;
 use std::sync::Arc;
 
@@ -405,7 +405,7 @@ fn walk_bystanders(world: &mut World, tick: u64) {
 /// The town's incidents.
 #[derive(Default)]
 pub struct Incidents {
-    town: Option<Arc<TownWorld>>,
+    town: Option<Arc<Area>>,
     /// Open ones.
     pub open: Vec<Incident>,
     /// How many have started (seeds the next).
@@ -423,7 +423,7 @@ pub struct Incidents {
     /// When the colossus last came out.
     last_colossus: Option<u64>,
     /// Buildings that came down since the last second (people trapped).
-    collapses: Vec<usize>,
+    collapses: Vec<u64>,
     news: Vec<ToClient>,
 }
 
@@ -437,7 +437,7 @@ fn ticks(seconds: f64) -> u64 {
 }
 
 impl Incidents {
-    pub fn new(town: Arc<TownWorld>) -> Self {
+    pub fn new(town: Arc<Area>) -> Self {
         Self {
             town: Some(town),
             first_after: FIRST_SECONDS,
@@ -480,14 +480,14 @@ impl Incidents {
 
     /// Building `b` (a collider of the city's solids) started to come
     /// down: people are trapped in it.
-    pub fn collapsed(&mut self, b: usize) {
+    pub fn collapsed(&mut self, b: u64) {
         if self.town.is_some() && !self.collapses.contains(&b) {
             self.collapses.push(b);
         }
     }
 
     /// A rescue in the rubble of building `b`, at its front.
-    fn start_collapse(&mut self, world: &mut World, tick: u64, b: usize) {
+    fn start_collapse(&mut self, world: &mut World, tick: u64, b: u64) {
         let solids = world.resource::<Solids>().0.clone();
         let Some((plan, _)) = solids.building(b) else {
             return;
@@ -974,7 +974,7 @@ impl Incidents {
 /// Where an ambulance waits for a rescue at `p`: parked at the kerb of a
 /// street about [`MEDIC_AWAY`] off, along it. Only straight stretches, clear
 /// of junctions, so it stands square with the kerb and not on a corner.
-fn medic_spot(town: &TownWorld, solids: &crate::collision::Obstacles, p: DVec2) -> (DVec3, DVec2) {
+fn medic_spot(town: &Area, solids: &crate::collision::Obstacles, p: DVec2) -> (DVec3, DVec2) {
     use hw_gen::water::segment_distance;
     let quarter = town.town.dystopia.as_ref();
     // Every 4 m along every road: where, which way, how far off we'd like.

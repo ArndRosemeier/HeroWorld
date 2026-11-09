@@ -82,7 +82,7 @@ pub struct UndergroundView {
 
 impl UndergroundView {
     pub fn spawn(world: &mut World, town: &TownWorld) -> EngineResult<Self> {
-        let u = &town.underground;
+        let u = town.underground();
         let chunk = |p: DVec2| ((p.x / CHUNK).floor() as i64, (p.y / CHUNK).floor() as i64);
         let mut builders: BTreeMap<(i64, i64), MeshBuilder> = BTreeMap::new();
         let mut glows = Vec::new();
@@ -153,7 +153,7 @@ impl UndergroundView {
         let q = DVec2::new(eye.x as f64, eye.z as f64);
         let below = (eye.y as f64) < town.ground(q) - 1.0;
         let by_lift = town
-            .underground
+            .underground()
             .entrances
             .iter()
             .any(|e| e.pos.distance(q) < 30.0);

@@ -13,7 +13,7 @@ fn main() {
         .unwrap_or(40_000.0);
     let town = GeneratedTown::generate(Seed(1), pop);
     let t = Instant::now();
-    let mut traffic = Traffic::new(town.world.clone());
+    let mut traffic = Traffic::new(town.area.clone());
     let (cars, fliers) = traffic.count();
     println!(
         "{cars} cars, {fliers} fliers, planned in {:.2} s",

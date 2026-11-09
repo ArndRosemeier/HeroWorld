@@ -96,7 +96,7 @@ fn walk_in_ride_the_lift_and_step_out_upstairs() {
     assert_eq!(
         city.obstacles.inside(w.body.pos),
         Some(Inside {
-            building: index,
+            building: hw_sim::collision::FIXED | index as u64,
             level: 0
         })
     );
@@ -146,7 +146,7 @@ fn walk_in_ride_the_lift_and_step_out_upstairs() {
     assert_eq!(
         city.obstacles.inside(w.body.pos),
         Some(Inside {
-            building: index,
+            building: hw_sim::collision::FIXED | index as u64,
             level: 2
         })
     );

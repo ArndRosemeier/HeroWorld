@@ -17,8 +17,13 @@ fn town() -> GeneratedTown {
     GeneratedTown::generate(Seed(1), 6000.0)
 }
 
+/// Every building near the start, by id.
+fn ids(t: &GeneratedTown) -> Vec<u64> {
+    t.area.building_ids.iter().map(|d| d.0).collect()
+}
+
 /// Building `i`'s centre at its base (world).
-fn centre(t: &GeneratedTown, i: usize) -> (DVec3, Arc<hw_gen::building::BuildingPlan>, Frame) {
+fn centre(t: &GeneratedTown, i: u64) -> (DVec3, Arc<hw_gen::building::BuildingPlan>, Frame) {
     let (plan, base) = t.obstacles.building(i).expect("a building");
     let s = &plan.site;
     let c = s.origin + s.along * s.size.x * 0.5 + s.inward * s.size.y * 0.5;
@@ -29,11 +34,12 @@ fn centre(t: &GeneratedTown, i: usize) -> (DVec3, Arc<hw_gen::building::Building
 #[test]
 fn every_building_stands_whole_and_engine_places_it_where_the_town_does() {
     let t = town();
-    let n = t.world.buildings.len();
+    let all = ids(&t);
+    let n = all.len();
     let mut kinds = std::collections::BTreeSet::new();
     let mut most = 0;
     let start = std::time::Instant::now();
-    for i in 0..n {
+    for &i in &all {
         let (_, plan, frame) = centre(&t, i);
         let pieces = destruction::pieces(&plan);
         most = most.max(pieces.len());
@@ -82,13 +88,17 @@ fn every_building_stands_whole_and_engine_places_it_where_the_town_does() {
 }
 
 /// A small brick-or-weaker building near the town's start.
-fn small_building(t: &GeneratedTown) -> usize {
+fn small_building(t: &GeneratedTown) -> u64 {
     let (spawn, _) = t.world.spawn_line();
-    (0..t.world.buildings.len())
+    ids(t)
+        .into_iter()
         .filter(|&i| {
             let (_, plan, _) = centre(t, i);
             // On level ground, so a hero in front stands at its floor.
-            let b = &t.world.buildings[i];
+            let b = t
+                .world
+                .building(hw_gen::urban::quarter::DetailId(i))
+                .expect("a building");
             plan.floors.len() <= 3
                 && destruction::material_factor(&plan) <= 1.1
                 && b.base - b.low < 0.3
@@ -142,7 +152,7 @@ fn a_level_one_hero_brings_down_a_small_building_and_a_late_joiner_sees_the_same
             building, broken, ..
         } = m
         {
-            late.apply(&other.obstacles, building as usize, &broken, 0);
+            late.apply(&other.obstacles, building, &broken, 0);
         }
     }
     let a = &sim.damage.buildings[&i].state;
@@ -168,7 +178,8 @@ fn a_level_one_hero_brings_down_a_small_building_and_a_late_joiner_sees_the_same
 fn strong_buildings_need_a_stronger_hero() {
     let t = town();
     // The building with the strongest material.
-    let i = (0..t.world.buildings.len())
+    let i = ids(&t)
+        .into_iter()
         .max_by(|&a, &b| {
             let m = |i| destruction::material_factor(&centre(&t, i).1);
             m(a).total_cmp(&m(b)).then(b.cmp(&a))
@@ -272,7 +283,7 @@ fn heroes_punch_through_walls_and_unseen_buildings_repair_themselves() {
     assert!(sim
         .take_news()
         .iter()
-        .any(|m| matches!(m, ToClient::Repaired { building } if *building as usize == i)));
+        .any(|m| matches!(m, ToClient::Repaired { building } if *building == i)));
     // Restoring the save brings the damage back.
     sim.restore(&save).unwrap();
     assert!(sim.solids().is_damaged(i));
