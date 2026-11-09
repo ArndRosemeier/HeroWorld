@@ -1455,6 +1455,10 @@ fn main() -> EngineResult<()> {
                             town.rebuild(world, changed);
                         }
                         A::Map => town_map = !town_map,
+                        A::GpuCheck => {
+                            quality_log.mark("GPU mesh check");
+                            world.request_gpu_check();
+                        }
                         A::Reupload(meshes) => {
                             quality_log.mark(if meshes {
                                 "re-upload meshes"

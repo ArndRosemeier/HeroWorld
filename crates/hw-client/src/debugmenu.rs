@@ -81,6 +81,8 @@ pub enum DebugAction {
     Map,
     /// Upload every mesh (true) or every texture (false) to the GPU again.
     Reupload(bool),
+    /// Compare every mesh on the GPU with the game's copy (Engine's audit log).
+    GpuCheck,
     /// Engine's drawing-check flags (`World::set_debug_shading`).
     Shading(u32),
 }
@@ -411,6 +413,9 @@ fn world_tab(ui: &mut egui::Ui, info: &DebugInfo, out: &mut Vec<DebugAction>) {
         }
         if ui.button("Re-upload textures").clicked() {
             out.push(DebugAction::Reupload(false));
+        }
+        if ui.button("Check meshes on the GPU").clicked() {
+            out.push(DebugAction::GpuCheck);
         }
     });
     ui.add_space(4.0);
