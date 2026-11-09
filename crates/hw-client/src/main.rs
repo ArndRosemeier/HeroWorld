@@ -1447,6 +1447,14 @@ fn main() -> EngineResult<()> {
                             town.rebuild(world, changed);
                         }
                         A::Map => town_map = !town_map,
+                        A::Reupload(meshes) => {
+                            quality_log.mark(if meshes {
+                                "re-upload meshes"
+                            } else {
+                                "re-upload textures"
+                            });
+                            world.request_gpu_reupload(meshes, !meshes);
+                        }
                     }
                 }
             }

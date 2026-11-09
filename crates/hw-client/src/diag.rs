@@ -60,6 +60,11 @@ impl QualityLog {
         log
     }
 
+    /// Frames seen so far.
+    pub fn frame(&self) -> u64 {
+        self.frame
+    }
+
     pub fn mark(&mut self, what: &str) {
         let line = format!("frame {:6}: {what}", self.frame);
         self.line(&line);
@@ -81,7 +86,9 @@ impl QualityLog {
         );
         if self.last != Some(now) {
             self.last = Some(now);
-            let fps = world.target_fps().map_or("off".to_string(), |f| format!("{f}"));
+            let fps = world
+                .target_fps()
+                .map_or("off".to_string(), |f| format!("{f}"));
             let line = format!(
                 "{seconds:7.2} s frame {:6}: lod bias {:.3}, ao {}, gi {}, quality {}, smooth target {fps}",
                 self.frame,

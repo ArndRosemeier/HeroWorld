@@ -79,6 +79,8 @@ pub enum DebugAction {
     CutLevel(i32),
     /// The town map on or off (M).
     Map,
+    /// Upload every mesh (true) or every texture (false) to the GPU again.
+    Reupload(bool),
 }
 
 /// The tab showing.
@@ -399,6 +401,12 @@ fn world_tab(ui: &mut egui::Ui, info: &DebugInfo, out: &mut Vec<DebugAction>) {
         }
         if ui.button("Town map (M)").clicked() {
             out.push(DebugAction::Map);
+        }
+        if ui.button("Re-upload meshes").clicked() {
+            out.push(DebugAction::Reupload(true));
+        }
+        if ui.button("Re-upload textures").clicked() {
+            out.push(DebugAction::Reupload(false));
         }
     });
 }
