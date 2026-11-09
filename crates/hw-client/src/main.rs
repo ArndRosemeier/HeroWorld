@@ -487,6 +487,8 @@ fn main() -> EngineResult<()> {
     let (spawn, spawn_dir) = generated.world.spawn_line();
     // `HW_BENCH=street|flight`: a measured run along the main roads (see `bench.rs`).
     let mut bench = hw_client::bench::Bench::from_env(&generated.world, spawn);
+    // Occlusion culling over the measured part: frames, meshes tested, hidden.
+    let mut bench_occlusion = (0u64, 0u64, 0u64);
     let mut hero_cam_yaw = 30.0f32;
     let mut fly = match view.as_str() {
         "street" | "citizen" | "alpha" => {
@@ -2245,6 +2247,10 @@ fn main() -> EngineResult<()> {
                 match b.step(frame.time) {
                     Step::Wait => {}
                     Step::Go { at, dir, height } => {
+                        let o = world.occlusion_stats();
+                        bench_occlusion.0 += 1;
+                        bench_occlusion.1 += u64::from(o.tested);
+                        bench_occlusion.2 += u64::from(o.hidden);
                         let floor = generated
                             .world
                             .ground(at)
@@ -2287,6 +2293,21 @@ fn main() -> EngineResult<()> {
                                     world.cpu_mesh_counts().0,
                                     world.cpu_meshes()
                                 ),
+                            ),
+                            (
+                                "occlusion",
+                                if world.occlusion_culling() {
+                                    let (n, tested, hidden) = bench_occlusion;
+                                    let n = n.max(1);
+                                    format!(
+                                        "on: {} meshes tested a frame, {} hidden ({:.0}%)",
+                                        tested / n,
+                                        hidden / n,
+                                        100.0 * hidden as f64 / tested.max(1) as f64
+                                    )
+                                } else {
+                                    "off".into()
+                                },
                             ),
                             (
                                 "timings",

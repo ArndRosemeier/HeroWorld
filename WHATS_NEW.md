@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.115 (2026-11-09)
+
+- The game no longer draws buildings you cannot see. Your graphics card checks what hides behind the houses in front of you and skips it. From the street that is about three in four buildings, and in a test the picture took about a third less work. Nothing pops in or out: the picture is exactly the same.
+
 ## 0.114 (2026-11-09)
 
 - The townsfolk need far less memory: people who wear the same clothes now share one copy of the cloth's picture instead of each carrying their own, the crowds in the distance borrow the pictures of the people up close, and the character workshop tidies away its leftovers once everyone is built. People went from about 1.6 GB to about 0.55 GB in a test, and the whole game peaked about 1.4 GB lower. They look exactly the same.

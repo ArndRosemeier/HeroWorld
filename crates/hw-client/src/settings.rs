@@ -46,6 +46,9 @@ pub fn apply_volumes(world: &mut World, p: &Profile) {
 pub fn apply(world: &mut World, p: &Profile) {
     world.set_quality(quality(p));
     crate::lighting::apply_quality(world, quality(p));
+    // Skip what hides behind buildings: from the street most of the town
+    // does (`ENGINE_OCCLUSION=0` compares without).
+    world.set_occlusion_culling(true);
     let _ = world.set_target_fps(p.smooth.then_some(SMOOTH_FPS));
     world.set_vsync(p.vsync);
     let near = world.camera().near();
