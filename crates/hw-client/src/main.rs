@@ -7,7 +7,9 @@
 //!
 //! Controls: you play your hero in third person. Hold the right mouse button
 //! (or press P to lock the pointer) and move the mouse to look, WASD to run,
-//! Space to jump, R/T to zoom in and out (all the way in is first person).
+//! Space to jump, R to run on by itself (autorun: the mouse steers, A/D
+//! step aside, S or R stops), the mouse wheel zooms in and out (all the way
+//! in is first person).
 //! V to fly once you have Flight: steer with WASD and the camera, Space
 //! climbs, Ctrl sinks, Shift goes faster; V again drops you. K knocks the people around you
 //! over (a test of ragdolls; they get up again).
@@ -20,6 +22,8 @@
 //! taxi when it lands beside you, and it flies you there above the roofs
 //! (G again hops out). Cars drive the streets; hover cars and taxis fly
 //! lanes over the main roads.
+//! N hides or shows the minimap (bottom right; it turns with the camera),
+//! M opens the whole town map.
 //! Escape opens the menu (settings, controls, quit; see `settings.rs`).
 //! O switches to a free-flying camera and back. C cuts buildings open
 //! around where you look (F moves the cut there), Z/X pick the floor.
@@ -127,6 +131,8 @@ struct HeroCamera {
 
 impl HeroCamera {
     const MAX_DISTANCE: f32 = 14.0;
+    /// Metres of zoom per point the wheel scrolls (a notch is about 50).
+    const ZOOM_PER_POINT: f32 = 0.02;
 
     /// `open_above`: height above which nothing is drawn (the hero's floor
     /// ceiling when inside a building), so the camera may go there.
@@ -144,8 +150,13 @@ impl HeroCamera {
             self.yaw = (self.yaw + yaw).rem_euclid(360.0);
             self.pitch = (self.pitch + pitch * self.look.1).clamp(-80.0, 80.0);
         }
-        let zoom = input.axis(Key::R, Key::T) * frame.dt.min(0.1) * 12.0;
-        self.distance = (self.distance + zoom).clamp(0.0, Self::MAX_DISTANCE);
+        // The mouse wheel zooms (not while it scrolls a window).
+        let ctx = frame.ui.ctx();
+        if !ctx.is_pointer_over_area() {
+            let wheel = ctx.input(|i| i.smooth_scroll_delta.y);
+            self.distance =
+                (self.distance - wheel * Self::ZOOM_PER_POINT).clamp(0.0, Self::MAX_DISTANCE);
+        }
         let head = target + Vec3::Y * (BODY_HEIGHT as f32 - 0.15);
         let dir = Camera::direction(self.yaw, self.pitch);
         // Pull the camera in front of walls between it and the hero.
@@ -169,6 +180,18 @@ impl HeroCamera {
         let eye = if d < 0.4 { head } else { head - dir * d };
         world.look_first_person(eye, self.yaw, self.pitch);
     }
+}
+
+/// Is a text field taking the keys (so letters are not game keys)?
+fn on_ui_keys(frame: &Frame) -> bool {
+    frame.ui.ctx().wants_keyboard_input()
+}
+
+/// Where an autorunning hero goes: ahead, plus any step aside (A/D) from
+/// the keys, `keys` being the keys' direction on the ground.
+fn autorun_dir(keys: Vec3, ahead: Vec3) -> Vec3 {
+    let aside = keys - ahead * keys.dot(ahead);
+    (ahead + aside).normalize_or_zero()
 }
 
 /// Keeps the hero's looks in the profile on this PC.
@@ -203,6 +226,8 @@ fn main() -> EngineResult<()> {
                 && std::env::var_os("HW_HOST").is_none()));
     let mut name = std::env::var("HW_NAME").unwrap_or_else(|_| profile.name.clone());
     let auto_walk = std::env::var_os("HW_WALK").is_some();
+    // R: the hero runs on by itself until S or R.
+    let mut autorun = false;
     let auto_fight = std::env::var_os("HW_AUTOFIGHT").is_some();
     let io = |e: std::io::Error| EngineError::InvalidValue(e.to_string());
 
@@ -354,6 +379,11 @@ fn main() -> EngineResult<()> {
     let mut crowd = CrowdView::new();
     let mut anims: BTreeMap<hw_core::NetId, HeroAnim> = BTreeMap::new();
     let mut town = TownView::new(generated.world.clone());
+    // The minimap (N) and the town's sounds and music.
+    let mut minimap = hw_client::minimap::Minimap::new(generated.world.clone());
+    let mut sounds = hw_client::soundscape::Soundscape::new();
+    let mut hero_was: Option<(Vec3, f32)> = None;
+    let mut hero_speed = 0.0f32;
     let ground = {
         let w = generated.world.clone();
         move |p: DVec2| w.ground(p).max(hw_gen::urban::world::WATER_LEVEL)
@@ -965,6 +995,8 @@ fn main() -> EngineResult<()> {
                     generated = g;
                     solids = generated.obstacles.clone();
                     town = TownView::new(generated.world.clone());
+                    minimap = hw_client::minimap::Minimap::new(generated.world.clone());
+                    sounds.stop(world);
                     traffic = hw_sim::traffic::Traffic::new(generated.area.clone());
                     citizens =
                         hw_sim::citizens::Citizens::new(generated.area.clone(), traffic.signals());
@@ -1303,9 +1335,14 @@ fn main() -> EngineResult<()> {
                         ));
                     }
                 }
+                if input.pressed(Key::R) && !creating && !on_ui_keys(frame) {
+                    autorun = !autorun;
+                } else if input.pressed(Key::S) {
+                    autorun = false;
+                }
                 let mut dir = input.move_dir_xz(hero_cam.yaw);
-                if auto_walk {
-                    dir = Camera::facing_xz(hero_cam.yaw);
+                if auto_walk || autorun {
+                    dir = autorun_dir(dir, Camera::facing_xz(hero_cam.yaw));
                 }
                 if hero_flies {
                     // Forward follows the camera up and down, so you fly where you look.
@@ -2185,6 +2222,79 @@ fn main() -> EngineResult<()> {
                     &radio,
                     fighting,
                 );
+                // The minimap (N hides it) and the town's sounds.
+                let eye = cam.eye();
+                let centre = hero_at.unwrap_or(eye);
+                let at2 = DVec2::new(centre.x as f64, centre.z as f64);
+                let eye2 = DVec2::new(eye.x as f64, eye.z as f64);
+                let height = (eye.y as f64 - generated.world.ground(eye2)).max(0.0) as f32;
+                let mates: Vec<DVec2> = heroes
+                    .iter()
+                    .filter(|e| e.kind == hw_net::EntityKind::Hero && Some(e.id) != mine)
+                    .map(|e| DVec2::new(e.pos[0], e.pos[2]))
+                    .collect();
+                minimap.update(
+                    frame.ui.ctx(),
+                    &generated.world,
+                    at2,
+                    look,
+                    height as f64,
+                    &mates,
+                    &radio,
+                    fighting,
+                    frame.input.pressed(Key::N) && !on_ui_keys(frame),
+                );
+                if let Some(h) = hero_at {
+                    if let Some((was, _)) = hero_was {
+                        let moved = glam::Vec2::new(h.x - was.x, h.z - was.z).length();
+                        let now = moved / frame.dt.max(1e-3);
+                        hero_speed += (now.min(80.0) - hero_speed) * (frame.dt * 8.0).min(1.0);
+                    }
+                    hero_was = Some((h, frame.time));
+                }
+                let game_time = session.time(tick_clock / hw_sim::DT);
+                let cars = traffic.near(eye2, 90.0, game_time, 40);
+                let scene = hw_client::soundscape::Scene {
+                    now: frame.time as f64,
+                    dt: frame.dt,
+                    eye,
+                    hero: hero_at,
+                    flying: hero_flies,
+                    speed: hero_speed,
+                    height,
+                    indoors: town.inside.is_some(),
+                    under: hw_client::soundscape::under(&generated.world, eye),
+                    hour: game_hour(),
+                    district: hw_client::soundscape::district(&generated.world, eye2),
+                    around: minimap.surroundings(eye2, 45.0),
+                    people: citizens.near(eye2, 35.0, game_time, 64).len(),
+                    cars: &cars,
+                    alarms: alarms
+                        .active()
+                        .map(|a| (a.id, a.kind, a.at.as_vec3()))
+                        .collect(),
+                    medics: radio
+                        .calls
+                        .values()
+                        .filter_map(|c| c.casualty.map(|k| k.medic))
+                        .collect(),
+                    clock: generated
+                        .world
+                        .town
+                        .growth
+                        .centres
+                        .iter()
+                        .find(|c| c.kind == hw_gen::urban::growth::CentreKind::Core)
+                        .map(|c| {
+                            Vec3::new(
+                                c.pos.x as f32,
+                                generated.world.ground(c.pos) as f32,
+                                c.pos.y as f32,
+                            )
+                        }),
+                    boss_music: robots.music_on() || music_fade_at.is_some(),
+                };
+                sounds.update(world, &scene);
                 for a in powers.ui(frame.ui.ctx(), &my_sheet, fighting, creating) {
                     match a {
                         PowerAction::Buy(p, theme) => session.buy(p, theme),

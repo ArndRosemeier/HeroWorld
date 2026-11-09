@@ -39,4 +39,4 @@ Crates and rules for contributors (and coding agents): [AGENTS.md](AGENTS.md).
 
 ## Controls
 
-WASD run, Space jump (in a lift: rise; Ctrl sinks), V fly (steer with WASD and the camera, Space/Ctrl climb and sink, Shift faster), right mouse (or P to lock the pointer) look, R/T zoom (all the way in is first person), Tab free camera, C cut buildings open, F move the cut to where you look, Z/X choose the floor.
+WASD run, Space jump (in a lift: rise; Ctrl sinks), V fly (steer with WASD and the camera, Space/Ctrl climb and sink, Shift faster), right mouse (or P to lock the pointer) look, R autorun (S or R stops), mouse wheel zoom (all the way in is first person), N minimap, M town map, Tab free camera, C cut buildings open, F move the cut to where you look, Z/X choose the floor.

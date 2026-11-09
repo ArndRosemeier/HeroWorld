@@ -178,14 +178,12 @@ Not needed for the first playable city, but the design depends on them eventuall
   - **A day that runs.** Lit windows are baked into the building meshes, so the hour is fixed
     per session; an emissive strength per mesh or material that can change at runtime would
     let windows switch on at dusk and allow a slow day and night cycle.
-<<<<<<< HEAD
 - **Several textures in one mesh** (added 2026-11-08, from real facade materials, 0.067): a mesh
   carries one albedo and one set of maps, so a town cell is split into a mesh per texture
   (wall, trim, base stone, frames, roof covering and their worn versions: often 20 to 40 per
   cell, each a draw call). A texture-array index per vertex (or per face) with triplanar
   mapping would let a cell stay one mesh, and the same index would let breakable buildings
   keep their textures (see above).
-=======
 - **Grass on streamed ground** (added 2026-11-08, 0.065): Engine's GPU grass blades only grow
   on the clipmap terrain, and the streamed voxel ground shades flat land a single noisy green
   that reads as paint. HeroWorld now drapes a textured lawn skin over the town's ground
@@ -197,7 +195,11 @@ Not needed for the first playable city, but the design depends on them eventuall
     ground can be textured without a skin above it;
   - a public per-point surface (`Mesh::set_point_surface`): the clumps' per-vertex wind weight
     is set today by appending one-point meshes.
->>>>>>> f27cf52 (0.067: real grass, more trees and hedges, streamed woods, solid trees)
+- **Streamed music and the mouse wheel** (added 2026-11-09, from the soundscape and minimap, 0.073):
+  `Sound` decodes a whole file into f32 samples, so a three-minute piece of background music
+  holds about 45 MB while it plays (twice that during a crossfade). A streamed music track
+  (decoded a few seconds ahead from the file) would keep that to a few hundred KB. And
+  `Input` has no mouse wheel; the camera zoom reads egui's scroll delta instead.
 
 ## Ground rules
 

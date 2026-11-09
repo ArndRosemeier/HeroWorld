@@ -69,7 +69,7 @@ struct Floater {
     rise: f32,
 }
 
-/// The fight's sounds, made here from sine waves and noise.
+/// The fight's sounds (clips in `assets/sound`, see its README).
 struct Sounds {
     punch: Sound,
     bolt: Sound,
@@ -1805,142 +1805,28 @@ pub fn villain_placeholder(kind: EntityKind) -> Mesh {
 }
 
 fn make_sounds() -> Sounds {
-    const RATE: u32 = 44_100;
-    let mut noise_state = 0x2545_F491u32;
-    let mut noise = move || {
-        noise_state ^= noise_state << 13;
-        noise_state ^= noise_state >> 17;
-        noise_state ^= noise_state << 5;
-        (noise_state as f32 / u32::MAX as f32) * 2.0 - 1.0
+    let clip = |name: &str| -> Sound {
+        let (_, bytes) = crate::soundscape::FIGHT_CLIPS
+            .iter()
+            .find(|(n, _)| *n == name)
+            .expect("a fight clip");
+        Sound::from_bytes(bytes.to_vec()).unwrap_or_else(|e| {
+            eprintln!("fight sound {name}: {e}");
+            Sound::tone(440.0, 0.05)
+        })
     };
-    let make = |seconds: f32, f: &mut dyn FnMut(f32) -> f32| -> Sound {
-        let n = (seconds * RATE as f32) as usize;
-        let samples: Vec<f32> = (0..n)
-            .map(|i| f(i as f32 / RATE as f32).clamp(-1.0, 1.0))
-            .collect();
-        Sound::from_mono(samples, RATE).expect("a sound")
-    };
-    use std::f32::consts::TAU;
-    // A meaty thump: a falling low sine with a noise crack on top.
-    let mut ph = 0.0f32;
-    let punch = make(0.28, &mut |t| {
-        let f = 140.0 * (-t * 14.0).exp() + 48.0;
-        ph += TAU * f / RATE as f32;
-        let body = ph.sin() * (-t * 16.0).exp();
-        let crack = noise() * (-t * 70.0).exp() * 0.7;
-        (body * 0.9 + crack) * 0.9
-    });
-    // The energy bolt: a bright falling sweep with a buzz.
-    let mut ph = 0.0f32;
-    let bolt = make(0.42, &mut |t| {
-        let f = 1500.0 * (-t * 7.0).exp() + 180.0;
-        ph += TAU * f / RATE as f32;
-        let tone = ph.sin() + 0.35 * (ph * 2.0).sin().signum() * 0.5;
-        let env = (t * 120.0).min(1.0) * (-t * 7.5).exp();
-        (tone * 0.6 + noise() * 0.12 * (-t * 20.0).exp()) * env
-    });
-    // The ray gun: a wobbling square-ish warble.
-    let mut ph = 0.0f32;
-    let ray = make(0.5, &mut |t| {
-        let f = 520.0 + 260.0 * (t * 38.0).sin() - 300.0 * t;
-        ph += TAU * f / RATE as f32;
-        let tone = (ph.sin() * 3.0).tanh();
-        tone * 0.35 * (t * 80.0).min(1.0) * (-t * 4.5).exp()
-    });
-    // Charging: a rising whine.
-    let mut ph = 0.0f32;
-    let charge = make(0.6, &mut |t| {
-        let f = 300.0 + 1400.0 * t;
-        ph += TAU * f / RATE as f32;
-        ph.sin() * 0.18 * (t / 0.6) * (1.0 - (t / 0.6).powi(6))
-    });
-    // A whoosh: noise swelling and fading, smoothed.
-    let mut lp = 0.0f32;
-    let whoosh = make(0.7, &mut |t| {
-        lp += (noise() - lp) * (0.04 + 0.2 * (t / 0.7));
-        let env = (std::f32::consts::PI * t / 0.7).sin();
-        lp * env * 1.6
-    });
-    // A chime: two bell partials.
-    let chime = make(1.1, &mut |t| {
-        let e = (-t * 3.5).exp() * (t * 200.0).min(1.0);
-        ((TAU * 880.0 * t).sin() * 0.5
-            + (TAU * 1320.0 * t).sin() * 0.3
-            + (TAU * 1760.0 * t).sin() * 0.15)
-            * e
-            * 0.5
-    });
-    // A drone's hum, made to loop (whole cycles in one second).
-    let hum = make(1.0, &mut |t| {
-        let wob = 1.0 + 0.15 * (TAU * 6.0 * t).sin();
-        ((TAU * 110.0 * t).sin() * 0.5
-            + (TAU * 220.0 * t).sin() * 0.25
-            + (TAU * 330.0 * t).sin() * 0.12)
-            * 0.25
-            * wob
-    });
-    // Shockwave: a deep thump under a rushing roar.
-    let mut ph = 0.0f32;
-    let mut lp = 0.0f32;
-    let boom = make(1.2, &mut |t| {
-        let f = 70.0 * (-t * 3.0).exp() + 32.0;
-        ph += TAU * f / RATE as f32;
-        lp += (noise() - lp) * 0.06;
-        let thump = ph.sin() * (-t * 4.0).exp();
-        let roar = lp * 2.2 * (t * 30.0).min(1.0) * (-t * 3.2).exp();
-        (thump * 0.9 + roar) * 0.8
-    });
-    // A hold: a falling shimmer of bells that locks into a chord.
-    let bind = make(0.9, &mut |t| {
-        let notes = [1046.5f32, 784.0, 659.3, 523.3];
-        let mut v = 0.0;
-        for (k, f) in notes.iter().enumerate() {
-            let start = k as f32 * 0.07;
-            if t >= start {
-                let u = t - start;
-                v += (TAU * f * u).sin() * (-u * 5.0).exp() * 0.22;
-            }
-        }
-        v
-    });
-    // A shield: a rising chorus hum.
-    let shield = make(0.9, &mut |t| {
-        let f = 220.0 + 180.0 * t;
-        let env = (t * 8.0).min(1.0) * (1.0 - t / 0.9).max(0.0);
-        ((TAU * f * t).sin() + (TAU * f * 1.006 * t).sin() * 0.8 + (TAU * f * 1.5 * t).sin() * 0.4)
-            * env
-            * 0.22
-    });
-    // The level-up fanfare: a bright arpeggio up to a held chord.
-    let fanfare = make(1.8, &mut |t| {
-        let notes = [
-            (523.3f32, 0.0f32),
-            (659.3, 0.12),
-            (784.0, 0.24),
-            (1046.5, 0.36),
-        ];
-        let mut v = 0.0;
-        for (f, start) in notes {
-            if t >= start {
-                let u = t - start;
-                let e = (u * 60.0).min(1.0) * (-u * 1.6).exp();
-                v += ((TAU * f * u).sin() + 0.3 * (TAU * f * 2.0 * u).sin()) * e * 0.18;
-            }
-        }
-        v
-    });
     Sounds {
-        boom,
-        bind,
-        shield,
-        fanfare,
-        punch,
-        bolt,
-        ray,
-        charge,
-        whoosh,
-        chime,
-        hum,
+        boom: clip("boom"),
+        bind: clip("bind"),
+        shield: clip("shield"),
+        fanfare: clip("fanfare"),
+        punch: clip("punch"),
+        bolt: clip("bolt"),
+        ray: clip("ray"),
+        charge: clip("charge"),
+        whoosh: clip("whoosh"),
+        chime: clip("chime"),
+        hum: clip("power_hum"),
     }
 }
 

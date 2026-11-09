@@ -144,10 +144,14 @@ pub const CONTROLS: &[(&str, &str)] = &[
         "Look around (P locks the pointer)",
     ),
     ("W A S D", "Run"),
+    ("R", "Autorun (the mouse steers; S or R stops)"),
     ("Space", "Jump; climb when flying or in a lift"),
     ("V", "Fly (once you have Flight); V again drops you"),
     ("Ctrl / Shift", "Sink / faster when flying"),
-    ("R / T", "Zoom in / out (all the way in: first person)"),
+    (
+        "Mouse wheel",
+        "Zoom in / out (all the way in: first person)",
+    ),
     ("Tab", "Pick the villain nearest the crosshair"),
     ("Left mouse / 1", "Strike"),
     ("Q / 2", "Energy bolt"),
@@ -157,6 +161,7 @@ pub const CONTROLS: &[(&str, &str)] = &[
     ("H", "Call the medical drone when you are down"),
     ("G", "Hail a flying taxi (G again hops out)"),
     ("M", "Town map (the wrist radio's incidents)"),
+    ("N", "Minimap on or off"),
     ("O", "Free camera"),
     (
         "C / F, Z / X",

@@ -58,7 +58,7 @@ jobs:
           d=HeroWorld
           mkdir -p "$d/assets"
           cp target/release/heroworld.exe target/release/hw-headless.exe "$d/"
-          cp -r assets/packs assets/robots "$d/assets/"
+          cp -r assets/packs assets/robots assets/music "$d/assets/"
           cp WHATS_NEW.md "$d/"
           cp packaging/windows/*.txt packaging/windows/*.bat "$d/"
           7z a -tzip -mx=5 HeroWorld-windows.zip "$d" > /dev/null

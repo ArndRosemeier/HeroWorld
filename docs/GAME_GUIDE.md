@@ -89,10 +89,11 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | --- | --- |
 | Right mouse (hold) / P | Look around (P locks the pointer) |
 | W A S D | Run |
+| R | Autorun: the mouse steers, A/D step aside, S or R stops |
 | Space | Jump; climb when flying or in a lift |
 | V | Fly (once you own Flight); V again drops you |
 | Ctrl / Shift | Sink / faster when flying (Ctrl also sinks in a lift) |
-| R / T | Zoom in / out (all the way in: first person) |
+| Mouse wheel | Zoom in / out (all the way in: first person) |
 | Tab | Target the villain nearest the crosshair (again: the next) |
 | Left mouse / 1 | Strike |
 | Q / 2 | Energy Bolt |
@@ -102,6 +103,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | H | Call the medical drone when you are down |
 | G | Hail a flying taxi (G again hops out mid-air) |
 | M | Town map with the radio's calls |
+| N | Minimap on or off |
 | O | Free camera |
 | C / F, Z / X | Cut buildings open / move the cut / pick the floor |
 | K | Knock nearby townspeople over (a ragdoll test, still in the game) |
@@ -510,18 +512,28 @@ on the way. Rides are free.
 ## 12. Screens, sound and settings
 
 - **HUD:** health and energy bars and the power tray (bottom centre), target frame,
-  wrist radio (top left), compass (top), version and "What's new" (top right).
+  wrist radio (top left), compass (top), version and "What's new" (top right), minimap
+  (bottom right: round, turns with the camera so what you look at is up, zooms out as you
+  fly higher; marks you, friends, landmarks and radio calls; `minimap.rs`, `mapraster.rs`).
 - **Windows:** powers (B: karma, level, shop, give up, faction standings), map (M), menu
   (Escape: settings, controls, quit).
 - **Settings:** music and sound volume, reduced motion, picture quality Low to Ultra (each
   says what it shows), "keep it smooth" at 60 fps, vertical sync, field of view, look
   speed, inverted mouse.
 - **Music:** the title theme (a swinging golden-age serial tune) fades out 20 s into the
-  game; the colossus has its own battle march. Music by district and hour is being made in
-  the sound thread.
-- **Sounds:** combat sounds synthesized in the game; robot sounds (footfalls, cannon, alarm,
-  servos, core, parts blowing off, the crash) from OpenRouter; whooshes and title button
-  sounds. A city soundscape is in progress.
+  game; then 16 Lyria pieces play by scenery and hour (`soundscape.rs`, `Music`; files in
+  `assets/music`): downtown, the old town, parks, the waterfront, the villains' quarter,
+  Molehaven and flying, each by day, evening, night or morning. One piece, a quiet minute or
+  so, then the next; a strong change of scene crossfades. The colossus has its own battle
+  march, which takes over. `HW_MUSIC=0` turns the scenery's music off.
+- **Sounds** (`soundscape.rs`, clips in `hw-client/assets/sound`): ambience layers that
+  crossfade with the place (busy streets by day or night, park, crowd by how many people are
+  near, indoors, tunnels, Molehaven, the villains' quarter, wind when flying; the town fades
+  out as you climb), engines on the four nearest cars and two nearest fliers, horns from cars
+  held up, tyres on hard stops, hover cars whooshing past, sirens a little after robberies,
+  explosions and collapses and at waiting ambulances, your footsteps, pigeons, birds, a dog at
+  night, café clatter and the town clock. Fight and robot sounds are OpenRouter clips;
+  whooshes and title button sounds.
 - **Crash reports:** a crash writes `crashes/crash-<ms>.txt` beside the profile; the next
   title points to it once. Send it to Arnd.
 - **Windows download:** the GitHub release "windows-latest" (`HeroWorld-windows.zip`),
@@ -614,6 +626,6 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | Destruction | Buildings, props, cars, self-repair, collateral tally | Collateral cost and careful-hero bonus, digging and craters |
 | Saves | Hero on each PC; world save in `hw-headless` and for host migration | World save for the single-player game |
 | Money | Karma only | Dollars for equipment (maybe) |
-| UI | HUD, radio, compass, map, powers, menu | Autorun and minimap (in progress), in-game debug menu (requested) |
-| Sound | Title theme, colossus march, combat and robot sounds | Music by district and hour, city soundscape (in progress) |
+| UI | HUD, radio, compass, map, minimap, autorun, powers, menu | In-game debug menu (requested) |
+| Sound | Title theme, colossus march, music by scenery and hour, city soundscape, combat and robot sounds | Streamed music decoding (Engine) |
 | Multiplayer | Room codes, UPnP, host migration, soak-tested by bots | A play test with people |

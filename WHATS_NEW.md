@@ -3,6 +3,20 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.073 (2026-11-09)
+
+- R runs on by itself (autorun): steer with the mouse, A and D step aside, S or R stops. The
+  mouse wheel zooms the camera now.
+- A minimap in the bottom right corner. It turns with the camera, zooms out as you fly
+  higher, and shows streets, houses, parks, water, landmarks, friends and radio calls. N hides it.
+- The town has sound: busy streets by day, quieter ones at night, parks with birds, crowds,
+  car engines and 1950s horns, hover cars humming past, sirens after trouble, your footsteps,
+  the town clock, the wind when you fly.
+- Background music that fits where you are: downtown jazz, old-town strings, a seaside tune
+  by the water, creepy theremin in the villains' quarter, Molehaven's cave music and a
+  soaring theme when you fly high.
+- Punches, bolts, shields and the level-up fanfare have real sounds.
+
 ## 0.072 (2026-11-09)
 
 - Cities are now built around you as you go, a district at a time, instead of all at once:
