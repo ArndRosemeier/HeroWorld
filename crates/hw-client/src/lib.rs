@@ -17,6 +17,7 @@ pub mod debugmenu;
 pub mod deepview;
 pub mod diag;
 pub mod dispatchview;
+pub mod drillview;
 pub mod dystopiaview;
 pub mod edgeview;
 pub mod extras;

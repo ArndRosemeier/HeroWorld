@@ -177,6 +177,8 @@ impl NightLights {
                         });
                     }
                 }
+                // Its beacon and the glow in its bore: see `drillview`.
+                LandmarkKind::MoleDrill => {}
             }
         }
         Self {

@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.111 (2026-11-09)
+
+- The mole folk have built a giant drill rig right over Molehaven: a riveted iron derrick with a huge fluted drill turning in a glowing bore, a steam boiler with a spinning flywheel, a smoking stack and glowing toadstool lamps. Taxis will take you there.
+- Every half minute or so the ground rumbles, the drill races and shakes, steam spits from the vents and a whistle blows. Then the drill is hauled up and a geyser of steam roars thirty metres into the sky.
+- You hear the drill grinding and chuffing as you come near, and the geyser's roar from far off.
+
 ## 0.110 (2026-11-09)
 
 - New heroes (below level 5) now start on a street near the Chrome Jackets' corners, where small crime happens all the time: muggings and hold-ups come about every 30 seconds, usually a short run away.

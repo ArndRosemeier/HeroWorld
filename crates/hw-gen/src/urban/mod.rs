@@ -21,6 +21,7 @@
 pub mod area;
 pub mod atomic;
 pub mod deep;
+pub mod drillrig;
 pub mod dystopia;
 pub mod edge;
 pub mod footprint;

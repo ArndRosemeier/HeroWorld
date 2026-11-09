@@ -330,6 +330,7 @@ pub fn map(
             LandmarkKind::MooringMast => "Airfield",
             LandmarkKind::RocketGantry => "Rocket port",
             LandmarkKind::AtomicPlant => "Atomic plant",
+            LandmarkKind::MoleDrill => "Mole drill",
         };
         let p = to_screen(l.pos);
         painter.circle_filled(p, 4.0, egui::Color32::from_rgb(60, 60, 70));

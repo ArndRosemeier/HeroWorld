@@ -66,6 +66,10 @@ static CLIPS: &[(&str, &[u8])] = clips![
     "step_concrete_4",
     "step_grass_1",
     "step_grass_2",
+    "drill_grind",
+    "geyser_blast",
+    "geyser_rumble",
+    "steam_whistle",
     "tesla_buzz",
     "tesla_crack_1",
     "tesla_crack_2",
@@ -292,6 +296,8 @@ pub struct Scene<'a> {
     pub rocket: crate::rocketview::Heard,
     /// The atomic plant's hum, steam and relief valve.
     pub atom: crate::atomview::Heard,
+    /// The mole folk's drill rig at work and its geyser.
+    pub drill: crate::drillview::Heard,
 }
 
 /// The ambience layers and how loud each one plays at full share.
@@ -368,6 +374,8 @@ pub struct Soundscape {
     rocket_vent: Option<SoundId>,
     /// The atomic plant's hum and its towers' steam.
     atom_loops: [Option<SoundId>; 2],
+    /// The drill rig's grind.
+    drill_grind: Option<SoundId>,
     pub music: Music,
 }
 
@@ -404,6 +412,7 @@ impl Soundscape {
             rocket_roar: None,
             rocket_vent: None,
             atom_loops: [None, None],
+            drill_grind: None,
             music: Music::new(),
         }
     }
@@ -432,6 +441,7 @@ impl Soundscape {
         self.mast(world, s);
         self.rocket(world, s);
         self.atom(world, s);
+        self.drill(world, s);
         self.timed.retain(|(id, until)| {
             if s.now >= *until {
                 world.stop_sound(*id, 2.5);
@@ -471,6 +481,9 @@ impl Soundscape {
             world.stop_sound(v, 0.5);
         }
         for v in self.atom_loops.iter_mut().filter_map(Option::take) {
+            world.stop_sound(v, 0.5);
+        }
+        if let Some(v) = self.drill_grind.take() {
             world.stop_sound(v, 0.5);
         }
         self.music.stop(world);
@@ -1054,6 +1067,68 @@ impl Soundscape {
         }
     }
 
+    /// The drill rig: a grinding, chuffing loop that works harder as the
+    /// pressure builds; a whistle and a rumble when it does; the geyser's
+    /// roar when it blows. Heard faintly down in Molehaven too.
+    fn drill(&mut self, world: &mut World, s: &Scene) {
+        let muffle = if s.under != Under::No {
+            0.3
+        } else if s.indoors {
+            0.35
+        } else {
+            1.0
+        };
+        let Some(at) = s.drill.at else {
+            if let Some(v) = self.drill_grind.take() {
+                world.stop_sound(v, 1.0);
+            }
+            return;
+        };
+        if at.distance(s.eye) < 260.0 {
+            let vol = (0.4 + 0.45 * s.drill.effort) * muffle;
+            let pitch = 0.85 + 0.3 * s.drill.effort;
+            match self.drill_grind {
+                Some(v) => {
+                    let _ = self.bank.get("drill_grind", s.now);
+                    let a = world.audio_mut();
+                    a.set_volume(v, vol);
+                    a.set_pitch(v, pitch);
+                }
+                None => {
+                    if let Some(c) = self.bank.get("drill_grind", s.now) {
+                        let p = PlaySound::at(at)
+                            .looped()
+                            .volume(vol)
+                            .pitch(pitch)
+                            .range(10.0, 240.0)
+                            .fade_in(1.0);
+                        self.drill_grind = Some(world.play_sound(&c, p));
+                    }
+                }
+            }
+        } else if let Some(v) = self.drill_grind.take() {
+            world.stop_sound(v, 1.0);
+        }
+        let mut shot = |clip: &'static str, vol: f32, range: f32| {
+            if at.distance(s.eye) > range {
+                return;
+            }
+            if let Some(c) = self.bank.get(clip, s.now) {
+                world.play_sound(
+                    &c,
+                    PlaySound::at(at).volume(vol * muffle).range(15.0, range),
+                );
+            }
+        };
+        if s.drill.rumbled {
+            shot("steam_whistle", 0.9, 800.0);
+            shot("geyser_rumble", 0.9, 450.0);
+        }
+        if s.drill.burst {
+            shot("geyser_blast", 1.0, 700.0);
+        }
+    }
+
     fn footsteps(&mut self, world: &mut World, s: &Scene) {
         let Some(feet) = s.hero else {
             return;
@@ -1457,6 +1532,7 @@ mod tests {
             mast: Default::default(),
             rocket: Default::default(),
             atom: Default::default(),
+            drill: Default::default(),
         }
     }
 

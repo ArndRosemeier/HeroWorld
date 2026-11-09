@@ -592,6 +592,21 @@ bolt (700 m), a zap for most yard arcs (120 m). Views: `HW_VIEW=tesla`, `teslado
   toadstools and crystals, a market of striped stalls round a glowing well under an iron
   arch, side caves. Its own lift has an amber sign, and a ramp leads there from the
   tunnels. Short, pale mole folk in goggles keep the stalls, run errands, stroll and chat.
+- **The mole drill** (`hw-gen/src/urban/drillrig.rs`, `hw-client/src/drillview.rs`), right
+  over Molehaven's great hall (the cavern is planned under it; its bore comes down over the
+  well): a riveted red-oxide derrick 23 m tall on its own plinth (radius 15 or 13.5 m), a
+  fluted steel drill turning in an iron bore collar that glows with the deep's heat, a
+  gearbox with a steam motor under the crown, a green boiler on a brick furnace with a
+  flywheel, a banded smokestack, and the mole folk's glowing toadstool lamps. Every part
+  is solid. The cycle is a pure function of the game clock (`drillrig::phase`, 36 s, so
+  every player sees the same): the drill turns at 0.45 turns a second; 14-21 s into each
+  cycle the bore rumbles for 4.5 s (the drill races to 1.35 turns a second and shakes,
+  the vents spit steam, the beacon flashes, a whistle blows), then the geyser blows for
+  6.5 s (the drill is hauled up 3.2 m, a column of steam roars about 30 m high) and it
+  settles for 4 s. Made within 1 000 m, animated within 700 m. Sound: the drill's grind
+  (260 m, harder as the pressure builds), the whistle (800 m), the rumble (450 m), the
+  blast (700 m). Taxis go there ("The mole drill"). Views: `HW_VIEW=drill`, `drillbore`;
+  `HW_DRILL_AT=s` shifts its clock (e.g. 30 to catch an eruption at the start).
 
 ### The deep underground (`hw-gen/src/urban/deep/`)
 
@@ -815,7 +830,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default: the profile's city, 40 000 at first; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |

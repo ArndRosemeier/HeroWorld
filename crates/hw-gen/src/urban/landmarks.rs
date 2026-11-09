@@ -37,6 +37,10 @@ pub enum LandmarkKind {
     /// The atomic plant out past the town's edge: a glowing reactor dome
     /// and two steaming cooling towers ([`super::atomic`]).
     AtomicPlant,
+    /// The mole folk's drill rig: an iron derrick over a bore down to
+    /// Molehaven, a giant drill turning in it, and a steam geyser that
+    /// erupts from it now and then ([`super::drillrig`]).
+    MoleDrill,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -216,6 +220,7 @@ impl Landmark {
                 v
             }
             LandmarkKind::RocketGantry => super::gantry::footprints(self.plaza),
+            LandmarkKind::MoleDrill => super::drillrig::footprints(self.plaza),
             LandmarkKind::HeroHall => {
                 let mut v = vec![
                     disc(HALL_R, HALL_WALL + 0.4),
@@ -376,8 +381,9 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
         .map_or(DVec2::ZERO, |c| c.pos);
     // Only the streets where landmarks may stand: round the core, the
     // villains' quarter and, by the sea, out to the lighthouse.
-    let mut lo = core - DVec2::splat(450.0);
-    let mut hi = core + DVec2::splat(450.0);
+    // (The drill rig's dry spots reach 490 m from the core.)
+    let mut lo = core - DVec2::splat(520.0);
+    let mut hi = core + DVec2::splat(520.0);
     if w.coastal() {
         let r = (w.half() * 0.8).min(1600.0) + 20.0;
         lo = lo.min(core - DVec2::splat(r));
@@ -449,6 +455,34 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
                     ..landmark_at(w, p, plaza)
                 });
                 break;
+            }
+        }
+    }
+    // The mole folk's drill rig, over a dry place where Molehaven can be
+    // dug out under it, away from the other landmarks.
+    {
+        let reach = super::underground::underground_reach(w);
+        let mut spots = super::underground::dry_spots(w, core, reach, 35.0, 48);
+        spots.sort_by(|a, b| a.0.total_cmp(&b.0));
+        'rig: for plaza in super::drillrig::PLAZAS {
+            for &(_, p) in &spots {
+                let apart = out
+                    .iter()
+                    .all(|l: &Landmark| l.pos.distance(p) > l.plaza + plaza + 25.0);
+                if !apart {
+                    continue;
+                }
+                let (lo, hi) = rim(w, p, plaza);
+                if lo < WATER_LEVEL + 1.2 || hi - lo > 3.0 || roads.touches(p, plaza + 0.8, None) {
+                    continue;
+                }
+                out.push(Landmark {
+                    kind: LandmarkKind::MoleDrill,
+                    height: super::drillrig::HEIGHT,
+                    dir: (core - p).normalize_or(DVec2::Y),
+                    ..landmark_at(w, p, plaza)
+                });
+                break 'rig;
             }
         }
     }
@@ -579,6 +613,45 @@ mod tests {
     use super::*;
     use crate::urban::params::TownParams;
     use hw_core::Seed;
+
+    #[test]
+    fn the_drill_rig_stands_over_molehaven() {
+        for s in [1u64, 3, 7, 11] {
+            let w = TownWorld::generate(Seed(s), TownParams::sample(Seed(s), 40_000.0));
+            let rig = w
+                .landmarks
+                .iter()
+                .find(|l| l.kind == LandmarkKind::MoleDrill)
+                .unwrap_or_else(|| panic!("seed {s}: no drill rig"));
+            // Every solid part is on its plinth.
+            for f in rig.footprints() {
+                let (lo, hi) = f.extent(rig.pos, DVec2::X);
+                let (lo2, hi2) = f.extent(rig.pos, DVec2::Y);
+                for e in [lo, hi, lo2, hi2] {
+                    assert!(
+                        e.abs() < rig.plaza,
+                        "seed {s}: the rig over its plinth's edge"
+                    );
+                }
+                assert!(f.span().0 >= rig.base - 1e-9);
+            }
+            // Molehaven is dug out right under it, with its own lift off
+            // the plinth.
+            let u = w.underground();
+            let c = u.cavern.as_ref().expect("Molehaven");
+            assert!(c.centre.distance(rig.pos) < 1e-9, "seed {s}");
+            let lift = u.entrances.iter().find(|e| e.molehaven).expect("a lift");
+            assert!(
+                !rig.covers(lift.pos, 1.5),
+                "seed {s}: the lift on the plinth"
+            );
+            for l in &w.landmarks {
+                if l.kind != LandmarkKind::MoleDrill {
+                    assert!(l.pos.distance(rig.pos) > l.plaza + rig.plaza + 20.0);
+                }
+            }
+        }
+    }
 
     #[test]
     fn spire_stands_near_the_core_and_lighthouse_by_the_sea() {

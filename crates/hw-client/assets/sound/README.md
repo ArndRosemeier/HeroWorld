@@ -50,6 +50,10 @@ seam.
 | `atom_steam.ogg` | loop | The sound of a giant cooling tower venting steam continuously, a soft steady roaring rush of steam and falling water, broad and airy |
 | `atom_vent_1.ogg` | shot | The sound of a high pressure steam relief valve blowing off, a sudden loud hissing blast of steam that roars for a few seconds and then dies away |
 | `atom_vent_2.ogg` | shot | (the same prompt, another take) |
+| `drill_grind.ogg` | loop | The sound of a giant steam-powered rock drill boring deep into the earth, a heavy grinding rumble of steel on stone, a big steam engine chuffing rhythmically and gears clanking, steady and continuous |
+| `geyser_rumble.ogg` | shot | The sound of a deep underground earthquake rumble building up, low growling earth tremor rising in intensity with metal rattling and a hiss of pressure |
+| `geyser_blast.ogg` | shot | The sound of a massive jet of steam bursting out of the ground with a whoosh and a thunderous roaring hiss, then slowly fading |
+| `steam_whistle.ogg` | shot | The sound of a train whistle, two tone chord, loud and clear, toot toot |
 | `tesla_zap.ogg` | shot | The sound of a short burst of electric sparks crackling, a quick high voltage zap and sizzle |
 | `airship_drone.ogg` | loop | The sound of a large 1930s airship passing overhead, the deep steady drone of four big propeller engines, a low throbbing hum, continuous, no voices |
 | `airship_horn.ogg` | shot | The sound of a giant airship's deep foghorn blast, one long low brass horn note echoing over an airfield |

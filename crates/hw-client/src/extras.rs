@@ -56,6 +56,8 @@ pub struct TownExtras {
     /// The rocket port's launches.
     pub rocket: Option<crate::rocketview::RocketView>,
     pub atom: Option<crate::atomview::AtomView>,
+    /// The mole folk's drill rig at work.
+    pub drill: Option<crate::drillview::DrillView>,
     pub grass: Option<GrassView>,
     pub waterfront: Option<crate::waterfrontview::WaterfrontView>,
 }
@@ -97,6 +99,9 @@ impl TownExtras {
         }
         if let Some(mut a) = self.atom.take() {
             a.clear(world);
+        }
+        if let Some(mut d) = self.drill.take() {
+            d.clear(world);
         }
         if let Some(g) = self.grass.take() {
             g.despawn(world);
@@ -371,6 +376,7 @@ fn assemble(
         // first update.
         under: Some(UndergroundView::new(town.clone())),
         deep: Some(crate::deepview::DeepView::new(town.clone())),
+        drill: Some(crate::drillview::DrillView::new(town)),
         dystopia: Some(crate::dystopiaview::DystopiaView::new(town)),
         mast: Some(crate::mastview::MastView::new(town)),
         rocket: Some(crate::rocketview::RocketView::new(town)),

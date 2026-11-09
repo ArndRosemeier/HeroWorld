@@ -275,6 +275,43 @@ impl TubeNet {
                 verge: r.half + r.pavement,
             });
         }
+        // Between the samples too: a stretch can clip a void (a corner of
+        // Molehaven) that neither of its ends' probes meets.
+        for l in &mut lines {
+            for _ in 0..3 {
+                let mut moved = false;
+                for i in 0..l.pts.len().saturating_sub(1) {
+                    let (a, b) = (l.pts[i], l.pts[i + 1]);
+                    let Some(v) = run(
+                        VoidKind::Tube,
+                        a,
+                        b,
+                        TUBE_HALF,
+                        l.floors[i],
+                        l.floors[i + 1],
+                        TUBE_HEIGHT,
+                    ) else {
+                        continue;
+                    };
+                    let mid = (a + b) * 0.5;
+                    for j in u.near(mid, a.distance(b) * 0.5 + TUBE_HALF + 4.0) {
+                        let o = &u.voids[j];
+                        if overlaps(&v, o, 1.5) {
+                            let low = o.floor[0].min(o.floor[1]) - 2.5 - TUBE_HEIGHT;
+                            for k in [i, i + 1] {
+                                if l.floors[k] > low {
+                                    l.floors[k] = low;
+                                    moved = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                if !moved {
+                    break;
+                }
+            }
+        }
         let joins = joins(&lines);
         // Gentle grades, and lines that meet share their floor there.
         for _ in 0..6 {

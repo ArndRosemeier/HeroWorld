@@ -801,6 +801,27 @@ fn main() -> EngineResult<()> {
             let pitch = ((look - eye) / dd.length()).atan().to_degrees() as f32;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
         }
+        "drill" | "drillbore" => {
+            // The mole folk's drill rig: from the plinth's front edge up at
+            // the derrick, or close at the bore and the drill.
+            use hw_gen::urban::landmarks::LandmarkKind;
+            let l =
+                hw_client::landmarkview::nearest(&generated.world, LandmarkKind::MoleDrill, spawn);
+            let (c, base, face, plaza) = l.map_or((spawn, ground(spawn), spawn_dir, 14.0), |l| {
+                (l.pos, l.base, l.dir, l.plaza)
+            });
+            let (p, eye, look) = if view == "drill" {
+                let p = c + (face + face.perp() * 0.35).normalize() * (plaza + 16.0);
+                (p, ground(p).max(base) + 3.0, base + 11.0)
+            } else {
+                let p = c + (face - face.perp() * 0.5).normalize() * 12.0;
+                (p, base + 4.5, base + 3.5)
+            };
+            let dd = c - p;
+            let yaw = dd.x.atan2(dd.y).to_degrees() as f32;
+            let pitch = ((look - eye) / dd.length()).atan().to_degrees() as f32;
+            FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
+        }
         "quay" => {
             // Along a quay wall at the nearest steps down to the water.
             let st = generated
@@ -1876,6 +1897,10 @@ fn main() -> EngineResult<()> {
             hw_client::hitch::mark("atom");
             if let Some(a) = extras.atom.as_mut() {
                 a.update(world, frame.dt)?;
+            }
+            hw_client::hitch::mark("drill rig");
+            if let Some(d) = extras.drill.as_mut() {
+                d.update(world, session.time(tick_clock / hw_sim::DT))?;
             }
             {
                 let eye = world.camera().eye();
@@ -3271,6 +3296,7 @@ fn main() -> EngineResult<()> {
                         .map(|r| r.heard())
                         .unwrap_or_default(),
                     atom: extras.atom.as_mut().map(|a| a.heard()).unwrap_or_default(),
+                    drill: extras.drill.as_mut().map(|d| d.heard()).unwrap_or_default(),
                 };
                 hw_client::hitch::mark("sounds");
                 sounds.update(world, &scene);

@@ -337,7 +337,7 @@ pub(crate) fn spot_free(w: &TownWorld, p: DVec2, r: f64) -> bool {
 }
 
 /// How far from the start the underground reaches (m).
-fn underground_reach(w: &TownWorld) -> f64 {
+pub(crate) fn underground_reach(w: &TownWorld) -> f64 {
     (w.half() * 0.35).clamp(250.0, 700.0)
 }
 
@@ -679,17 +679,24 @@ fn nearest_road_dir(roads: &[WorldRoad], p: DVec2) -> DVec2 {
     best.map_or(DVec2::Y, |b| b.1)
 }
 
-/// A dry place for the cavern: high above the water all round, a few
-/// hundred metres from the centre, with room for a lift on top.
-fn cavern_site(w: &TownWorld, core: DVec2, reach: f64, ground: &Ground) -> Option<(DVec2, DVec2)> {
-    let mut best: Option<(f64, DVec2)> = None;
-    for ring in 0..6 {
-        let r = 140.0 + ring as f64 * 70.0;
-        if r > reach + 150.0 {
+/// Dry places for the cavern a few hundred metres from `core`, high above
+/// the water all round: rings `step` apart, `n` spots round each, and how
+/// uneven the ground is round each one (the lower the better).
+pub(crate) fn dry_spots(
+    w: &TownWorld,
+    core: DVec2,
+    reach: f64,
+    step: f64,
+    n: usize,
+) -> Vec<(f64, DVec2)> {
+    let mut out = Vec::new();
+    for ring in 0.. {
+        let r = 140.0 + ring as f64 * step;
+        if r > (reach + 150.0).min(490.0) {
             break;
         }
-        for k in 0..24 {
-            let a = std::f64::consts::TAU * k as f64 / 24.0 + ring as f64 * 0.37;
+        for k in 0..n {
+            let a = std::f64::consts::TAU * k as f64 / n as f64 + ring as f64 * 0.37;
             let p = core + DVec2::new(hw_core::det::cos(a), hw_core::det::sin(a)) * r;
             let mut low = f64::MAX;
             let mut high = f64::MIN;
@@ -705,21 +712,41 @@ fn cavern_site(w: &TownWorld, core: DVec2, reach: f64, ground: &Ground) -> Optio
             if low < WATER_LEVEL + 4.0 {
                 continue;
             }
-            // Prefer flat ground with a free spot for the lift.
-            let room = (0..8).any(|j| {
-                let b = std::f64::consts::TAU * j as f64 / 8.0;
-                ground.free(
-                    p + DVec2::new(hw_core::det::cos(b), hw_core::det::sin(b)) * 12.0,
-                    SHAFT_HALF + 1.2,
-                )
-            });
-            let score = (high - low) + r * 0.02 + if room { 0.0 } else { 50.0 };
-            if best.is_none_or(|b| score < b.0) {
-                best = Some((score, p));
-            }
+            out.push(((high - low) + r * 0.02, p));
         }
     }
-    let (_, p) = best?;
+    out
+}
+
+/// Where the cavern goes: right under the mole folk's drill rig if the
+/// town has one (its bore comes down over the well), else a dry place
+/// with room for a lift on top. With the way its great hall runs.
+fn cavern_site(w: &TownWorld, core: DVec2, reach: f64, ground: &Ground) -> Option<(DVec2, DVec2)> {
+    let p = match w
+        .landmarks
+        .iter()
+        .find(|l| l.kind == super::landmarks::LandmarkKind::MoleDrill)
+    {
+        Some(rig) => rig.pos,
+        None => {
+            let mut best: Option<(f64, DVec2)> = None;
+            for (score, p) in dry_spots(w, core, reach, 70.0, 24) {
+                // Prefer a free spot for the lift.
+                let room = (0..8).any(|j| {
+                    let b = std::f64::consts::TAU * j as f64 / 8.0;
+                    ground.free(
+                        p + DVec2::new(hw_core::det::cos(b), hw_core::det::sin(b)) * 12.0,
+                        SHAFT_HALF + 1.2,
+                    )
+                });
+                let score = score + if room { 0.0 } else { 50.0 };
+                if best.is_none_or(|b| score < b.0) {
+                    best = Some((score, p));
+                }
+            }
+            best?.1
+        }
+    };
     let d = (p - core).normalize_or(DVec2::X);
     Some((p, d.perp()))
 }
