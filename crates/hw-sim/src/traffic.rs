@@ -1624,6 +1624,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "slow: scripts/check.sh --full and CI run it"]
     fn cars_give_way_at_junctions_and_keep_moving() {
         let mut t = traffic();
         let zones: usize = t.zones.iter().map(|z| z.len()).sum();

@@ -218,6 +218,7 @@ fn the_iron_legion_holds_townsfolk_until_it_is_beaten() {
 }
 
 #[test]
+#[ignore = "slow: scripts/check.sh --full and CI run it"]
 fn the_empire_waits_until_the_team_can_take_it() {
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let mut sim = Sim::for_town(Seed(3), &town);

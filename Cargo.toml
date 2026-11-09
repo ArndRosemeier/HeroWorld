@@ -53,6 +53,11 @@ serde_json = "1"
 # builds quickly.
 [profile.dev]
 opt-level = 1
+# Line numbers in our own backtraces, no full debug info: with it every test
+# binary was 600-800 MB (30 of them filled a cloud sandbox's disk) and
+# linking them took most of a test build.
+debug = "line-tables-only"
 
 [profile.dev.package."*"]
 opt-level = 3
+debug = false

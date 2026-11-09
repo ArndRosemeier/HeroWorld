@@ -303,9 +303,9 @@ const PLAN: [Power; 15] = [
 
 /// Ten hours of play in one go: levels 1 to 20 (about a minute in release,
 /// several in a debug build, so it runs with `--ignored` and in the balance
-/// example).
+/// example; `scripts/check.sh --full` skips it by name).
 #[test]
-#[ignore]
+#[ignore = "ten hours of play: run it with --ignored or the balance example"]
 fn a_new_hero_reaches_level_twenty_in_about_ten_hours() {
     let mut sim = arena(11);
     let me = PlayerId(1);

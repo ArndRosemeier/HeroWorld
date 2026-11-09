@@ -7,6 +7,7 @@ use hw_core::Seed;
 use hw_sim::GeneratedCity;
 
 #[test]
+#[ignore = "slow: scripts/check.sh --full and CI run it"]
 fn the_city_has_no_z_fighting() {
     // Seed 1 has a river, seed 2 a river, a coast and a harbour.
     let views = [

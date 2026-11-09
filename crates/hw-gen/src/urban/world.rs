@@ -942,6 +942,7 @@ mod tests {
     /// far one goes, and coming back finds the same buildings and props,
     /// by the same ids, as on the way out.
     #[test]
+    #[ignore = "slow: scripts/check.sh --full and CI run it"]
     fn a_walk_across_a_megacity_keeps_memory_bounded_and_the_world_the_same() {
         let w = TownWorld::generate(Seed(2), TownParams::sample(Seed(2), 2_000_000.0));
         let core = w.core();

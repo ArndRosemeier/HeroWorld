@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.093 (2026-11-09)
+
+- Behind the scenes: the checks run before each update are much quicker, so new things reach you sooner. Nothing in the game changes.
+
 ## 0.092 (2026-11-09)
 
 - Lift and Telekinesis no longer leave a crate floating over your head for ever: press the key again to throw it where you aim, or after 8 seconds it slips free and drops in front of you.

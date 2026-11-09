@@ -183,6 +183,7 @@ fn join(host: &mut Host, addr: std::net::SocketAddr, name: &str) -> Connection {
 }
 
 #[test]
+#[ignore = "slow: scripts/check.sh --full and CI run it"]
 fn an_evening_of_co_op_play() {
     let minutes: u64 = std::env::var("HW_SOAK_MINUTES")
         .ok()

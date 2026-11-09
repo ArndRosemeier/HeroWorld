@@ -10,6 +10,7 @@ use hw_sim::destruction::{self, Damage};
 use hw_sim::{GeneratedTown, TICK_HZ};
 
 #[test]
+#[ignore = "slow: scripts/check.sh --full and CI run it"]
 fn a_long_trip_across_a_big_city_keeps_memory_bounded() {
     let t = GeneratedTown::generate(Seed(2), 400_000.0);
     let solids = &t.obstacles;

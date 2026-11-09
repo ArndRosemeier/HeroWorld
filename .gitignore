@@ -4,6 +4,5 @@ screenshots/
 *.png.tmp
 /assets/packs
 /reports
-/logs
+logs/
 __pycache__/
-/logs/

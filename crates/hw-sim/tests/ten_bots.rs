@@ -64,6 +64,7 @@ fn bot_input(bot: u32, tick: u64, at: DVec3, home: DVec3) -> InputState {
 }
 
 #[test]
+#[ignore = "slow: scripts/check.sh --full and CI run it"]
 fn ten_bots_play_for_ten_minutes() {
     let minutes: u64 = std::env::var("HW_BOT_MINUTES")
         .ok()

@@ -84,7 +84,8 @@ people were proofs of concept, not the bar: do not copy them, and do not build a
 ## Checks
 
 ```
-scripts/check.sh        # cargo fmt --check, clippy -D warnings, cargo test --workspace
+scripts/check.sh        # before every push: fmt, clippy, tests of the crates you touched
+scripts/check.sh --full # everything, slow tests too (CI runs it); see docs/CHECKS.md
 scripts/screenshot.sh   # renders the client headless to screenshots/client.png
 cargo run -p hw-gen --example city_map -- 1 screenshots/city.svg   # a city plan as a map
 scripts/dupcheck.sh     # duplicated code: same-name functions, body clones, repeated snippets
@@ -104,7 +105,9 @@ Z-fighting: `cargo run --release -p hw-client --bin zfight -- <seed> [--cut N]` 
 (where, which colours, which building); `tests/no_zfighting.rs` in hw-client keeps the city clean, and
 `ENGINE_ZFIGHT=1` marks spots in the game (the finder is Engine's, `engine::zfight`). Fix overlaps in the geometry, never by loosening the check.
 
-Run `check.sh` before every push. For client changes also take a screenshot and look at it.
+Run `check.sh` before every push (the fast default; `--full` when you change what a slow
+test covers, see [`docs/CHECKS.md`](docs/CHECKS.md)). Mark a new test that takes over ~12 s in a
+debug build `#[ignore = "slow: scripts/check.sh --full and CI run it"]`. For client changes also take a screenshot and look at it.
 On Linux the client needs `libasound2-dev`, and headless screenshots need `xvfb`,
 `libxkbcommon-x11-0` and `mesa-vulkan-drivers`.
 
