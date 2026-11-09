@@ -69,7 +69,10 @@ pub fn pirate_roost(w: &TownWorld) -> Option<PirateRoost> {
     use hw_gen::urban::world::WATER_LEVEL;
     let wet = |p: DVec2| w.ground(p) < WATER_LEVEL + 0.05;
     let core = w.core();
-    let near = w.quarters_in(core - DVec2::splat(ROOST_SEARCH), core + DVec2::splat(ROOST_SEARCH));
+    let near = w.quarters_in(
+        core - DVec2::splat(ROOST_SEARCH),
+        core + DVec2::splat(ROOST_SEARCH),
+    );
     let mut walls: Vec<&hw_gen::urban::waterfront::QuayWall> = near
         .iter()
         .flat_map(|q| q.quays.iter())
@@ -96,18 +99,7 @@ pub fn pirate_roost(w: &TownWorld) -> Option<PirateRoost> {
                 continue;
             }
             // High enough to clear whatever stands under it.
-            let under = |p: DVec2| {
-                let d = p - c;
-                d.dot(along).abs() < SHIP_HALF.0 + 6.0 && d.dot(out).abs() < SHIP_HALF.1 + 6.0
-            };
-            let reach = DVec2::splat(SHIP_HALF.0 + 8.0);
-            let roofs = w
-                .quarters_in(c - reach, c + reach)
-                .iter()
-                .flat_map(|q| q.buildings.clone())
-                .filter(|b| b.site.corners().iter().any(|&p| under(p)) || under(b.site.origin))
-                .map(|b| w.ground(b.site.origin) + b.site.height())
-                .fold(f64::NEG_INFINITY, f64::max);
+            let roofs = roofs_under(w, c, along, SHIP_HALF.0 + 6.0, SHIP_HALF.1 + 6.0);
             return Some(PirateRoost {
                 quay: q.pts[k],
                 out,
@@ -117,6 +109,30 @@ pub fn pirate_roost(w: &TownWorld) -> Option<PirateRoost> {
         }
     }
     None
+}
+
+/// The highest roof with any part in the box centred on `c`, `half_len`
+/// along `along` and `half_wide` across it (or -infinity over open ground):
+/// what an airship hanging there has to clear. Straight from the town plan,
+/// so server and clients agree whatever is loaded.
+pub fn roofs_under(w: &TownWorld, c: DVec2, along: DVec2, half_len: f64, half_wide: f64) -> f64 {
+    let across = along.perp();
+    let inside = |p: DVec2| {
+        let d = p - c;
+        d.dot(along).abs() < half_len && d.dot(across).abs() < half_wide
+    };
+    let reach = DVec2::splat(half_len.max(half_wide) + 40.0);
+    w.quarters_in(c - reach, c + reach)
+        .iter()
+        .flat_map(|q| q.buildings.iter())
+        .filter(|b| {
+            let k = b.site.corners();
+            // A corner inside, the middle inside, or the box's middle
+            // inside the building.
+            k.iter().any(|&p| inside(p)) || inside(b.site.origin) || hw_gen::urban::contains(&k, c)
+        })
+        .map(|b| w.ground(b.site.origin) + b.site.height())
+        .fold(f64::NEG_INFINITY, f64::max)
 }
 
 /// Where Molehaven's guards stand: on open cavern floor as near the lift

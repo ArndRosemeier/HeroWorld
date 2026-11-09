@@ -1652,6 +1652,7 @@ fn main() -> EngineResult<()> {
             let mut news = session.take_news();
             // Broken and mended street props: their places, and lamps on them.
             radio.solids = Some(solids.clone());
+            radio.town = Some(generated.world.clone());
             news.retain(|m| match m {
                 hw_net::ToClient::Incident { id, at, yaw, .. } => {
                     radio.hear(world, m);

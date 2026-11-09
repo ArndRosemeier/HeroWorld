@@ -895,6 +895,8 @@ pub fn villain(
             b.muscle = 0.75;
             b.weight = 0.6;
             b.height = 0.9;
+            // Under the hat: no hair poking through its crown.
+            c.hair = None;
             c.hair_color = Some("#7a3a1a".into());
             c.beard = "full".into();
             c.outfit = keep(&[

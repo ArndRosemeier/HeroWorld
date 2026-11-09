@@ -38,6 +38,8 @@ fn an_incident_starts_near_a_hero_and_is_resolved_by_beating_its_villains() {
     let mut sim = Sim::for_town(Seed(3), &town);
     let me = PlayerId(1);
     let hero = sim.spawn_hero(me, sim.spawn_point(1));
+    // A fight (the dice might otherwise pick a car crash or a fire).
+    sim.incidents.next_kind = Some(incidents::IncidentKind::Robbery);
     let mut news = Vec::new();
     run(&mut sim, incidents::FIRST_SECONDS + 2.0, &mut news);
     assert_eq!(sim.incidents.open.len(), 1, "no incident yet");

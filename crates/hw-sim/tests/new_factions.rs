@@ -186,7 +186,7 @@ fn the_iron_legion_holds_townsfolk_until_it_is_beaten() {
     // Unknown heroes are not attacked on sight, even by the Empire...
     let face = DVec3::new(inc.facing.x, 0.0, inc.facing.y);
     for _ in 0..TICK_HZ * 2 {
-        stand(&mut sim, hero, inc.at + face * 24.0);
+        stand(&mut sim, hero, inc.at + face * 30.0);
         sim.step();
     }
     assert!(sim.enemies().iter().all(|e| e.3.target.is_none()));

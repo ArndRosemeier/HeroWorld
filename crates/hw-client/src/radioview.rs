@@ -92,6 +92,8 @@ const SAIL_SECONDS: f32 = 40.0;
 pub struct Radio {
     /// The town's solids: where an airship can hang clear of the roofs.
     pub solids: Option<std::sync::Arc<hw_sim::collision::Obstacles>>,
+    /// The town plan: what an airship has to clear.
+    pub town: Option<std::sync::Arc<hw_gen::urban::world::TownWorld>>,
     departing: Vec<Departing>,
     /// Seconds the radio has run (an airship's gentle sway).
     clock: f32,
@@ -330,42 +332,37 @@ impl Radio {
     /// the way along which the roofs under it are lowest, clear of them.
     fn mooring(&self, street: Vec3) -> (Vec3, f32) {
         use crate::factionview as fv;
-        let roof_under = |p: Vec3| -> f32 {
-            self.solids.as_ref().map_or(street.y, |s| {
-                s.floor_under(DVec2::new(p.x as f64, p.z as f64), 2000.0) as f32
-            })
-        };
-        let half = fv::AIRSHIP_LENGTH as f32 * 0.5;
-        let r = fv::AIRSHIP_RADIUS as f32;
-        let (mut best, mut best_yaw) = (f32::INFINITY, 0.0f32);
+        let half = fv::AIRSHIP_LENGTH * 0.5 + 2.0;
+        let r = fv::AIRSHIP_RADIUS + 2.0;
+        let c = DVec2::new(street.x as f64, street.z as f64);
+        let (mut best, mut best_yaw) = (f64::INFINITY, 0.0f32);
         for k in 0..8 {
             let yaw = k as f32 * 22.5;
-            let a = yaw.to_radians();
-            let along = Vec3::new(a.sin(), 0.0, a.cos());
-            let side = Vec3::new(along.z, 0.0, -along.x);
-            let mut top = street.y;
-            for i in -4..=4 {
-                for j in -2..=2 {
-                    let p = street + along * (half * i as f32 / 4.0) + side * (r * j as f32 / 2.0);
-                    top = top.max(roof_under(p));
-                }
-            }
+            let a = (yaw as f64).to_radians();
+            let along = DVec2::new(a.sin(), a.cos());
+            let top = self.town.as_ref().map_or(street.y as f64, |w| {
+                hw_sim::roosts::roofs_under(w, c, along, half, r).max(street.y as f64)
+            });
             if top < best - 0.5 {
                 best = top;
                 best_yaw = yaw;
             }
         }
-        // The gondola's keel a few metres over the highest roof under it,
-        // and never lower than a ladder's climb above the street.
+        // The envelope's belly a few metres over the highest roof under it,
+        // and the gondola never lower than a ladder's climb above the street.
         let keel = fv::GONDOLA_DECK as f32 + 2.6;
-        let y = (best + keel + 4.0).max(street.y + keel + 14.0);
+        let y = (best as f32 + fv::AIRSHIP_RADIUS as f32 + 4.0)
+            .max(best as f32 + keel + 4.0)
+            .max(street.y + keel + 14.0);
         (Vec3::new(street.x, y, street.z), best_yaw)
     }
 
     /// The first raiding airship there is: where it hangs and its yaw
     /// (degrees). For screenshots.
     pub fn ship_at(&self) -> Option<(Vec3, f32)> {
-        self.scenes.values().find_map(|s| s.ship.map(|(_, at, yaw)| (at, yaw)))
+        self.scenes
+            .values()
+            .find_map(|s| s.ship.map(|(_, at, yaw)| (at, yaw)))
     }
 
     /// Departing airships sail off and rise; a moored one sways a little.

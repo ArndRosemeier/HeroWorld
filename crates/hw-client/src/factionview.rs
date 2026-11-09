@@ -63,8 +63,8 @@ fn envelope_r(t: f64) -> f64 {
 /// stern. Origin at the envelope's middle, nose to +z.
 pub fn airship(lod: Lod) -> Mesh {
     let mut b = MeshBuilder::new();
-    let seg = lod.pick(36, 18, 10);
-    let rows = lod.pick(44, 22, 10);
+    let seg = lod.pick(36, 14, 10);
+    let rows = lod.pick(44, 14, 10);
     let canvas = rgb(232, 220, 190);
     let patch = rgb(206, 188, 150);
     let red = rgb(160, 30, 28);
@@ -170,8 +170,8 @@ fn gondola(b: &mut MeshBuilder, lod: Lod, dark: Color, brass: Color) {
     let len = 18.0;
     let beam = 2.0;
     let depth = 2.4;
-    let rows = lod.pick(22, 10, 5);
-    let seg = lod.pick(16, 10, 6);
+    let rows = lod.pick(22, 8, 5);
+    let seg = lod.pick(16, 8, 6);
     // Cross-sections of a ship's hull from bow (+z) to stern: a U that
     // narrows to the stem, the keel rising at both ends.
     let hull: Vec<Vec<DVec3>> = (0..=rows)
@@ -579,15 +579,16 @@ pub fn broken_ground(lod: Lod, radius: f64, scorch: bool, ladder: bool) -> Mesh 
     let under = rgb(110, 100, 86);
     let earth = rgb(92, 66, 42);
     let earth2 = rgb(74, 52, 34);
-    let seg = lod.pick(36, 18, 10);
-    // The heap of dug earth round the rim.
+    let seg = lod.pick(72, 28, 12);
+    // The heap of dug earth round the rim: low, so people stand on it, not
+    // in it, and lumpy in long smooth waves rather than facets.
     let r = radius;
     let rim: Vec<(f64, f64)> = vec![
-        (r * 1.75, -0.05),
-        (r * 1.5, 0.22),
-        (r * 1.25, 0.5),
-        (r * 1.08, 0.55),
-        (r * 0.98, 0.32),
+        (r * 1.8, -0.04),
+        (r * 1.55, 0.1),
+        (r * 1.3, 0.24),
+        (r * 1.1, 0.28),
+        (r * 0.99, 0.16),
         (r * 0.95, 0.0),
     ];
     let rows: Vec<Vec<DVec3>> = rim
@@ -596,14 +597,14 @@ pub fn broken_ground(lod: Lod, radius: f64, scorch: bool, ladder: bool) -> Mesh 
             (0..seg)
                 .map(|j| {
                     let a = TAU * j as f64 / seg as f64;
-                    let wob = 1.0 + 0.08 * jitter(j as u32, 3);
+                    let wob = 1.0 + 0.06 * (3.0 * a + 0.7).sin() + 0.035 * (7.0 * a + 2.1).sin();
                     DVec3::new(rad * wob * a.cos(), y * wob, rad * wob * a.sin())
                 })
                 .collect()
         })
         .collect();
     surface(&mut b, &rows, true, |i, j| {
-        if lod != Lod::Far && (i + j) % 5 == 0 {
+        if lod != Lod::Far && i == 3 && j % 7 < 3 {
             plain(earth2)
         } else {
             plain(earth)
@@ -663,7 +664,11 @@ pub fn broken_ground(lod: Lod, radius: f64, scorch: bool, ladder: bool) -> Mesh 
         for i in 0..6 {
             let j = (i + 1) % 6;
             let mid = (corners[i] + corners[j]) * 0.5 - c;
-            b.quad([corners[i], corners[j], top[j], top[i]], mid.normalize(), under);
+            b.quad(
+                [corners[i], corners[j], top[j], top[i]],
+                mid.normalize(),
+                under,
+            );
         }
     }
     // Timber props and a ladder for the mole folk.
