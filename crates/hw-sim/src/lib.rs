@@ -26,6 +26,7 @@ pub mod predict;
 pub mod progress;
 pub mod props;
 pub mod quarter;
+pub mod rainmaker;
 pub mod robots;
 pub mod rocket;
 pub mod roosts;

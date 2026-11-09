@@ -84,6 +84,12 @@ static CLIPS: &[(&str, &[u8])] = clips![
     "rocket_beep",
     "rocket_vent",
     "rocket_touchdown",
+    "wx_puff",
+    "wx_rain",
+    "wx_rainbow",
+    "wx_thunder_1",
+    "wx_thunder_2",
+    "wx_whirr",
 ];
 
 /// The fight's clips (`fightview.rs` plays them).
@@ -298,6 +304,8 @@ pub struct Scene<'a> {
     pub atom: crate::atomview::Heard,
     /// The mole folk's drill rig at work and its geyser.
     pub drill: crate::drillview::Heard,
+    /// The weather tower's machinery, cannons, rain and thunder.
+    pub weather: crate::weatherview::Heard,
 }
 
 /// The ambience layers and how loud each one plays at full share.
@@ -376,6 +384,11 @@ pub struct Soundscape {
     atom_loops: [Option<SoundId>; 2],
     /// The drill rig's grind.
     drill_grind: Option<SoundId>,
+    /// The weather tower's whirr and rain, and thunder still on its way
+    /// (when it is heard, where the flash was).
+    wx_whirr: Option<SoundId>,
+    wx_rain: Option<SoundId>,
+    wx_thunder: Vec<(f64, Vec3)>,
     pub music: Music,
 }
 
@@ -413,6 +426,9 @@ impl Soundscape {
             rocket_vent: None,
             atom_loops: [None, None],
             drill_grind: None,
+            wx_whirr: None,
+            wx_rain: None,
+            wx_thunder: Vec::new(),
             music: Music::new(),
         }
     }
@@ -442,6 +458,7 @@ impl Soundscape {
         self.rocket(world, s);
         self.atom(world, s);
         self.drill(world, s);
+        self.weather(world, s);
         self.timed.retain(|(id, until)| {
             if s.now >= *until {
                 world.stop_sound(*id, 2.5);
@@ -468,7 +485,14 @@ impl Soundscape {
         for (id, _) in std::mem::take(&mut self.timed) {
             world.stop_sound(id, 0.5);
         }
-        if let Some(v) = self.tesla_hum.take() {
+        for v in [
+            self.tesla_hum.take(),
+            self.wx_whirr.take(),
+            self.wx_rain.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
             world.stop_sound(v, 0.5);
         }
         for v in [self.rocket_roar.take(), self.rocket_vent.take()]
@@ -486,6 +510,7 @@ impl Soundscape {
         if let Some(v) = self.drill_grind.take() {
             world.stop_sound(v, 0.5);
         }
+        self.wx_thunder.clear();
         self.music.stop(world);
     }
 
@@ -754,6 +779,104 @@ impl Soundscape {
                 }
             } else {
                 i += 1;
+            }
+        }
+    }
+
+    /// The weather tower: its machinery whirring at the crown (faster in
+    /// the storm), a whoomp for each cannon shot, the rain's rush (all
+    /// round the listener under the shower), thunder rolling in at the
+    /// speed of sound after each flash, and a sparkle as the rainbow comes
+    /// out.
+    fn weather(&mut self, world: &mut World, s: &Scene) {
+        let w = &s.weather;
+        let muffle = if s.under != Under::No {
+            0.0
+        } else if s.indoors {
+            0.4
+        } else {
+            1.0
+        };
+        let whirr = w
+            .whirr
+            .filter(|at| muffle > 0.0 && at.distance(s.eye) < 160.0)
+            .map(|at| (at, (0.35 + 0.35 * w.spin) * muffle, 0.85 + 0.35 * w.spin));
+        keep_loop(
+            world,
+            &mut self.bank,
+            &mut self.wx_whirr,
+            "wx_whirr",
+            whirr,
+            (8.0, 150.0),
+            s.now,
+        );
+        let rain = w
+            .rain
+            .filter(|(at, k)| muffle > 0.0 && *k > 0.02 && at.distance(s.eye) < 260.0)
+            .map(|(at, k)| (at, (0.25 + 0.75 * k) * muffle, 1.0));
+        keep_loop(
+            world,
+            &mut self.bank,
+            &mut self.wx_rain,
+            "wx_rain",
+            rain,
+            (25.0, 250.0),
+            s.now,
+        );
+        if muffle > 0.0 {
+            for &at in &w.puffs {
+                if at.distance(s.eye) > 300.0 {
+                    continue;
+                }
+                if let Some(c) = self.bank.get("wx_puff", s.now) {
+                    let pitch = 0.85 + 0.3 * self.rand() as f32;
+                    world.play_sound(
+                        &c,
+                        PlaySound::at(at)
+                            .volume(0.8 * muffle)
+                            .pitch(pitch)
+                            .range(12.0, 300.0),
+                    );
+                }
+            }
+            if let Some(at) = w.bow {
+                if at.distance(s.eye) < 400.0 {
+                    if let Some(c) = self.bank.get("wx_rainbow", s.now) {
+                        world.play_sound(
+                            &c,
+                            PlaySound::at(at).volume(0.7 * muffle).range(60.0, 400.0),
+                        );
+                    }
+                }
+            }
+        }
+        for &at in &w.thunder {
+            // Sound takes its time: a far flash rolls in late.
+            self.wx_thunder
+                .push((s.now + at.distance(s.eye) as f64 / 340.0, at));
+        }
+        let mut i = 0;
+        while i < self.wx_thunder.len() {
+            let (when, at) = self.wx_thunder[i];
+            if when > s.now {
+                i += 1;
+                continue;
+            }
+            self.wx_thunder.swap_remove(i);
+            if muffle <= 0.0 || at.distance(s.eye) > 1500.0 {
+                continue;
+            }
+            self.cracks = self.cracks.wrapping_add(1);
+            let clip = ["wx_thunder_1", "wx_thunder_2"][(self.cracks % 2) as usize];
+            if let Some(c) = self.bank.get(clip, s.now) {
+                let pitch = 0.85 + 0.25 * self.rand() as f32;
+                world.play_sound(
+                    &c,
+                    PlaySound::at(at)
+                        .volume(muffle)
+                        .pitch(pitch)
+                        .range(120.0, 1500.0),
+                );
             }
         }
     }
@@ -1504,6 +1627,45 @@ pub fn music_dir() -> Option<PathBuf> {
     tries.into_iter().find(|p| has(p))
 }
 
+/// Keeps a looped sound playing at `want` (where, volume, pitch), or
+/// fades it out when there is none.
+fn keep_loop(
+    world: &mut World,
+    bank: &mut Bank,
+    slot: &mut Option<SoundId>,
+    clip: &'static str,
+    want: Option<(Vec3, f32, f32)>,
+    (near, far): (f32, f32),
+    now: f64,
+) {
+    match (want, *slot) {
+        (Some((at, vol, pitch)), Some(v)) => {
+            // Keep the clip in the bank while it plays.
+            let _ = bank.get(clip, now);
+            let a = world.audio_mut();
+            a.set_position(v, at);
+            a.set_volume(v, vol);
+            a.set_pitch(v, pitch);
+        }
+        (Some((at, vol, pitch)), None) => {
+            if let Some(c) = bank.get(clip, now) {
+                let p = PlaySound::at(at)
+                    .looped()
+                    .volume(vol)
+                    .pitch(pitch)
+                    .range(near, far)
+                    .fade_in(1.5);
+                *slot = Some(world.play_sound(&c, p));
+            }
+        }
+        (None, Some(v)) => {
+            world.stop_sound(v, 1.5);
+            *slot = None;
+        }
+        (None, None) => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1533,6 +1695,7 @@ mod tests {
             rocket: Default::default(),
             atom: Default::default(),
             drill: Default::default(),
+            weather: Default::default(),
         }
     }
 

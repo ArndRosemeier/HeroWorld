@@ -152,12 +152,24 @@ pub fn bloom(world: &World, hour: f32) -> BloomSettings {
 /// The sky at `hour`, with the look that goes with it. Use this instead
 /// of `World::set_physical_sky`.
 pub fn set_sky(world: &mut World, hour: f32) {
+    set_sky_wet(world, hour, 0.0);
+}
+
+/// The sky at `hour` with the camera `wet` (0..1) under a rain cloud (the
+/// weather tower's): the sky greys over and the sun goes in.
+pub fn set_sky_wet(world: &mut World, hour: f32, wet: f32) {
+    let w = wet.clamp(0.0, 1.0);
+    let mix = |a: f32, b: f32| a + (b - a) * w;
     let sky = PhysicalSky {
         // A few more clouds than Engine's clear sky: something for the
         // sunset to colour and for the eye to rest on above the roofs.
         weather: SkyWeather {
-            cover: 0.42,
-            ..SkyWeather::CLEAR
+            cover: mix(0.42, 0.97),
+            density: mix(SkyWeather::CLEAR.density, 0.9),
+            dark: mix(0.0, 0.45),
+            sun: mix(1.0, 0.22),
+            fog: mix(0.0, 0.15),
+            rain: mix(0.0, 0.6),
         },
         ..PhysicalSky::at_hour(hour)
     };

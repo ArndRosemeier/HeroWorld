@@ -556,6 +556,7 @@ pub fn places(world: &Area, solids: &Obstacles) -> Vec<Place> {
         (LandmarkKind::Lighthouse, "Lighthouse"),
         (LandmarkKind::AtomicPlant, "Atomic plant, at its gate"),
         (LandmarkKind::MoleDrill, "Mole drill rig"),
+        (LandmarkKind::WeatherTower, "Weather tower"),
     ] {
         if let Some(l) = crate::landmarkview::nearest(world, kind, spawn) {
             let side = l.stairs.first().map_or(l.dir, |s| s.down);

@@ -932,6 +932,25 @@ impl Incidents {
                 self.news.push(inc.news());
             }
         }
+        // A fire under the weather tower's rain burns at half pace: the
+        // people inside hold out longer.
+        let wx = self.town.as_ref().and_then(|t| {
+            t.world
+                .landmarks
+                .iter()
+                .find(|l| l.kind == LandmarkKind::WeatherTower)
+                .cloned()
+        });
+        if let Some(wx) = &wx {
+            let now = tick as f64 * DT;
+            for inc in self.open.iter_mut() {
+                if inc.kind == IncidentKind::Fire
+                    && crate::rainmaker::rain_at(wx, DVec2::new(inc.at.x, inc.at.z), now) > 0.5
+                {
+                    inc.expires += TICK_HZ as u64 / 2;
+                }
+            }
+        }
         let mut ended = Vec::new();
         for (k, inc) in self.open.iter_mut().enumerate() {
             if let Some(t) = inc.calmed {

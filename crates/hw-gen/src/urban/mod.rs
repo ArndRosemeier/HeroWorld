@@ -46,6 +46,7 @@ pub mod tensor;
 pub mod trace;
 pub mod underground;
 pub mod waterfront;
+pub mod weather_tower;
 pub mod world;
 
 pub use growth::{Centre, CentreKind, Era, Growth};

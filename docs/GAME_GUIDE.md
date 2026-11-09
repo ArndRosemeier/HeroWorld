@@ -480,6 +480,7 @@ between them) is designed but not built; the town stands in endless streamed gro
   beacon blinks (1.8 s) and every 25-60 s the relief valve on the hall roof blows off for
   2.5-4 s. Sound: turbine hum (200 m), tower steam (260 m), valve roar (500 m). Views:
   `HW_VIEW=atomplant`, `atomgate`, `atomtower`.
+- The **weather tower** (towns of 5 000 or more; see "The weather tower" below).
 - **Street furniture:** lamps in each quarter's style (iron lanterns, deco double globes,
   atomic saucers), parked golden-age cars, trees by region (lindens and birches north,
   planes and chestnuts in the middle, palms and cypresses south), hedges, fountains,
@@ -552,6 +553,30 @@ lights (the next goes ahead); `gantry::weak_spots` are where a saboteur goes (th
 valves at the gantry's foot, each sphere's valve, the blockhouse door).
 Views: `HW_VIEW=rocket`, `rocketpad`, `rocketarm`, `rocketboard`; `HW_ROCKET_T=<s>`
 freezes the first launch that many seconds in.
+
+### The weather tower (`hw-gen/src/urban/weather_tower.rs`, `hw-sim/src/rainmaker.rs`, `hw-client/src/weatherview.rs`)
+
+The Weather Bureau's tower stands in every town of 5 000 people or more, on the highest clear
+ground 250-900 m out from the core, outside the villain quarter and at least 150 m clear of
+the other landmarks: a round glass pavilion, a white mast 44-62 m tall with three swept coral
+fins, an observation saucer, and on top six cloud cannons round a glass weather globe under
+an anemometer. A barometer dial on the mast reads FAIR (gold), CHANGE or RAIN (blue).
+
+It makes its own weather over the blocks in front of it (a shower 58 m round, centred 40 m
+out from the tower), in a round of 300 s on the game clock, so every player sees the same:
+fair 0-60 s (globe gold); brewing 60-100 s (the cannons fire puffs of vapour one after
+another, every 0.8-1.5 s, and a cloud builds 24 m over the top and darkens); rain 95-200 s
+(full from 105 s; thunder every 6-15 s while it pours, the rumble arriving at the speed of
+sound); clearing 185-215 s; a rainbow 195-260 s, in daylight only, always turned to whoever
+looks at it. The anemometer races and the needle swings to RAIN in the storm; under the cloud
+the sky greys over and the sun goes in. No rain falls indoors or underground.
+
+Gameplay: a house fire under the rain (rain over half strength) burns at half pace, so the
+people inside hold out twice as long. Sound: the machinery's whirr (160 m), a whoomp per cannon
+shot (300 m), the rain's rush (all round you under the shower, 250 m), thunder (1.5 km), a
+sparkle as the rainbow comes out. Views: `HW_VIEW=weather`, `weathertop`, `weatherfoot`,
+`weatherstreet`; `HW_WEATHER=brew|rain|clear|bow|fair` picks the moment. Debug menu: Places,
+"Weather tower".
 
 ### The villain quarter (`hw-gen/src/urban/dystopia.rs`, `hw-sim/src/quarter.rs`)
 

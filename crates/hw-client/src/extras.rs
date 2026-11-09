@@ -58,6 +58,8 @@ pub struct TownExtras {
     pub atom: Option<crate::atomview::AtomView>,
     /// The mole folk's drill rig at work.
     pub drill: Option<crate::drillview::DrillView>,
+    /// The weather tower's cloud, rain and rainbow.
+    pub weather: Option<crate::weatherview::WeatherView>,
     pub grass: Option<GrassView>,
     pub waterfront: Option<crate::waterfrontview::WaterfrontView>,
 }
@@ -102,6 +104,9 @@ impl TownExtras {
         }
         if let Some(mut d) = self.drill.take() {
             d.clear(world);
+        }
+        if let Some(mut w) = self.weather.take() {
+            w.clear(world);
         }
         if let Some(g) = self.grass.take() {
             g.despawn(world);
@@ -381,6 +386,7 @@ fn assemble(
         mast: Some(crate::mastview::MastView::new(town)),
         rocket: Some(crate::rocketview::RocketView::new(town)),
         atom: Some(crate::atomview::AtomView::new(town)),
+        weather: Some(crate::weatherview::WeatherView::new(town)),
     }
 }
 

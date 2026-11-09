@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.112 (2026-11-09)
+
+- The Weather Bureau has built its tower: a white Googie mast with swept coral fins, a saucer deck and a crown of cloud cannons round a glowing weather globe, in every town of 5 000 people or more.
+- Every five minutes it makes its own weather: the cannons boom puffs of vapour into the sky, a cloud gathers and darkens over the blocks in front of it, and down comes the rain, with thunder rolling in. Then the sun breaks through and a rainbow stands over the wet streets.
+- Watch the barometer on the mast swing from FAIR to RAIN, and the globe turn from gold to blue. A house fire under the rain burns slower, so you have longer to get the people out.
+
 ## 0.111 (2026-11-09)
 
 - The mole folk have built a giant drill rig right over Molehaven: a riveted iron derrick with a huge fluted drill turning in a glowing bore, a steam boiler with a spinning flywheel, a smoking stack and glowing toadstool lamps. Taxis will take you there.

@@ -480,6 +480,7 @@ pub fn stands(world: &Area) -> Vec<Stand> {
             LandmarkKind::RocketGantry => "The rocket port",
             LandmarkKind::AtomicPlant => "Atomic plant gate",
             LandmarkKind::MoleDrill => "The mole drill",
+            LandmarkKind::WeatherTower => "The weather tower",
             // No taxi will take you there.
             LandmarkKind::TeslaTower => continue,
         };

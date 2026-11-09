@@ -145,6 +145,18 @@ impl NightLights {
                         ),
                     });
                 }
+                LandmarkKind::WeatherTower => {
+                    // Floodlights washing up the mast from the pavilion's
+                    // roof, and the saucer's windows. The globe's light
+                    // changes with the weather: see `weatherview`.
+                    let d = hw_gen::urban::weather_tower::WxDims::of(l.height);
+                    sources.push(Source {
+                        lamp: Lamp::point(at(7.5), rgb(230, 238, 255), 45.0, 40.0),
+                    });
+                    sources.push(Source {
+                        lamp: Lamp::point(at(d.deck_y), rgb(255, 214, 160), 30.0, 30.0),
+                    });
+                }
                 // Its lights pulse with its arcs: see `teslaview`.
                 LandmarkKind::TeslaTower => {}
                 LandmarkKind::RocketGantry => {

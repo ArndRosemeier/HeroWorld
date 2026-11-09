@@ -41,6 +41,9 @@ pub enum LandmarkKind {
     /// Molehaven, a giant drill turning in it, and a steam geyser that
     /// erupts from it now and then ([`super::drillrig`]).
     MoleDrill,
+    /// The Weather Bureau's tower, which makes its own cloud, rain and
+    /// rainbow (see [`super::weather_tower`]).
+    WeatherTower,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -260,6 +263,7 @@ impl Landmark {
             }
             LandmarkKind::MooringMast => super::mast::mast_footprints(),
             LandmarkKind::AtomicPlant => super::atomic::footprints(),
+            LandmarkKind::WeatherTower => super::weather_tower::footprints(self),
         };
         local
             .into_iter()
@@ -394,6 +398,9 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
         lo = lo.min(d.centre - DVec2::splat(r));
         hi = hi.max(d.centre + DVec2::splat(r));
     }
+    // The weather tower's ring round the core.
+    lo = lo.min(core - DVec2::splat(super::weather_tower::WX_REACH + 20.0));
+    hi = hi.max(core + DVec2::splat(super::weather_tower::WX_REACH + 20.0));
     let all = w.roads_in(lo, hi);
     let roads = RoadGrid::new(&all, 0.0);
     let mut out = Vec::new();
@@ -531,6 +538,9 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
     }
     if let Some(l) = super::atomic::plan(w, &out) {
         out.push(l);
+    }
+    if let Some(t) = super::weather_tower::plan(w, &roads, core, &out) {
+        out.push(t);
     }
     for l in &mut out {
         l.stairs = plan_stairs(w, &roads, l);

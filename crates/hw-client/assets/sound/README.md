@@ -8,7 +8,7 @@ Decoded when first heard and forgotten after a minute of quiet.
 Made with OpenRouter on 2026-11-09 with `bytedance-seed/seed-audio-1-0` (Seed Audio renders a
 sound, not speech, when the text starts with "The sound of"). Two to five takes each; a Gemini
 model listened to every take blind and scored it against the prompt, and the best was kept.
-Raw takes and scores: project files `heroworld/sounds/raw/`. To make one again use the same
+Raw takes and scores: project files `heroworld/sounds/raw/` (the weather tower's: `weather.json`, picked by level and steadiness, not scored). To make one again use the same
 model and prompt; the outputs differ from run to run.
 
 Processing (`process.py`, kept beside the raw takes): silence trimmed, DC removed, mono Ogg
@@ -65,6 +65,12 @@ seam.
 | `rocket_beep.ogg` | shot | The sound of a single short clean electronic beep from a 1950s science fiction control console |
 | `rocket_vent.ogg` | loop | The sound of cold gas venting from a rocket, a steady loud hiss of escaping vapour with soft pops, continuous |
 | `rocket_touchdown.ogg` | shot | The sound of a heavy rocket landing on a concrete pad, quick: the engine cuts off with a short falling whoosh, at once a deep metallic thud and clank, then a short hiss |
+| `wx_rain.ogg` | loop | The sound of steady heavy rain falling on a city street and rooftops, a constant even rushing patter with water splashing, continuous, no thunder |
+| `wx_thunder_1.ogg` | shot | The sound of distant rolling thunder, a deep low rumble that grows and slowly fades away |
+| `wx_thunder_2.ogg` | shot | (the same prompt, another take) |
+| `wx_puff.ogg` | shot | The sound of a big steam cannon firing a puff of vapour upward, a deep pneumatic whoomp followed by a long rushing hiss |
+| `wx_whirr.ogg` | loop | The sound of a large rotating weather machine on a tower, a steady whirring motor with soft clicking gears and a gentle wind, continuous |
+| `wx_rainbow.ogg` | shot | The sound of a magical sparkling harp glissando rising upward with shimmering bells, bright and happy |
 
 ## From Scale
 

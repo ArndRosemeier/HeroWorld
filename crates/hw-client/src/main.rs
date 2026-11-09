@@ -55,6 +55,9 @@
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; by default
 //! the city picked in the title's city window; joining players get the host's); `HW_NAME`; `HW_VIEW` =
 //! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the light over the first call, with `HW_INCIDENT`), `far` (a main road across town, where people and traffic must follow) or
+//! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
+//! players get the host's); `HW_NAME`; `HW_VIEW` =
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `weather` (the weather tower and its shower; `weathertop`, `weatherfoot`, `weatherstreet` close up; `HW_WEATHER=brew|rain|clear|bow|fair` picks the moment), `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `far` (a main road across town, where people and traffic must follow) or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -820,6 +823,47 @@ fn main() -> EngineResult<()> {
             let dd = c - p;
             let yaw = dd.x.atan2(dd.y).to_degrees() as f32;
             let pitch = ((look - eye) / dd.length()).atan().to_degrees() as f32;
+            FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
+        }
+        "weather" | "weathertop" | "weatherfoot" | "weatherstreet" => {
+            // The weather tower: from afar with its shower and the blocks
+            // round it, close up at its crown, up at it from the doors, and
+            // out in its rain on the street. HW_WEATHER picks the moment.
+            use hw_gen::urban::landmarks::LandmarkKind;
+            use hw_gen::urban::weather_tower::{rain_centre, WxDims};
+            let l = hw_client::landmarkview::nearest(
+                &generated.world,
+                LandmarkKind::WeatherTower,
+                spawn,
+            );
+            let (c, base, h, face) = l.map_or((spawn, ground(spawn), 50.0, spawn_dir), |l| {
+                (l.pos, l.base, l.height, l.dir)
+            });
+            let d = WxDims::of(h);
+            let rain = l.map_or(c + face * 40.0, rain_centre);
+            let side = face.perp();
+            let (p, eye, target) = match view.as_str() {
+                "weather" => {
+                    let mid = (c + rain) * 0.5;
+                    let p = mid + (side * 0.9 + face * 0.35).normalize() * 190.0;
+                    (p, base + 28.0, (mid, base + h * 0.7))
+                }
+                "weathertop" => {
+                    let p = c + (face + side * 0.5).normalize() * 15.0;
+                    (p, base + d.crown_y + 2.0, (c, base + d.crown_y + 1.5))
+                }
+                "weatherfoot" => {
+                    let p = c + (face * 1.0 + side * 0.25).normalize() * 24.0;
+                    (p, ground(p).max(base) + 1.7, (c, base + h * 0.3))
+                }
+                _ => {
+                    let p = rain + side * 18.0;
+                    (p, ground(p) + 1.7, (c, base + h * 0.55))
+                }
+            };
+            let dd = target.0 - p;
+            let yaw = dd.x.atan2(dd.y).to_degrees() as f32;
+            let pitch = ((target.1 - eye) / dd.length()).atan().to_degrees() as f32;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
         }
         "quay" => {
@@ -1901,6 +1945,24 @@ fn main() -> EngineResult<()> {
             hw_client::hitch::mark("drill rig");
             if let Some(d) = extras.drill.as_mut() {
                 d.update(world, session.time(tick_clock / hw_sim::DT))?;
+            }
+            hw_client::hitch::mark("weather tower");
+            if let Some(w) = extras.weather.as_mut() {
+                let eye = world.camera().eye();
+                let sheltered = town.inside.is_some()
+                    || hw_client::soundscape::under(&generated.world, eye)
+                        != hw_client::soundscape::Under::No;
+                w.update(
+                    world,
+                    session.time(tick_clock / hw_sim::DT),
+                    hour,
+                    frame.dt,
+                    sheltered,
+                )?;
+                // Under its cloud the sky greys over and the sun goes in.
+                if swoop.is_none() && w.wet() > 0.0 {
+                    hw_client::lighting::set_sky_wet(world, hour, w.wet());
+                }
             }
             {
                 let eye = world.camera().eye();
@@ -3297,6 +3359,11 @@ fn main() -> EngineResult<()> {
                         .unwrap_or_default(),
                     atom: extras.atom.as_mut().map(|a| a.heard()).unwrap_or_default(),
                     drill: extras.drill.as_mut().map(|d| d.heard()).unwrap_or_default(),
+                    weather: extras
+                        .weather
+                        .as_mut()
+                        .map(|w| w.heard())
+                        .unwrap_or_default(),
                 };
                 hw_client::hitch::mark("sounds");
                 sounds.update(world, &scene);

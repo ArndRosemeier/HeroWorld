@@ -58,4 +58,6 @@ pub mod townmesh;
 pub mod trafficview;
 pub mod undergroundview;
 pub mod waterfrontview;
+pub mod weathermodel;
+pub mod weatherview;
 pub mod zfight;
