@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.102 (2026-11-09)
+
+- Behind the scenes: fresh build machines download the engine's libraries ready-built instead of compiling them, so checks start minutes sooner.
+
 ## 0.101 (2026-11-09)
 
 - Behind the scenes: a test of playing through the online relay no longer fails at random on a busy test machine.

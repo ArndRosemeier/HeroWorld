@@ -26,12 +26,13 @@ for a in "$@"; do
     esac
 done
 
-# Engine links ALSA and udev on Linux; a fresh cloud sandbox has neither.
-if [ "$(uname -s)" = Linux ] && ! pkg-config --exists alsa libudev 2>/dev/null; then
+# Engine links ALSA and udev on Linux; a fresh cloud sandbox has neither (nor
+# zstd, for the prebuilt dependencies below).
+if [ "$(uname -s)" = Linux ] && { ! pkg-config --exists alsa libudev 2>/dev/null || ! command -v zstd >/dev/null; }; then
     if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null; then
-        echo "== installing libasound2-dev libudev-dev"
-        apt-get install -y -q libasound2-dev libudev-dev >/dev/null 2>&1 ||
-            { apt-get update -q >/dev/null 2>&1 && apt-get install -y -q libasound2-dev libudev-dev >/dev/null; }
+        echo "== installing libasound2-dev libudev-dev zstd"
+        apt-get install -y -q libasound2-dev libudev-dev zstd >/dev/null 2>&1 ||
+            { apt-get update -q >/dev/null 2>&1 && apt-get install -y -q libasound2-dev libudev-dev zstd >/dev/null; }
     else
         echo "Engine needs libasound2-dev and libudev-dev: install them first." >&2
         exit 1
@@ -39,6 +40,23 @@ if [ "$(uname -s)" = Linux ] && ! pkg-config --exists alsa libudev 2>/dev/null; 
 fi
 
 t0=$SECONDS
+
+# A fresh Linux sandbox: download the prebuilt dependencies (Engine, wgpu,
+# ...) instead of compiling them, when CI has built them for exactly this
+# Cargo.lock (.github/workflows/dev-cache.yml). Only into an empty target/,
+# and only where they were built: as root in /home/user/HeroWorld.
+if [ "$(uname -s)" = Linux ] && [ ! -d target/debug/deps ] && [ "$PWD" = /home/user/HeroWorld ] &&
+    [ "$(id -u)" = 0 ] && command -v zstd >/dev/null; then
+    key="$(scripts/dev-cache-key.sh)"
+    url="https://github.com/ArndRosemeier/HeroWorld/releases/download/dev-cache/deps-$key.tar.zst"
+    echo "== fetching prebuilt dependencies ($key)"
+    if curl -fsSL --retry 3 "$url" | zstd -dq | tar -xf -; then
+        echo "== prebuilt dependencies in place ($((SECONDS - t0)) s)"
+    else
+        rm -rf target
+        echo "== none for this Cargo.lock yet (CI builds them after a push): compiling"
+    fi
+fi
 step() { echo "== $1 ($((SECONDS - t0)) s so far)"; }
 
 step "cargo fmt"

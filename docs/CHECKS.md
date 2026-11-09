@@ -18,8 +18,24 @@ scripts/check.sh hw-gen     # the tests of the crates you name
    `Cargo.lock` and `assets/` run everything; docs and scripts run no tests.
 3. Tests marked `#[ignore = "slow: ..."]` are left out.
 
-On Linux it installs `libasound2-dev` and `libudev-dev` when they are missing and it runs
-as root (a fresh cloud sandbox).
+On Linux it installs `libasound2-dev`, `libudev-dev` and `zstd` when they are missing and
+it runs as root (a fresh cloud sandbox).
+
+## Prebuilt dependencies for fresh sandboxes
+
+Compiling Engine, wgpu, bevy_ecs, rapier and the rest takes about 6 minutes on a 4-core
+sandbox. CI builds them once per dependency set (`.github/workflows/dev-cache.yml`, run
+when `Cargo.lock`, a `Cargo.toml` or `rust-toolchain.toml` changes) and publishes the
+`target/` folder without our own crates as `deps-<key>.tar.zst` on the public release
+`dev-cache`. The key (`scripts/dev-cache-key.sh`) hashes those files. When `target/` is
+empty, `check.sh` downloads the matching archive (about 115 MB/s in a sandbox) and cargo
+only compiles our crates. With no archive for the key yet (a dependency just changed and
+CI is still building it) it compiles as before.
+
+Cargo ties its build outputs to paths, so the cache is built as root in
+`/home/user/HeroWorld` with `HOME=/root`, where cloud sandboxes have them; anywhere else
+(Arnd's PCs, Windows CI) `check.sh` skips it. It is built with an empty environment, so no
+token or secret is in it.
 
 ## Slow tests
 
