@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.090 (2026-11-09)
+
+- At the very start the window stays hidden while the graphics get ready, and appears once it can respond, so it no longer shows up frozen.
+
 ## 0.089 (2026-11-09)
 
 - The title screen no longer freezes while the town loads: props, trees, landmarks, grass and the ground are made in the background and come in a few at a time, so the cover keeps moving and the window can be dragged.
