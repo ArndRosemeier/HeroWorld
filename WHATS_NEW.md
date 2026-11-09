@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.086 (2026-11-09)
+
+- Smoother play: town blocks coming into view and walking into a building no longer freeze the game for a moment (they are drawn in the background now).
+- The steady little stutter twice a second in busy streets is gone (looking up the cars around you was slow).
+- Cars, taxis and hover cars are made once at the start instead of the first time each one drives into view.
+- The game keeps a hitch log: every stutter it notices goes into `logs/hitches.log` with what was going on, so it can be found and fixed. Send it to Arnd if the game ever stutters.
+
 ## 0.085 (2026-11-09)
 
 - The day runs now: the game starts in the afternoon, dusk comes about ten minutes in, then night and a new morning.

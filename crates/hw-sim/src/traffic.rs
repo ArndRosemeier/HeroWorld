@@ -1331,21 +1331,17 @@ impl Traffic {
         let c0 = cell_of(around - DVec2::splat(radius));
         let c1 = cell_of(around + DVec2::splat(radius));
         let mut ids = Vec::new();
+        // Street lanes: their stretches in the box first, then each lane's
+        // cars once (a long lane crosses many cells; going through all its
+        // cars for every stretch took 30 ms round a busy centre).
+        let mut streets: BTreeMap<u32, Vec<(f64, f64)>> = BTreeMap::new();
         for x in c0.0..=c1.0 {
             for (_, list) in self.grid.range((x, c0.1)..=(x, c1.1)) {
                 for &(flies, lane, s0, s1) in list {
                     let l = self.lane(flies, lane);
                     let len = l.path.len();
                     if !flies {
-                        for (k, c) in self.cars[lane as usize].iter().enumerate() {
-                            if c.parked {
-                                continue;
-                            }
-                            let a = c.s.rem_euclid(len);
-                            if a >= s0 - 3.0 && a <= s1 + 3.0 {
-                                ids.push(id_of(false, lane, k as u64));
-                            }
-                        }
+                        streets.entry(lane).or_default().push((s0 - 3.0, s1 + 3.0));
                         continue;
                     }
                     let gap = len / l.count as f64;
@@ -1358,6 +1354,21 @@ impl Traffic {
                         let k = k.rem_euclid(l.count as i64) as u64;
                         ids.push(id_of(flies, lane, k));
                     }
+                }
+            }
+        }
+        for (lane, mut spans) in streets {
+            spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let len = self.ground[lane as usize].path.len();
+            for (k, c) in self.cars[lane as usize].iter().enumerate() {
+                if c.parked {
+                    continue;
+                }
+                let a = c.s.rem_euclid(len);
+                // Inside one of the stretches that start at or before it?
+                let i = spans.partition_point(|sp| sp.0 <= a);
+                if spans[..i].iter().rev().any(|sp| a <= sp.1) {
+                    ids.push(id_of(false, lane, k as u64));
                 }
             }
         }
@@ -1554,6 +1565,34 @@ mod tests {
                 assert!((a.pos.y - ground).abs() < 1.5, "car off the road");
             }
         }
+    }
+
+    #[test]
+    fn near_finds_every_street_car_in_reach() {
+        let mut t = traffic();
+        t.advance_to(60.0);
+        let p = t.world.spawn_line().0;
+        let r = 500.0;
+        let near: std::collections::BTreeSet<u64> = t
+            .near(p, r, 60.0, usize::MAX)
+            .iter()
+            .filter(|v| !v.flies())
+            .map(|v| v.id)
+            .collect();
+        // Every street car, looked at one by one.
+        let mut all = std::collections::BTreeSet::new();
+        for (lane, cars) in t.cars.iter().enumerate() {
+            for k in 0..cars.len() {
+                let id = id_of(false, lane as u32, k as u64);
+                if let Some(v) = t.vehicle(id, 60.0) {
+                    if DVec2::new(v.pos.x, v.pos.z).distance(p) <= r {
+                        all.insert(id);
+                    }
+                }
+            }
+        }
+        assert!(all.len() > 50, "{} cars", all.len());
+        assert_eq!(near, all);
     }
 
     #[test]

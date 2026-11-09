@@ -74,6 +74,9 @@
 //! opens it at start);
 //! `ENGINE_ZFIGHT=1` marks z-fighting with magenta posts (the `zfight` tool
 //! checks a whole city without the game).
+//! Stutters are written to `logs/hitches.log` (see `hitch.rs`; `HW_HITCH_LOG`,
+//! `HW_HITCH_MS`); `HW_AT=x,y,z` with `HW_YAW` starts the hero at a spot a
+//! report names.
 
 mod session;
 
@@ -98,7 +101,8 @@ use hw_sim::GeneratedTown;
 use session::Session;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Milliseconds per frame for building town cells as you move.
+/// Milliseconds per frame for putting town cells, drawn on worker threads,
+/// into the world as you move.
 const BUILD_BUDGET_MS: f64 = 6.0;
 /// Milliseconds per frame for putting cells drawn on worker threads into
 /// the world behind the title (and for its props).
@@ -256,6 +260,7 @@ fn main() -> EngineResult<()> {
         && (view == "title"
             || (std::env::var_os("HW_VIEW").is_none()
                 && std::env::var_os("HW_JOIN").is_none()
+                && std::env::var_os("HW_AT").is_none()
                 && std::env::var_os("HW_HOST").is_none()));
     let mut name = std::env::var("HW_NAME").unwrap_or_else(|_| profile.name.clone());
     let auto_walk = std::env::var_os("HW_WALK").is_some();
@@ -1009,10 +1014,31 @@ fn main() -> EngineResult<()> {
     // Broken buildings, once a game is on.
     let mut damage: Option<DamageView> = None;
     let shooting = std::env::var_os("ENGINE_SCREENSHOT").is_some();
+    let mut hitch_noted = f32::NEG_INFINITY;
+    // `HW_AT=x,y,z` (and `HW_YAW`): the hero starts there, as a hitch
+    // report's `repro` line gives it.
+    let mut start_at = std::env::var("HW_AT").ok().and_then(|s| {
+        let v: Vec<f64> = s.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+        (v.len() == 3).then(|| DVec3::new(v[0], v[1], v[2]))
+    });
+    hw_client::hitch::install(&[
+        ("world", format!("seed {world_seed}, {world_people} people")),
+        (
+            "settings",
+            format!(
+                "quality {}, smooth {}, vsync {}, fov {}",
+                profile.quality, profile.smooth, profile.vsync, profile.fov
+            ),
+        ),
+        ("start", format!("view {view}, title {title_mode}")),
+    ]);
     let run = Engine::run(
         format!("HeroWorld {}", hw_core::version()),
         move |world, frame| {
+            // Notices late frames and writes what went on (see `hitch.rs`).
+            let _hitch = hw_client::hitch::begin(world, frame.time);
             if frame.first {
+                hw_client::hitch::mark("first frame");
                 world.set_view_distance(6000.0)?;
                 // The player's settings (screenshots keep full detail).
                 let mut p = profile.clone();
@@ -1061,6 +1087,7 @@ fn main() -> EngineResult<()> {
                 }
             }
 
+            hw_client::hitch::mark("packs");
             // What heroes can be made of, once the packs are loaded.
             if hero_catalog.is_none() {
                 if let Some(c) = actors.as_ref().and_then(|p| p.take_catalog()) {
@@ -1070,6 +1097,7 @@ fn main() -> EngineResult<()> {
                     hero_catalog = Some(c);
                 }
             }
+            hw_client::hitch::mark("title");
             if let Some(t) = title_screen.as_mut() {
                 t.no_people = actors.is_none();
                 // The hero in the foreground: built on the worker, the
@@ -1107,6 +1135,8 @@ fn main() -> EngineResult<()> {
                     switching.as_ref().and_then(|rx| rx.try_recv().ok())
                 {
                     switching = None;
+                    hw_client::hitch::event(format!("world {seed} swapped in behind the title"));
+                    hw_client::hitch::job("new world", None);
                     town.clear(world);
                     extras.despawn(world);
                     world_seed = seed;
@@ -1130,11 +1160,13 @@ fn main() -> EngineResult<()> {
                     extras = spawn_extras(world, &generated, town.green.clone())?;
                 }
                 if !extras_loaded && t.wants_heavy() {
+                    hw_client::hitch::event("props, trees and ground spawned behind the title");
                     extras = spawn_extras(world, &generated, town.green.clone())?;
                     extras_loaded = true;
                 }
                 let eye = world.camera().eye();
                 let eye = DVec2::new(eye.x as f64, eye.z as f64);
+                hw_client::hitch::mark("title town");
                 town.update_background(world, eye, TITLE_BUILD_MS);
                 if let Some(v) = extras.props.as_mut() {
                     v.update(eye, TITLE_BUILD_MS * 0.5);
@@ -1152,6 +1184,7 @@ fn main() -> EngineResult<()> {
                     (built as f32 / wanted as f32, "Building the city...")
                 };
                 t.set_world_ready(extras_loaded && switching.is_none(), done);
+                hw_client::hitch::mark("title screen");
                 let mut choice = t.frame(world, frame, &generated.world, &solids, (done, what))?;
                 // A joined world (or a new hero's) waits for its town.
                 if choice.is_none() && switching.is_none() && done >= 1.0 {
@@ -1174,9 +1207,11 @@ fn main() -> EngineResult<()> {
                             tx.send((seed, people, GeneratedTown::generate(Seed(seed), people)));
                     });
                     switching = Some(rx);
+                    hw_client::hitch::job("new world", Some(format!("seed {seed} generating")));
                     waiting = Some(then);
                     None
                 };
+                hw_client::hitch::mark("title choice");
                 match choice {
                     Some(Choice::Continue) => {
                         session = Some(
@@ -1246,12 +1281,13 @@ fn main() -> EngineResult<()> {
                     t.profile.save();
                     menu = hw_client::settings::GameMenu::new(&t.profile);
                     t.leave(world);
-                    // The game builds its cells itself, as before.
-                    town.stop_background();
+                    // The game goes on drawing cells on the workers.
+                    hw_client::hitch::event("left the title");
                     title_screen = None;
                 }
                 return Ok(());
             }
+            hw_client::hitch::mark("menus");
             if music_fade_at.is_some_and(|at| frame.time > at) {
                 // The title theme fades, unless a colossus fight took over.
                 if !robots.music_on() {
@@ -1269,6 +1305,13 @@ fn main() -> EngineResult<()> {
                 session.room_code(),
                 open_at.as_deref(),
             );
+            if let Some(p) = start_at.take() {
+                session.teleport(p);
+                if let Some(yaw) = std::env::var("HW_YAW").ok().and_then(|y| y.parse().ok()) {
+                    hero_cam.yaw = yaw;
+                }
+                hw_client::hitch::event(format!("started at {:.0}, {:.0}, {:.0}", p.x, p.y, p.z));
+            }
             if crash_noted != Some(world_seed) {
                 crash_noted = Some(world_seed);
                 hw_client::crash::note("world seed", world_seed);
@@ -1315,6 +1358,10 @@ fn main() -> EngineResult<()> {
                 for a in debug.ui(frame.ui.ctx(), &info) {
                     // Puts the hero at `p`, looking along `facing`.
                     let mut go = |session: &mut Session, p: glam::DVec3, facing: DVec2| {
+                        hw_client::hitch::event(format!(
+                            "debug menu: went to {:.0}, {:.0}, {:.0}",
+                            p.x, p.y, p.z
+                        ));
                         session.teleport(p);
                         flying = false;
                         hero_cam.yaw = facing.x.atan2(facing.y).to_degrees() as f32;
@@ -1441,6 +1488,7 @@ fn main() -> EngineResult<()> {
                     }
                 }
             }
+            hw_client::hitch::mark("looks");
             // Our looks go to the others once (a hero from before the
             // creator is dressed by name as soon as the catalog is in).
             if my_look.is_none() && title_screen.is_none() {
@@ -1466,6 +1514,7 @@ fn main() -> EngineResult<()> {
                 }
             }
             let creating = hero_file.is_none();
+            hw_client::hitch::mark("sky and lights");
             // The day runs: sky, grade, lit windows and the people out.
             let hour = hour_now(session.time(tick_clock / hw_sim::DT));
             if swoop.is_none() {
@@ -1476,15 +1525,19 @@ fn main() -> EngineResult<()> {
                 let dark = swoop.is_none() && hw_client::nightlights::dark_at(hour);
                 lights.update(world, world.camera().eye(), dark, props)?;
             }
+            hw_client::hitch::mark("underground");
             if let Some(under) = extras.under.as_mut() {
                 under.update(world, world.camera().eye(), &generated.world)?;
             }
+            hw_client::hitch::mark("deep");
             if let Some(deep) = extras.deep.as_mut() {
                 deep.update(world, world.camera().eye())?;
             }
+            hw_client::hitch::mark("grass");
             if let Some(g) = extras.grass.as_mut() {
                 g.update(world, world.camera().eye())?;
             }
+            hw_client::hitch::mark("dystopia");
             if let Some(d) = extras.dystopia.as_mut() {
                 d.update(world, &generated.world, frame.dt)?;
             }
@@ -1511,6 +1564,7 @@ fn main() -> EngineResult<()> {
                     }
                 }
             }
+            hw_client::hitch::mark("input and menus");
             let input = &frame.input;
             if input.pressed(Key::O) {
                 flying = !flying;
@@ -1643,6 +1697,7 @@ fn main() -> EngineResult<()> {
                 tube_status(&frame.ui, capsule.is_some(), riding, to, here.is_some());
             }
 
+            hw_client::hitch::mark("cutaway");
             // Cut-open view.
             let mut changed = BTreeSet::new();
             if input.pressed(Key::C) {
@@ -1669,6 +1724,7 @@ fn main() -> EngineResult<()> {
             }
             town.rebuild(world, changed);
 
+            hw_client::hitch::mark("hero input");
             // Hero input, relative to where the camera faces.
             let mut hero_input = hw_net::InputState::default();
             let can_fly = my_sheet.has(hw_net::Power::Flight);
@@ -1780,6 +1836,7 @@ fn main() -> EngineResult<()> {
                 }
             }
 
+            hw_client::hitch::mark("server ticks");
             // Fixed ticks for the game, however fast frames come.
             tick_clock += frame.dt as f64;
             let mut ticks = 0;
@@ -1804,15 +1861,18 @@ fn main() -> EngineResult<()> {
                     look_sent = false;
                 }
             }
+            hw_client::hitch::count("server ticks", ticks as u64);
             if ticks == 5 {
                 tick_clock = 0.0;
             }
+            hw_client::hitch::mark("news");
             // Damage: broken buildings, repairs, impacts.
             let joined = session.joined();
             let mut news = session.take_news();
             if let Some(rx) = &area_job {
                 match rx.try_recv() {
                     Ok((area, next, people, next_stands)) => {
+                        hw_client::hitch::event("new people and traffic square swapped in");
                         area_job = None;
                         generated.area = area;
                         traffic = next;
@@ -1851,6 +1911,9 @@ fn main() -> EngineResult<()> {
                 .position(|m| matches!(m, hw_net::ToClient::AreaMoved { .. }))
             {
                 if let hw_net::ToClient::AreaMoved { x, z } = news[i] {
+                    hw_client::hitch::event(format!(
+                        "people and traffic square moves to {x:.0}, {z:.0} (built on a thread)"
+                    ));
                     // What came before it is for the old square; what comes
                     // after waits for the new one.
                     area_held.extend(news.drain(i + 1..));
@@ -1877,6 +1940,7 @@ fn main() -> EngineResult<()> {
             radio.town = Some(generated.world.clone());
             news.retain(|m| match m {
                 hw_net::ToClient::Incident { id, at, yaw, .. } => {
+                    hw_client::hitch::event(format!("incident {id} at {:.0}, {:.0}", at[0], at[2]));
                     radio.hear(world, m);
                     // `HW_VIEW=incident`: the camera goes to the first call.
                     if view == "incident" && radio.calls.len() == 1 && radio.calls.contains_key(id)
@@ -2023,6 +2087,7 @@ fn main() -> EngineResult<()> {
                 }
                 _ => true,
             });
+            hw_client::hitch::mark("props and damage");
             if let Some(v) = extras.props.as_mut() {
                 v.flush(world)?;
             }
@@ -2030,11 +2095,12 @@ fn main() -> EngineResult<()> {
                 .get_or_insert_with(|| DamageView::new(joined))
                 .news(world, &mut town, &solids, news);
 
+            hw_client::hitch::mark("people built");
             // People finished on the worker thread (HW_WAIT_PEOPLE=1 waits
             // for all of them at the start, for screenshots).
             if let Some(p) = &actors {
-                let mut done = p.finished();
-                done.append(&mut held);
+                let mut done = std::mem::take(&mut held);
+                done.extend(p.finished());
                 if frame.first && std::env::var_os("HW_WAIT_PEOPLE").is_some() {
                     let all = (hw_sim::citizens::LOOKS + hw_sim::citizens::MOLE_LOOKS) as usize
                         + 1
@@ -2042,14 +2108,25 @@ fn main() -> EngineResult<()> {
                     let more = p.wait(all.saturating_sub(done.len()));
                     done.extend(more);
                 }
+                // A new crowd uploads its look's model and maps (tens of
+                // MB): one a frame, so they do not pile into one long frame.
+                let all_now = frame.first || shooting;
+                let mut crowds = 0;
                 for b in done {
                     if let Who::Citizen(look) = b.who {
+                        if crowds > 0 && !all_now {
+                            held.push(b);
+                            continue;
+                        }
+                        crowds += 1;
                         crowd.add_look(world, look, &b)?;
                     }
+                    hw_client::hitch::count("characters taken in", 1);
                     models.insert(b.who.clone(), b.model.clone());
                 }
             }
 
+            hw_client::hitch::mark("heroes");
             // Draw heroes.
             let heroes = session.entities(frame.dt as f64);
             anims.retain(|id, _| heroes.iter().any(|h| h.id == *id));
@@ -2399,6 +2476,7 @@ fn main() -> EngineResult<()> {
             fight.on_fx(world, &events, now, mine, &hero_entities, &heroes);
             let muzzles = fight.muzzles.clone();
             robots.on_fx(world, &mut fight, &events, &heroes, &muzzles, mine);
+            hw_client::hitch::mark("robots");
             robots.update(world, &heroes, frame.dt)?;
             robots.music(world, &heroes);
             // `HW_VIEW=sentry`: a close-up of the first robo-sentry (with
@@ -2463,6 +2541,7 @@ fn main() -> EngineResult<()> {
                 }
             }
             let me_state = mine.and_then(|id| heroes.iter().find(|e| e.id == id));
+            hw_client::hitch::mark("fight");
             fight.update(world, frame.dt, &heroes, me_state);
             // Our sheet as the host has it: a level up shows, the file is kept.
             if let Some(s) = session.take_sheet() {
@@ -2487,6 +2566,7 @@ fn main() -> EngineResult<()> {
             }
             powers.update(frame.dt);
 
+            hw_client::hitch::mark("crowd");
             // Citizens around the camera, at the game's time.
             let eye = world.camera().eye();
             crowd.update(
@@ -2511,6 +2591,7 @@ fn main() -> EngineResult<()> {
                     fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
                 }
             }
+            hw_client::hitch::mark("traffic");
             // Cars on the streets, hover cars and taxis in the sky lanes.
             // Cars stop for anyone in the road (on their feet, knocked down
             // or lying hurt) and short of trouble, as the server's do.
@@ -2559,6 +2640,7 @@ fn main() -> EngineResult<()> {
                 }
             }
 
+            hw_client::hitch::mark("camera");
             // Camera.
             let me = session.my_position(&heroes);
             let inside = me.and_then(|p| solids.inside(p));
@@ -2633,6 +2715,7 @@ fn main() -> EngineResult<()> {
                     swoop = None;
                 }
             }
+            hw_client::hitch::mark("fight screen");
             // The fight's screen over everything.
             {
                 let view_proj = world.camera().view_projection(frame.aspect);
@@ -2775,13 +2858,57 @@ fn main() -> EngineResult<()> {
             }
             drawn = heroes;
 
+            // Where we are, for the hitch log (four times a second).
+            if frame.time - hitch_noted >= 0.25 {
+                hitch_noted = frame.time;
+                note_for_hitches(
+                    session.my_position(&drawn),
+                    world.camera().eye(),
+                    if flying {
+                        (fly.yaw_deg, fly.pitch_deg)
+                    } else {
+                        (hero_cam.yaw, hero_cam.pitch)
+                    },
+                    (world_seed, world_people),
+                    (hour, hero_flies, flying),
+                );
+                let c = (generated.area.lo + generated.area.hi) * 0.5;
+                hw_client::hitch::context(
+                    "streamed",
+                    format!(
+                        "people and traffic square round {:.0}, {:.0}; {} citizens, {} cars drawn",
+                        c.x,
+                        c.y,
+                        crowd.shown(),
+                        traffic_view.shown()
+                    ),
+                );
+                let planning = generated.world.planning();
+                hw_client::hitch::job(
+                    "town planning",
+                    (planning > 0).then(|| format!("{planning} districts or verge tiles")),
+                );
+                let drawing = town.drawing();
+                hw_client::hitch::job(
+                    "town cells",
+                    (drawing > 0).then(|| format!("{drawing} being drawn")),
+                );
+                hw_client::hitch::job(
+                    "next area",
+                    area_job
+                        .is_some()
+                        .then(|| "people and traffic for the new square".into()),
+                );
+            }
+            hw_client::hitch::mark("town");
             // Roads and buildings around the camera, full detail close by.
             let eye = world.camera().eye();
-            town.update(
+            town.update_background(
                 world,
                 DVec2::new(eye.x as f64, eye.z as f64),
                 BUILD_BUDGET_MS,
             );
+            hw_client::hitch::mark("props");
             // Street props, trees and hedges around the camera.
             if let Some(v) = extras.props.as_mut() {
                 v.update(
@@ -2790,6 +2917,7 @@ fn main() -> EngineResult<()> {
                 );
                 v.flush(world)?;
             }
+            hw_client::hitch::mark("waterfront");
             if let Some(w) = extras.waterfront.as_mut() {
                 w.update(world, DVec2::new(eye.x as f64, eye.z as f64), true);
             }
@@ -2800,6 +2928,45 @@ fn main() -> EngineResult<()> {
         hw_client::crash::engine_error(e);
     }
     run
+}
+
+/// Tells the hitch log where the hero and the camera are, and how to
+/// start a game right there.
+fn note_for_hitches(
+    hero: Option<DVec3>,
+    eye: Vec3,
+    (yaw, pitch): (f32, f32),
+    (seed, people): (u64, f64),
+    (hour, hero_flies, free_cam): (f32, bool, bool),
+) {
+    use hw_client::hitch::context;
+    let at = hero.unwrap_or(eye.as_dvec3());
+    context(
+        "where",
+        format!(
+            "hero {}, camera {:.0}, {:.0}, {:.0} looking {yaw:.0} deg, pitch {pitch:.0}{}{}",
+            hero.map_or("-".into(), |p| format!(
+                "{:.1}, {:.1}, {:.1}",
+                p.x, p.y, p.z
+            )),
+            eye.x,
+            eye.y,
+            eye.z,
+            if hero_flies { ", flying" } else { "" },
+            if free_cam { ", free camera" } else { "" },
+        ),
+    );
+    context("hour", format!("{hour:.2}"));
+    context(
+        "repro",
+        format!(
+            "HW_SEED={seed} HW_POP={people} HW_HOUR={hour:.1} HW_AT={:.1},{:.1},{:.1} HW_YAW={yaw:.0}{}",
+            at.x,
+            at.y,
+            at.z,
+            if hero_flies { " HW_FLY=1" } else { "" }
+        ),
+    );
 }
 
 /// Someone waiting on the title for another world's town to be generated.

@@ -632,6 +632,11 @@ impl TownWorld {
         });
     }
 
+    /// How many units are being planned in the background now.
+    pub fn planning(&self) -> usize {
+        self.pending.lock().expect("pending lock").len()
+    }
+
     /// The underground (planned on first use, from the quarters round
     /// the centre).
     pub fn underground(&self) -> &Underground {

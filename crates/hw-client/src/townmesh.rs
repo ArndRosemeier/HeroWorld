@@ -142,14 +142,19 @@ pub struct TownView {
     hidden: BTreeSet<u64>,
     /// Where grass grows (the lawns drawn in each cell).
     pub green: Arc<Greenery>,
-    /// Worker threads drawing cells off the main thread (the title uses
-    /// them, so its animation never waits for a cell).
+    /// Worker threads drawing cells off the main thread, so a frame never
+    /// waits for a cell (one took 40 to 800 ms on the main thread).
     workers: Option<Workers>,
+    /// The newest job handed out for each cell: an older one coming back
+    /// late (the cut moved again meanwhile) is thrown away.
+    stamps: BTreeMap<CellKey, u64>,
+    next_stamp: u64,
 }
 
 /// What one cell needs to be drawn, sent to a worker.
 struct CellJob {
     key: CellKey,
+    stamp: u64,
     detail: Detail,
     world: Arc<TownWorld>,
     green: Arc<Greenery>,
@@ -169,6 +174,7 @@ struct CellBuilding {
 /// A cell's meshes, ready to be put into the world.
 struct CellMeshes {
     key: CellKey,
+    stamp: u64,
     detail: Detail,
     solid: Vec<Mesh>,
     lawns: Vec<Mesh>,
@@ -177,9 +183,17 @@ struct CellMeshes {
     plans: Vec<(u64, Arc<BuildingPlan>)>,
 }
 
+/// Jobs waiting for a worker: redraws (the cut, walking into a building)
+/// go in front of the cells streaming in.
+#[derive(Default)]
+struct Queue {
+    jobs: std::collections::VecDeque<CellJob>,
+    closed: bool,
+}
+
 /// A few threads turning cell jobs into meshes. Dropping it stops them.
 struct Workers {
-    jobs: std::sync::mpsc::Sender<CellJob>,
+    queue: Arc<(std::sync::Mutex<Queue>, std::sync::Condvar)>,
     done: std::sync::mpsc::Receiver<CellMeshes>,
     busy: BTreeSet<CellKey>,
     count: usize,
@@ -187,33 +201,71 @@ struct Workers {
 
 impl Workers {
     fn start() -> Self {
-        let (jobs, rx) = std::sync::mpsc::channel::<CellJob>();
+        let queue = Arc::new((
+            std::sync::Mutex::new(Queue::default()),
+            std::sync::Condvar::new(),
+        ));
         let (tx, done) = std::sync::mpsc::channel();
-        let rx = Arc::new(std::sync::Mutex::new(rx));
         // Leave a core or two for the frame itself.
         let count = std::thread::available_parallelism()
             .map_or(2, |n| n.get())
             .saturating_sub(2)
             .clamp(1, 4);
         for _ in 0..count {
-            let (rx, tx) = (rx.clone(), tx.clone());
+            let (queue, tx) = (queue.clone(), tx.clone());
             std::thread::spawn(move || loop {
-                let job = match rx.lock() {
-                    Ok(r) => r.recv(),
-                    Err(_) => return,
+                let job = {
+                    let (lock, ready) = &*queue;
+                    let Ok(mut q) = lock.lock() else { return };
+                    loop {
+                        if q.closed {
+                            return;
+                        }
+                        if let Some(job) = q.jobs.pop_front() {
+                            break job;
+                        }
+                        q = match ready.wait(q) {
+                            Ok(q) => q,
+                            Err(_) => return,
+                        };
+                    }
                 };
-                let Ok(job) = job else { return };
                 if tx.send(make_cell(job)).is_err() {
                     return;
                 }
             });
         }
         Self {
-            jobs,
+            queue,
             done,
             busy: BTreeSet::new(),
             count,
         }
+    }
+
+    /// Hands out a job; `urgent` ones are drawn before the rest.
+    fn send(&mut self, job: CellJob, urgent: bool) {
+        self.busy.insert(job.key);
+        let (lock, ready) = &*self.queue;
+        if let Ok(mut q) = lock.lock() {
+            if urgent {
+                q.jobs.push_front(job);
+            } else {
+                q.jobs.push_back(job);
+            }
+            ready.notify_one();
+        }
+    }
+}
+
+impl Drop for Workers {
+    fn drop(&mut self) {
+        let (lock, ready) = &*self.queue;
+        if let Ok(mut q) = lock.lock() {
+            q.closed = true;
+            q.jobs.clear();
+        }
+        ready.notify_all();
     }
 }
 
@@ -222,6 +274,7 @@ impl Workers {
 fn make_cell(job: CellJob) -> CellMeshes {
     let CellJob {
         key: k,
+        stamp,
         detail,
         world,
         green,
@@ -295,6 +348,7 @@ fn make_cell(job: CellJob) -> CellMeshes {
     };
     CellMeshes {
         key: k,
+        stamp,
         detail,
         solid,
         lawns,
@@ -319,6 +373,8 @@ impl TownView {
             hidden: BTreeSet::new(),
             green,
             workers: None,
+            stamps: BTreeMap::new(),
+            next_stamp: 0,
         };
         v.cut_focus = v
             .tallest_near(v.world.spawn_line().0, 300.0)
@@ -426,9 +482,13 @@ impl TownView {
         } else {
             self.hidden.remove(&i)
         };
+        // Now, not on the workers: Engine's breakable copy appears this
+        // frame, and both must not stand there together.
         if changed {
             if let Some(k) = self.cell_of_building(i) {
-                self.rebuild(world, [k]);
+                if let Some(&d) = self.built.get(&k) {
+                    self.build_cell(world, k, d);
+                }
             }
         }
     }
@@ -438,10 +498,19 @@ impl TownView {
         self.built.keys().copied().collect()
     }
 
-    /// Redraws the given cells if they are built.
+    /// Redraws the given cells if they are built: on the workers when
+    /// they run (the old drawing stays until the new one is in), else now.
     pub fn rebuild(&mut self, world: &mut World, cells: impl IntoIterator<Item = CellKey>) {
         for k in cells {
-            if let Some(&d) = self.built.get(&k) {
+            let Some(&d) = self.built.get(&k) else {
+                continue;
+            };
+            if self.workers.is_some() {
+                let job = self.cell_job(k, d);
+                if let Some(w) = self.workers.as_mut() {
+                    w.send(job, true);
+                }
+            } else {
                 self.build_cell(world, k, d);
             }
         }
@@ -503,9 +572,13 @@ impl TownView {
         let start = std::time::Instant::now();
         while let Ok(m) = workers.done.try_recv() {
             workers.busy.remove(&m.key);
-            // A cell that went out of range while it was drawn is dropped.
-            if cell_centre(m.key).distance(eye) <= UNLOAD {
+            // A cell that went out of range while it was drawn is dropped,
+            // and so is a drawing that a newer job replaces.
+            let newest = self.stamps.get(&m.key) == Some(&m.stamp);
+            if newest && cell_centre(m.key).distance(eye) <= UNLOAD {
                 self.place_cell(world, m);
+            } else if !newest {
+                crate::hitch::count("town cells drawn too late", 1);
             }
             if start.elapsed().as_secs_f64() * 1000.0 > budget_ms {
                 break;
@@ -524,10 +597,8 @@ impl TownView {
                 later.push(cell_centre(k));
                 continue;
             }
-            if workers.jobs.send(self.cell_job(k, detail)).is_ok() {
-                workers.busy.insert(k);
-                room -= 1;
-            }
+            workers.send(self.cell_job(k, detail), false);
+            room -= 1;
         }
         if !later.is_empty() {
             self.world.prefetch(&later, CELL * 0.5 + BUILDING_MARGIN);
@@ -538,6 +609,11 @@ impl TownView {
     /// Stops the worker threads (cells still being drawn are forgotten).
     pub fn stop_background(&mut self) {
         self.workers = None;
+    }
+
+    /// Cells being drawn on the workers now (for the hitch log).
+    pub fn drawing(&self) -> usize {
+        self.workers.as_ref().map_or(0, |w| w.busy.len())
     }
 
     fn drop_far(&mut self, world: &mut World, eye: DVec2) {
@@ -614,6 +690,7 @@ impl TownView {
             self.plans.remove(&i);
         }
         self.built.remove(&k);
+        self.stamps.remove(&k);
     }
 
     /// The buildings whose centres stand in cell `k`.
@@ -637,12 +714,15 @@ impl TownView {
 
     fn build_cell(&mut self, world: &mut World, k: CellKey, detail: Detail) {
         let job = self.cell_job(k, detail);
+        crate::hitch::count("town cells drawn on the main thread", 1);
         self.place_cell(world, make_cell(job));
     }
 
     /// Everything a worker needs to draw cell `k`.
     fn cell_job(&mut self, k: CellKey, detail: Detail) -> CellJob {
         let (lo, hi) = cell_box(k);
+        self.next_stamp += 1;
+        self.stamps.insert(k, self.next_stamp);
         if !self.buildings.contains_key(&k) {
             let list = self.buildings_of(k);
             self.buildings.insert(k, list);
@@ -663,6 +743,7 @@ impl TownView {
             .collect();
         CellJob {
             key: k,
+            stamp: self.next_stamp,
             detail,
             world: self.world.clone(),
             green: self.green.clone(),
@@ -693,6 +774,8 @@ impl TownView {
         for &id in &ids {
             world.set_name(id, format!("town cell {} {}", k.0, k.1));
         }
+        crate::hitch::count("town cells placed", 1);
+        crate::hitch::count("town meshes spawned", ids.len() as u64);
         self.entities.insert(k, ids);
         self.built.insert(k, m.detail);
     }

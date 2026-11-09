@@ -5,7 +5,7 @@
 
 use engine::prelude::*;
 use glam::{DQuat, DVec2, DVec3};
-use hw_gen::urban::props::CarModel;
+use hw_gen::urban::props::{CarModel, CAR_PAINTS};
 use hw_sim::traffic::{Traffic, Vehicle, VehicleKind};
 use std::collections::BTreeMap;
 
@@ -16,8 +16,122 @@ pub const MAX_SHOWN: usize = 700;
 /// Wheels are turned only on cars this close.
 const WHEEL_RADIUS: f64 = 120.0;
 
-#[derive(Default)]
+/// A wrecked car's doors: each one's LOD levels, hinge, axis and how far
+/// it opens (see `propview::car_door_levels`).
+type DoorSets = Vec<(Vec<LodLevel>, DVec3, DVec3, f64)>;
+
+/// A vehicle model made on the worker thread (see [`Models`]).
+enum Made {
+    Body(VehicleKind, Vec<LodLevel>),
+    Wheel(CarModel, Vec<LodLevel>),
+    Shell(VehicleKind, Vec<LodLevel>),
+    Doors(VehicleKind, DoorSets),
+}
+
+/// Every vehicle's models, made once on a worker thread when the game
+/// starts: a car is 10 to 20 ms of meshing, too much for a frame the
+/// first time each model and paint drives into view. Cars whose model is
+/// not made yet wait off screen (a moment at the start).
+struct Models {
+    rx: std::sync::mpsc::Receiver<Made>,
+    bodies: BTreeMap<VehicleKind, Vec<LodLevel>>,
+    wheels: BTreeMap<CarModel, Vec<LodLevel>>,
+    shells: BTreeMap<VehicleKind, Vec<LodLevel>>,
+    doors: BTreeMap<VehicleKind, DoorSets>,
+}
+
+impl Models {
+    fn start() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let cars: Vec<VehicleKind> = [CarModel::Cruiser, CarModel::Bubble, CarModel::Hover]
+                .into_iter()
+                .flat_map(|m| (0..CAR_PAINTS).map(move |p| VehicleKind::Car(m, p)))
+                .collect();
+            let mut bodies = cars.clone();
+            bodies.push(VehicleKind::Taxi);
+            bodies.extend((0..CAR_PAINTS).map(VehicleKind::SkyCar));
+            for kind in bodies {
+                let levels = match kind {
+                    VehicleKind::Car(m, paint) => crate::propview::moving_car_levels(m, paint),
+                    VehicleKind::SkyCar(paint) => crate::propview::sky_car_levels(paint),
+                    VehicleKind::Taxi => crate::propview::taxi_levels(),
+                };
+                if tx.send(Made::Body(kind, levels)).is_err() {
+                    return;
+                }
+            }
+            for m in [CarModel::Cruiser, CarModel::Bubble, CarModel::Hover] {
+                if let Some(levels) = crate::propview::wheel_levels(m) {
+                    if tx.send(Made::Wheel(m, levels)).is_err() {
+                        return;
+                    }
+                }
+            }
+            // What wrecks need, last.
+            for kind in cars {
+                let VehicleKind::Car(m, paint) = kind else {
+                    continue;
+                };
+                let shell = Made::Shell(kind, shell_levels(m, paint));
+                let doors = Made::Doors(kind, crate::propview::car_door_levels(m, paint));
+                if tx.send(shell).is_err() || tx.send(doors).is_err() {
+                    return;
+                }
+            }
+        });
+        Self {
+            rx,
+            bodies: BTreeMap::new(),
+            wheels: BTreeMap::new(),
+            shells: BTreeMap::new(),
+            doors: BTreeMap::new(),
+        }
+    }
+
+    /// Takes in what the worker finished.
+    fn collect(&mut self) {
+        while let Ok(m) = self.rx.try_recv() {
+            match m {
+                Made::Body(k, l) => {
+                    self.bodies.insert(k, l);
+                }
+                Made::Wheel(k, l) => {
+                    self.wheels.insert(k, l);
+                }
+                Made::Shell(k, l) => {
+                    self.shells.insert(k, l);
+                }
+                Made::Doors(k, l) => {
+                    self.doors.insert(k, l);
+                }
+            }
+        }
+    }
+}
+
+/// Spawns the set made for `key` the first time it is wanted (meshes made
+/// on the worker; Engine uploads them). `None` while it is not made yet.
+fn spawn_made<K: Ord + Copy>(
+    world: &mut World,
+    spawned: &mut BTreeMap<K, LodId>,
+    made: &mut BTreeMap<K, Vec<LodLevel>>,
+    key: K,
+) -> EngineResult<Option<LodId>> {
+    if let Some(id) = spawned.get(&key) {
+        return Ok(Some(*id));
+    }
+    let Some(levels) = made.remove(&key) else {
+        return Ok(None);
+    };
+    let id = world.spawn_lod(levels)?;
+    crate::hitch::count("vehicle models uploaded", 1);
+    spawned.insert(key, id);
+    Ok(Some(id))
+}
+
 pub struct TrafficView {
+    models: Models,
     bodies: BTreeMap<VehicleKind, LodId>,
     wheels: BTreeMap<CarModel, LodId>,
     /// Who is near enough to show (looked up twice a second, placed every
@@ -34,26 +148,38 @@ pub struct TrafficView {
     doors: BTreeMap<VehicleKind, Vec<(LodId, DVec3, DVec3, f64)>>,
 }
 
+impl Default for TrafficView {
+    fn default() -> Self {
+        Self {
+            models: Models::start(),
+            bodies: BTreeMap::new(),
+            wheels: BTreeMap::new(),
+            near: Vec::new(),
+            refresh: 0.0,
+            wrecks: BTreeMap::new(),
+            shells: BTreeMap::new(),
+            doors: BTreeMap::new(),
+        }
+    }
+}
+
 impl TrafficView {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Takes every vehicle off the streets (another town comes).
+    /// Takes every vehicle off the streets (another town or square comes).
+    /// The models stay: they are the same everywhere, and making them
+    /// again took a long frame each time the square moved.
     pub fn clear(&mut self, world: &mut World) {
-        for (_, id) in std::mem::take(&mut self.bodies) {
-            world.despawn_lod(id);
-        }
-        for (_, id) in std::mem::take(&mut self.wheels) {
-            world.despawn_lod(id);
-        }
-        for (_, id) in std::mem::take(&mut self.shells) {
-            world.despawn_lod(id);
-        }
-        for (_, doors) in std::mem::take(&mut self.doors) {
-            for (id, ..) in doors {
-                world.despawn_lod(id);
-            }
+        let doors = self.doors.values().flatten().map(|d| d.0);
+        let sets: Vec<LodId> = (self.bodies.values().copied())
+            .chain(self.wheels.values().copied())
+            .chain(self.shells.values().copied())
+            .chain(doors)
+            .collect();
+        for id in sets {
+            let _ = world.set_lod_places(id, &[]);
         }
         self.near.clear();
         self.refresh = 0.0;
@@ -130,6 +256,7 @@ impl TrafficView {
         time: f64,
         dt: f64,
     ) -> EngineResult<()> {
+        self.models.collect();
         self.refresh -= dt;
         if self.refresh <= 0.0 {
             self.refresh = 0.5;
@@ -158,17 +285,22 @@ impl TrafficView {
                 bodies.entry(v.kind).or_default().push(body);
                 continue;
             };
-            wheel_places(v, model, wheels.entry(model).or_default());
-            shells.entry(v.kind).or_default().push(body);
             // The doors sprung by the crash: hanging part open, each wreck
-            // its own way.
+            // its own way (as a whole car until they are made).
             if let std::collections::btree_map::Entry::Vacant(e) = self.doors.entry(v.kind) {
+                let Some(made) = self.models.doors.remove(&v.kind) else {
+                    let _ = paint;
+                    bodies.entry(v.kind).or_default().push(body);
+                    continue;
+                };
                 let mut sets = Vec::new();
-                for (levels, hinge, axis, open) in crate::propview::car_door_levels(model, paint) {
+                for (levels, hinge, axis, open) in made {
                     sets.push((world.spawn_lod(levels)?, hinge, axis, open));
                 }
                 e.insert(sets);
             }
+            wheel_places(v, model, wheels.entry(model).or_default());
+            shells.entry(v.kind).or_default().push(body);
             let (yaw, pitch, roll) = angles(v);
             let q = DQuat::from_rotation_y(yaw)
                 * DQuat::from_rotation_x(pitch)
@@ -202,23 +334,10 @@ impl TrafficView {
         }
         // Every set gets its places, an empty list when none is near.
         for kind in bodies.keys() {
-            if !self.bodies.contains_key(kind) {
-                let levels = match *kind {
-                    VehicleKind::Car(m, paint) => crate::propview::moving_car_levels(m, paint),
-                    VehicleKind::SkyCar(paint) => crate::propview::sky_car_levels(paint),
-                    VehicleKind::Taxi => crate::propview::taxi_levels(),
-                };
-                let id = world.spawn_lod(levels)?;
-                self.bodies.insert(*kind, id);
-            }
+            spawn_made(world, &mut self.bodies, &mut self.models.bodies, *kind)?;
         }
         for model in wheels.keys() {
-            if !self.wheels.contains_key(model) {
-                if let Some(levels) = crate::propview::wheel_levels(*model) {
-                    let id = world.spawn_lod(levels)?;
-                    self.wheels.insert(*model, id);
-                }
-            }
+            spawn_made(world, &mut self.wheels, &mut self.models.wheels, *model)?;
         }
         for (kind, id) in &self.bodies {
             let places = bodies.get(kind).map_or(&[][..], |v| &v[..]);
@@ -229,11 +348,7 @@ impl TrafficView {
             world.set_lod_places(*id, places)?;
         }
         for kind in shells.keys() {
-            if let (false, VehicleKind::Car(model, paint)) = (self.shells.contains_key(kind), *kind)
-            {
-                let id = world.spawn_lod(shell_levels(model, paint))?;
-                self.shells.insert(*kind, id);
-            }
+            spawn_made(world, &mut self.shells, &mut self.models.shells, *kind)?;
         }
         for (kind, id) in &self.shells {
             let places = shells.get(kind).map_or(&[][..], |v| &v[..]);

@@ -179,6 +179,7 @@ impl PropView {
                 continue;
             }
             self.load(k);
+            crate::hitch::count("prop tiles loaded", 1);
             if start.elapsed().as_secs_f64() * 1000.0 > budget_ms {
                 break;
             }
@@ -286,6 +287,8 @@ impl PropView {
                 .flatten()
                 .map(|(_, p)| *p)
                 .collect();
+            crate::hitch::count("prop kinds re-sent", 1);
+            crate::hitch::count("prop places re-sent", places.len() as u64);
             world.set_lod_places(self.sets[k], &places)?;
         }
         Ok(())

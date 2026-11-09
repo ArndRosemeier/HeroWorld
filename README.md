@@ -35,6 +35,18 @@ cargo run --release -p hw-client --bin zfight -- 1 --svg screenshots/zfight.svg 
 ENGINE_ZFIGHT=1 cargo run -p hw-client             # ...or see it in the game as magenta posts
 ```
 
+### Hitches
+
+The game watches its own frame times. A frame late enough to show as a stutter (over 25 ms,
+`HW_HITCH_MS`, and well over the usual frame) is written to `logs/hitches.log` beside
+`start.bat` (the run before is kept as `logs/hitches.prev.log`; `HW_HITCH_LOG=<file>` moves it,
+`HW_HITCH_LOG=0` turns it off). Each report says where the frame's time went (the game's
+sections, Engine's steps and GPU uploads), what was streaming and loading, where the hero was,
+the hour, memory and the seconds before; its `repro:` line starts a game at that spot
+(`HW_AT=x,y,z HW_YAW=... HW_HOUR=...`). A summary line each minute (five when all is smooth)
+counts the rest. Code: `crates/hw-client/src/hitch.rs`; mark new work with `hitch::mark`,
+`hitch::count` and `hitch::event`.
+
 Crates and rules for contributors (and coding agents): [AGENTS.md](AGENTS.md).
 
 ## Controls
