@@ -256,6 +256,8 @@ fn main() -> EngineResult<()> {
     let env_num = |name: &str| std::env::var(name).ok().and_then(|s| s.parse::<u64>().ok());
     let view = std::env::var("HW_VIEW").unwrap_or_else(|_| "hero".into());
     let profile = Profile::load();
+    hw_client::diag::load_env_file();
+    let mut quality_log = hw_client::diag::QualityLog::open();
     let title_mode = std::env::var("HW_TITLE").map_or(true, |v| v != "0")
         && (view == "title"
             || (std::env::var_os("HW_VIEW").is_none()
@@ -983,6 +985,8 @@ fn main() -> EngineResult<()> {
 
     // HW_WHATS_NEW=1 opens the list at start (for screenshots).
     let mut whats_new = std::env::var_os("HW_WHATS_NEW").is_some();
+    // A warning about a graphics driver known to draw wrongly, until closed.
+    let mut driver_note = true;
     // A reflection probe over the street around the camera, moved along in
     // steps, so chrome and glass reflect the buildings around them.
     let mut street_probe: Option<(engine::reflections::ReflectionProbeId, (i32, i32))> = None;
@@ -1037,6 +1041,7 @@ fn main() -> EngineResult<()> {
         move |world, frame| {
             // Notices late frames and writes what went on (see `hitch.rs`).
             let _hitch = hw_client::hitch::begin(world, frame.time);
+            quality_log.note(world, t0.elapsed().as_secs_f32());
             if frame.first {
                 hw_client::hitch::mark("first frame");
                 world.set_view_distance(6000.0)?;
@@ -1045,6 +1050,13 @@ fn main() -> EngineResult<()> {
                 p.smooth &= !shooting;
                 hw_client::settings::apply(world, &p);
                 hw_client::settings::apply_volumes(world, &p);
+                // `HW_SHADING=<flags>`: Engine's drawing checks from the start.
+                if let Some(f) = std::env::var("HW_SHADING")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                {
+                    world.set_debug_shading(f);
+                }
                 // `HW_CRASH_TEST=1`: crash at once (tries the crash reporter).
                 if std::env::var_os("HW_CRASH_TEST").is_some() {
                     panic!("HW_CRASH_TEST asked for a crash");
@@ -1263,6 +1275,7 @@ fn main() -> EngineResult<()> {
                     // Off we go: the camera swoops down to the hero.
                     let (eye, yaw, pitch) = t.camera(&generated.world, &solids);
                     swoop = Some((frame.time, eye, yaw, pitch));
+                    quality_log.mark("the game starts (title left)");
                     hero_cam.yaw = yaw;
                     music_fade_at = Some(frame.time + 20.0);
                     t.profile.played = true;
@@ -1312,6 +1325,7 @@ fn main() -> EngineResult<()> {
                 }
                 hw_client::hitch::event(format!("started at {:.0}, {:.0}, {:.0}", p.x, p.y, p.z));
             }
+            driver_notice(&frame.ui, world, &mut driver_note);
             if crash_noted != Some(world_seed) {
                 crash_noted = Some(world_seed);
                 hw_client::crash::note("world seed", world_seed);
@@ -1353,6 +1367,7 @@ fn main() -> EngineResult<()> {
                     hour: game_hour(),
                     local: !session.joined(),
                     unsaved: cheated,
+                    shading: world.debug_shading(),
                 };
                 let at = me.unwrap_or_else(|| world.camera().eye().as_dvec3());
                 for a in debug.ui(frame.ui.ctx(), &info) {
@@ -1484,7 +1499,36 @@ fn main() -> EngineResult<()> {
                             changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
                             town.rebuild(world, changed);
                         }
+                        A::CutLevel(step) => {
+                            town.cut_level = (town.cut_level as i32 + step).clamp(0, 40) as u32;
+                            let changed = town.cells_near(town.cut_focus, CUT_REACH);
+                            town.rebuild(world, changed);
+                        }
                         A::Map => town_map = !town_map,
+                        A::Rebuild(surface) => {
+                            quality_log.mark(if surface {
+                                "redo window surface"
+                            } else {
+                                "rebuild screen buffers"
+                            });
+                            world.request_renderer_rebuild(surface, !surface);
+                        }
+                        A::GpuCheck => {
+                            quality_log.mark("GPU mesh check");
+                            world.request_gpu_check();
+                        }
+                        A::Reupload(meshes) => {
+                            quality_log.mark(if meshes {
+                                "re-upload meshes"
+                            } else {
+                                "re-upload textures"
+                            });
+                            world.request_gpu_reupload(meshes, !meshes);
+                        }
+                        A::Shading(flags) => {
+                            quality_log.mark(&format!("drawing checks {flags}"));
+                            world.set_debug_shading(flags);
+                        }
                     }
                 }
             }
@@ -1696,33 +1740,6 @@ fn main() -> EngineResult<()> {
                     .map(|s| s.name.as_str());
                 tube_status(&frame.ui, capsule.is_some(), riding, to, here.is_some());
             }
-
-            hw_client::hitch::mark("cutaway");
-            // Cut-open view.
-            let mut changed = BTreeSet::new();
-            if input.pressed(Key::C) {
-                town.cut_on = !town.cut_on;
-                changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
-            }
-            let look_from = world.camera().eye();
-            let look_dir = (world.camera().target() - look_from).normalize_or_zero();
-            if input.pressed(Key::F) {
-                if let Some(hit) = town.ground_hit(look_from, look_dir) {
-                    changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
-                    town.cut_focus = hit;
-                    town.cut_on = true;
-                    changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
-                }
-            }
-            if input.pressed(Key::Z) && town.cut_level > 0 {
-                town.cut_level -= 1;
-                changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
-            }
-            if input.pressed(Key::X) && town.cut_level < 40 {
-                town.cut_level += 1;
-                changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
-            }
-            town.rebuild(world, changed);
 
             hw_client::hitch::mark("hero input");
             // Hero input, relative to where the camera faces.
@@ -3286,6 +3303,33 @@ fn taxi_status(ui: &engine::ui::UiFrame, cab: bool, riding: bool, to: Option<&st
                             .color(egui::Color32::from_rgb(255, 214, 70))
                             .size(15.0),
                     );
+                });
+        });
+}
+
+/// Below the version: Engine's warning when the graphics driver is known to
+/// draw wrongly (an old NVIDIA driver drew far houses over near walls).
+fn driver_notice(ui: &engine::ui::UiFrame, world: &World, open: &mut bool) {
+    use engine::ui::egui;
+    if !*open {
+        return;
+    }
+    let Some(warning) = world.gpu_info().and_then(|g| g.driver_warning()) else {
+        return;
+    };
+    egui::Area::new(egui::Id::new("driver notice"))
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 44.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_unmultiplied(120, 20, 20, 220))
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.set_max_width(360.0);
+                    ui.label(egui::RichText::new(warning).color(egui::Color32::WHITE));
+                    if ui.button("OK").clicked() {
+                        *open = false;
+                    }
                 });
         });
 }

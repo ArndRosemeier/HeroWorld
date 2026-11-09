@@ -163,14 +163,10 @@ pub const CONTROLS: &[(&str, &str)] = &[
     ("M", "Town map (the wrist radio's incidents)"),
     ("N", "Minimap on or off"),
     ("O", "Free camera"),
-    (
-        "C / F, Z / X",
-        "Cut buildings open / move the cut / pick the floor",
-    ),
     ("Escape", "This menu; frees the mouse when it is locked"),
     (
         "Ctrl+Shift+F12",
-        "Debug menu: go anywhere, levels, powers, events, time",
+        "Debug menu: go anywhere, levels, powers, events, time, cut-open view",
     ),
 ];
 

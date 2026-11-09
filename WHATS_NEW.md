@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.087 (2026-11-09)
+
+- Houses with see-through walls, cars missing parts, far houses drawn over near ones: this was an old NVIDIA graphics driver. The game now shows a red note at the top right when your driver is known to do this; updating it from nvidia.com fixes it.
+- The cut-open view (seeing inside buildings) is only in the debug menu now, so it can no longer be switched on by a stray key.
+- The debug menu's World tab has drawing checks and GPU checks for hunting picture bugs, and the game can read settings from `env.txt` beside your profile (for testing).
+
 ## 0.086 (2026-11-09)
 
 - Smoother play: town blocks coming into view and walking into a building no longer freeze the game for a moment (they are drawn in the background now).

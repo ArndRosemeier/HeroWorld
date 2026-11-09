@@ -6,3 +6,4 @@ screenshots/
 /reports
 /logs
 __pycache__/
+/logs/

@@ -73,10 +73,21 @@ pub enum DebugAction {
     FastForward(u32),
     /// The free-flying camera on or off (O).
     FreeCamera,
-    /// Buildings cut open around where you look on or off (C).
+    /// Buildings cut open around the hero on or off.
     Cutaway,
+    /// Show the floor below (-1) or above (+1) in the cut-open buildings.
+    CutLevel(i32),
     /// The town map on or off (M).
     Map,
+    /// Upload every mesh (true) or every texture (false) to the GPU again.
+    Reupload(bool),
+    /// Compare every mesh on the GPU with the game's copy (Engine's audit log).
+    GpuCheck,
+    /// Configure the window surface again (true) or rebuild the window-sized
+    /// buffers (false), as a resize does.
+    Rebuild(bool),
+    /// Engine's drawing-check flags (`World::set_debug_shading`).
+    Shading(u32),
 }
 
 /// The tab showing.
@@ -101,6 +112,8 @@ pub struct DebugInfo<'a> {
     pub local: bool,
     /// The hero file is no longer saved (debug changes or `HW_LEVEL`).
     pub unsaved: bool,
+    /// Engine's drawing-check flags (`World::set_debug_shading`).
+    pub shading: u32,
 }
 
 /// The debug menu: open or not, its tab and the town's places.
@@ -386,11 +399,42 @@ fn world_tab(ui: &mut egui::Ui, info: &DebugInfo, out: &mut Vec<DebugAction>) {
         if ui.button("Free camera (O)").clicked() {
             out.push(DebugAction::FreeCamera);
         }
-        if ui.button("Cut buildings open (C)").clicked() {
+        if ui.button("Cut buildings open").clicked() {
             out.push(DebugAction::Cutaway);
+        }
+        if ui.button("Cut floor down").clicked() {
+            out.push(DebugAction::CutLevel(-1));
+        }
+        if ui.button("Cut floor up").clicked() {
+            out.push(DebugAction::CutLevel(1));
         }
         if ui.button("Town map (M)").clicked() {
             out.push(DebugAction::Map);
+        }
+        if ui.button("Re-upload meshes").clicked() {
+            out.push(DebugAction::Reupload(true));
+        }
+        if ui.button("Re-upload textures").clicked() {
+            out.push(DebugAction::Reupload(false));
+        }
+        if ui.button("Check meshes on the GPU").clicked() {
+            out.push(DebugAction::GpuCheck);
+        }
+        if ui.button("Redo window surface").clicked() {
+            out.push(DebugAction::Rebuild(true));
+        }
+        if ui.button("Rebuild screen buffers").clicked() {
+            out.push(DebugAction::Rebuild(false));
+        }
+    });
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new("Drawing checks").strong());
+    ui.horizontal_wrapped(|ui| {
+        for (bit, name) in engine::world::DEBUG_SHADING_FLAGS {
+            let mut on = info.shading & bit != 0;
+            if ui.checkbox(&mut on, name).changed() {
+                out.push(DebugAction::Shading(info.shading ^ bit));
+            }
         }
     });
 }
