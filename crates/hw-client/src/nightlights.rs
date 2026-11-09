@@ -125,16 +125,8 @@ impl NightLights {
                         lamp: Lamp::point(at(l.height + 8.4), rgb(255, 210, 120), 25.0, 25.0),
                     });
                 }
-                LandmarkKind::TeslaTower => {
-                    let arc = rgb(150, 255, 110);
-                    // The dome's rim, and the coil lighting the yard.
-                    sources.push(Source {
-                        lamp: Lamp::point(at(l.height * 0.9), arc, 60.0, 60.0),
-                    });
-                    sources.push(Source {
-                        lamp: Lamp::point(at(8.0), arc, 25.0, 30.0),
-                    });
-                }
+                // Its lights pulse with its arcs: see `teslaview`.
+                LandmarkKind::TeslaTower => {}
             }
         }
         Self {

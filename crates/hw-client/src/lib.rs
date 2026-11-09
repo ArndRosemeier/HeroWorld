@@ -43,6 +43,7 @@ pub mod settings;
 pub mod signalview;
 pub mod skins;
 pub mod soundscape;
+pub mod teslaview;
 pub mod title;
 pub mod townmesh;
 pub mod trafficview;

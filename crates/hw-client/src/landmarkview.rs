@@ -2,12 +2,15 @@
 //! lighthouse on the shore, both in the 1939 World's Fair's taste, and the
 //! mad scientist's Tesla tower, which is not.
 
+use crate::carmesh::{lathe, tube};
 use crate::citymesh::{MeshBuilder, Surf};
 use crate::skins::Tex;
 use engine::prelude::*;
 use engine::texgen::{FacadeLayer, GroundLayer};
 use glam::{DVec2, DVec3};
-use hw_gen::urban::landmarks::{Landmark, LandmarkKind};
+use hw_gen::urban::landmarks::{
+    tesla_rods, Landmark, LandmarkKind, TESLA_LAB, TESLA_LAB_ROOF, TESLA_ROD_TIP,
+};
 use hw_gen::urban::world::TownWorld;
 use std::f64::consts::TAU;
 
@@ -410,7 +413,7 @@ pub fn strut(b: &mut MeshBuilder, a: DVec3, c: DVec3, w: f64, color: Color) {
 /// the yard, and dead conduits running off into the quarter.
 fn tesla(b: &mut MeshBuilder, l: &Landmark, near: bool) {
     let h = l.height;
-    let seg = if near { 24 } else { 10 };
+    let seg = if near { 48 } else { 10 };
     let iron = rgb(58, 62, 58);
     let rust = rgb(96, 66, 48);
     let concrete = rgb(118, 122, 112);
@@ -420,7 +423,7 @@ fn tesla(b: &mut MeshBuilder, l: &Landmark, near: bool) {
     b.oriented_box(
         DVec3::Y * 2.6,
         DVec3::X,
-        DVec3::new(6.5, 2.6, 6.5),
+        DVec3::new(TESLA_LAB, 2.6, TESLA_LAB),
         concrete,
     );
     b.oriented_box(DVec3::Y * 5.4, DVec3::X, DVec3::new(6.9, 0.25, 6.9), iron);
@@ -449,7 +452,7 @@ fn tesla(b: &mut MeshBuilder, l: &Landmark, near: bool) {
         );
     }
     // The lattice: four legs leaning in, cross-braced in bays.
-    let top = h * 0.78;
+    let top = tesla_dims(h).top;
     let r_of = |y: f64| 5.0 + (1.6 - 5.0) * (y / top);
     let leg = |k: usize, y: f64| {
         let a = TAU * (k as f64 + 0.5) / 4.0;
@@ -474,91 +477,123 @@ fn tesla(b: &mut MeshBuilder, l: &Landmark, near: bool) {
             }
         }
     }
-    // A green-glowing coil in the lattice's heart.
-    with(b, Surf::Glow, |b| {
-        b.cylinder(
-            DVec3::Y * 6.0,
-            (0.6, 0.6),
-            top - 6.0,
-            seg / 2,
-            false,
-            c3(ARC),
-        )
-    });
+    let d = tesla_dims(h);
+    // The coil in the lattice's heart: a copper winding round a glowing
+    // core. Near, the core is Tesla view's (it pulses); far, it is here.
+    if near {
+        let turns = 22.0;
+        let pts: Vec<DVec3> = (0..=(turns as usize * 14))
+            .map(|i| {
+                let t = i as f64 / (turns * 14.0);
+                let a = TAU * turns * t;
+                DVec3::new(
+                    a.sin() * (COIL_R + 0.14),
+                    COIL_FOOT + (top - 0.5 - COIL_FOOT) * t,
+                    a.cos() * (COIL_R + 0.14),
+                )
+            })
+            .collect();
+        tube(
+            b,
+            &pts,
+            (0.07, 0.07),
+            6,
+            Some((Surf::Metal, rgb(176, 104, 58))),
+        );
+    } else {
+        tesla_core(b, &d, 0.0, 1.0, false);
+    }
     // Rings of coil round the top of the lattice.
     with(b, Surf::Metal, |b| {
         for t in [0.55, 0.75, 0.95] {
             let y = top * t;
             let r = r_of(y) + 0.5;
-            b.cylinder(DVec3::Y * y, (r, r), 0.4, seg, false, copper);
+            let (r0, r1) = (r - 0.18, r + 0.18);
+            lathe(
+                b,
+                DVec3::Y * y,
+                DVec3::Y,
+                &[(r0, 0.0), (r1, 0.0), (r1, 0.4), (r0, 0.4), (r0, 0.0)],
+                seg * 2,
+                |_| Some((Surf::Metal, copper)),
+            );
         }
     });
-    // The dome: a great dark mushroom cap with a glowing rim.
-    let dr = (h * 0.16).clamp(6.0, 11.0);
-    with(b, Surf::Metal, |b| {
-        b.cylinder(DVec3::Y * top, (1.8, dr), dr * 0.35, seg, false, iron);
-        b.dome(DVec3::Y * (top + dr * 0.35), dr, seg, 6, copper);
-    });
-    with(b, Surf::Glow, |b| {
-        b.cylinder(
-            DVec3::Y * (top + dr * 0.35 - 0.2),
-            (dr + 0.15, dr + 0.15),
-            0.4,
-            seg,
-            false,
-            c3(ARC),
-        );
-        // The ball on the needle at the very top.
-        b.dome(DVec3::Y * (top + dr * 1.35 + 1.5), 1.0, seg / 2, 3, c3(ARC));
-        b.dome(
-            DVec3::Y * (top + dr * 1.35 + 1.5),
-            -1.0,
-            seg / 2,
-            3,
-            c3(ARC),
-        );
-    });
-    with(b, Surf::Metal, |b| {
-        b.cylinder(
-            DVec3::Y * (top + dr * 1.3),
-            (0.2, 0.05),
-            1.6,
-            6,
-            false,
-            iron,
-        )
-    });
+    // The dome: a great mushroom cap of riveted copper on a flaring iron
+    // bell, its rim rolled into a fat lip, smooth all round.
+    tesla_dome(b, &d, near, iron, copper);
+    // The needle, and its ball (near, the ball is Tesla view's).
+    lathe(
+        b,
+        DVec3::Y * (d.rim_y + d.cap_h - 0.3),
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.45, 0.0),
+            (0.35, 0.5),
+            (0.12, 0.7),
+            (0.06, d.ball_y - d.rim_y - d.cap_h - 0.4),
+            (0.0, d.ball_y - d.rim_y - d.cap_h - 0.4),
+        ],
+        if near { 24 } else { 8 },
+        |_| Some((Surf::Metal, iron)),
+    );
     if !near {
+        tesla_rim(b, &d, false);
+        tesla_ball(b, &d, false);
         return;
     }
-    // Frozen arcs: jagged green bolts from the dome's rim down to the yard.
-    with(b, Surf::Glow, |b| {
-        for k in 0..5 {
-            let a = TAU * (k as f64 * 0.37 + 0.1);
-            let d = DVec3::new(a.sin(), 0.0, a.cos());
-            let side = DVec3::new(d.z, 0.0, -d.x);
-            let start = d * dr + DVec3::Y * (top + dr * 0.3);
-            let mut p = start;
-            let end = d * (l.plaza - 1.0) + DVec3::Y * 0.2;
-            let n = 9;
-            for i in 1..=n {
-                let t = i as f64 / n as f64;
-                // A zigzag, each kink a different size.
-                let (jag, out) = if i == n {
-                    (0.0, 0.0)
-                } else {
-                    let sign = if i % 2 == 0 { 1.0 } else { -1.0 };
-                    (
-                        sign * (1.0 + ((k * 7 + i * 3) % 4) as f64 * 0.6),
-                        (((k * 5 + i * 2) % 3) as f64 - 1.0) * 1.2,
-                    )
-                };
-                let q = start.lerp(end, t) + side * jag + d * out;
-                strut(b, p, q, 0.12, c3(ARC));
-                p = q;
-            }
+    // Lightning rods on the lab roof's corners, where the big arcs strike:
+    // an iron mast in insulator rings, a copper ball on top.
+    for at in tesla_rods() {
+        let foot = DVec3::new(at.x, TESLA_LAB_ROOF - 0.25, at.y);
+        let tip = TESLA_ROD_TIP - TESLA_LAB_ROOF;
+        lathe(
+            b,
+            foot,
+            DVec3::Y,
+            &[
+                (0.0, 0.0),
+                (0.3, 0.0),
+                (0.3, 0.35),
+                (0.12, 0.45),
+                (0.09, tip - 0.6),
+                (0.0, tip - 0.6),
+            ],
+            16,
+            |_| Some((Surf::Metal, iron)),
+        );
+        for k in 0..4 {
+            let y = 1.0 + k as f64 * 0.32;
+            lathe(
+                b,
+                foot + DVec3::Y * y,
+                DVec3::Y,
+                &[
+                    (0.0, 0.0),
+                    (0.1, 0.0),
+                    (0.26, 0.08),
+                    (0.26, 0.14),
+                    (0.1, 0.22),
+                    (0.0, 0.22),
+                ],
+                16,
+                |_| Some((Surf::Plain, rgb(214, 206, 188))),
+            );
         }
-    });
+        let ball = |a: f64| -> (f64, f64) { (0.42 * a.sin(), 0.42 * (1.0 - a.cos())) };
+        let prof: Vec<(f64, f64)> = (0..=10)
+            .map(|i| ball(std::f64::consts::PI * i as f64 / 10.0))
+            .collect();
+        lathe(
+            b,
+            foot + DVec3::Y * (tip - 0.7),
+            DVec3::Y,
+            &prof,
+            20,
+            |_| Some((Surf::Metal, copper_bright())),
+        );
+    }
     // A wire fence round the yard: posts, and a mesh of rusty strands.
     let fence = l.plaza - 0.6;
     let posts = 28;
@@ -590,6 +625,185 @@ fn tesla(b: &mut MeshBuilder, l: &Landmark, near: bool) {
             0.5,
             rust,
         );
+    }
+}
+
+/// The Tesla tower's coil core: its radius and where it starts.
+const COIL_R: f64 = 0.5;
+const COIL_FOOT: f64 = 6.0;
+
+/// The heights and sizes of a Tesla tower's top, from its height.
+#[derive(Clone, Copy, Debug)]
+pub struct TeslaDims {
+    /// Top of the lattice, where the dome's bell starts.
+    pub top: f64,
+    /// The dome's radius at its rim.
+    pub dr: f64,
+    /// Height of the rim's lip.
+    pub rim_y: f64,
+    /// How high the cap rises over the rim.
+    pub cap_h: f64,
+    /// The ball on the needle.
+    pub ball_y: f64,
+}
+
+pub fn tesla_dims(h: f64) -> TeslaDims {
+    let top = h * 0.78;
+    let dr = (h * 0.16).clamp(6.0, 11.0);
+    let rim_y = top + dr * 0.35;
+    let cap_h = dr * 0.8;
+    TeslaDims {
+        top,
+        dr,
+        rim_y,
+        cap_h,
+        ball_y: rim_y + cap_h + 2.4,
+    }
+}
+
+/// Bright copper (the rods' balls, the coil's winding).
+fn copper_bright() -> Color {
+    rgb(184, 115, 60)
+}
+
+/// The glowing core of the coil, from `t0` to `t1` of its length. `live`:
+/// a hair larger, for Tesla view's pulsing copy over the far model's.
+pub fn tesla_core(b: &mut MeshBuilder, d: &TeslaDims, t0: f64, t1: f64, live: bool) {
+    let r = COIL_R + if live { 0.03 } else { 0.0 };
+    let len = d.top - 0.5 - COIL_FOOT;
+    lathe(
+        b,
+        DVec3::Y * COIL_FOOT,
+        DVec3::Y,
+        &[(r, len * t0), (r, len * t1)],
+        20,
+        |_| Some((Surf::Glow, c3(ARC))),
+    );
+}
+
+/// The glowing ring round the dome's lip.
+pub fn tesla_rim(b: &mut MeshBuilder, d: &TeslaDims, live: bool) {
+    let r = 0.2 + if live { 0.02 } else { 0.0 };
+    let n = 12;
+    let prof: Vec<(f64, f64)> = (0..=n)
+        .map(|i| {
+            let a = TAU * i as f64 / n as f64;
+            (d.dr + 0.12 + r * a.cos(), r * a.sin())
+        })
+        .collect();
+    lathe(b, DVec3::Y * d.rim_y, DVec3::Y, &prof, 96, |_| {
+        Some((Surf::Glow, c3(ARC)))
+    });
+}
+
+/// The glowing ball on the needle at the very top.
+pub fn tesla_ball(b: &mut MeshBuilder, d: &TeslaDims, live: bool) {
+    let r = 1.0 + if live { 0.03 } else { 0.0 };
+    let prof: Vec<(f64, f64)> = (0..=12)
+        .map(|i| {
+            let a = std::f64::consts::PI * i as f64 / 12.0;
+            (r * a.sin(), r * (1.0 - a.cos()))
+        })
+        .collect();
+    lathe(b, DVec3::Y * (d.ball_y - r), DVec3::Y, &prof, 32, |_| {
+        Some((Surf::Glow, c3(ARC)))
+    });
+}
+
+/// The dome: a flaring iron bell from the lattice's top out to a rolled
+/// copper lip, and over it a riveted copper cap, all lathed smooth; near,
+/// with ribs down the cap and gussets under the bell.
+fn tesla_dome(b: &mut MeshBuilder, d: &TeslaDims, near: bool, iron: Color, copper: Color) {
+    let seg = if near { 96 } else { 24 };
+    let fine = if near { 1 } else { 3 };
+    let mut prof = vec![(0.0, d.top), (1.9, d.top)];
+    // The bell: out and up, flaring ever faster towards the lip.
+    let lip_c = (d.dr - 0.45, d.rim_y);
+    let lip_r = 0.5;
+    let lip = |deg: f64| {
+        let a = deg.to_radians();
+        (lip_c.0 + lip_r * a.cos(), lip_c.1 + lip_r * a.sin())
+    };
+    let start = lip(-100.0);
+    let n_bell = 16 / fine;
+    let bell = |u: f64| {
+        (
+            1.9 + (start.0 - 1.9) * u,
+            d.top + (start.1 - d.top) * u.powf(2.4),
+        )
+    };
+    for i in 1..=n_bell {
+        prof.push(bell(i as f64 / n_bell as f64));
+    }
+    let under = prof.len() - 1;
+    // The rolled lip.
+    let n_lip = 12 / fine;
+    for i in 1..=n_lip {
+        prof.push(lip(-100.0 + 200.0 * i as f64 / n_lip as f64));
+    }
+    let lipped = prof.len() - 1;
+    // The cap: half an ellipse from the lip's top to the needle.
+    let from = lip(100.0);
+    let (rx, ry) = (from.0, d.rim_y + d.cap_h - from.1);
+    let cap = |phi: f64| (rx * phi.cos(), from.1 + ry * phi.sin());
+    let n_cap = 24 / fine;
+    for i in 1..=n_cap {
+        let phi = std::f64::consts::FRAC_PI_2 * i as f64 / n_cap as f64;
+        let (r, y) = cap(phi);
+        prof.push((r.max(0.0), y));
+    }
+    if let Some(last) = prof.last_mut() {
+        last.0 = 0.0;
+    }
+    lathe(b, DVec3::ZERO, DVec3::Y, &prof, seg, |i| {
+        if i < under {
+            Some((Surf::Metal, iron))
+        } else if i < lipped {
+            Some((Surf::Metal, copper_bright().lerp(copper, 0.55)))
+        } else {
+            Some((Surf::Metal, copper))
+        }
+    });
+    if !near {
+        return;
+    }
+    // Ribs down the cap's seams, standing proud of the plates.
+    let ribs = 24;
+    for k in 0..ribs {
+        let a = TAU * (k as f64 + 0.5) / ribs as f64;
+        let (s, c) = a.sin_cos();
+        let path: Vec<DVec3> = (0..=14)
+            .map(|i| {
+                let phi = 1.45 * i as f64 / 14.0;
+                let (r, y) = cap(phi);
+                let n = DVec2::new(phi.cos() / rx, phi.sin() / ry).normalize() * 0.06;
+                DVec3::new(s * (r + n.x), y + n.y, c * (r + n.x))
+            })
+            .collect();
+        tube(b, &path, (0.07, 0.07), 6, Some((Surf::Metal, copper)));
+    }
+    // A riveted band round the cap low down.
+    let (r, y) = cap(0.35);
+    let band: Vec<(f64, f64)> = (0..=8)
+        .map(|i| {
+            let t = std::f64::consts::PI * i as f64 / 8.0;
+            (r + 0.02 + 0.08 * t.sin(), y - 0.18 + 0.36 * i as f64 / 8.0)
+        })
+        .collect();
+    lathe(b, DVec3::ZERO, DVec3::Y, &band, 96, |_| {
+        Some((Surf::Metal, copper_bright().lerp(copper, 0.4)))
+    });
+    // Gussets under the bell, from the neck out to the lip.
+    for k in 0..12 {
+        let a = TAU * k as f64 / 12.0;
+        let (s, c) = a.sin_cos();
+        let path: Vec<DVec3> = (0..=10)
+            .map(|i| {
+                let (r, y) = bell(0.04 + 0.9 * i as f64 / 10.0);
+                DVec3::new(s * r, y - 0.12, c * r)
+            })
+            .collect();
+        tube(b, &path, (0.09, 0.16), 6, Some((Surf::Metal, iron)));
     }
 }
 

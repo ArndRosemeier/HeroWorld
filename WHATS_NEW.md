@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.096 (2026-11-09)
+
+- The mad scientist's Tesla tower has come alive: green arcs crackle from its dome into the yard, flicker and jump about, sparks lick off the ball on top, and a glow pulse climbs the coil.
+- Every few seconds the charge builds to a great bolt that cracks down onto one of the lightning rods on the lab roof, with a flash, a shower of sparks and a thunderclap. You hear the tower humming and crackling as you come near.
+- The dome is now a smooth riveted copper cap on a flared iron bell, with ribs and a rolled lip, instead of a faceted one.
+
 ## 0.095 (2026-11-09)
 
 - Behind the scenes: everyone building the game now uses the same Rust version, so the automatic checks agree again.

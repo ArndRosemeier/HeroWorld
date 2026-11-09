@@ -43,6 +43,10 @@ seam.
 | `bind.ogg` | shot | The sound of an energy binding snapping shut around someone, a crackling electric lock with a fizzing hum |
 | `shield.ogg` | shot | The sound of a force shield switching on, a shimmering electric whoomp with a glassy ring |
 | `fanfare.ogg` | shot | The sound of a short triumphant brass fanfare, bright trumpets, about two seconds |
+| `tesla_buzz.ogg` | loop | The sound of a giant Tesla coil running continuously, a loud buzzing electric hum with rapid crackling sizzling sparks and snapping arcs, steady |
+| `tesla_crack_1.ogg` | shot | The sound of a single huge electric arc discharge striking a lightning rod, a violent sharp crack and snap like close thunder with a fizzing sizzle tail |
+| `tesla_crack_2.ogg` | shot | (the same prompt, another take) |
+| `tesla_zap.ogg` | shot | The sound of a short burst of electric sparks crackling, a quick high voltage zap and sizzle |
 
 ## From Scale
 

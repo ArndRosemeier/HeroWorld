@@ -1,16 +1,14 @@
 //! The mad scientist's quarter as the camera sees it: the air turns a sick
 //! green-grey and thick, the colour drains out of the town, and his Tesla
-//! tower spits green sparks. Around it, walls are tagged and the streets
-//! in are barricaded ([`crate::edgeview`]).
+//! tower crackles ([`crate::teslaview`]). Around it, walls are tagged and
+//! the streets in are barricaded ([`crate::edgeview`]).
 //!
 //! One fog volume around the camera carries the look; how strongly follows
 //! how deep the camera is in the quarter
 //! ([`hw_gen::urban::dystopia::Dystopia::depth`]).
 
-use crate::landmarkview::ARC;
 use engine::prelude::*;
 use glam::{DVec2, Vec3};
-use hw_gen::urban::landmarks::LandmarkKind;
 use hw_gen::urban::world::TownWorld;
 
 /// The air deep in the quarter.
@@ -37,32 +35,17 @@ pub fn grade() -> ColorGrade {
 
 pub struct DystopiaView {
     volume: Option<FogVolumeId>,
-    /// The tower's top, where the sparks fly.
-    crown: Option<Vec3>,
-    clock: f32,
-    sparks: u32,
+    /// The Tesla tower's arcs, glow and bolts.
+    tesla: crate::teslaview::TeslaView,
     /// Graffiti and barricades at its edge.
     edge: crate::edgeview::EdgeView,
 }
 
 impl DystopiaView {
     pub fn new(town: &TownWorld) -> Self {
-        let crown = town
-            .landmarks
-            .iter()
-            .find(|l| l.kind == LandmarkKind::TeslaTower)
-            .map(|l| {
-                Vec3::new(
-                    l.pos.x as f32,
-                    (l.base + l.height * 0.8) as f32,
-                    l.pos.y as f32,
-                )
-            });
         Self {
             volume: None,
-            crown,
-            clock: 0.0,
-            sparks: 0,
+            tesla: crate::teslaview::TeslaView::new(town),
             edge: crate::edgeview::EdgeView::new(town),
         }
     }
@@ -111,26 +94,17 @@ impl DystopiaView {
             }
         }
         self.edge.update(world, town)?;
-        // The tower sparks now and then while anyone is near enough to see.
-        if let Some(crown) = self.crown {
-            self.clock += dt;
-            let gap = 0.7 + (self.sparks % 5) as f32 * 0.45;
-            if self.clock >= gap && crown.distance(eye) < 900.0 {
-                self.clock = 0.0;
-                self.sparks = self.sparks.wrapping_add(1);
-                let a = self.sparks as f32 * 2.399;
-                let dir = Vec3::new(a.sin(), -0.4, a.cos()) * 7.0;
-                world.particles_mut().burst(
-                    ParticleEmitter::sparks(crown, dir, 50)
-                        .with_color(rgb(ARC.0, ARC.1, ARC.2))
-                        .with_secondary_color(rgb(230, 255, 210)),
-                )?;
-            }
-        }
+        self.tesla.update(world, dt)?;
         Ok(())
     }
 
+    /// What the soundscape hears of the Tesla tower this frame.
+    pub fn heard(&mut self) -> crate::teslaview::Heard {
+        self.tesla.heard()
+    }
+
     pub fn clear(&mut self, world: &mut World) {
+        self.tesla.clear(world);
         self.edge.clear(world);
         if let Some(id) = self.volume.take() {
             world.remove_fog_volume(id);

@@ -614,6 +614,28 @@ fn main() -> EngineResult<()> {
             let pitch = ((h * 0.4 - (eye - base)) / d.length()).atan().to_degrees() as f32;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
         }
+        "tesladome" | "teslayard" => {
+            // Close up at the Tesla tower: level with its dome, or up at it
+            // from the yard by the lab.
+            use hw_gen::urban::landmarks::LandmarkKind;
+            let l =
+                hw_client::landmarkview::nearest(&generated.world, LandmarkKind::TeslaTower, spawn);
+            let (c, base, h, face) = l.map_or((spawn, ground(spawn), 60.0, spawn_dir), |l| {
+                (l.pos, l.base, l.height, l.dir)
+            });
+            let d = hw_client::landmarkview::tesla_dims(h);
+            let (p, eye, look) = if view == "tesladome" {
+                let p = c + (face + face.perp() * 0.4).normalize() * (d.dr * 2.2 + 6.0);
+                (p, base + d.rim_y + 1.5, base + d.rim_y + d.cap_h * 0.3)
+            } else {
+                let p = c + (face + face.perp() * 0.6).normalize() * 22.0;
+                (p, ground(p).max(base) + 1.8, base + d.rim_y * 0.6)
+            };
+            let dd = c - p;
+            let yaw = dd.x.atan2(dd.y).to_degrees() as f32;
+            let pitch = ((look - eye) / dd.length()).atan().to_degrees() as f32;
+            FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
+        }
         "quay" => {
             // Along a quay wall at the nearest steps down to the water.
             let st = generated
@@ -2900,6 +2922,11 @@ fn main() -> EngineResult<()> {
                             )
                         }),
                     boss_music: robots.music_on() || music_fade_at.is_some(),
+                    tesla: extras
+                        .dystopia
+                        .as_mut()
+                        .map(|d| d.heard())
+                        .unwrap_or_default(),
                 };
                 sounds.update(world, &scene);
                 for a in powers.ui(frame.ui.ctx(), &my_sheet, fighting, creating) {

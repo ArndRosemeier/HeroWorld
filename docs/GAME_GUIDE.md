@@ -450,9 +450,19 @@ between them) is designed but not built; the town stands in endless streamed gro
 
 Every town of 3 000 people or more has one district the mad scientist holds: a run of
 blocks out from the core along main roads, tenements and labs, with his **Tesla tower** in
-the middle (iron lattice, dark dome, green coils, sparking). The air turns green-grey and
+the middle (iron lattice, copper dome, green coils). The air turns green-grey and
 thick and the colour drains as you go in; two lamps in three are dead, the rest flicker
 green; neon is broken; dirt and soot everywhere.
+
+The tower is alive (`hw-client/src/teslaview.rs`, made within 1 200 m, animated within
+900 m): up to 3 green arcs at a time crackle from the dome's lip into the yard, each lit
+0.15-1.3 s and jumping to a new path every 0.04-0.12 s; 3 tendrils lick off the ball on
+the needle; a glow pulse climbs the coil. The charge builds (+0.12 a second), and every
+3.5-9 s a bolt cracks down in three strokes onto one of the four lightning rods on the lab
+roof (solid, tips 13 m up), with a flash of light and sparks. Sound: a crackling hum from
+the dome (heard within 320 m, louder and higher as the charge builds), a thunderclap per
+bolt (700 m), a zap for most yard arcs (120 m). Views: `HW_VIEW=tesla`, `tesladome`,
+`teslayard`.
 
 - **Street corners:** groups of Lab minions **two levels above the team**, three above at
   the tower's gate. Every fourth corner (and the gate) has a Robo-Sentry in front; others a
@@ -698,7 +708,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default 40 000; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |

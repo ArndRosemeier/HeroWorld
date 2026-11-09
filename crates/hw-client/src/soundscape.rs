@@ -62,6 +62,10 @@ static CLIPS: &[(&str, &[u8])] = clips![
     "step_concrete_4",
     "step_grass_1",
     "step_grass_2",
+    "tesla_buzz",
+    "tesla_crack_1",
+    "tesla_crack_2",
+    "tesla_zap",
 ];
 
 /// The fight's clips (`fightview.rs` plays them).
@@ -254,6 +258,8 @@ pub struct Scene<'a> {
     pub clock: Option<Vec3>,
     /// A boss's music is on: the scenery's music keeps quiet.
     pub boss_music: bool,
+    /// The Tesla tower's hum and bolts.
+    pub tesla: crate::teslaview::Heard,
 }
 
 /// The ambience layers and how loud each one plays at full share.
@@ -320,6 +326,9 @@ pub struct Soundscape {
     /// Next time for each small life sound.
     next: BTreeMap<&'static str, f64>,
     rng: u64,
+    /// The Tesla tower's hum.
+    tesla_hum: Option<SoundId>,
+    cracks: u32,
     pub music: Music,
 }
 
@@ -350,6 +359,8 @@ impl Soundscape {
             step_n: 0,
             next: BTreeMap::new(),
             rng: 0x9e37_79b9_7f4a_7c15,
+            tesla_hum: None,
+            cracks: 0,
             music: Music::new(),
         }
     }
@@ -374,6 +385,7 @@ impl Soundscape {
         self.trouble(world, s);
         self.footsteps(world, s);
         self.life(world, s);
+        self.tesla(world, s);
         self.timed.retain(|(id, until)| {
             if s.now >= *until {
                 world.stop_sound(*id, 2.5);
@@ -399,6 +411,9 @@ impl Soundscape {
         }
         for (id, _) in std::mem::take(&mut self.timed) {
             world.stop_sound(id, 0.5);
+        }
+        if let Some(v) = self.tesla_hum.take() {
+            world.stop_sound(v, 0.5);
         }
         self.music.stop(world);
     }
@@ -668,6 +683,75 @@ impl Soundscape {
                 }
             } else {
                 i += 1;
+            }
+        }
+    }
+
+    /// The Tesla tower: a crackling hum from the dome that rises with its
+    /// charge, a thunderclap for each bolt onto a rod, a zap for each arc
+    /// into the yard.
+    fn tesla(&mut self, world: &mut World, s: &Scene) {
+        let muffle = if s.under != Under::No {
+            0.0
+        } else if s.indoors {
+            0.35
+        } else {
+            1.0
+        };
+        match s.tesla.hum {
+            Some(at) if muffle > 0.0 && at.distance(s.eye) < 320.0 => {
+                let vol = (0.45 + 0.4 * s.tesla.charge) * muffle;
+                let pitch = 0.9 + 0.25 * s.tesla.charge;
+                match self.tesla_hum {
+                    Some(v) => {
+                        let _ = self.bank.get("tesla_buzz", s.now);
+                        let a = world.audio_mut();
+                        a.set_position(v, at);
+                        a.set_volume(v, vol);
+                        a.set_pitch(v, pitch);
+                    }
+                    None => {
+                        if let Some(c) = self.bank.get("tesla_buzz", s.now) {
+                            let p = PlaySound::at(at)
+                                .looped()
+                                .volume(vol)
+                                .pitch(pitch)
+                                .range(12.0, 300.0)
+                                .fade_in(1.0);
+                            self.tesla_hum = Some(world.play_sound(&c, p));
+                        }
+                    }
+                }
+            }
+            _ => {
+                if let Some(v) = self.tesla_hum.take() {
+                    world.stop_sound(v, 1.0);
+                }
+            }
+        }
+        for &(at, power) in &s.tesla.strikes {
+            if muffle <= 0.0 {
+                continue;
+            }
+            let (clip, range) = if power >= 0.9 {
+                self.cracks = self.cracks.wrapping_add(1);
+                (
+                    ["tesla_crack_1", "tesla_crack_2"][(self.cracks % 2) as usize],
+                    700.0,
+                )
+            } else {
+                ("tesla_zap", 120.0)
+            };
+            if at.distance(s.eye) > range {
+                continue;
+            }
+            if let Some(c) = self.bank.get(clip, s.now) {
+                let pitch = 0.85 + 0.3 * self.rand() as f32;
+                let p = PlaySound::at(at)
+                    .volume(power.max(0.5) * muffle)
+                    .pitch(pitch)
+                    .range(15.0, range);
+                world.play_sound(&c, p);
             }
         }
     }
@@ -1071,6 +1155,7 @@ mod tests {
             medics: Vec::new(),
             clock: None,
             boss_music: false,
+            tesla: Default::default(),
         }
     }
 

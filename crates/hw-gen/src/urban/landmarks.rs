@@ -124,6 +124,23 @@ pub const HALL_ARCH_FEET: [(f64, f64); 4] =
     [(-14.5, 8.0), (14.5, 8.0), (-14.5, -8.0), (14.5, -8.0)];
 pub const HALL_CANOPY: (f64, f64, f64) = (4.5, 4.2, 4.0);
 
+/// The Tesla tower's lab: a square blockhouse of this half width, its roof
+/// at this height.
+pub const TESLA_LAB: f64 = 6.5;
+pub const TESLA_LAB_ROOF: f64 = 5.65;
+/// Lightning rods on the lab roof's four corners, where the dome's arcs
+/// strike: their distance out along each axis, and their tips' height.
+pub const TESLA_ROD_AT: f64 = 6.0;
+pub const TESLA_ROD_TIP: f64 = 13.0;
+/// The rods' radius (with the clamps round them).
+pub const TESLA_ROD_R: f64 = 0.3;
+
+/// Where the Tesla tower's rods stand, in its own frame (+z its front).
+pub fn tesla_rods() -> [DVec2; 4] {
+    [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
+        .map(|(x, z)| DVec2::new(x, z) * TESLA_ROD_AT)
+}
+
 impl Landmark {
     /// From the landmark's own frame (x right, z the way it faces) to the
     /// town's plan.
@@ -176,7 +193,18 @@ impl Landmark {
                     y1: self.height - 3.0,
                 },
             ],
-            LandmarkKind::TeslaTower => vec![block(6.5, 6.5, 5.65)],
+            LandmarkKind::TeslaTower => {
+                let mut v = vec![block(TESLA_LAB, TESLA_LAB, TESLA_LAB_ROOF)];
+                for at in tesla_rods() {
+                    v.push(Footprint::Disc {
+                        at,
+                        r: TESLA_ROD_R,
+                        y0: TESLA_LAB_ROOF,
+                        y1: TESLA_ROD_TIP,
+                    });
+                }
+                v
+            }
             LandmarkKind::HeroHall => {
                 let mut v = vec![
                     disc(HALL_R, HALL_WALL + 0.4),
@@ -580,6 +608,19 @@ mod tests {
                 d.contains(tesla.pos),
                 "seed {s}: the tower outside the quarter"
             );
+            // The lightning rods the arcs strike are solid, up on the
+            // lab's roof inside its walls.
+            let fps = tesla.footprints();
+            for at in tesla_rods() {
+                let p = tesla.to_plan(at);
+                assert!(
+                    fps.iter().any(|f| matches!(f, Footprint::Disc { .. })
+                        && f.distance(p) < 0.01
+                        && f.span().1 >= tesla.base + TESLA_ROD_TIP - 0.01),
+                    "seed {s}: a rod nothing stops"
+                );
+                assert!(at.x.abs() < TESLA_LAB && at.y.abs() < TESLA_LAB);
+            }
         }
     }
 }
