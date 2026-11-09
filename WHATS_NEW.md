@@ -5,8 +5,17 @@ Newest first. Every build pushed to `main` adds 0.001 to the version (in
 
 ## 0.075 (2026-11-09)
 
+<<<<<<< HEAD
 - Big cities start in seconds: setting up the traffic of a city of a million took five
   minutes, now it takes one second.
+=======
+- The title screen no longer stutters in: a comic cover with the logo slamming in shows
+  straight away, and opens onto the city once it is ready.
+- Uninvited guests on the title screen: a giant robot, a martian, a mad scientist, a space
+  octopus, a flying saucer and a passing hero. Click them to punch them away. POW!
+- Click the HEROWORLD letters to make them jump (try all nine), click the sky for comic
+  words, and watch the twinkles follow your mouse.
+>>>>>>> def4e79 (0.075: title screen without stutter, with jump scares and things to click)
 
 ## 0.074 (2026-11-09)
 

@@ -142,6 +142,165 @@ pub struct TownView {
     hidden: BTreeSet<u64>,
     /// Where grass grows (the lawns drawn in each cell).
     pub green: Arc<Greenery>,
+    /// Worker threads drawing cells off the main thread (the title uses
+    /// them, so its animation never waits for a cell).
+    workers: Option<Workers>,
+}
+
+/// What one cell needs to be drawn, sent to a worker.
+struct CellJob {
+    key: CellKey,
+    detail: Detail,
+    world: Arc<TownWorld>,
+    green: Arc<Greenery>,
+    roads: Vec<WorldRoad>,
+    buildings: Vec<CellBuilding>,
+}
+
+struct CellBuilding {
+    id: u64,
+    building: WorldBuilding,
+    /// Its plan, if one was made already (the worker makes the rest).
+    plan: Option<Arc<BuildingPlan>>,
+    look: Look,
+    hidden: bool,
+}
+
+/// A cell's meshes, ready to be put into the world.
+struct CellMeshes {
+    key: CellKey,
+    detail: Detail,
+    solid: Vec<Mesh>,
+    lawns: Vec<Mesh>,
+    water: Option<Mesh>,
+    /// Plans the worker had to make, for the cache.
+    plans: Vec<(u64, Arc<BuildingPlan>)>,
+}
+
+/// A few threads turning cell jobs into meshes. Dropping it stops them.
+struct Workers {
+    jobs: std::sync::mpsc::Sender<CellJob>,
+    done: std::sync::mpsc::Receiver<CellMeshes>,
+    busy: BTreeSet<CellKey>,
+    count: usize,
+}
+
+impl Workers {
+    fn start() -> Self {
+        let (jobs, rx) = std::sync::mpsc::channel::<CellJob>();
+        let (tx, done) = std::sync::mpsc::channel();
+        let rx = Arc::new(std::sync::Mutex::new(rx));
+        // Leave a core or two for the frame itself.
+        let count = std::thread::available_parallelism()
+            .map_or(2, |n| n.get())
+            .saturating_sub(2)
+            .clamp(1, 4);
+        for _ in 0..count {
+            let (rx, tx) = (rx.clone(), tx.clone());
+            std::thread::spawn(move || loop {
+                let job = match rx.lock() {
+                    Ok(r) => r.recv(),
+                    Err(_) => return,
+                };
+                let Ok(job) = job else { return };
+                if tx.send(make_cell(job)).is_err() {
+                    return;
+                }
+            });
+        }
+        Self {
+            jobs,
+            done,
+            busy: BTreeSet::new(),
+            count,
+        }
+    }
+}
+
+/// Draws one cell: roads, buildings, lawns and inland water. Pure, so it
+/// runs on any thread.
+fn make_cell(job: CellJob) -> CellMeshes {
+    let CellJob {
+        key: k,
+        detail,
+        world,
+        green,
+        roads,
+        buildings,
+    } = job;
+    let (lo, hi) = cell_box(k);
+    let mut solid = Vec::new();
+    let mut plans = Vec::new();
+    // Roads first, one mesh for the cell.
+    let mut b = MeshBuilder::new();
+    for r in &roads {
+        for run in runs_in(r, k) {
+            draw_road(&mut b, &world, r, &run);
+        }
+    }
+    // Buildings: each drawn at the town's block height, then lifted to
+    // its own ground, on a plinth where the ground falls away.
+    for cb in buildings {
+        let wb = &cb.building;
+        let plan = match cb.plan {
+            Some(p) => p,
+            None => {
+                let p = Arc::new(BuildingPlan::generate(&wb.site));
+                plans.push((cb.id, p.clone()));
+                p
+            }
+        };
+        if !cb.hidden {
+            let mut one = MeshBuilder::new();
+            add_building(&mut one, &plan, wb.site.district, cb.look, detail);
+            let lift = Vec3::new(0.0, (wb.base - BLOCK_TOP) as f32, 0.0);
+            b.append(one, lift);
+        }
+        if wb.base - wb.low > 0.05 {
+            // The plinth is the building's own base stone.
+            b.tex = Some(crate::facades::facade(&plan).base);
+            b.prism(
+                &wb.site.corners(),
+                wb.low - 1.0,
+                wb.base,
+                rgb(150, 142, 128),
+            );
+            b.tex = None;
+        }
+        if b.face_count() > MESH_FACES {
+            solid.extend(std::mem::take(&mut b).finish_parts());
+        }
+    }
+    if !b.is_empty() {
+        solid.extend(b.finish_parts());
+    }
+    // Lawns and meadows, finer close by.
+    // (Across town, past DISTANT_DETAIL, Engine's own green ground is
+    // enough under the haze.)
+    let step = match detail {
+        Detail::Near => 2.0,
+        Detail::Far => 5.0,
+        Detail::Distant => 0.0,
+    };
+    let lawns = if step == 0.0 || std::env::var("HW_LAWN").is_ok_and(|v| v == "0") {
+        Vec::new()
+    } else {
+        crate::lawnmesh::lawn(&world, &green, lo, hi, step)
+    };
+    // Inland water (a coastal town's comes from Engine's sea).
+    let water = if world.coastal() {
+        None
+    } else {
+        water_mesh(&world, k)
+    };
+    CellMeshes {
+        key: k,
+        detail,
+        solid,
+        lawns,
+        water,
+        plans,
+    }
 }
 
 impl TownView {
@@ -159,6 +318,7 @@ impl TownView {
             inside: None,
             hidden: BTreeSet::new(),
             green,
+            workers: None,
         };
         v.cut_focus = v
             .tallest_near(v.world.spawn_line().0, 300.0)
@@ -315,6 +475,72 @@ impl TownView {
     /// while the town plans it in the background (unless the budget is
     /// unlimited: then it is planned on the spot).
     pub fn update(&mut self, world: &mut World, eye: DVec2, budget_ms: f64) {
+        self.drop_far(world, eye);
+        let wait = budget_ms.is_finite();
+        let start = std::time::Instant::now();
+        let mut later = Vec::new();
+        for (_, k, detail) in self.todo(eye) {
+            if wait && !self.built.contains_key(&k) && !self.ready(k) {
+                later.push(cell_centre(k));
+                continue;
+            }
+            self.build_cell(world, k, detail);
+            if start.elapsed().as_secs_f64() * 1000.0 > budget_ms {
+                break;
+            }
+        }
+        if !later.is_empty() {
+            self.world.prefetch(&later, CELL * 0.5 + BUILDING_MARGIN);
+        }
+    }
+
+    /// Like `update`, but cells are drawn on worker threads: each call only
+    /// puts finished cells into the world (for at most `budget_ms`) and
+    /// hands out more work, so a frame never waits for a cell.
+    pub fn update_background(&mut self, world: &mut World, eye: DVec2, budget_ms: f64) {
+        self.drop_far(world, eye);
+        let mut workers = self.workers.take().unwrap_or_else(Workers::start);
+        let start = std::time::Instant::now();
+        while let Ok(m) = workers.done.try_recv() {
+            workers.busy.remove(&m.key);
+            // A cell that went out of range while it was drawn is dropped.
+            if cell_centre(m.key).distance(eye) <= UNLOAD {
+                self.place_cell(world, m);
+            }
+            if start.elapsed().as_secs_f64() * 1000.0 > budget_ms {
+                break;
+            }
+        }
+        let mut room = (workers.count * 2).saturating_sub(workers.busy.len());
+        let mut later = Vec::new();
+        for (_, k, detail) in self.todo(eye) {
+            if room == 0 {
+                break;
+            }
+            if workers.busy.contains(&k) {
+                continue;
+            }
+            if !self.built.contains_key(&k) && !self.ready(k) {
+                later.push(cell_centre(k));
+                continue;
+            }
+            if workers.jobs.send(self.cell_job(k, detail)).is_ok() {
+                workers.busy.insert(k);
+                room -= 1;
+            }
+        }
+        if !later.is_empty() {
+            self.world.prefetch(&later, CELL * 0.5 + BUILDING_MARGIN);
+        }
+        self.workers = Some(workers);
+    }
+
+    /// Stops the worker threads (cells still being drawn are forgotten).
+    pub fn stop_background(&mut self) {
+        self.workers = None;
+    }
+
+    fn drop_far(&mut self, world: &mut World, eye: DVec2) {
         let gone: Vec<CellKey> = self
             .built
             .keys()
@@ -324,6 +550,10 @@ impl TownView {
         for k in gone {
             self.drop_cell(world, k);
         }
+    }
+
+    /// Cells to build or redraw at another detail, nearest first.
+    fn todo(&self, eye: DVec2) -> Vec<(f64, CellKey, Detail)> {
         let want = |k: &CellKey| {
             let d = cell_centre(*k).distance(eye);
             let detail = if d < NEAR_DETAIL + CELL * 0.71 {
@@ -344,22 +574,7 @@ impl TownView {
             })
             .collect();
         todo.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let wait = budget_ms.is_finite();
-        let start = std::time::Instant::now();
-        let mut later = Vec::new();
-        for (_, k, detail) in todo {
-            if wait && !self.built.contains_key(&k) && !self.ready(k) {
-                later.push(cell_centre(k));
-                continue;
-            }
-            self.build_cell(world, k, detail);
-            if start.elapsed().as_secs_f64() * 1000.0 > budget_ms {
-                break;
-            }
-        }
-        if !later.is_empty() {
-            self.world.prefetch(&later, CELL * 0.5 + BUILDING_MARGIN);
-        }
+        todo
     }
 
     /// Has the town planned what cell `k` shows?
@@ -384,6 +599,7 @@ impl TownView {
 
     /// Takes every built cell out of the world (before switching towns).
     pub fn clear(&mut self, world: &mut World) {
+        self.workers = None;
         let keys: Vec<CellKey> = self.built.keys().copied().collect();
         for k in keys {
             self.drop_cell(world, k);
@@ -420,88 +636,65 @@ impl TownView {
     }
 
     fn build_cell(&mut self, world: &mut World, k: CellKey, detail: Detail) {
-        for e in self.entities.remove(&k).unwrap_or_default() {
-            world.despawn(e);
-        }
+        let job = self.cell_job(k, detail);
+        self.place_cell(world, make_cell(job));
+    }
+
+    /// Everything a worker needs to draw cell `k`.
+    fn cell_job(&mut self, k: CellKey, detail: Detail) -> CellJob {
         let (lo, hi) = cell_box(k);
-        let mut ids = Vec::new();
-        // Roads first, one mesh for the cell.
-        let mut b = MeshBuilder::new();
-        for r in self.world.roads_in(lo, hi) {
-            for run in runs_in(&r, k) {
-                draw_road(&mut b, &self.world, &r, &run);
-            }
-        }
-        // Buildings: each drawn at the town's block height, then lifted to
-        // its own ground, on a plinth where the ground falls away.
         if !self.buildings.contains_key(&k) {
             let list = self.buildings_of(k);
             self.buildings.insert(k, list);
         }
-        let list = self.buildings.get(&k).cloned().unwrap_or_default();
-        for (i, wb) in &list {
-            let plan = self.plan_of(*i, wb);
-            if !self.hidden.contains(i) {
-                let mut one = MeshBuilder::new();
-                add_building(
-                    &mut one,
-                    &plan,
-                    wb.site.district,
-                    self.look_of(*i, wb),
-                    detail,
-                );
-                let lift = Vec3::new(0.0, (wb.base - BLOCK_TOP) as f32, 0.0);
-                b.append(one, lift);
-            }
-            if wb.base - wb.low > 0.05 {
-                // The plinth is the building's own base stone.
-                b.tex = Some(crate::facades::facade(&plan).base);
-                b.prism(
-                    &wb.site.corners(),
-                    wb.low - 1.0,
-                    wb.base,
-                    rgb(150, 142, 128),
-                );
-                b.tex = None;
-            }
-            if b.face_count() > MESH_FACES {
-                let full = std::mem::take(&mut b);
-                ids.extend(full.finish_parts().into_iter().map(|m| world.spawn(m)));
-            }
+        let buildings = self
+            .buildings
+            .get(&k)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(id, building)| CellBuilding {
+                id,
+                plan: self.plans.get(&id).cloned(),
+                look: self.look_of(id, &building),
+                hidden: self.hidden.contains(&id),
+                building,
+            })
+            .collect();
+        CellJob {
+            key: k,
+            detail,
+            world: self.world.clone(),
+            green: self.green.clone(),
+            roads: self.world.roads_in(lo, hi),
+            buildings,
         }
-        if !b.is_empty() {
-            ids.extend(b.finish_parts().into_iter().map(|m| world.spawn(m)));
+    }
+
+    fn place_cell(&mut self, world: &mut World, m: CellMeshes) {
+        let k = m.key;
+        for e in self.entities.remove(&k).unwrap_or_default() {
+            world.despawn(e);
         }
-        // Lawns and meadows, finer close by.
-        // (Across town, past DISTANT_DETAIL, Engine's own green ground is
-        // enough under the haze.)
-        let step = match detail {
-            Detail::Near => 2.0,
-            Detail::Far => 5.0,
-            Detail::Distant => 0.0,
-        };
-        let lawns = if step == 0.0 || std::env::var("HW_LAWN").is_ok_and(|v| v == "0") {
-            Vec::new()
-        } else {
-            crate::lawnmesh::lawn(&self.world, &self.green, lo, hi, step)
-        };
-        for m in lawns {
-            let id = world.spawn(m);
+        // Keep plans only for buildings of cells still listed.
+        if self.buildings.contains_key(&k) {
+            self.plans.extend(m.plans);
+        }
+        let mut ids: Vec<EntityId> = m.solid.into_iter().map(|mesh| world.spawn(mesh)).collect();
+        for mesh in m.lawns {
+            let id = world.spawn(mesh);
             // Flat ground casts no shadow worth its cost.
             let _ = world.set_casts_shadow(id, false);
             ids.push(id);
         }
-        // Inland water (a coastal town's comes from Engine's sea).
-        if !self.world.coastal() {
-            if let Some(mesh) = water_mesh(&self.world, k) {
-                ids.push(world.spawn(mesh));
-            }
+        if let Some(mesh) = m.water {
+            ids.push(world.spawn(mesh));
         }
         for &id in &ids {
             world.set_name(id, format!("town cell {} {}", k.0, k.1));
         }
         self.entities.insert(k, ids);
-        self.built.insert(k, detail);
+        self.built.insert(k, m.detail);
     }
 
     /// Where a ray from `origin` along `dir` first meets the ground.

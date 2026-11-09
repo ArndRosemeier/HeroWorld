@@ -100,8 +100,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Milliseconds per frame for building town cells as you move.
 const BUILD_BUDGET_MS: f64 = 6.0;
-/// Milliseconds per frame for building the town behind the title.
-const TITLE_BUILD_MS: f64 = 20.0;
+/// Milliseconds per frame for putting cells drawn on worker threads into
+/// the world behind the title (and for its props).
+const TITLE_BUILD_MS: f64 = 5.0;
 /// The hour the game is played at: mid-afternoon, a sun low enough to
 /// model the facades and throw long shadows (the title is at golden hour).
 const GAME_HOUR: f32 = 15.5;
@@ -914,6 +915,9 @@ fn main() -> EngineResult<()> {
     let mut waiting: Option<Waiting> = None;
     // Props and landmarks of the current town.
     let mut extras = TownExtras::default();
+    // Behind the title the props, trees and ground come in once the logo
+    // has landed (they take a moment), not on the first frame.
+    let mut extras_loaded = false;
     // From the title down to the hero: (start, eye, yaw, pitch).
     let mut swoop: Option<(f32, Vec3, f32, f32)> = None;
     let mut music_fade_at: Option<f32> = None;
@@ -947,21 +951,15 @@ fn main() -> EngineResult<()> {
                 let all_now = title_screen.is_none() || shooting;
                 if all_now {
                     town.build_all(world, eye);
-                }
-                extras = spawn_extras(world, &generated, town.green.clone())?;
-                if let Some(v) = extras.props.as_mut() {
-                    v.update(
-                        eye,
-                        if all_now {
-                            f64::INFINITY
-                        } else {
-                            TITLE_BUILD_MS
-                        },
-                    );
-                    v.flush(world)?;
-                }
-                if let Some(w) = extras.waterfront.as_mut() {
-                    w.update(world, eye, !all_now);
+                    extras = spawn_extras(world, &generated, town.green.clone())?;
+                    extras_loaded = true;
+                    if let Some(v) = extras.props.as_mut() {
+                        v.update(eye, f64::INFINITY);
+                        v.flush(world)?;
+                    }
+                    if let Some(w) = extras.waterfront.as_mut() {
+                        w.update(world, eye, false);
+                    }
                 }
             }
 
@@ -1031,9 +1029,13 @@ fn main() -> EngineResult<()> {
                     crowd.clear(world);
                     extras = spawn_extras(world, &generated, town.green.clone())?;
                 }
+                if !extras_loaded && t.wants_heavy() {
+                    extras = spawn_extras(world, &generated, town.green.clone())?;
+                    extras_loaded = true;
+                }
                 let eye = world.camera().eye();
                 let eye = DVec2::new(eye.x as f64, eye.z as f64);
-                town.update(world, eye, TITLE_BUILD_MS);
+                town.update_background(world, eye, TITLE_BUILD_MS);
                 if let Some(v) = extras.props.as_mut() {
                     v.update(eye, TITLE_BUILD_MS * 0.5);
                     v.flush(world)?;
@@ -1049,6 +1051,7 @@ fn main() -> EngineResult<()> {
                 } else {
                     (built as f32 / wanted as f32, "Building the city...")
                 };
+                t.set_world_ready(extras_loaded && switching.is_none(), done);
                 let mut choice = t.frame(world, frame, &generated.world, &solids, (done, what))?;
                 // A joined world (or a new hero's) waits for its town.
                 if choice.is_none() && switching.is_none() && done >= 1.0 {
@@ -1143,6 +1146,8 @@ fn main() -> EngineResult<()> {
                     t.profile.save();
                     menu = hw_client::settings::GameMenu::new(&t.profile);
                     t.leave(world);
+                    // The game builds its cells itself, as before.
+                    town.stop_background();
                     title_screen = None;
                 }
                 return Ok(());

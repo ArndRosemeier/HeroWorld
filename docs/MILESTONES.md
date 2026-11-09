@@ -176,6 +176,11 @@ What's new, Quit; the Lyria title theme fading in and out after the game starts;
 built behind the title with a loading bar; a camera swoop down to the hero. Profile in
 `%APPDATA%\HeroWorld\profile.json`. Still open: searchlights. (0.038: your hero poses in the
 foreground on a gold pedestal and a click opens the creator; New hero opens the creator.)
+(0.076: no more stutter on the way in: a comic cover with the logo slamming in shows from
+the first frame while the town is drawn on worker threads, then irises open onto it; jump
+scares and fun moments: a robot, an alien splat, a villain with lightning, a space octopus,
+a saucer and a flying hero drop by and can be punched away; letters jump when clicked and
+all nine blow the logo apart; clicks on the sky give comic words; twinkles follow the mouse.)
 
 The first thing anyone sees, so it gets hero quality: playful and inviting, at least as good as
 Scale's start screen (rising title letters, the sunset city behind, the title theme).

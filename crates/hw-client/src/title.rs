@@ -10,6 +10,14 @@
 //!
 //! Everything is drawn with egui shapes: the letters are the logo font's
 //! glyphs cut into strips, so each strip can take its own colour.
+//!
+//! It opens at once on a comic cover (turning rays, the logo slamming in)
+//! that needs nothing loaded; the heavy loading runs once the logo has
+//! landed, the town's cells are drawn on worker threads, and the cover's
+//! circle opens onto the town when it is there. Then the fun starts (see
+//! `fun.rs`): click the letters, the sky, and whoever turns up.
+
+mod fun;
 
 use crate::creator::Creator;
 use crate::profile::{clean_name, Profile};
@@ -158,6 +166,14 @@ pub struct Title {
     /// Where the hero stands on the screen (to click or turn them).
     hero_rect: Option<Rect>,
     spin: f32,
+    /// Cover, clicks and visitors.
+    fun: fun::Fun,
+    /// Seconds since the last frame (clamped), for the fun's motion.
+    dt: f32,
+    /// The town behind is ready to be seen: the cover may open.
+    world_ready: bool,
+    /// When the cover started opening onto the town.
+    reveal_at: Option<f32>,
 }
 
 /// The hero in the title's foreground, on a gold pedestal.
@@ -179,10 +195,11 @@ impl Title {
             .ok()
             .and_then(|s| s.parse::<f32>().ok())
             .unwrap_or(0.0);
+        let still = profile.reduced_motion;
         Self {
             new_name: profile.name.clone(),
             new_seed: profile.seed.to_string(),
-            still: profile.reduced_motion,
+            still,
             profile,
             clock: start,
             last_time: None,
@@ -214,6 +231,32 @@ impl Title {
             asked: None,
             hero_rect: None,
             spin: 0.0,
+            fun: fun::Fun::new(still),
+            dt: 0.0,
+            world_ready: false,
+            reveal_at: None,
+        }
+    }
+
+    /// True once the logo has landed on the cover: the heavy loading (props,
+    /// trees, the ground) may freeze a frame or two then without spoiling
+    /// the swoop.
+    pub fn wants_heavy(&self) -> bool {
+        self.still || self.clock >= fun::LANDED
+    }
+
+    /// How far the town is: `loaded` once props and ground are in, `built`
+    /// the share of cells drawn. The cover opens when enough is there.
+    pub fn set_world_ready(&mut self, loaded: bool, built: f32) {
+        self.world_ready = loaded && (built >= 0.3 || self.clock > 10.0);
+    }
+
+    /// How far the cover has opened onto the town (0..1).
+    fn opened(&self) -> f32 {
+        match self.reveal_at {
+            Some(_) if self.still => 1.0,
+            Some(r) => ((self.clock - r) / fun::REVEAL_SECONDS).clamp(0.0, 1.0),
+            None => 0.0,
         }
     }
 
@@ -400,8 +443,9 @@ impl Title {
         let yaw_to = d.x.atan2(d.y).to_degrees() as f32;
         let pitch_to = ((base + h * 0.42 - y) / d.length()).atan().to_degrees() as f32;
         // The spire stands right of centre; the buttons get the left.
-        let yaw = yaw_to + 16.0 - self.lean.x * 3.0;
-        let pitch = pitch_to + 2.0 - self.lean.y * 1.5;
+        let shake = self.fun.jitter(self.clock, 1.2);
+        let yaw = yaw_to + 16.0 - self.lean.x * 3.0 + shake.x;
+        let pitch = pitch_to + 2.0 - self.lean.y * 1.5 + shake.y;
         (Vec3::new(p.x as f32, y as f32, p.y as f32), yaw, pitch)
     }
 
@@ -475,10 +519,18 @@ impl Title {
         solids: &Obstacles,
         loading: (f32, &str),
     ) -> EngineResult<Option<Choice>> {
+        let mut sfx_reveal = false;
         let now = frame.time;
         let dt = self.last_time.map_or(0.0, |t| (now - t).clamp(0.0, 0.1));
         self.last_time = Some(now);
         self.clock += dt;
+        self.dt = dt;
+        if self.reveal_at.is_none() && self.world_ready && self.clock >= fun::LANDED + 0.4 {
+            self.reveal_at = Some(self.clock);
+            if !self.still {
+                sfx_reveal = true;
+            }
+        }
         // The camera holds still while you make your hero.
         if self.creator.is_none() {
             self.orbit += dt;
@@ -554,9 +606,13 @@ impl Title {
             sfx.push(Sfx::Start);
             self.profile.save();
         }
+        if sfx_reveal {
+            sfx.push(Sfx::Whoosh);
+        }
         for s in sfx {
             self.play(world, s);
         }
+        self.fun.play_pending(world);
         Ok(choice)
     }
 
@@ -580,33 +636,103 @@ impl Title {
         if self.creator.is_some() {
             return self.creator_screen(ctx, left, sfx);
         }
-        let em = (w * 0.085).min(h * 0.15).max(40.0);
-        let logo_top = (h * 0.07).max(16.0);
+        let open = self.opened();
+        let shown = open >= 1.0;
+        self.fun.update(ctx, t, self.dt, shown);
+        // The logo starts big in the middle of the cover and moves to the
+        // top left as the cover opens.
+        let em_final = (w * 0.085).min(h * 0.15).max(40.0);
+        let em_big = (w * 0.11).min(h * 0.2).max(44.0);
+        let ratio = logo_layout(ctx, em_final, Pos2::ZERO).rect.width() / em_final;
+        let e = smoothstep(open);
+        let em = em_big + (em_final - em_big) * e;
+        let big_origin = pos2((w - ratio * em_big) * 0.5, h * 0.24);
+        let final_origin = pos2(left, (h * 0.07).max(16.0));
+        let origin = big_origin + (final_origin - big_origin) * e + self.fun.jitter(t, 9.0);
+        // Buttons pop in once the town shows (their clock starts then).
+        let tb = self.reveal_at.map_or(-10.0, |r| {
+            if self.still {
+                30.0
+            } else {
+                t - r - fun::REVEAL_SECONDS * 0.6 + 1.3
+            }
+        });
+        let pose_t = match self.fun.regroup {
+            Some(r) if t - r < 2.0 => t - r,
+            _ => t,
+        };
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ctx, |ui| {
                 let painter = ui.painter().clone();
+                // Clicks on the sky and the town (buttons sit on top).
+                let bg = ui.interact(screen, egui::Id::new("title scene"), Sense::click());
+                if bg.clicked() {
+                    if let Some(p) = bg.interact_pointer_pos() {
+                        self.fun.clicked_scene(t, p);
+                    }
+                }
+                fun::cover(&painter, screen, t, open, self.still);
                 // A soft dark wash on the left keeps the column readable.
-                wash(&painter, screen);
-                let logo = logo_layout(ctx, em, pos2(left, logo_top));
+                if e > 0.0 {
+                    wash(&painter, screen, e);
+                }
+                // Glyphs are laid out at one of two fixed sizes and scaled:
+                // a new font size every frame would fill the font atlas.
+                let font_em = if e < 0.5 { em_big } else { em_final };
+                let logo = logo_layout(ctx, font_em, Pos2::ZERO).scaled(em / font_em, origin);
                 sunburst(&painter, logo.rect, t, self.still);
                 sparks(&painter, logo.rect, t);
-                draw_logo(&painter, &logo, em, t, self.still);
-                let tag_y = logo.rect.bottom() + em * 0.28;
+                let fun = &self.fun;
+                let extra = |i: usize| fun.letter_extra(i, t, em);
+                draw_logo(&painter, &logo, em, t, pose_t, self.still, &extra);
+                // Each letter can be poked.
+                let mut poked = None;
+                for (i, l) in logo.letters.iter().enumerate() {
+                    let r = ui.interact(
+                        Rect::from_center_size(l.at, l.glyph.pos.size()),
+                        egui::Id::new(("title letter", i)),
+                        Sense::click(),
+                    );
+                    if r.clicked() {
+                        poked = Some((i, l.at));
+                    }
+                    if r.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                }
+                if let Some((i, at)) = poked {
+                    self.fun.poke_letter(t, i, at);
+                }
+                if !shown {
+                    // On the cover: what is being got ready, in turn.
+                    shadow_text(
+                        &painter,
+                        pos2(w * 0.5, logo.rect.bottom() + em * 0.45),
+                        Align2::CENTER_TOP,
+                        fun::loading_line(t),
+                        FontId::new((em_big * 0.2).max(16.0), ui_family()),
+                        with_alpha(
+                            CREAM,
+                            smoothstep((t - fun::LANDED) / 0.4) * (1.0 - e * 4.0).max(0.0),
+                        ),
+                    );
+                }
+                let tag_y = logo.rect.bottom() + em_final * 0.28;
                 shadow_text(
                     &painter,
-                    pos2(left + em * 0.08, tag_y),
+                    pos2(left + em_final * 0.08, tag_y),
                     Align2::LEFT_TOP,
                     "A whole planet needs a hero.",
-                    FontId::new((em * 0.24).max(16.0), ui_family()),
-                    CREAM,
+                    FontId::new((em_final * 0.24).max(16.0), ui_family()),
+                    with_alpha(CREAM, smoothstep((e - 0.7) / 0.3)),
                 );
 
                 // The buttons.
-                let bw = (em * 3.3).clamp(240.0, 380.0);
-                let bh = (em * 0.5).clamp(44.0, 62.0);
+                let bw = (em_final * 3.3).clamp(240.0, 380.0);
+                let bh = (em_final * 0.5).clamp(44.0, 62.0);
                 let gap = bh * 0.28;
-                let mut y = tag_y + em * 0.62;
+                let mut y = tag_y + em_final * 0.62;
                 let played = self.profile.played;
                 let (main_label, main_sub) = if played {
                     (
@@ -635,7 +761,7 @@ impl Title {
                     let pop = if self.still {
                         1.0
                     } else {
-                        ease_out_back(((t - 1.3 - i as f32 * 0.08) / 0.45).clamp(0.0, 1.0))
+                        ease_out_back(((tb - 1.3 - i as f32 * 0.08) / 0.45).clamp(0.0, 1.0))
                     };
                     let id = egui::Id::new(("title button", i));
                     let r = big_button(
@@ -711,7 +837,7 @@ impl Title {
             });
         // Your hero: drag to turn them, click to change their looks.
         if let (Some(rect), Some(cat)) = (self.hero_rect, self.catalog.clone()) {
-            if self.hero.is_some() && self.panel == Panel::None {
+            if self.hero.is_some() && self.panel == Panel::None && shown {
                 egui::Area::new(egui::Id::new("title hero"))
                     .fixed_pos(rect.min)
                     .order(egui::Order::Background)
@@ -744,6 +870,7 @@ impl Title {
                     });
             }
         }
+        self.fun.draw_front(ctx, t);
         whats_new_modal(ctx, &mut self.whats_new);
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.panel = Panel::None;
@@ -766,7 +893,7 @@ impl Title {
         let card_h = h - 2.0 * top;
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
-            .show(ctx, |ui| wash(ui.painter(), screen));
+            .show(ctx, |ui| wash(ui.painter(), screen, 1.0));
         let (creator, existing) = self.creator.as_mut()?;
         let existing = *existing;
         let mut close = false;
@@ -1026,6 +1153,7 @@ impl Title {
                                     .changed()
                                 {
                                     self.still = self.profile.reduced_motion;
+                                    self.fun.set_still(self.still);
                                 }
                                 ui.collapsing("Controls", crate::settings::controls_ui);
                                 if ui.button("Done").clicked() {
@@ -1198,16 +1326,16 @@ fn shadow_text(
         align,
         text,
         font.clone(),
-        Color32::from_black_alpha(170),
+        Color32::from_black_alpha((170 * color.a() as u32 / 255) as u8),
     );
     painter.text(pos, align, text, font, color);
 }
 
 /// A dark wash from the left edge, so the column reads over a bright sky.
-fn wash(painter: &egui::Painter, screen: Rect) {
+fn wash(painter: &egui::Painter, screen: Rect, alpha: f32) {
     let mut m = Mesh::default();
     let w = (screen.width() * 0.55).max(420.0);
-    let dark = Color32::from_rgba_unmultiplied(8, 10, 30, 150);
+    let dark = Color32::from_rgba_unmultiplied(8, 10, 30, (150.0 * alpha) as u8);
     let clear = Color32::TRANSPARENT;
     let (t, b) = (screen.top(), screen.bottom());
     m.colored_vertex(pos2(0.0, t), dark);
@@ -1237,6 +1365,29 @@ struct LogoLetter {
 struct Logo {
     letters: Vec<LogoLetter>,
     rect: Rect,
+}
+
+impl Logo {
+    /// The logo grown by `k` about the layout origin, then moved to `origin`.
+    fn scaled(self, k: f32, origin: Pos2) -> Self {
+        let at = |p: Pos2| origin + p.to_vec2() * k;
+        let rect = |r: Rect| Rect::from_min_max(at(r.min), at(r.max));
+        Self {
+            letters: self
+                .letters
+                .into_iter()
+                .map(|l| LogoLetter {
+                    glyph: Glyph {
+                        pos: rect(l.glyph.pos),
+                        uv: l.glyph.uv,
+                    },
+                    at: at(l.at),
+                    tilt: l.tilt,
+                })
+                .collect(),
+            rect: rect(self.rect),
+        }
+    }
 }
 
 fn glyph(ctx: &egui::Context, ch: char, font: &FontId) -> Option<(Glyph, f32)> {
@@ -1419,7 +1570,17 @@ fn letter_pose(i: usize, t: f32, still: bool, em: f32) -> (Vec2, f32, f32, f32) 
     (offset + vec2(0.0, bob), scale, spin, smoothstep(k * 3.0))
 }
 
-fn draw_logo(painter: &egui::Painter, logo: &Logo, em: f32, t: f32, still: bool) {
+/// `pose_t` drives the letters' flight (it restarts when the logo regroups);
+/// `extra` adds each letter's jump, spin and squash from a poke.
+fn draw_logo(
+    painter: &egui::Painter,
+    logo: &Logo,
+    em: f32,
+    t: f32,
+    pose_t: f32,
+    still: bool,
+    extra: &dyn Fn(usize) -> (Vec2, f32, f32),
+) {
     let mut mesh = Mesh::with_texture(egui::TextureId::default());
     // The glint: a bright band sweeping left to right every 7.5 s.
     let period = 7.5;
@@ -1430,10 +1591,12 @@ fn draw_logo(painter: &egui::Painter, logo: &Logo, em: f32, t: f32, still: bool)
         Some(logo.rect.left() - em + phase * (logo.rect.width() + em * 2.0))
     };
     for (i, l) in logo.letters.iter().enumerate() {
-        let (offset, scale, spin, alpha) = letter_pose(i, t, still, em);
+        let (offset, scale, spin, alpha) = letter_pose(i, pose_t, still, em);
         if alpha <= 0.0 {
             continue;
         }
+        let (jump, twirl, squash) = extra(i);
+        let (offset, scale, spin) = (offset + jump, scale * squash, spin + twirl);
         let rot = l.tilt + spin;
         let (s, c) = rot.sin_cos();
         let centre = l.glyph.pos.center();
