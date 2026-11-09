@@ -30,6 +30,8 @@ pub mod lawnmesh;
 pub mod lighting;
 pub mod looks;
 pub mod mapraster;
+pub mod mastmesh;
+pub mod mastview;
 pub mod minimap;
 pub mod nightlights;
 pub mod people;

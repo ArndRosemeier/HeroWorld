@@ -27,6 +27,9 @@ pub enum LandmarkKind {
     /// Hero Hall: a round glass hall under a flying-saucer roof and two
     /// sweeping arches, where the town's own heroes meet newcomers.
     HeroHall,
+    /// The airship mooring mast on its airfield at the town's edge, where
+    /// the liner docks ([`super::mast`]).
+    MooringMast,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -242,6 +245,7 @@ impl Landmark {
                 });
                 v
             }
+            LandmarkKind::MooringMast => super::mast::mast_footprints(),
         };
         local
             .into_iter()
@@ -478,6 +482,9 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
                 ..landmark_at(w, p, plaza)
             });
         }
+    }
+    if let Some(m) = super::mast::plan_mast(w, &out) {
+        out.push(m);
     }
     for l in &mut out {
         l.stairs = plan_stairs(w, &roads, l);

@@ -639,6 +639,63 @@ fn main() -> EngineResult<()> {
             let pitch = ((look - eye) / dd.length()).atan().to_degrees() as f32;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
         }
+        "mast" | "mastapron" | "terminal" | "liner" => {
+            // The airship mooring mast: across the airfield with the liner
+            // moored (`mast`), up from the apron at the gangway and the
+            // cargo hatch (`mastapron`), or alongside the liner on its round
+            // (`liner`). HW_MAST_T sets how far into its cycle it is.
+            use hw_gen::urban::landmarks::LandmarkKind;
+            use hw_gen::urban::mast::{MastRoute, MOOR_Y, SHIP_LEN};
+            let l = hw_client::landmarkview::nearest(
+                &generated.world,
+                LandmarkKind::MooringMast,
+                spawn,
+            );
+            match l {
+                Some(l) => {
+                    let (eye, look) = match view.as_str() {
+                        "mast" => {
+                            let side = l.dir.perp();
+                            let p = l.pos + side * 120.0 - l.dir * 35.0;
+                            let c = l.pos + l.dir * 35.0;
+                            (
+                                DVec3::new(p.x, ground(p).max(l.base) + 14.0, p.y),
+                                DVec3::new(c.x, l.base + MOOR_Y * 0.55, c.y),
+                            )
+                        }
+                        "mastapron" => {
+                            let p = l.to_plan(DVec2::new(14.0, 4.0));
+                            let c = l.to_plan(DVec2::new(0.0, 9.0));
+                            (
+                                DVec3::new(p.x, l.base + 1.7, p.y),
+                                DVec3::new(c.x, l.base + MOOR_Y - 6.0, c.y),
+                            )
+                        }
+                        "terminal" => {
+                            let p = l.to_plan(DVec2::new(13.0, 3.0));
+                            let c = l.to_plan(DVec2::new(-2.0, -12.0));
+                            (
+                                DVec3::new(p.x, l.base + 1.7, p.y),
+                                DVec3::new(c.x, l.base + 4.0, c.y),
+                            )
+                        }
+                        _ => {
+                            let r = MastRoute::new(&generated.world, l);
+                            let pose = r.pose(r.when(0.0, hw_client::mastview::view_t()));
+                            let f = pose.forward();
+                            let mid = pose.nose - f * (SHIP_LEN * 0.45);
+                            let side = DVec3::new(f.z, 0.0, -f.x).normalize();
+                            (mid + side * 75.0 + f * 40.0 + DVec3::Y * 8.0, mid)
+                        }
+                    };
+                    let d = look - eye;
+                    let yaw = d.x.atan2(d.z).to_degrees() as f32;
+                    let pitch = (d.y / DVec2::new(d.x, d.z).length()).atan().to_degrees() as f32;
+                    FlyCamera::new((eye.x as f32, eye.y as f32, eye.z as f32), yaw, pitch)
+                }
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
         "quay" => {
             // Along a quay wall at the nearest steps down to the water.
             let st = generated
@@ -1651,6 +1708,10 @@ fn main() -> EngineResult<()> {
             hw_client::hitch::mark("dystopia");
             if let Some(d) = extras.dystopia.as_mut() {
                 d.update(world, &generated.world, frame.dt)?;
+            }
+            hw_client::hitch::mark("mast");
+            if let Some(m) = extras.mast.as_mut() {
+                m.update(world, session.time(tick_clock / hw_sim::DT), frame.dt)?;
             }
             {
                 let eye = world.camera().eye();
@@ -3002,6 +3063,7 @@ fn main() -> EngineResult<()> {
                         .as_mut()
                         .map(|d| d.heard())
                         .unwrap_or_default(),
+                    mast: extras.mast.as_mut().map(|m| m.heard()).unwrap_or_default(),
                 };
                 sounds.update(world, &scene);
                 for a in powers.ui(frame.ui.ctx(), &my_sheet, fighting, creating) {

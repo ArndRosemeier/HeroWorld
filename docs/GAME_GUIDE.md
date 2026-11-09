@@ -436,7 +436,8 @@ between them) is designed but not built; the town stands in endless streamed gro
   to the water. Water is a surface you stand on at its level; quay walls block (fly out).
 - **Landmarks:** the **Aether Spire** (every town, on a raised plaza near the old centre,
   with steps; the Hero Signal shines from it), the **lighthouse** (seaside towns), the
-  **Tesla tower** (in the villain quarter).
+  **Tesla tower** (in the villain quarter), the **airship mooring mast** (every town, on
+  its airfield just past the edge).
 - **Street furniture:** lamps in each quarter's style (iron lanterns, deco double globes,
   atomic saucers), parked golden-age cars, trees by region (lindens and birches north,
   planes and chestnuts in the middle, palms and cypresses south), hedges, fountains,
@@ -447,6 +448,35 @@ between them) is designed but not built; the town stands in endless streamed gro
   at golden hour. `HW_HOUR` sets another hour: at night lamps light the streets, a third of
   the windows glow, the Spire bathes its plaza in cyan, and two moons hang in the sky.
   There is no day/night cycle yet.
+
+### The airfield and its liner (`hw-gen/src/urban/mast.rs`, `hw-client/src/mastview.rs`)
+
+Every town has an airfield: a 22 m apron on open ground just past the last houses, as near
+the core as there is room for the moored ship to lie out over the fields (in the 48
+directions round the core; 255 m out in a hamlet of 800, 2.2 km in a city of 60 000,
+2.7 km at 600 000). On it stand a 56 m red-and-white lattice mast with a glass lift shaft, a
+tulip collar ringed with Aether light and a gallery at 45 m; a terminal with a glass front
+under a boomerang roof, a walkway canopy to the lift, a pylon with a gold atom, and a
+windsock. All of it is solid (legs, shaft, collar, gallery, head, terminal, canopy and its
+posts, pylon, windsock pole). Taxi stand: "The airfield".
+
+The liner *Skylark* (96 m, silver, red cheat line, passenger deck with panoramic windows,
+four engine pods, rocket fins) keeps a timetable from the game clock, so every player sees
+it in the same place: moored 170 s with its nose in the mast's cup (swinging a few
+degrees, the head turning with it), cast off 45 s (backs 35 m off, rises 12 m, turns
+away), then its round: up to cruising height (above the town's tallest towers, 100 m at
+least, 90 m over any hill), over the core, out beyond the town and round wide, at 22 m/s,
+turning at most 0.075 rad/s; then a glide in along the mast's axis from 700 m out and
+70 m up, slowing evenly to a stop. A cycle is 12-17 minutes; a session opens with it moored,
+25 s before it casts off. The liner is cosmetic: it does not collide.
+
+While moored: the gangway slides out to the nose door (6-12 s), the lift runs up and down
+twice, two crates come down on the winch from the cargo hatch onto the baggage cart
+(22-50 s, 66-94 s), the cart drives them round the mast into the terminal (112-132 s) and
+comes back. The beacon blinks red, a second on, a second off. Sound: the engines' drone
+(within 900 m, louder as they work), a horn on the glide in and as it casts off (1.5 km),
+the latch clanking, the winch whirring. Views: `HW_VIEW=mast`, `mastapron`, `terminal`,
+`liner`; `HW_MAST_T=<s>` holds the liner that many seconds into its cycle (0 just moored).
 
 ### The villain quarter (`hw-gen/src/urban/dystopia.rs`, `hw-sim/src/quarter.rs`)
 
@@ -564,7 +594,7 @@ Heroes cannot target townsfolk.
 ### Flying taxis (`hw-sim/src/taxi.rs`)
 
 Press **G**: "TAXI! Where to?" lists up to nine stands: the town centre, the Aether Spire,
-the lighthouse or harbour, the waterfront, old villages, rooftop pads. A yellow-checkered
+the lighthouse or harbour, the airfield, the waterfront, old villages, rooftop pads. A yellow-checkered
 taxi drops out of the sky beside you, lands and swings its bubble canopy up; walk in, it
 shuts, climbs above the roofs, crosses town and lets you out at the stand. G again hops out
 on the way. Rides are free.
@@ -710,7 +740,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default 40 000; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `mast`, `mastapron`, `terminal`, `liner`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |

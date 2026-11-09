@@ -66,6 +66,10 @@ static CLIPS: &[(&str, &[u8])] = clips![
     "tesla_crack_1",
     "tesla_crack_2",
     "tesla_zap",
+    "airship_drone",
+    "airship_horn",
+    "mooring_clank",
+    "winch",
 ];
 
 /// The fight's clips (`fightview.rs` plays them).
@@ -260,6 +264,8 @@ pub struct Scene<'a> {
     pub boss_music: bool,
     /// The Tesla tower's hum and bolts.
     pub tesla: crate::teslaview::Heard,
+    /// The airship mooring mast: the liner's engines, its horn, the winch.
+    pub mast: crate::mastview::Heard,
 }
 
 /// The ambience layers and how loud each one plays at full share.
@@ -329,6 +335,8 @@ pub struct Soundscape {
     /// The Tesla tower's hum.
     tesla_hum: Option<SoundId>,
     cracks: u32,
+    /// The liner's engines and the mast's winch.
+    mast_loops: [Option<SoundId>; 2],
     pub music: Music,
 }
 
@@ -361,6 +369,7 @@ impl Soundscape {
             rng: 0x9e37_79b9_7f4a_7c15,
             tesla_hum: None,
             cracks: 0,
+            mast_loops: [None, None],
             music: Music::new(),
         }
     }
@@ -386,6 +395,7 @@ impl Soundscape {
         self.footsteps(world, s);
         self.life(world, s);
         self.tesla(world, s);
+        self.mast(world, s);
         self.timed.retain(|(id, until)| {
             if s.now >= *until {
                 world.stop_sound(*id, 2.5);
@@ -413,6 +423,9 @@ impl Soundscape {
             world.stop_sound(id, 0.5);
         }
         if let Some(v) = self.tesla_hum.take() {
+            world.stop_sound(v, 0.5);
+        }
+        for v in self.mast_loops.iter_mut().filter_map(Option::take) {
             world.stop_sound(v, 0.5);
         }
         self.music.stop(world);
@@ -751,6 +764,81 @@ impl Soundscape {
                     .volume(power.max(0.5) * muffle)
                     .pitch(pitch)
                     .range(15.0, range);
+                world.play_sound(&c, p);
+            }
+        }
+    }
+
+    /// The airship: the deep drone of its engines (louder as they work),
+    /// a horn on the glide in and as it casts off, the latch clanking,
+    /// the winch whirring while crates come down.
+    fn mast(&mut self, world: &mut World, s: &Scene) {
+        let muffle = if s.under != Under::No {
+            0.0
+        } else if s.indoors {
+            0.35
+        } else {
+            1.0
+        };
+        let m = &s.mast;
+        let loops = [
+            (
+                "airship_drone",
+                m.engines
+                    .map(|(p, k)| (p, (0.35 + 0.65 * k) * muffle, 0.85 + 0.25 * k)),
+                (25.0, 900.0),
+            ),
+            (
+                "winch",
+                m.winch.map(|p| (p, 0.7 * muffle, 1.0)),
+                (6.0, 160.0),
+            ),
+        ];
+        for (k, (clip, want, (near, far))) in loops.into_iter().enumerate() {
+            match want {
+                Some((at, vol, pitch)) if vol > 0.0 && at.distance(s.eye) < far => {
+                    match self.mast_loops[k] {
+                        Some(v) => {
+                            let _ = self.bank.get(clip, s.now);
+                            let a = world.audio_mut();
+                            a.set_position(v, at);
+                            a.set_volume(v, vol);
+                            a.set_pitch(v, pitch);
+                        }
+                        None => {
+                            if let Some(c) = self.bank.get(clip, s.now) {
+                                let p = PlaySound::at(at)
+                                    .looped()
+                                    .volume(vol)
+                                    .pitch(pitch)
+                                    .range(near, far)
+                                    .fade_in(1.5);
+                                self.mast_loops[k] = Some(world.play_sound(&c, p));
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(v) = self.mast_loops[k].take() {
+                        world.stop_sound(v, 1.5);
+                    }
+                }
+            }
+        }
+        if muffle <= 0.0 {
+            return;
+        }
+        let shots = m
+            .horns
+            .iter()
+            .map(|p| ("airship_horn", *p, 1.0, 1500.0))
+            .chain(m.clanks.iter().map(|p| ("mooring_clank", *p, 0.8, 220.0)));
+        for (clip, at, vol, range) in shots.collect::<Vec<_>>() {
+            if at.distance(s.eye) > range {
+                continue;
+            }
+            if let Some(c) = self.bank.get(clip, s.now) {
+                let p = PlaySound::at(at).volume(vol * muffle).range(30.0, range);
                 world.play_sound(&c, p);
             }
         }
@@ -1156,6 +1244,7 @@ mod tests {
             clock: None,
             boss_music: false,
             tesla: Default::default(),
+            mast: Default::default(),
         }
     }
 

@@ -47,6 +47,10 @@ seam.
 | `tesla_crack_1.ogg` | shot | The sound of a single huge electric arc discharge striking a lightning rod, a violent sharp crack and snap like close thunder with a fizzing sizzle tail |
 | `tesla_crack_2.ogg` | shot | (the same prompt, another take) |
 | `tesla_zap.ogg` | shot | The sound of a short burst of electric sparks crackling, a quick high voltage zap and sizzle |
+| `airship_drone.ogg` | loop | The sound of a large 1930s airship passing overhead, the deep steady drone of four big propeller engines, a low throbbing hum, continuous, no voices |
+| `airship_horn.ogg` | shot | The sound of a giant airship's deep foghorn blast, one long low brass horn note echoing over an airfield |
+| `mooring_clank.ogg` | shot | The sound of a heavy steel mooring latch locking shut, a deep metallic clank and a chain rattle |
+| `winch.ogg` | loop | The sound of an electric cargo winch unspooling steel cable, a steady mechanical whirr with gear clicks, continuous |
 
 ## From Scale
 

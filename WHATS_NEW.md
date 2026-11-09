@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.103 (2026-11-09)
+
+- Every town now has an airfield just past its last houses: a red-and-white mooring mast with a glass lift, a little terminal under a boomerang roof, and a windsock.
+- The silver liner *Skylark* keeps its timetable: it sails over the rooftops, glides in nose first to the mast, and while it is moored the gangway slides out, the lift runs, crates come down on the winch and a baggage cart takes them to the terminal. Then it sounds its horn, backs off and sets out on its round again. Listen for its engines droning overhead.
+- Taxis go there too: "The airfield".
+
 ## 0.102 (2026-11-09)
 
 - Behind the scenes: fresh build machines download the engine's libraries ready-built instead of compiling them, so checks start minutes sooner.

@@ -327,6 +327,7 @@ pub fn map(
             LandmarkKind::Lighthouse => "Lighthouse",
             LandmarkKind::TeslaTower => "Tesla tower",
             LandmarkKind::HeroHall => "Hero Hall",
+            LandmarkKind::MooringMast => "Airfield",
         };
         let p = to_screen(l.pos);
         painter.circle_filled(p, 4.0, egui::Color32::from_rgb(60, 60, 70));

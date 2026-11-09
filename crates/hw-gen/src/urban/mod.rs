@@ -30,6 +30,7 @@ pub mod land;
 pub mod landmarks;
 pub mod lanes;
 pub mod lines;
+pub mod mast;
 pub mod params;
 pub mod plots;
 pub mod props;

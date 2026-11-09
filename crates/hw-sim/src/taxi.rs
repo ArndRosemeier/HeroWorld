@@ -476,10 +476,17 @@ pub fn stands(world: &Area) -> Vec<Stand> {
             LandmarkKind::AetherSpire => "Aether Spire plaza",
             LandmarkKind::Lighthouse => "The lighthouse",
             LandmarkKind::HeroHall => "Hero Hall",
+            LandmarkKind::MooringMast => "The airfield",
             // No taxi will take you there.
             LandmarkKind::TeslaTower => continue,
         };
-        let p = l.pos + l.dir * (l.plaza - 3.0).max(2.0);
+        // On the airfield's apron beside the mast, clear of the ship's
+        // cargo square and the terminal.
+        let p = if l.kind == LandmarkKind::MooringMast {
+            l.to_plan(DVec2::new(l.plaza - 3.0, 0.0))
+        } else {
+            l.pos + l.dir * (l.plaza - 3.0).max(2.0)
+        };
         if out.iter().all(|s| s.name != name) {
             out.push(Stand {
                 name: name.into(),

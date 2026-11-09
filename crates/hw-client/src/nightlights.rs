@@ -125,6 +125,26 @@ impl NightLights {
                         lamp: Lamp::point(at(l.height + 8.4), rgb(255, 210, 120), 25.0, 25.0),
                     });
                 }
+                LandmarkKind::MooringMast => {
+                    // The terminal glowing, and floodlight up the mast.
+                    let t = l.to_plan(DVec2::new(0.0, hw_gen::urban::mast::TERMINAL_Z + 6.0));
+                    sources.push(Source {
+                        lamp: Lamp::point(
+                            Vec3::new(t.x as f32, l.base as f32 + 3.0, t.y as f32),
+                            rgb(255, 222, 170),
+                            30.0,
+                            30.0,
+                        ),
+                    });
+                    sources.push(Source {
+                        lamp: Lamp::point(
+                            at(hw_gen::urban::mast::GALLERY_Y - 3.0),
+                            rgb(200, 236, 255),
+                            45.0,
+                            45.0,
+                        ),
+                    });
+                }
                 // Its lights pulse with its arcs: see `teslaview`.
                 LandmarkKind::TeslaTower => {}
             }
