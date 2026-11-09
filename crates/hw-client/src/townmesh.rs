@@ -176,9 +176,12 @@ struct CellMeshes {
     key: CellKey,
     stamp: u64,
     detail: Detail,
-    solid: Vec<Mesh>,
-    lawns: Vec<Mesh>,
-    water: Option<Mesh>,
+    /// Prepared on the worker (`Mesh::prepare`): taking a cell into the
+    /// world was 20-60 ms on the main thread when the meshes were built
+    /// and their facade maps hashed there.
+    solid: Vec<PreparedMesh>,
+    lawns: Vec<PreparedMesh>,
+    water: Option<PreparedMesh>,
     /// Plans the worker had to make, for the cache.
     plans: Vec<(u64, Arc<BuildingPlan>)>,
 }
@@ -350,9 +353,9 @@ fn make_cell(job: CellJob) -> CellMeshes {
         key: k,
         stamp,
         detail,
-        solid,
-        lawns,
-        water,
+        solid: solid.into_iter().map(Mesh::prepare).collect(),
+        lawns: lawns.into_iter().map(Mesh::prepare).collect(),
+        water: water.map(Mesh::prepare),
         plans,
     }
 }
@@ -761,15 +764,19 @@ impl TownView {
         if self.buildings.contains_key(&k) {
             self.plans.extend(m.plans);
         }
-        let mut ids: Vec<EntityId> = m.solid.into_iter().map(|mesh| world.spawn(mesh)).collect();
+        let mut ids: Vec<EntityId> = m
+            .solid
+            .into_iter()
+            .map(|mesh| world.spawn_prepared(mesh))
+            .collect();
         for mesh in m.lawns {
-            let id = world.spawn(mesh);
+            let id = world.spawn_prepared(mesh);
             // Flat ground casts no shadow worth its cost.
             let _ = world.set_casts_shadow(id, false);
             ids.push(id);
         }
         if let Some(mesh) = m.water {
-            ids.push(world.spawn(mesh));
+            ids.push(world.spawn_prepared(mesh));
         }
         for &id in &ids {
             world.set_name(id, format!("town cell {} {}", k.0, k.1));

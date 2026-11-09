@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.088 (2026-11-09)
+
+- Smoother walking and flying through town: a town block coming into view no longer costs a short stutter when it appears (it is made ready in the background now).
+- The hitch log also says which of Engine's own steps (drawing, shadows, uploads) a stutter came from.
+
 ## 0.087 (2026-11-09)
 
 - Houses with see-through walls, cars missing parts, far houses drawn over near ones: this was an old NVIDIA graphics driver. The game now shows a red note at the top right when your driver is known to do this; updating it from nvidia.com fixes it.
