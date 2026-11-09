@@ -1651,6 +1651,7 @@ fn main() -> EngineResult<()> {
             let joined = session.joined();
             let mut news = session.take_news();
             // Broken and mended street props: their places, and lamps on them.
+            radio.solids = Some(solids.clone());
             news.retain(|m| match m {
                 hw_net::ToClient::Incident { id, at, yaw, .. } => {
                     radio.hear(world, m);
@@ -2004,18 +2005,9 @@ fn main() -> EngineResult<()> {
                 // A look per player until the hero creator, the same on
                 // every machine; villains by kind, a few looks each.
                 let who = match h.kind {
-                    hw_net::EntityKind::Brute => {
-                        Who::Villain(VillainKind::Brute, h.id.0 % people::VILLAIN_LOOKS)
-                    }
-                    hw_net::EntityKind::Alpha => Who::Villain(VillainKind::Alpha, 0),
-                    hw_net::EntityKind::Technician => {
-                        Who::Villain(VillainKind::Technician, h.id.0 % people::VILLAIN_LOOKS)
-                    }
-                    hw_net::EntityKind::Greaser => {
-                        Who::Villain(VillainKind::Greaser, h.id.0 % people::VILLAIN_LOOKS)
-                    }
-                    hw_net::EntityKind::Gunsel => {
-                        Who::Villain(VillainKind::Gunsel, h.id.0 % people::VILLAIN_LOOKS)
+                    k if VillainKind::of(k).is_some() => {
+                        let v = VillainKind::of(k).expect("a villain");
+                        Who::Villain(v, h.id.0 % v.looks())
                     }
                     // A townsperson in a crime: one of the citizens' looks.
                     hw_net::EntityKind::Bystander => Who::Citizen(h.id.0 % hw_sim::citizens::LOOKS),
@@ -2074,6 +2066,8 @@ fn main() -> EngineResult<()> {
                                 anim.shown = "";
                                 if h.kind.is_ranged() {
                                     fight.arm(world, e);
+                                } else if h.kind.wields() {
+                                    fight.wield(world, e, h.kind);
                                 }
                                 e
                             }
@@ -2196,6 +2190,40 @@ fn main() -> EngineResult<()> {
                     let at = Vec3::new(a.pos[0] as f32, a.pos[1] as f32, a.pos[2] as f32);
                     let p = at + Vec3::new(3.6, 2.4, 3.6);
                     let d = at + Vec3::Y * 1.4 - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
+            // `HW_VIEW=villain HW_VILLAIN=<kind>` (with an incident of theirs):
+            // a close-up of the first villain of that kind ("legionary",
+            // "captain", "delver"...).
+            if view == "villain" {
+                let want = std::env::var("HW_VILLAIN").unwrap_or_default();
+                if let Some(a) = heroes
+                    .iter()
+                    .find(|e| format!("{:?}", e.kind).eq_ignore_ascii_case(&want))
+                {
+                    let at = Vec3::new(a.pos[0] as f32, a.pos[1] as f32, a.pos[2] as f32);
+                    let (y, _, _) = glam::Quat::from_array(a.rot).to_euler(glam::EulerRot::YXZ);
+                    let ahead = Vec3::new(y.sin(), 0.0, y.cos());
+                    let side = Vec3::new(ahead.z, 0.0, -ahead.x);
+                    let p = at + ahead * 2.4 + side * 1.0 + Vec3::Y * 1.7;
+                    let d = at + Vec3::Y * 1.15 - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
+            // `HW_VIEW=airship` (with HW_INCIDENT=pirates): the raiders'
+            // airship from a rooftop's height down the street.
+            if view == "airship" {
+                if let Some((at, yaw)) = radio.ship_at() {
+                    let a = yaw.to_radians() + 1.1;
+                    let p = at + Vec3::new(a.sin(), 0.0, a.cos()) * 38.0 - Vec3::Y * 9.0;
+                    let d = at - Vec3::Y * 3.0 - p;
                     let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
                         .atan()
                         .to_degrees();
@@ -2387,6 +2415,7 @@ fn main() -> EngineResult<()> {
                 let fighting = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
                 radio.me = mine.map(|m| m.0);
                 radio.update(frame.dt);
+                radio.animate(world, frame.dt);
                 radio.carry(world, |id| {
                     let h = heroes.iter().find(|h| h.id.0 == id)?;
                     let yaw = anims.get(&h.id).map_or(0.0, |a| a.yaw());
@@ -2645,17 +2674,20 @@ fn spawn_extras(
         hw_client::grassview::GrassView::spawn(world, generated.world.clone(), green.clone())?;
     // The country's woods stream in around the camera, drawn with the
     // props' tree sets.
-    let lods: Vec<LodId> = props.sets.iter().copied().chain(landmarks.sets).collect();
+    let mut lods: Vec<LodId> = props.sets.iter().copied().chain(landmarks.sets).collect();
     let trees: std::collections::BTreeMap<_, _> = hw_gen::urban::props::PropKind::all()
         .into_iter()
         .filter(|k| matches!(k, hw_gen::urban::props::PropKind::Tree(..)))
         .filter_map(|k| Some((k, props.set_for(k)?)))
         .collect();
     set_town_stream(world, generated, green, trees)?;
+    let (roost_lods, roost_entities) =
+        hw_client::factionview::spawn_roost(world, &generated.world)?;
+    lods.extend(roost_lods);
     Ok(TownExtras {
         grass: Some(grass),
         lods,
-        entities: Vec::new(),
+        entities: roost_entities,
         waterfront: Some(hw_client::waterfrontview::WaterfrontView::new(
             generated.world.clone(),
         )),

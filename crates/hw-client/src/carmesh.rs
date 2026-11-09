@@ -147,7 +147,7 @@ thread_local! {
 
 /// Runs `f` with every surface it lays facing inwards: the inner face of
 /// a thin shell, such as a canopy seen from under it when it is open.
-fn inside(f: impl FnOnce()) {
+pub(crate) fn inside(f: impl FnOnce()) {
     INSIDE.set(true);
     f();
     INSIDE.set(false);

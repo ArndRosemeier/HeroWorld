@@ -55,6 +55,8 @@ pub enum Help {
     LiftThem,
     /// Carrying someone hurt: on to the ambulance.
     CarryThem,
+    /// By frightened mole folk: talk them down.
+    TalkDown,
 }
 
 /// What stands at a rescue: wrecked cars, flames and smoke, the people.
@@ -68,10 +70,31 @@ struct Scene {
     ambulance: Vec<EntityId>,
     /// The hurt person, lying or in someone's arms.
     hurt: Option<EntityId>,
+    /// A pirate airship over the raid: where it hangs, its yaw (degrees),
+    /// and the rope ladders down from it.
+    ship: Option<(LodId, Vec3, f32)>,
+    ladders: Vec<EntityId>,
 }
+
+/// An airship sailing off once its raid is over: where it was, its yaw
+/// (degrees), seconds since it set off.
+struct Departing {
+    lod: LodId,
+    from: Vec3,
+    yaw: f32,
+    age: f32,
+}
+
+/// How long a departing airship stays in sight (s).
+const SAIL_SECONDS: f32 = 40.0;
 
 #[derive(Default)]
 pub struct Radio {
+    /// The town's solids: where an airship can hang clear of the roofs.
+    pub solids: Option<std::sync::Arc<hw_sim::collision::Obstacles>>,
+    departing: Vec<Departing>,
+    /// Seconds the radio has run (an airship's gentle sway).
+    clock: f32,
     pub calls: BTreeMap<u32, Call>,
     beams: BTreeMap<u32, EntityId>,
     scenes: BTreeMap<u32, Scene>,
@@ -92,6 +115,9 @@ fn beam_colour(kind: IncidentKind) -> Color {
         IncidentKind::Fire => rgb(255, 130, 40),
         IncidentKind::Colossus => rgb(255, 40, 60),
         IncidentKind::Collapse => rgb(230, 210, 170),
+        IncidentKind::Surfacing => rgb(200, 150, 255),
+        IncidentKind::PirateRaid => rgb(90, 230, 210),
+        IncidentKind::IronLanding => rgb(255, 60, 30),
     }
 }
 
@@ -147,7 +173,13 @@ impl Radio {
         if *state == 0 {
             if let Some(c) = self.calls.get_mut(id) {
                 // News of a rescue: one more got out.
-                if *left < c.left {
+                if *left < c.left && kind == IncidentKind::Surfacing {
+                    c.left = *left;
+                    self.flash = Some((
+                        "Talked them down. Molehaven will remember this.".into(),
+                        5.0,
+                    ));
+                } else if *left < c.left {
                     c.left = *left;
                     self.flash = Some(("Got one out! Well done.".into(), 3.0));
                     self.people(world, *id);
@@ -184,6 +216,8 @@ impl Radio {
             }
             if kind.trapped() > 0 {
                 self.stage(world, *id);
+            } else {
+                self.set_piece(world, *id);
             }
             self.flash = Some((format!("Calling all heroes: {}!", kind.name()), 5.0));
         } else {
@@ -204,6 +238,173 @@ impl Radio {
             self.flash = Some((word, 4.0));
         }
         true
+    }
+
+    /// The new factions' trouble on the spot: the hole mole folk came up
+    /// by, the pirates' airship over the shop with ladders down, the iron
+    /// capsule in its crater.
+    fn set_piece(&mut self, world: &mut World, id: u32) {
+        use crate::factionview as fv;
+        let Some(c) = self.calls.get(&id).copied() else {
+            return;
+        };
+        let mut scene = Scene::default();
+        let f = Vec3::new(c.facing.x as f32, 0.0, c.facing.y as f32);
+        let yaw = c.facing.x.atan2(c.facing.y).to_degrees() as f32;
+        match c.kind {
+            IncidentKind::Surfacing => {
+                let p = c.at;
+                let place = Place::new(p.x, p.y, p.z).with_yaw_deg(yaw);
+                if let Ok(l) =
+                    world.spawn_lod_at(fv::broken_ground_levels(1.6, false, true), &[place])
+                {
+                    scene.cars.push(l);
+                }
+                let _ = world.particles_mut().burst(ParticleEmitter::dust(
+                    p + Vec3::Y * 0.6,
+                    3.0,
+                    Color::rgb(120, 96, 70),
+                ));
+            }
+            IncidentKind::IronLanding => {
+                // It struck just behind where its legionaries stand.
+                let p = c.at - f * 5.5;
+                let place = Place::new(p.x, p.y, p.z).with_yaw_deg(yaw);
+                for levels in [
+                    fv::broken_ground_levels(2.2, true, false),
+                    fv::iron_capsule_levels(),
+                ] {
+                    if let Ok(l) = world.spawn_lod_at(levels, &[place]) {
+                        scene.cars.push(l);
+                    }
+                }
+                let d = Decal::new(DecalKind::Scorch, p + Vec3::Y * 0.3, Vec3::Y, 7.0)
+                    .depth(1.5)
+                    .opacity(0.9)
+                    .lifetime(600.0)
+                    .fade(0.0, 6.0);
+                let _ = world.spawn_decal(d);
+                let ps = world.particles_mut();
+                if let Ok(e) = ps.start(
+                    ParticleEmitter::smoke(p + Vec3::Y * 2.5, 1.4)
+                        .with_color(Color::rgba(60, 58, 56, 140)),
+                ) {
+                    scene.fire.push(e);
+                }
+                let _ = ps.burst(ParticleEmitter::dust(
+                    p + Vec3::Y * 0.5,
+                    6.0,
+                    Color::rgb(110, 104, 96),
+                ));
+                let _ = ps.burst(ParticleEmitter::sparks(
+                    p + Vec3::Y * 1.5,
+                    Vec3::Y * 6.0,
+                    80,
+                ));
+            }
+            IncidentKind::PirateRaid => {
+                let (at, ship_yaw) = self.mooring(c.at);
+                let place = Place::new(at.x, at.y, at.z).with_yaw_deg(ship_yaw);
+                if let Ok(l) = world.spawn_lod_at(fv::airship_levels(), &[place]) {
+                    scene.ship = Some((l, at, ship_yaw));
+                }
+                // Two ladders from the gondola's rail down to the street.
+                let a = ship_yaw.to_radians();
+                let along = Vec3::new(a.sin(), 0.0, a.cos());
+                let side = Vec3::new(along.z, 0.0, -along.x);
+                for (k, z) in [(-1.0f32, -2.0f32), (1.0, 3.0)] {
+                    let top = at + along * z + side * (1.9 * k) - Vec3::Y * fv::GONDOLA_DECK as f32;
+                    let foot = c.at + along * (z * 0.5) + side * (2.4 * k) + Vec3::Y * 0.05;
+                    let mesh = fv::rope_ladder(DVec3::ZERO, (foot - top).as_dvec3());
+                    if let Ok(e) = world.place(mesh, Place::new(top.x, top.y, top.z)) {
+                        scene.ladders.push(e);
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.scenes.insert(id, scene);
+    }
+
+    /// Where a raiding airship hangs over `street`, and its yaw (degrees):
+    /// the way along which the roofs under it are lowest, clear of them.
+    fn mooring(&self, street: Vec3) -> (Vec3, f32) {
+        use crate::factionview as fv;
+        let roof_under = |p: Vec3| -> f32 {
+            self.solids.as_ref().map_or(street.y, |s| {
+                s.floor_under(DVec2::new(p.x as f64, p.z as f64), 2000.0) as f32
+            })
+        };
+        let half = fv::AIRSHIP_LENGTH as f32 * 0.5;
+        let r = fv::AIRSHIP_RADIUS as f32;
+        let (mut best, mut best_yaw) = (f32::INFINITY, 0.0f32);
+        for k in 0..8 {
+            let yaw = k as f32 * 22.5;
+            let a = yaw.to_radians();
+            let along = Vec3::new(a.sin(), 0.0, a.cos());
+            let side = Vec3::new(along.z, 0.0, -along.x);
+            let mut top = street.y;
+            for i in -4..=4 {
+                for j in -2..=2 {
+                    let p = street + along * (half * i as f32 / 4.0) + side * (r * j as f32 / 2.0);
+                    top = top.max(roof_under(p));
+                }
+            }
+            if top < best - 0.5 {
+                best = top;
+                best_yaw = yaw;
+            }
+        }
+        // The gondola's keel a few metres over the highest roof under it,
+        // and never lower than a ladder's climb above the street.
+        let keel = fv::GONDOLA_DECK as f32 + 2.6;
+        let y = (best + keel + 4.0).max(street.y + keel + 14.0);
+        (Vec3::new(street.x, y, street.z), best_yaw)
+    }
+
+    /// The first raiding airship there is: where it hangs and its yaw
+    /// (degrees). For screenshots.
+    pub fn ship_at(&self) -> Option<(Vec3, f32)> {
+        self.scenes.values().find_map(|s| s.ship.map(|(_, at, yaw)| (at, yaw)))
+    }
+
+    /// Departing airships sail off and rise; a moored one sways a little.
+    pub fn animate(&mut self, world: &mut World, dt: f32) {
+        self.clock += dt;
+        let t = self.clock;
+        for s in self.scenes.values() {
+            if let Some((l, at, yaw)) = s.ship {
+                let bob = Vec3::Y * (t * 0.5).sin() * 0.35;
+                let place = Place::new(at.x, at.y + bob.y, at.z)
+                    .with_yaw_deg(yaw + (t * 0.23).sin() * 1.5)
+                    .with_roll_deg((t * 0.41).sin() * 1.2);
+                let _ = world.set_lod_places(l, &[place]);
+            }
+        }
+        for d in self.departing.iter_mut() {
+            d.age += dt;
+            let a = d.yaw.to_radians();
+            let along = Vec3::new(a.sin(), 0.0, a.cos());
+            // Slowly at first, then under full steam, climbing.
+            let s = d.age * d.age * 0.35;
+            let p = d.from + along * s.min(d.age * 14.0) + Vec3::Y * d.age * 1.2;
+            let place = Place::new(p.x, p.y, p.z)
+                .with_yaw_deg(d.yaw)
+                .with_pitch_deg(-3.0);
+            let _ = world.set_lod_places(d.lod, &[place]);
+        }
+        let mut gone = Vec::new();
+        self.departing.retain(|d| {
+            if d.age > SAIL_SECONDS {
+                gone.push(d.lod);
+                false
+            } else {
+                true
+            }
+        });
+        for l in gone {
+            world.despawn_lod(l);
+        }
     }
 
     /// A rescue's scene: cars or flames, then the people.
@@ -385,6 +586,18 @@ impl Radio {
 
     fn unstage(&mut self, world: &mut World, id: u32) {
         if let Some(scene) = self.scenes.remove(&id) {
+            // The pirates climb aboard and the airship sails off.
+            if let Some((lod, from, yaw)) = scene.ship {
+                self.departing.push(Departing {
+                    lod,
+                    from,
+                    yaw,
+                    age: 0.0,
+                });
+            }
+            for e in scene.ladders {
+                world.despawn(e);
+            }
             for e in scene.ambulance.into_iter().chain(scene.hurt) {
                 world.despawn(e);
             }
@@ -411,6 +624,9 @@ impl Radio {
             return Some(Help::CarryThem);
         }
         self.calls.values().find_map(|c| match c.casualty {
+            _ if c.kind == IncidentKind::Surfacing => (c.left > 0
+                && c.at.distance(hero) < hw_sim::incidents::CALM_REACH as f32 + 2.5)
+                .then_some(Help::TalkDown),
             Some(k) if k.state == 0 && k.at.distance(hero) < reach => Some(Help::LiftThem),
             _ => victims(c.kind, c.at.as_dvec3(), c.facing, c.left)
                 .last()
@@ -448,6 +664,7 @@ impl Radio {
             let text = match help {
                 Help::FreeThem => "Hold E to help them out".to_string(),
                 Help::LiftThem => "Hold E to lift them".to_string(),
+                Help::TalkDown => "Hold E to talk them down (or fight them)".to_string(),
                 Help::CarryThem => {
                     let d = match (hero, self.carrying()) {
                         (Some(h), Some(m)) => {
@@ -535,6 +752,9 @@ impl Radio {
         let ids: Vec<u32> = self.scenes.keys().copied().collect();
         for id in ids {
             self.unstage(world, id);
+        }
+        for d in std::mem::take(&mut self.departing) {
+            world.despawn_lod(d.lod);
         }
         self.calls.clear();
         self.flash = None;

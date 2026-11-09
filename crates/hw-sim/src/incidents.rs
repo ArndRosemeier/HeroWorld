@@ -59,6 +59,15 @@ pub const MEDIC_REACH: f64 = 5.0;
 pub const LIFT_SECONDS: f64 = 1.0;
 /// The ambulance waits about this far from a rescue (m).
 const MEDIC_AWAY: f64 = 50.0;
+/// A hero holding the help key this near a frightened mole talks the
+/// group down (m), in this many seconds.
+pub const CALM_REACH: f64 = 4.5;
+pub const CALM_SECONDS: f64 = 3.0;
+/// Talked down, the mole folk climb back into their hole: gone after this
+/// long (s).
+pub const HOME_SECONDS: f64 = 6.0;
+/// The Iron-Masked Empire lands only once the team reaches this level.
+pub const IRON_LEVEL: u8 = 2;
 
 /// What kind of trouble.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -80,10 +89,19 @@ pub enum IncidentKind {
     /// A building brought down in a fight (by heroes or the colossus),
     /// people trapped in the rubble. Never rolled: it follows a collapse.
     Collapse,
+    /// Mole folk burst up through the street, frightened by the Lab's
+    /// drilling. Talk them down (hold the help key by them) and they go
+    /// home, and Molehaven remembers; or fight them.
+    Surfacing,
+    /// Sky pirates rope down from their airship to loot a shop.
+    PirateRaid,
+    /// An iron capsule of the Iron-Masked Empire crashes into a street;
+    /// its legionaries round up townsfolk to take away.
+    IronLanding,
 }
 
 impl IncidentKind {
-    pub const ALL: [IncidentKind; 8] = [
+    pub const ALL: [IncidentKind; 11] = [
         IncidentKind::Mugging,
         IncidentKind::Robbery,
         IncidentKind::Rampage,
@@ -92,6 +110,9 @@ impl IncidentKind {
         IncidentKind::Fire,
         IncidentKind::Colossus,
         IncidentKind::Collapse,
+        IncidentKind::Surfacing,
+        IncidentKind::PirateRaid,
+        IncidentKind::IronLanding,
     ];
 
     pub fn code(self) -> u8 {
@@ -113,6 +134,9 @@ impl IncidentKind {
             IncidentKind::Fire => "Fire, people inside",
             IncidentKind::Colossus => "The colossus is loose!",
             IncidentKind::Collapse => "Building collapse, people trapped",
+            IncidentKind::Surfacing => "Mole folk surfacing",
+            IncidentKind::PirateRaid => "Sky pirates raiding a shop",
+            IncidentKind::IronLanding => "Iron Legion landing, people taken",
         }
     }
 
@@ -143,7 +167,28 @@ impl IncidentKind {
             IncidentKind::Rampage => (3, Some(EnemyKind::Brute), 2),
             IncidentKind::Breakout => (5, Some(EnemyKind::Technician), 2),
             IncidentKind::Colossus => (1, Some(EnemyKind::Colossus), 3),
+            IncidentKind::Surfacing => (4, Some(EnemyKind::Delver), 0),
+            IncidentKind::PirateRaid => (5, None, 1),
+            IncidentKind::IronLanding => (5, None, 2),
             IncidentKind::CarCrash | IncidentKind::Fire | IncidentKind::Collapse => (0, None, 0),
+        }
+    }
+
+    /// Its faction's crew, when it is not of one kind only: (who fights up
+    /// close, who shoots).
+    fn crew(self) -> Option<(EnemyKind, EnemyKind)> {
+        match self {
+            IncidentKind::PirateRaid => Some((EnemyKind::Buccaneer, EnemyKind::Gunner)),
+            IncidentKind::IronLanding => Some((EnemyKind::Legionary, EnemyKind::Legionary)),
+            _ => None,
+        }
+    }
+
+    /// People the villains hold (townsfolk rounded up), freed when it ends.
+    pub fn captives(self) -> u8 {
+        match self {
+            IncidentKind::IronLanding => 2,
+            _ => 0,
         }
     }
 
@@ -159,6 +204,11 @@ impl IncidentKind {
             IncidentKind::Fire => 2.5,
             IncidentKind::Colossus => 1.5,
             IncidentKind::Collapse => 3.0,
+            // Fought rather than talked down: a small thanks from the
+            // street, none from Molehaven.
+            IncidentKind::Surfacing => 0.5,
+            IncidentKind::PirateRaid => 2.0,
+            IncidentKind::IronLanding => 3.0,
         }
     }
 
@@ -173,6 +223,12 @@ impl IncidentKind {
             IncidentKind::Breakout => 18.0,
             // The walking tank fights whoever comes.
             IncidentKind::Colossus => f64::INFINITY,
+            // Frightened, not wicked: they fight only who hits them.
+            IncidentKind::Surfacing => 0.0,
+            IncidentKind::PirateRaid => 12.0,
+            // Hostile to everyone anyway; this is how near they defend
+            // their captives even from a friend.
+            IncidentKind::IronLanding => 20.0,
             IncidentKind::CarCrash | IncidentKind::Fire | IncidentKind::Collapse => 0.0,
         }
     }
@@ -182,6 +238,8 @@ impl IncidentKind {
         match self {
             IncidentKind::Rampage => Some(EnemyKind::Alpha),
             IncidentKind::Breakout => Some(EnemyKind::Sentry),
+            IncidentKind::PirateRaid => Some(EnemyKind::Captain),
+            IncidentKind::IronLanding => Some(EnemyKind::Praetorian),
             _ => None,
         }
     }
@@ -247,6 +305,8 @@ pub struct Incident {
     pub expires: u64,
     pub answered: bool,
     pub state: State,
+    /// Mole folk talked down at this tick: they are on their way home.
+    pub calmed: Option<u64>,
 }
 
 impl Incident {
@@ -326,6 +386,18 @@ pub const LEAVE_SPEED: f64 = 1.4;
 /// 1.5 m ahead of the spot, facing this way).
 pub fn mugged(at: DVec3, facing: DVec2) -> DVec3 {
     at + DVec3::new(facing.x, 0.0, facing.y) * 3.4
+}
+
+/// Where the townsfolk an incident's villains hold stand: between the
+/// legionaries (behind the spot) and their praetorian (in front), facing
+/// the way the group does.
+pub fn captives(kind: IncidentKind, at: DVec3, facing: DVec2) -> Vec<DVec3> {
+    let f = DVec3::new(facing.x, 0.0, facing.y).normalize_or(DVec3::X);
+    let side = DVec3::new(f.z, 0.0, -f.x);
+    let n = kind.captives();
+    (0..n)
+        .map(|k| at - f * 1.0 + side * ((k as f64 - (n as f64 - 1.0) * 0.5) * 1.6))
+        .collect()
 }
 
 fn yaw_quat(dir: DVec2) -> [f32; 4] {
@@ -455,6 +527,7 @@ impl Incidents {
             return;
         }
         self.rescue(world);
+        self.calm(world, tick);
         walk_bystanders(world, tick);
         if !tick.is_multiple_of(TICK_HZ as u64) {
             return;
@@ -560,6 +633,7 @@ impl Incidents {
             expires: tick + ticks(kind.timeout()),
             answered: false,
             state: State::Open,
+            calmed: None,
         }
     }
 
@@ -666,6 +740,104 @@ impl Incidents {
         world.resource_mut::<Fights>().rewards.extend(rewards);
     }
 
+    /// Heroes holding the help key next to frightened mole folk talk them
+    /// down: they thank the hero, Molehaven likes the heroes there better,
+    /// and the group climbs back into its hole. Not once a fight is on.
+    fn calm(&mut self, world: &mut World, tick: u64) {
+        if !self
+            .open
+            .iter()
+            .any(|i| i.kind == IncidentKind::Surfacing && i.calmed.is_none())
+        {
+            return;
+        }
+        let mut heroes: Vec<(NetId, DVec3, u8, bool)> = world
+            .query::<(&Hero, &Net, &Motion, &Fighter, &Control)>()
+            .iter(world)
+            .map(|(_, n, m, f, c)| (n.0, m.0.pos, f.level, c.0.revive && f.standing()))
+            .collect();
+        heroes.sort_by_key(|h| h.0);
+        let mut moles: Vec<(NetId, usize, DVec3, bool)> = world
+            .query::<(&Net, &combat::Enemy, &Motion, &Fighter)>()
+            .iter(world)
+            .map(|(n, e, m, f)| {
+                let calm = f.standing() && f.target.is_none();
+                (n.0, e.spot, m.0.pos, calm)
+            })
+            .collect();
+        moles.sort_by_key(|m| m.0);
+        let mut rewards = Vec::new();
+        let mut friends = Vec::new();
+        let mut fx = Vec::new();
+        let mut homeward: Vec<(usize, DVec3)> = Vec::new();
+        for inc in self
+            .open
+            .iter_mut()
+            .filter(|i| i.kind == IncidentKind::Surfacing && i.calmed.is_none())
+        {
+            let Some(spot) = inc.spot else {
+                continue;
+            };
+            let group: Vec<&(NetId, usize, DVec3, bool)> =
+                moles.iter().filter(|m| m.1 == spot).collect();
+            if group.is_empty() || group.iter().any(|m| !m.3) {
+                // A fight is on (or over): no talking now.
+                inc.freeing = 0.0;
+                continue;
+            }
+            let talker = heroes
+                .iter()
+                .find(|h| h.3 && group.iter().any(|m| m.2.distance(h.1) < CALM_REACH));
+            let Some(talker) = talker else {
+                inc.freeing = (inc.freeing - DT).max(0.0);
+                continue;
+            };
+            inc.answered = true;
+            inc.freeing += DT;
+            if inc.freeing + 1e-9 < CALM_SECONDS {
+                continue;
+            }
+            inc.freeing = 0.0;
+            inc.calmed = Some(tick);
+            inc.left = 0;
+            self.news.push(inc.news());
+            let base = combat::enemy_spec(EnemyKind::Delver).karma;
+            for h in heroes.iter().filter(|h| h.1.distance(inc.at) < REWARD) {
+                let one = progress::defeat_karma(base, inc.level, h.2) as f32;
+                rewards.push(combat::Reward {
+                    hero: h.0,
+                    karma: (one * group.len() as f32).round() as u32,
+                    deed: Some(Affinity::Guardian),
+                    lean: 0,
+                });
+                friends.push((h.0, hw_net::Faction::Moles, crate::factions::CALMED));
+            }
+            let lead = group[0];
+            fx.push(combat::event(
+                tick,
+                hw_net::FxKind::Calmed,
+                lead.0,
+                talker.0,
+                lead.2 + DVec3::Y * 1.6,
+            ));
+            homeward.push((spot, inc.at));
+        }
+        for (mut en, mut f) in world
+            .query::<(&mut combat::Enemy, &mut Fighter)>()
+            .iter_mut(world)
+        {
+            if let Some((_, at)) = homeward.iter().find(|h| h.0 == en.spot) {
+                en.home = *at;
+                en.windup = None;
+                f.target = None;
+            }
+        }
+        let mut fights = world.resource_mut::<Fights>();
+        fights.rewards.extend(rewards);
+        fights.friends.extend(friends);
+        fights.events.extend(fx);
+    }
+
     /// Answered, resolved or timed out.
     fn settle(&mut self, world: &mut World, tick: u64, heroes: &[(NetId, DVec3, u8)]) {
         // The walking tank moves on: its call follows it.
@@ -690,6 +862,14 @@ impl Incidents {
         }
         let mut ended = Vec::new();
         for (k, inc) in self.open.iter_mut().enumerate() {
+            if let Some(t) = inc.calmed {
+                // Talked down: resolved once they are home.
+                if tick >= t + ticks(HOME_SECONDS) {
+                    inc.state = State::Resolved;
+                    ended.push(k);
+                }
+                continue;
+            }
             if heroes.iter().any(|h| h.1.distance(inc.at) < ANSWER) {
                 inc.answered = true;
             }
@@ -717,7 +897,7 @@ impl Incidents {
             release_bystanders(world, tick, inc.id);
             if let Some(spot) = inc.spot {
                 match inc.state {
-                    State::Resolved => self.reward(world, &inc, heroes),
+                    State::Resolved if inc.calmed.is_none() => self.reward(world, &inc, heroes),
                     _ => Self::send_home(world, spot),
                 }
                 self.free.push(spot);
@@ -813,6 +993,9 @@ impl Incidents {
             (IncidentKind::CarCrash, 0.14),
             (IncidentKind::Fire, 0.14),
             (IncidentKind::Colossus, 0.08),
+            (IncidentKind::Surfacing, 0.1),
+            (IncidentKind::PirateRaid, 0.1),
+            (IncidentKind::IronLanding, 0.07),
         ];
         // The walking tank comes out of the Tesla tower now and then, once
         // the team can take it, and never two at once.
@@ -842,9 +1025,11 @@ impl Incidents {
                     && self
                         .last_colossus
                         .is_none_or(|t| tick >= t + ticks(COLOSSUS_GAP))));
+        let iron_ok = self.next_kind == Some(IncidentKind::IronLanding) || team >= IRON_LEVEL;
         kinds.retain(|(k, _)| match k {
             IncidentKind::Breakout => !labs.is_empty(),
-            IncidentKind::Robbery => !shops.is_empty(),
+            IncidentKind::Robbery | IncidentKind::PirateRaid => !shops.is_empty(),
+            IncidentKind::IronLanding => iron_ok && !streets.is_empty(),
             IncidentKind::Fire => !homes.is_empty(),
             IncidentKind::Colossus => colossus_ok,
             _ => !streets.is_empty(),
@@ -870,7 +1055,7 @@ impl Incidents {
         let tower_place: Vec<(DVec2, DVec2)> = tower.into_iter().collect();
         let places = match kind {
             IncidentKind::Breakout => &labs,
-            IncidentKind::Robbery => &shops,
+            IncidentKind::Robbery | IncidentKind::PirateRaid => &shops,
             IncidentKind::Fire => &homes,
             IncidentKind::Colossus => &tower_place,
             _ => &streets,
@@ -923,6 +1108,7 @@ impl Incidents {
             extra,
             size: Some(size),
             only,
+            crew: kind.crew(),
             once: true,
             lead: kind.lead(),
             provoke: Some(kind.reach()),
@@ -955,7 +1141,8 @@ impl Incidents {
             at,
             spot: Some(index),
             facing,
-            left: 0,
+            // Mole folk: 1 while they are frightened, 0 once talked down.
+            left: (kind == IncidentKind::Surfacing) as u8,
             freeing: 0.0,
             hurt: None,
             medic: None,
@@ -964,12 +1151,16 @@ impl Incidents {
             expires: tick + ticks(kind.timeout()),
             answered: false,
             state: State::Open,
+            calmed: None,
         };
         if kind == IncidentKind::Colossus {
             self.last_colossus = Some(tick);
         }
         if kind == IncidentKind::Mugging {
             spawn_bystander(world, tick, inc.id, mugged(at, facing), -facing);
+        }
+        for p in captives(kind, at, facing) {
+            spawn_bystander(world, tick, inc.id, p, facing);
         }
         self.news.push(inc.news());
         self.open.push(inc);

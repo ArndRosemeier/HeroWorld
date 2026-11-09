@@ -22,6 +22,7 @@ pub mod progress;
 pub mod props;
 pub mod quarter;
 pub mod robots;
+pub mod roosts;
 pub mod save;
 pub mod streets;
 pub mod taxi;
@@ -99,6 +100,10 @@ pub struct Control(pub InputState);
 
 /// No gang hangs out this near where heroes appear (m).
 pub const HANGOUT_CLEAR: f64 = 300.0;
+/// The pirates' landing is never this near where heroes appear (m).
+pub const ROOST_CLEAR: f64 = 200.0;
+/// Molehaven's guards stand at their gate while a hero is this near (m).
+pub const MOLE_WAKE: f64 = 90.0;
 
 /// A hero's progress (karma, level, powers): the player's hero file, which
 /// the server plays by and sends back when it changes.
@@ -497,6 +502,17 @@ impl Sim {
             let y = solids.ground_at(c.at).max(GROUND_Y);
             sim.add_hangout(DVec3::new(c.at.x, y, c.at.y), c.facing);
         }
+        // The sky pirates' landing on the quay under their airship, never
+        // where heroes appear; Molehaven's guards inside its gate.
+        if let Some(r) = roosts::pirate_roost(&town.world) {
+            let (at, facing) = r.watch();
+            if DVec2::new(at.x, at.z).distance(sim.spawn.0) > ROOST_CLEAR {
+                sim.add_pirate_roost(at, facing);
+            }
+        }
+        if let Some((at, facing)) = roosts::mole_gate(town.world.underground()) {
+            sim.add_mole_gate(at, facing);
+        }
         sim
     }
 
@@ -509,6 +525,30 @@ impl Sim {
         let spot = &mut f.spots[i];
         spot.only = Some(combat::EnemyKind::Greaser);
         spot.size = Some(quarter::HANGOUT_GROUP);
+        i
+    }
+
+    /// The sky pirates' lookouts on the quay: buccaneers and a gunner, at
+    /// the team's level, while a hero is near; they warn strangers off.
+    /// Returns the spot's index.
+    pub fn add_pirate_roost(&mut self, at: DVec3, facing: DVec2) -> usize {
+        let i = self.add_villain_corner(at, facing, 0, quarter::WAKE);
+        let mut f = self.world.resource_mut::<Fights>();
+        let spot = &mut f.spots[i];
+        spot.crew = Some((combat::EnemyKind::Buccaneer, combat::EnemyKind::Gunner));
+        spot.size = Some(roosts::ROOST_GROUP);
+        i
+    }
+
+    /// Molehaven's gate guards: delvers inside the cavern. They let
+    /// strangers pass (Molehaven is neutral) but warn off a hero who has
+    /// beaten mole folk. Returns the spot's index.
+    pub fn add_mole_gate(&mut self, at: DVec3, facing: DVec2) -> usize {
+        let i = self.add_villain_corner(at, facing, 0, MOLE_WAKE);
+        let mut f = self.world.resource_mut::<Fights>();
+        let spot = &mut f.spots[i];
+        spot.only = Some(combat::EnemyKind::Delver);
+        spot.size = Some(roosts::GATE_GROUP);
         i
     }
 
@@ -1272,6 +1312,19 @@ impl Sim {
             {
                 if n.0 == d.hero {
                     factions::beat(&mut p.sheet.regard, d.beaten);
+                    p.changed = true;
+                }
+            }
+        }
+        let friends = self.world.resource::<Fights>().friends.clone();
+        for (hero, faction, by) in friends {
+            for (n, mut p) in self
+                .world
+                .query::<(&Net, &mut Progress)>()
+                .iter_mut(&mut self.world)
+            {
+                if n.0 == hero {
+                    factions::befriend(&mut p.sheet.regard, faction, by);
                     p.changed = true;
                 }
             }

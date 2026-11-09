@@ -661,6 +661,24 @@ impl FightView {
                         self.note = Some(("You're on their turf: back off, or fight.".into(), 3.0));
                     }
                 }
+                FxKind::Calmed => {
+                    // Mole folk a hero talked down thank them and go home.
+                    const THANKS: [&str; 3] = [
+                        "You are kind, surface friend. We go home now.",
+                        "The drills frightened us... thank you.",
+                        "Molehaven will hear of you, friend.",
+                    ];
+                    let line = THANKS[(e.from.0 as usize + e.tick as usize / 7) % THANKS.len()];
+                    let head = all.iter().find(|x| x.id == e.from).map_or(at, pos);
+                    self.speak(
+                        head + Vec3::Y * 2.3,
+                        line.to_string(),
+                        egui::Color32::from_rgb(200, 170, 255),
+                    );
+                    if on_me {
+                        self.note = Some(("Molehaven likes you better now.".into(), 4.0));
+                    }
+                }
                 FxKind::Karma => {
                     if on_me {
                         self.float(
@@ -1011,6 +1029,25 @@ impl FightView {
                 self.guns.insert(e, gun);
             } else {
                 world.despawn(gun);
+            }
+        }
+    }
+
+    /// Puts a fighter's own weapon in its right hand: a delver's pick, a
+    /// pirate's cutlass, a praetorian's lance (once per character).
+    pub fn wield(&mut self, world: &mut World, e: EntityId, kind: EntityKind) {
+        if self.guns.contains_key(&e) {
+            return;
+        }
+        let Some(mesh) = crate::factionview::weapon(kind) else {
+            return;
+        };
+        if let Ok(w) = world.place(mesh, Place::new(0.0, 0.0, 0.0)) {
+            let local = crate::factionview::weapon_grip();
+            if world.attach_to_bone(w, e, "hand_r", local).is_ok() {
+                self.guns.insert(e, w);
+            } else {
+                world.despawn(w);
             }
         }
     }
@@ -1976,6 +2013,10 @@ pub fn villain_placeholder(kind: EntityKind) -> Mesh {
         EntityKind::Brute => (rgb(90, 80, 60), rgb(110, 160, 80)),
         EntityKind::Greaser => (rgb(28, 28, 32), rgb(224, 186, 150)),
         EntityKind::Gunsel => (rgb(60, 32, 58), rgb(224, 186, 150)),
+        EntityKind::Delver => (rgb(90, 63, 40), rgb(230, 201, 195)),
+        EntityKind::Buccaneer | EntityKind::Gunner => (rgb(91, 36, 32), rgb(224, 186, 150)),
+        EntityKind::Captain => (rgb(28, 40, 72), rgb(224, 186, 150)),
+        EntityKind::Legionary | EntityKind::Praetorian => (rgb(37, 38, 43), rgb(108, 111, 118)),
         _ => (rgb(236, 234, 226), rgb(224, 186, 150)),
     };
     let mut m = Mesh::new();

@@ -307,6 +307,18 @@ pub enum EnemyKind {
     Greaser,
     /// A Velvet Syndicate gunsel: ranged, with a ray pistol.
     Gunsel,
+    /// A Molehaven delver: a stocky tunneller with a pick, melee.
+    Delver,
+    /// A sky pirate buccaneer: a cutlass, quick on its feet.
+    Buccaneer,
+    /// A sky pirate gunner: ranged, with a ray pistol.
+    Gunner,
+    /// A sky pirate captain: a lieutenant with a heavy cutlass.
+    Captain,
+    /// An Iron-Masked legionary: armoured, with a ray rifle.
+    Legionary,
+    /// An Iron-Masked praetorian: a lieutenant with a shock lance.
+    Praetorian,
 }
 
 /// How a kind of villain fights.
@@ -427,6 +439,78 @@ pub fn enemy_spec(k: EnemyKind) -> EnemySpec {
             aggro: 18.0,
             karma: 6.0,
         },
+        EnemyKind::Delver => EnemySpec {
+            name: "Molehaven Delver",
+            rank: "Minion",
+            health: 50.0,
+            damage: 6.5,
+            attack_every: 2.0,
+            windup: 0.55,
+            reach: 2.4,
+            speed: 0.75,
+            aggro: 14.0,
+            karma: 6.0,
+        },
+        EnemyKind::Buccaneer => EnemySpec {
+            name: "Sky Pirate Buccaneer",
+            rank: "Minion",
+            health: 42.0,
+            damage: 6.5,
+            attack_every: 1.7,
+            windup: 0.4,
+            reach: 2.5,
+            speed: 0.95,
+            aggro: 16.0,
+            karma: 6.0,
+        },
+        EnemyKind::Gunner => EnemySpec {
+            name: "Sky Pirate Gunner",
+            rank: "Minion",
+            health: 34.0,
+            damage: 6.5,
+            attack_every: 2.4,
+            windup: 0.6,
+            reach: 26.0,
+            speed: 0.65,
+            aggro: 20.0,
+            karma: 6.0,
+        },
+        EnemyKind::Captain => EnemySpec {
+            name: "Sky Pirate Captain",
+            rank: "Lieutenant",
+            health: 160.0,
+            damage: 11.0,
+            attack_every: 1.9,
+            windup: 0.5,
+            reach: 2.7,
+            speed: 0.9,
+            aggro: 22.0,
+            karma: 22.0,
+        },
+        EnemyKind::Legionary => EnemySpec {
+            name: "Iron Legionary",
+            rank: "Minion",
+            health: 48.0,
+            damage: 7.5,
+            attack_every: 2.6,
+            windup: 0.7,
+            reach: 28.0,
+            speed: 0.6,
+            aggro: 26.0,
+            karma: 8.0,
+        },
+        EnemyKind::Praetorian => EnemySpec {
+            name: "Iron Praetorian",
+            rank: "Lieutenant",
+            health: 190.0,
+            damage: 12.0,
+            attack_every: 2.2,
+            windup: 0.6,
+            reach: 3.0,
+            speed: 0.75,
+            aggro: 26.0,
+            karma: 24.0,
+        },
     }
 }
 
@@ -441,6 +525,12 @@ impl EnemyKind {
             EnemyKind::WeakPoint => EntityKind::WeakPoint,
             EnemyKind::Greaser => EntityKind::Greaser,
             EnemyKind::Gunsel => EntityKind::Gunsel,
+            EnemyKind::Delver => EntityKind::Delver,
+            EnemyKind::Buccaneer => EntityKind::Buccaneer,
+            EnemyKind::Gunner => EntityKind::Gunner,
+            EnemyKind::Captain => EntityKind::Captain,
+            EnemyKind::Legionary => EntityKind::Legionary,
+            EnemyKind::Praetorian => EntityKind::Praetorian,
         }
     }
 
@@ -448,7 +538,14 @@ impl EnemyKind {
     pub fn heavy(self) -> bool {
         !matches!(
             self,
-            EnemyKind::Brute | EnemyKind::Technician | EnemyKind::Greaser | EnemyKind::Gunsel
+            EnemyKind::Brute
+                | EnemyKind::Technician
+                | EnemyKind::Greaser
+                | EnemyKind::Gunsel
+                | EnemyKind::Delver
+                | EnemyKind::Buccaneer
+                | EnemyKind::Gunner
+                | EnemyKind::Legionary
         )
     }
 
@@ -456,7 +553,11 @@ impl EnemyKind {
     pub fn ranged(self) -> bool {
         matches!(
             self,
-            EnemyKind::Technician | EnemyKind::Sentry | EnemyKind::Gunsel
+            EnemyKind::Technician
+                | EnemyKind::Sentry
+                | EnemyKind::Gunsel
+                | EnemyKind::Gunner
+                | EnemyKind::Legionary
         )
     }
 
@@ -475,6 +576,12 @@ impl EnemyKind {
             EntityKind::WeakPoint => Some(EnemyKind::WeakPoint),
             EntityKind::Greaser => Some(EnemyKind::Greaser),
             EntityKind::Gunsel => Some(EnemyKind::Gunsel),
+            EntityKind::Delver => Some(EnemyKind::Delver),
+            EntityKind::Buccaneer => Some(EnemyKind::Buccaneer),
+            EntityKind::Gunner => Some(EnemyKind::Gunner),
+            EntityKind::Captain => Some(EnemyKind::Captain),
+            EntityKind::Legionary => Some(EnemyKind::Legionary),
+            EntityKind::Praetorian => Some(EnemyKind::Praetorian),
             _ => None,
         }
     }
@@ -717,6 +824,9 @@ pub struct Spot {
     /// this kind only (else brutes and technicians), and never refilled.
     pub size: Option<u32>,
     pub only: Option<EnemyKind>,
+    /// A faction's own crew in place of brutes and technicians: (who
+    /// fights up close, who shoots). `only` wins over it.
+    pub crew: Option<(EnemyKind, EnemyKind)>,
     pub once: bool,
     /// On a roof (`center` on top of it): its group stands up there.
     pub perch: bool,
@@ -741,6 +851,7 @@ impl Spot {
             wake: None,
             size: None,
             only: None,
+            crew: None,
             once: false,
             perch: false,
             lead: None,
@@ -822,6 +933,9 @@ pub struct Fights {
     pub rewards: Vec<Reward>,
     /// Villains beaten in the last tick, by hero (moves factions' regard).
     pub deeds: Vec<Deed>,
+    /// Factions a hero helped in the last tick, and by how much (talking
+    /// frightened mole folk down).
+    pub friends: Vec<(NetId, hw_net::Faction, i16)>,
     /// Throws in the air.
     pub throws: Vec<Throw>,
     /// Meteors on their way down.
@@ -846,6 +960,7 @@ impl Default for Fights {
             team_level: 1,
             rewards: Vec::new(),
             deeds: Vec::new(),
+            friends: Vec::new(),
             throws: Vec::new(),
             sky: Vec::new(),
             paths: BTreeMap::new(),
@@ -945,7 +1060,20 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
     let mut n = 0;
     let mut group: Vec<(EnemyKind, u8)> = roster(gseed, size, level)
         .into_iter()
-        .map(|(kind, level)| (spot.only.unwrap_or(kind), level))
+        .map(|(kind, level)| {
+            let kind = match (spot.only, spot.crew) {
+                (Some(only), _) => only,
+                (None, Some((close, far))) => {
+                    if kind.ranged() {
+                        far
+                    } else {
+                        close
+                    }
+                }
+                (None, None) => kind,
+            };
+            (kind, level)
+        })
         .collect();
     // A lieutenant or boss takes the place of the first in line.
     if let (Some(lead), Some(first)) = (spot.lead, group.first_mut()) {
@@ -971,7 +1099,14 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
         let y = if spot.perch {
             solids.floor_under(p, spot.center.y + 1.0)
         } else {
-            solids.ground_at(p).max(GROUND_Y)
+            // The street, or the floor of the tunnel or cavern it is in.
+            let street = solids.ground_at(p).max(GROUND_Y);
+            let floor = solids.ground_for(p, spot.center.y + 1.0);
+            if floor < street - 1.0 {
+                floor
+            } else {
+                street
+            }
         };
         let home = DVec3::new(p.x, y, p.y);
         let id = spawn_enemy(world, tick, kind, level, spot_index, home, heroes);
@@ -1080,6 +1215,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     world.resource_mut::<Fights>().events.clear();
     world.resource_mut::<Fights>().rewards.clear();
     world.resource_mut::<Fights>().deeds.clear();
+    world.resource_mut::<Fights>().friends.clear();
     let solids = world.resource::<Solids>().0.clone();
     let mut actors: Vec<Actor> = world
         .query::<(

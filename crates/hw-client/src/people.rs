@@ -95,6 +95,24 @@ pub enum VillainKind {
     Greaser,
     /// A Velvet Syndicate gunsel: a pinstripe suit and a tilted fedora.
     Gunsel,
+    /// A Molehaven delver: one of the mole folk in a leather tunnelling
+    /// cap, heavy gauntlets and earth-brown overalls, carrying a pick.
+    Delver,
+    /// A sky pirate buccaneer: a sailor's striped shirt, an aviator's
+    /// leather cap and goggles, pirate boots, a cutlass.
+    Buccaneer,
+    /// A sky pirate gunner: an oxblood long coat over a shirt, goggles,
+    /// boots, a ray pistol.
+    Gunner,
+    /// A sky pirate captain: a navy long coat over stripes, a wide hat,
+    /// gauntlets and a full beard.
+    Captain,
+    /// An Iron-Masked legionary: a closed iron helm, gunmetal uniform,
+    /// iron pauldrons and gauntlets, a ray rifle.
+    Legionary,
+    /// An Iron-Masked praetorian: a crested bronze helm, breastplate,
+    /// greaves over a blood-red uniform, a shock lance.
+    Praetorian,
     /// The mutant alpha who leads a rampage: the heaviest brute there is,
     /// darker, bald, with long tusks and blazing eyes (drawn a head and a
     /// half taller). One look, built when an alpha first shows.
@@ -102,6 +120,46 @@ pub enum VillainKind {
 }
 
 impl VillainKind {
+    /// The villain drawn for an entity of `kind`, if it is a person.
+    pub fn of(kind: hw_net::EntityKind) -> Option<Self> {
+        use hw_net::EntityKind as K;
+        Some(match kind {
+            K::Brute => VillainKind::Brute,
+            K::Alpha => VillainKind::Alpha,
+            K::Technician => VillainKind::Technician,
+            K::Greaser => VillainKind::Greaser,
+            K::Gunsel => VillainKind::Gunsel,
+            K::Delver => VillainKind::Delver,
+            K::Buccaneer => VillainKind::Buccaneer,
+            K::Gunner => VillainKind::Gunner,
+            K::Captain => VillainKind::Captain,
+            K::Legionary => VillainKind::Legionary,
+            K::Praetorian => VillainKind::Praetorian,
+            _ => return None,
+        })
+    }
+
+    /// Dressed from the whole wardrobe (iron helms, breastplates), not
+    /// only the era's clothes the townsfolk wear.
+    pub fn any_clothes(self) -> bool {
+        matches!(
+            self,
+            VillainKind::Buccaneer
+                | VillainKind::Gunner
+                | VillainKind::Captain
+                | VillainKind::Legionary
+                | VillainKind::Praetorian
+        )
+    }
+
+    /// Looks it comes in (bosses and lieutenants have one).
+    pub fn looks(self) -> u32 {
+        match self {
+            VillainKind::Alpha | VillainKind::Captain | VillainKind::Praetorian => 1,
+            _ => VILLAIN_LOOKS,
+        }
+    }
+
     pub const ALL: [VillainKind; 4] = [
         VillainKind::Brute,
         VillainKind::Technician,
@@ -751,6 +809,158 @@ pub fn villain(
             colour(&mut c, "fedora-tilted", "#1e1a1e");
             colour(&mut c, "gloves-short", "#141214");
         }
+        VillainKind::Delver => {
+            // One of the mole folk, kitted out for the tunnels.
+            let mole = mole_person(builder, look + 7);
+            c.body = mole.body;
+            c.skin = mole.skin;
+            c.skin_color = mole.skin_color;
+            c.eye_color = mole.eye_color;
+            c.eye_glow = mole.eye_glow;
+            c.hair_color = mole.hair_color;
+            c.body.gender = if look == 1 { 0.0 } else { 1.0 };
+            c.body.muscle = rng.range(0.65, 0.85);
+            c.beard = if look == 2 {
+                "full".into()
+            } else {
+                "none".into()
+            };
+            c.outfit = keep(&[
+                "worksuit",
+                "leather-helmet",
+                "tinted-glasses",
+                "gauntlet-gloves",
+                "work-boots",
+            ]);
+            colour(
+                &mut c,
+                "worksuit",
+                ["#5a3f28", "#4b3a2a", "#634529"][(look as usize) % 3],
+            );
+            colour(&mut c, "leather-helmet", "#3b2a1c");
+            colour(&mut c, "gauntlet-gloves", "#2e231a");
+        }
+        VillainKind::Buccaneer => {
+            let b = &mut c.body;
+            b.gender = if look == 2 { 0.0 } else { 1.0 };
+            b.age_years = rng.range(20.0, 40.0);
+            b.muscle = rng.range(0.5, 0.75);
+            b.weight = rng.range(0.35, 0.55);
+            c.hair_color = Some(["#5a2e18", "#1f1a16", "#a8662c"][(look as usize) % 3].into());
+            c.beard = if look == 0 {
+                "stubble".into()
+            } else {
+                "none".into()
+            };
+            c.outfit = keep(&[
+                "striped-shirt-jeans",
+                "leather-helmet",
+                "tinted-glasses",
+                "gloves-short",
+                "pirate-boots",
+            ]);
+            colour(&mut c, "leather-helmet", "#6a4426");
+            colour(&mut c, "gloves-short", "#4a2e1a");
+            colour(&mut c, "pirate-boots", "#2a1a10");
+        }
+        VillainKind::Gunner => {
+            let b = &mut c.body;
+            b.gender = if look == 1 { 0.0 } else { 1.0 };
+            b.age_years = rng.range(22.0, 45.0);
+            b.muscle = rng.range(0.4, 0.6);
+            b.weight = rng.range(0.4, 0.55);
+            c.hair_color = Some(["#2a1c14", "#c08a4a", "#6a3a20"][(look as usize) % 3].into());
+            c.outfit = keep(&[
+                "open-coat",
+                "tucked-tshirt",
+                "wool-pants",
+                "gloves-medium",
+                "tinted-glasses",
+                "pirate-boots",
+            ]);
+            colour(
+                &mut c,
+                "open-coat",
+                ["#5b2420", "#4a2a1c", "#3c2a3e"][(look as usize) % 3],
+            );
+            colour(&mut c, "tucked-tshirt", "#e8e0cc");
+            colour(&mut c, "wool-pants", "#3a3228");
+            colour(&mut c, "gloves-medium", "#3a2416");
+            colour(&mut c, "pirate-boots", "#22160e");
+        }
+        VillainKind::Captain => {
+            let b = &mut c.body;
+            b.gender = 1.0;
+            b.age_years = 46.0;
+            b.muscle = 0.75;
+            b.weight = 0.6;
+            b.height = 0.9;
+            c.hair_color = Some("#7a3a1a".into());
+            c.beard = "full".into();
+            c.outfit = keep(&[
+                "open-coat",
+                "striped-shirt-jeans",
+                "wide-brim-hat",
+                "gauntlet-gloves",
+                "pirate-boots",
+            ]);
+            colour(&mut c, "open-coat", "#1c2848");
+            colour(&mut c, "wide-brim-hat", "#16120e");
+            colour(&mut c, "gauntlet-gloves", "#3a2414");
+            colour(&mut c, "pirate-boots", "#120c08");
+        }
+        VillainKind::Legionary => {
+            let b = &mut c.body;
+            b.gender = 1.0;
+            b.age_years = rng.range(22.0, 40.0);
+            b.muscle = rng.range(0.6, 0.8);
+            b.weight = 0.5;
+            b.height = rng.range(0.6, 0.8);
+            c.beard = "none".into();
+            c.outfit = keep(&[
+                "worksuit",
+                "corinthian-helmet",
+                "med-cuirass",
+                "med-pauldrons",
+                "gauntlet-gloves",
+                "cuffed-knee-boots",
+                "med-belt",
+            ]);
+            // Blackened iron over gunmetal: the Empire's livery.
+            colour(&mut c, "worksuit", "#25262b");
+            // The iron mask: a closed helmet hiding the face.
+            colour(&mut c, "corinthian-helmet", "#4a4d54");
+            colour(&mut c, "med-cuirass", "#3c3f46");
+            colour(&mut c, "med-pauldrons", "#5a5d64");
+            colour(&mut c, "gauntlet-gloves", "#4c4f56");
+            colour(&mut c, "cuffed-knee-boots", "#141416");
+            colour(&mut c, "med-belt", "#7a1418");
+        }
+        VillainKind::Praetorian => {
+            let b = &mut c.body;
+            b.gender = 1.0;
+            b.age_years = 38.0;
+            b.muscle = 1.0;
+            b.weight = 0.65;
+            b.height = 1.0;
+            b.proportions = 0.4;
+            c.beard = "none".into();
+            c.outfit = keep(&[
+                "worksuit",
+                "corinthian-helmet",
+                "med-cuirass",
+                "med-pauldrons",
+                "gauntlet-gloves",
+                "med-greaves",
+                "cuffed-knee-boots",
+            ]);
+            colour(&mut c, "worksuit", "#4a0e12");
+            colour(&mut c, "corinthian-helmet", "#a08848");
+            colour(&mut c, "med-cuirass", "#5c5f66");
+            colour(&mut c, "med-pauldrons", "#a08848");
+            colour(&mut c, "gauntlet-gloves", "#3e4046");
+            colour(&mut c, "med-greaves", "#5c5f66");
+        }
     }
     c
 }
@@ -853,7 +1063,14 @@ pub fn build(
         ),
         Who::Villain(..) => (false, 0),
     };
-    builder.allow(&allow(hero));
+    let mut allowed = allow(hero);
+    if let Who::Villain(kind, _) = who {
+        if kind.any_clothes() {
+            // Helms, breastplates, pirate boots: the whole wardrobe.
+            allowed.clothing = None;
+        }
+    }
+    builder.allow(&allowed);
     let config = match (who, config) {
         (Who::Villain(kind, look), _) => villain(builder, *kind, *look),
         (Who::Citizen(look), _) if *look >= hw_sim::citizens::LOOKS => {

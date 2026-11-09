@@ -161,10 +161,16 @@ pub enum Faction {
     Syndicate,
     /// Molehaven's people, under the city.
     Moles,
+    /// The sky pirates of the airship *Cloudcutter*: buccaneers who raid
+    /// rooftops and moor over the harbour.
+    SkyPirates,
+    /// The Iron-Masked Empire: invaders from beyond the sea who drop from
+    /// the sky in iron capsules and take townsfolk away.
+    Empire,
 }
 
 /// How many factions there are.
-pub const FACTIONS: usize = 6;
+pub const FACTIONS: usize = 8;
 
 impl Faction {
     pub const ALL: [Faction; FACTIONS] = [
@@ -174,6 +180,8 @@ impl Faction {
         Faction::Jackets,
         Faction::Syndicate,
         Faction::Moles,
+        Faction::SkyPirates,
+        Faction::Empire,
     ];
 
     pub fn index(self) -> usize {
@@ -188,6 +196,8 @@ impl Faction {
             Faction::Jackets => "Chrome Jackets",
             Faction::Syndicate => "Velvet Syndicate",
             Faction::Moles => "Molehaven",
+            Faction::SkyPirates => "Sky Pirates",
+            Faction::Empire => "Iron-Masked Empire",
         }
     }
 }
@@ -227,6 +237,19 @@ pub enum EntityKind {
     /// A townsperson caught up in a crime (being mugged): drawn as a
     /// citizen; heroes cannot target them.
     Bystander,
+    /// One of Molehaven's delvers: a mole-folk tunneller with a pick.
+    Delver,
+    /// A sky pirate buccaneer: a cutlass and a striped shirt.
+    Buccaneer,
+    /// A sky pirate gunner: a long coat and a ray pistol.
+    Gunner,
+    /// A sky pirate captain: a lieutenant with a cutlass.
+    Captain,
+    /// An Iron-Masked legionary: an iron helm and a ray rifle.
+    Legionary,
+    /// An Iron-Masked praetorian: a crested helm, armour and a shock lance;
+    /// a lieutenant.
+    Praetorian,
 }
 
 impl EntityKind {
@@ -245,6 +268,12 @@ impl EntityKind {
             EntityKind::Greaser => 10,
             EntityKind::Gunsel => 11,
             EntityKind::Bystander => 12,
+            EntityKind::Delver => 13,
+            EntityKind::Buccaneer => 14,
+            EntityKind::Gunner => 15,
+            EntityKind::Captain => 16,
+            EntityKind::Legionary => 17,
+            EntityKind::Praetorian => 18,
         }
     }
 
@@ -263,6 +292,12 @@ impl EntityKind {
             10 => Ok(EntityKind::Greaser),
             11 => Ok(EntityKind::Gunsel),
             12 => Ok(EntityKind::Bystander),
+            13 => Ok(EntityKind::Delver),
+            14 => Ok(EntityKind::Buccaneer),
+            15 => Ok(EntityKind::Gunner),
+            16 => Ok(EntityKind::Captain),
+            17 => Ok(EntityKind::Legionary),
+            18 => Ok(EntityKind::Praetorian),
             _ => Err(WireError),
         }
     }
@@ -281,12 +316,36 @@ impl EntityKind {
                 | EntityKind::WeakPoint
                 | EntityKind::Greaser
                 | EntityKind::Gunsel
+                | EntityKind::Delver
+                | EntityKind::Buccaneer
+                | EntityKind::Gunner
+                | EntityKind::Captain
+                | EntityKind::Legionary
+                | EntityKind::Praetorian
         )
     }
 
     /// Shoots from a distance (draws a ray gun).
     pub fn is_ranged(self) -> bool {
-        matches!(self, EntityKind::Technician | EntityKind::Gunsel)
+        matches!(
+            self,
+            EntityKind::Technician
+                | EntityKind::Gunsel
+                | EntityKind::Gunner
+                | EntityKind::Legionary
+        )
+    }
+
+    /// Fights hand to hand with a weapon it carries (a pick, a cutlass, a
+    /// lance).
+    pub fn wields(self) -> bool {
+        matches!(
+            self,
+            EntityKind::Delver
+                | EntityKind::Buccaneer
+                | EntityKind::Captain
+                | EntityKind::Praetorian
+        )
     }
 
     /// Drawn as a machine (prefab parts), not as a person.
@@ -723,6 +782,9 @@ pub enum FxKind {
     Meteor,
     /// A nova went off round `from` (`to`: a villain it hit, or `from`).
     Nova,
+    /// Frightened people a hero talked down thank them and go home (`from`
+    /// speaks to `to`).
+    Calmed,
 }
 
 impl FxKind {
@@ -762,6 +824,7 @@ impl FxKind {
             FxKind::MeteorCall => 32,
             FxKind::Meteor => 33,
             FxKind::Nova => 34,
+            FxKind::Calmed => 35,
         }
     }
 
@@ -801,6 +864,7 @@ impl FxKind {
             32 => FxKind::MeteorCall,
             33 => FxKind::Meteor,
             34 => FxKind::Nova,
+            35 => FxKind::Calmed,
             _ => return Err(WireError),
         })
     }
@@ -1756,7 +1820,7 @@ mod tests {
                     paid: 300,
                 },
             ],
-            regard: [0, 5, -40, -100, 12, 127],
+            regard: [0, 5, -40, -100, 12, 127, -7, 60],
         }
     }
 

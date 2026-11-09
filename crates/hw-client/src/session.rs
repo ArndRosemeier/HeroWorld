@@ -134,6 +134,9 @@ impl Session {
                 "crash" => Some(IncidentKind::CarCrash),
                 "fire" => Some(IncidentKind::Fire),
                 "colossus" => Some(IncidentKind::Colossus),
+                "moles" => Some(IncidentKind::Surfacing),
+                "pirates" => Some(IncidentKind::PirateRaid),
+                "iron" => Some(IncidentKind::IronLanding),
                 _ => None,
             };
         }

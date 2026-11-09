@@ -25,7 +25,10 @@ const EMBLEM: f64 = 34.0;
 pub fn lights_signal(kind: IncidentKind) -> bool {
     matches!(
         kind,
-        IncidentKind::Rampage | IncidentKind::Breakout | IncidentKind::Colossus
+        IncidentKind::Rampage
+            | IncidentKind::Breakout
+            | IncidentKind::Colossus
+            | IncidentKind::IronLanding
     )
 }
 

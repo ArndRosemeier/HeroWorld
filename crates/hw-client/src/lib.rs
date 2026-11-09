@@ -14,6 +14,7 @@ pub mod dispatchview;
 pub mod dystopiaview;
 pub mod edgeview;
 pub mod facades;
+pub mod factionview;
 pub mod fightview;
 pub mod grassview;
 pub mod heroview;

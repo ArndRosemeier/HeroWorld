@@ -65,22 +65,35 @@ impl Attitude {
 }
 
 /// How each faction (row) regards each other one (column), in the order of
-/// [`Faction::ALL`]: Townsfolk, Patrol, Lab, Jackets, Syndicate, Moles.
+/// [`Faction::ALL`]: Townsfolk, Patrol, Lab, Jackets, Syndicate, Moles, Sky
+/// Pirates, Empire.
 const TABLE: [[i16; FACTIONS]; FACTIONS] = [
-    // Townsfolk fear the Lab, mistrust the gangs, like the Patrol.
-    [50, 40, -60, -30, -20, 0],
-    // The Patrol keeps the peace against every gang.
-    [50, 80, -80, -50, -40, 0],
+    // Townsfolk fear the Lab and the Empire, mistrust the gangs and the
+    // pirates, like the Patrol.
+    [50, 40, -60, -30, -20, 0, -30, -80],
+    // The Patrol keeps the peace against every gang and invader.
+    [50, 80, -80, -50, -40, 0, -50, -90],
     // The Lab looks down on everyone; it hates the Patrol and the Syndicate
-    // (rivals for the city's underworld).
-    [-40, -70, 80, -30, -50, -40],
+    // (rivals for the city's underworld), and the Empire (rivals for the
+    // world).
+    [-40, -70, 80, -30, -50, -40, -30, -60],
     // The Chrome Jackets: unfriendly to anyone outside the gang, at war
     // with the Syndicate.
-    [-30, -60, -40, 80, -60, -10],
-    // The Velvet Syndicate keeps the peace when it suits business.
-    [-10, -50, -50, -60, 80, 0],
-    // Molehaven: wary of the surface, hates the Lab's diggers.
-    [0, 10, -50, -10, -10, 80],
+    [-30, -60, -40, 80, -60, -10, -20, -60],
+    // The Velvet Syndicate keeps the peace when it suits business; the
+    // pirates are rival smugglers.
+    [-10, -50, -50, -60, 80, 0, -40, -60],
+    // Molehaven: wary of the surface, hates the Lab's diggers and the
+    // Empire, which takes mole folk for its mines.
+    [0, 10, -50, -10, -10, 80, 0, -70],
+    // The sky pirates: rogues, not monsters. Unfriendly to landlubbers,
+    // at odds with the law and the Syndicate; they trade with Molehaven.
+    [-30, -60, -40, -10, -40, 10, 80, -50],
+    // The Iron-Masked Empire: hostile to every power that is not of it,
+    // and it despises townsfolk, but even it does not know a newcomer
+    // yet (nobody attacks an unknown hero on sight): its legionaries
+    // fight whoever comes near the people they round up.
+    [-55, -90, -60, -60, -60, -70, -60, 90],
 ];
 
 /// How `of` regards `toward`, before any deeds.
@@ -105,6 +118,9 @@ pub fn of_enemy(kind: EnemyKind) -> Faction {
         | EnemyKind::WeakPoint => Faction::Lab,
         EnemyKind::Greaser => Faction::Jackets,
         EnemyKind::Gunsel => Faction::Syndicate,
+        EnemyKind::Delver => Faction::Moles,
+        EnemyKind::Buccaneer | EnemyKind::Gunner | EnemyKind::Captain => Faction::SkyPirates,
+        EnemyKind::Legionary | EnemyKind::Praetorian => Faction::Empire,
     }
 }
 
@@ -131,6 +147,19 @@ pub fn beat(regard: &mut [i8; FACTIONS], faction: Faction) {
         let hi = 100 - base(f, Faction::Townsfolk);
         *r = (*r as i16 + d).clamp(lo.max(-128), hi.min(127)) as i8;
     }
+}
+
+/// Regard gained with a faction whose frightened people a hero talked
+/// down instead of fighting (mole folk surfacing).
+pub const CALMED: i16 = 6;
+
+/// A hero helped `faction`'s people (talked them down, sent them home
+/// safe): the faction likes the hero better. Nobody else minds.
+pub fn befriend(regard: &mut [i8; FACTIONS], faction: Faction, by: i16) {
+    let f = faction.index();
+    let lo = -100 - base(faction, Faction::Townsfolk);
+    let hi = 100 - base(faction, Faction::Townsfolk);
+    regard[f] = (regard[f] as i16 + by).clamp(lo.max(-128), hi.min(127)) as i8;
 }
 
 /// What a villain does about a hero it notices.
@@ -209,6 +238,21 @@ pub fn warnings(f: Faction) -> &'static [&'static str] {
             "Nothing to see here.",
             "Private business. Keep walking.",
         ],
+        Faction::Moles => &[
+            "Back, surface-walker! Back!",
+            "These tunnels are Molehaven's.",
+            "No lamps past the gate, stranger.",
+        ],
+        Faction::SkyPirates => &[
+            "Avast! This roof's spoken for!",
+            "Shove off, landlubber!",
+            "One more step and you walk the plank. Off the roof.",
+        ],
+        Faction::Empire => &[
+            "Kneel before the Iron Throne!",
+            "Resistance is noted. And punished.",
+            "This city belongs to the Empire now.",
+        ],
         _ => &["Go away!"],
     }
 }
@@ -216,6 +260,54 @@ pub fn warnings(f: Faction) -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_empire_is_evil_and_the_others_are_not_all_bad() {
+        let fresh = [0i8; FACTIONS];
+        let att = |f| Attitude::of(toward_hero(f, &fresh));
+        // Really evil, but nobody attacks an unknown hero on sight.
+        assert_eq!(att(Faction::Empire), Attitude::Unfriendly);
+        for f in Faction::ALL {
+            assert!(
+                base(Faction::Empire, Faction::Townsfolk) <= base(f, Faction::Townsfolk),
+                "the Empire thinks least of townsfolk, not {f:?}"
+            );
+        }
+        // Rogues: warn strangers off their turf, leave them alone elsewhere.
+        assert_eq!(att(Faction::SkyPirates), Attitude::Unfriendly);
+        // Molehaven minds its own business.
+        assert_eq!(att(Faction::Moles), Attitude::Neutral);
+        // Everyone hates the Empire, the Empire every power.
+        for f in Faction::ALL {
+            if f != Faction::Empire {
+                assert!(base(f, Faction::Empire) <= UNFRIENDLY, "{f:?}");
+            }
+            if f != Faction::Empire && f != Faction::Townsfolk {
+                assert!(base(Faction::Empire, f) <= HOSTILE, "{f:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn talking_mole_folk_down_wins_molehaven_over() {
+        let mut regard = [0i8; FACTIONS];
+        for _ in 0..4 {
+            befriend(&mut regard, Faction::Moles, CALMED);
+        }
+        assert_eq!(
+            Attitude::of(toward_hero(Faction::Moles, &regard)),
+            Attitude::Friendly
+        );
+        for f in Faction::ALL {
+            if f != Faction::Moles {
+                assert_eq!(regard[f.index()], 0);
+            }
+        }
+        for _ in 0..100 {
+            befriend(&mut regard, Faction::Moles, CALMED);
+        }
+        assert_eq!(toward_hero(Faction::Moles, &regard), 100);
+    }
 
     fn meet(attitude: Attitude, distance: f64) -> Encounter {
         Encounter {
@@ -300,6 +392,7 @@ mod tests {
         assert!(toward_hero(Faction::Townsfolk, &regard) > 50);
         // Molehaven only mildly minds the Jackets: no change.
         assert_eq!(regard[Faction::Moles.index()], 0);
+        assert_eq!(regard[Faction::SkyPirates.index()], 0);
         // Regard stays in range however many are beaten.
         for _ in 0..500 {
             beat(&mut regard, Faction::Jackets);
