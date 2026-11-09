@@ -1560,7 +1560,14 @@ impl Sim {
             )>()
             .iter(&self.world)
             .map(
-                |(n, m, h, o, (prop, enemy, drone, view), (c, fare, mount, bystander, rider, npc))| {
+                |(
+                    n,
+                    m,
+                    h,
+                    o,
+                    (prop, enemy, drone, view),
+                    (c, fare, mount, bystander, rider, npc),
+                )| {
                     (
                         EntityState {
                             id: n.0,

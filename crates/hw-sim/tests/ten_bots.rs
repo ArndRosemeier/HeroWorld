@@ -137,13 +137,18 @@ fn ten_bots_play_for_ten_minutes() {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
-    // Deliver the last updates.
+    // Deliver the last updates: the bots read last, after the host's
+    // final tick, so what still moves (a villain falling) is up to date.
     for _ in 0..10 {
         for b in &mut bots {
             b.update(InputState::default());
         }
         std::thread::sleep(Duration::from_millis(2));
         host.tick();
+    }
+    std::thread::sleep(Duration::from_millis(5));
+    for b in &mut bots {
+        b.update(InputState::default());
     }
     let elapsed = started.elapsed();
 
@@ -174,7 +179,11 @@ fn ten_bots_play_for_ten_minutes() {
                 .mirror
                 .get(e.id)
                 .unwrap_or_else(|| panic!("{player:?} misses {:?} at {d:.0} m", e.id));
-            assert_eq!(mine.pos, e.pos, "{player:?} sees {:?} elsewhere", e.id);
+            assert_eq!(
+                mine.pos, e.pos,
+                "{player:?} sees {:?} ({:?}) elsewhere",
+                e.id, e.kind
+            );
         }
     }
     assert!(max_bubbles >= 2, "the bots never split up");
