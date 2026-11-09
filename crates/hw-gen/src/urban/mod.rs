@@ -19,6 +19,7 @@
 //! replace it.
 
 pub mod area;
+pub mod atomic;
 pub mod deep;
 pub mod dystopia;
 pub mod edge;

@@ -419,7 +419,12 @@ impl Greenery {
                     continue;
                 }
                 let h = w.ground(p);
-                if h < SAND_TOP + 0.8 || self.on_road(w, p, 3.0) || self.in_building(w, p, 3.0) {
+                if h < SAND_TOP + 0.8
+                    || self.on_road(w, p, 3.0)
+                    || self.in_building(w, p, 3.0)
+                    // The atomic plant's yard is out in the country.
+                    || w.landmarks.iter().any(|l| l.covers(p, 3.0))
+                {
                     continue;
                 }
                 let e = 2.0;

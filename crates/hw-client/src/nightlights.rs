@@ -163,6 +163,20 @@ impl NightLights {
                         });
                     }
                 }
+                // Its glow breathes: see `atomview`. Floodlights on the yard.
+                LandmarkKind::AtomicPlant => {
+                    for (x, z) in [(-20.0, 20.0), (20.0, 22.0)] {
+                        let p = l.to_plan(glam::DVec2::new(x, z));
+                        sources.push(Source {
+                            lamp: Lamp::point(
+                                Vec3::new(p.x as f32, (l.base + 9.0) as f32, p.y as f32),
+                                rgb(255, 226, 180),
+                                40.0,
+                                40.0,
+                            ),
+                        });
+                    }
+                }
             }
         }
         Self {

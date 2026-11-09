@@ -55,6 +55,7 @@ pub struct TownExtras {
     pub mast: Option<crate::mastview::MastView>,
     /// The rocket port's launches.
     pub rocket: Option<crate::rocketview::RocketView>,
+    pub atom: Option<crate::atomview::AtomView>,
     pub grass: Option<GrassView>,
     pub waterfront: Option<crate::waterfrontview::WaterfrontView>,
 }
@@ -93,6 +94,9 @@ impl TownExtras {
         }
         if let Some(mut m) = self.mast.take() {
             m.clear(world);
+        }
+        if let Some(mut a) = self.atom.take() {
+            a.clear(world);
         }
         if let Some(g) = self.grass.take() {
             g.despawn(world);
@@ -370,6 +374,7 @@ fn assemble(
         dystopia: Some(crate::dystopiaview::DystopiaView::new(town)),
         mast: Some(crate::mastview::MastView::new(town)),
         rocket: Some(crate::rocketview::RocketView::new(town)),
+        atom: Some(crate::atomview::AtomView::new(town)),
     }
 }
 

@@ -34,6 +34,9 @@ pub enum LandmarkKind {
     /// gantry, that now and then goes up and comes back (see
     /// [`super::gantry`]).
     RocketGantry,
+    /// The atomic plant out past the town's edge: a glowing reactor dome
+    /// and two steaming cooling towers ([`super::atomic`]).
+    AtomicPlant,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -251,6 +254,7 @@ impl Landmark {
                 v
             }
             LandmarkKind::MooringMast => super::mast::mast_footprints(),
+            LandmarkKind::AtomicPlant => super::atomic::footprints(),
         };
         local
             .into_iter()
@@ -490,6 +494,9 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
     }
     if let Some(m) = super::mast::plan_mast(w, &out) {
         out.push(m);
+    }
+    if let Some(l) = super::atomic::plan(w, &out) {
+        out.push(l);
     }
     for l in &mut out {
         l.stairs = plan_stairs(w, &roads, l);

@@ -447,7 +447,22 @@ between them) is designed but not built; the town stands in endless streamed gro
   with steps; the Hero Signal shines from it), the **lighthouse** (seaside towns), the
   **Tesla tower** (in the villain quarter), the **airship mooring mast** (every town, on
   its airfield just past the edge), the **rocket port** (every town, just past its edge;
-  see below).
+  see below), the **atomic plant** (out of town, below).
+- **The atomic plant** (`hw-gen/src/urban/atomic.rs`, `hw-client/src/atomview.rs`): on a
+  38 m paved yard just past the built-up edge (growth time 68-650 m past the edge),
+  beside a main road (yard edge 4-40 m from it, facing it), preferring water within 200 m;
+  no plant where no spot is clear and level (rim spread at most 5 m). A white reactor drum
+  (r 11 m, 9 m walls) under a ribbed dome with a blue glass band, a blue ring at its foot
+  and a glass lantern on top (22 m); two hyperbolic cooling towers (34 m, hollow: walk in
+  between the 24 legs and look up through the steam); a streamlined turbine hall with a
+  rounded nose, ribbon windows (lit at night) and three red fins; two steam mains on a
+  trestle; a red-and-white stack (50 m) with a blinking beacon; an atom on a pylon at the
+  gate and a saucer-roofed gatehouse. Every part is solid. Taxi stand: "Atomic plant gate".
+  Alive within 2 600 m: the reactor's light breathes (3.4 s) and surges every 8-22 s;
+  steam rolls out of both towers; within 1 200 m electrons race round the atom, the
+  beacon blinks (1.8 s) and every 25-60 s the relief valve on the hall roof blows off for
+  2.5-4 s. Sound: turbine hum (200 m), tower steam (260 m), valve roar (500 m). Views:
+  `HW_VIEW=atomplant`, `atomgate`, `atomtower`.
 - **Street furniture:** lamps in each quarter's style (iron lanterns, deco double globes,
   atomic saucers), parked golden-age cars, trees by region (lindens and birches north,
   planes and chestnuts in the middle, palms and cypresses south), hedges, fountains,
@@ -778,7 +793,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default: the profile's city, 40 000 at first; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |

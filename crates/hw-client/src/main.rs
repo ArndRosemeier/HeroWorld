@@ -757,6 +757,48 @@ fn main() -> EngineResult<()> {
                 None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
             }
         }
+        "atomplant" | "atomgate" | "atomtower" => {
+            // The atomic plant: the whole of it from the road, the gate and
+            // its atom close up, or up at a cooling tower from its foot.
+            use hw_gen::urban::atomic::{towers, PYLON_AT, PYLON_H, TOWER_FOOT, TOWER_H};
+            use hw_gen::urban::landmarks::LandmarkKind;
+            let l = hw_client::landmarkview::nearest(
+                &generated.world,
+                LandmarkKind::AtomicPlant,
+                spawn,
+            );
+            let (p, eye, look, at) = match l {
+                Some(l) => {
+                    let base = l.base;
+                    match view.as_str() {
+                        "atomplant" => {
+                            let p = l.to_plan(DVec2::new(-30.0, 105.0));
+                            (p, ground(p).max(base) + 14.0, base + 14.0, l.pos)
+                        }
+                        "atomgate" => {
+                            let a = DVec2::new(PYLON_AT.0, PYLON_AT.1);
+                            let p = l.to_plan(a + DVec2::new(4.5, 6.5));
+                            (p, base + 4.0, base + PYLON_H + 1.5, l.to_plan(a))
+                        }
+                        _ => {
+                            let t = towers()[0];
+                            let p = l.to_plan(t + DVec2::new(-(TOWER_FOOT + 4.0), 5.0));
+                            (p, base + 1.8, base + TOWER_H * 0.6, l.to_plan(t))
+                        }
+                    }
+                }
+                None => (
+                    spawn,
+                    ground(spawn) + 2.0,
+                    ground(spawn) + 2.0,
+                    spawn + spawn_dir,
+                ),
+            };
+            let dd = at - p;
+            let yaw = dd.x.atan2(dd.y).to_degrees() as f32;
+            let pitch = ((look - eye) / dd.length()).atan().to_degrees() as f32;
+            FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
+        }
         "quay" => {
             // Along a quay wall at the nearest steps down to the water.
             let st = generated
@@ -1828,6 +1870,10 @@ fn main() -> EngineResult<()> {
             hw_client::hitch::mark("rocket port");
             if let Some(r) = extras.rocket.as_mut() {
                 r.update(world, session.time(tick_clock / hw_sim::DT), frame.dt)?;
+            }
+            hw_client::hitch::mark("atom");
+            if let Some(a) = extras.atom.as_mut() {
+                a.update(world, frame.dt)?;
             }
             {
                 let eye = world.camera().eye();
@@ -3220,6 +3266,7 @@ fn main() -> EngineResult<()> {
                         .as_mut()
                         .map(|r| r.heard())
                         .unwrap_or_default(),
+                    atom: extras.atom.as_mut().map(|a| a.heard()).unwrap_or_default(),
                 };
                 hw_client::hitch::mark("sounds");
                 sounds.update(world, &scene);

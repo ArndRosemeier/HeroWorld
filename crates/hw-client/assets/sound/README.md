@@ -46,6 +46,10 @@ seam.
 | `tesla_buzz.ogg` | loop | The sound of a giant Tesla coil running continuously, a loud buzzing electric hum with rapid crackling sizzling sparks and snapping arcs, steady |
 | `tesla_crack_1.ogg` | shot | The sound of a single huge electric arc discharge striking a lightning rod, a violent sharp crack and snap like close thunder with a fizzing sizzle tail |
 | `tesla_crack_2.ogg` | shot | (the same prompt, another take) |
+| `atom_hum.ogg` | loop | The sound of a huge power station turbine hall running steadily, a deep smooth electric hum with a low droning generator whine and a faint rhythmic machine throb, continuous |
+| `atom_steam.ogg` | loop | The sound of a giant cooling tower venting steam continuously, a soft steady roaring rush of steam and falling water, broad and airy |
+| `atom_vent_1.ogg` | shot | The sound of a high pressure steam relief valve blowing off, a sudden loud hissing blast of steam that roars for a few seconds and then dies away |
+| `atom_vent_2.ogg` | shot | (the same prompt, another take) |
 | `tesla_zap.ogg` | shot | The sound of a short burst of electric sparks crackling, a quick high voltage zap and sizzle |
 | `airship_drone.ogg` | loop | The sound of a large 1930s airship passing overhead, the deep steady drone of four big propeller engines, a low throbbing hum, continuous, no voices |
 | `airship_horn.ogg` | shot | The sound of a giant airship's deep foghorn blast, one long low brass horn note echoing over an airfield |

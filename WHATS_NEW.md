@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.108 (2026-11-09)
+
+- An atomic plant now stands just outside town, beside a main road and by the water where it can: a white reactor dome ringed with blue light, two great cooling towers, a streamlined turbine hall with red fins, a striped stack and a spinning atom on a pylon at the gate.
+- It is alive: the reactor's light breathes and surges, steam rolls up out of the towers, electrons race round the atom, the stack's beacon blinks, and every half minute or so a relief valve on the roof blows off with a roar. Come near and you hear the turbines hum and the steam rush.
+- Walk in between the legs of a cooling tower and look up through the steam. Taxis go to the plant's gate.
+
 ## 0.107 (2026-11-09)
 
 - Choose your city's size: the new **Your city** button on the title (or "Change city" when making a hero) lets you pick anything from a hamlet of 300 people to a megalopolis of two million, and the world number. Press OK and the city is built behind the title; change your mind and the half-built one is thrown away. Your choice is remembered.

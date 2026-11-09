@@ -74,6 +74,7 @@ pub fn model(l: &Landmark, near: bool) -> Vec<Mesh> {
         LandmarkKind::HeroHall => hero_hall(&mut b, near),
         LandmarkKind::MooringMast => crate::mastmesh::mast(&mut b, l, near),
         LandmarkKind::RocketGantry => crate::rocketmesh::gantry(&mut b, l, near),
+        LandmarkKind::AtomicPlant => crate::atomview::plant(&mut b, near),
     }
     stairs(&mut b, l, near);
     b.finish_parts()
@@ -1117,6 +1118,7 @@ mod tests {
             LandmarkKind::HeroHall,
             LandmarkKind::MooringMast,
             LandmarkKind::RocketGantry,
+            LandmarkKind::AtomicPlant,
         ] {
             let l = Landmark {
                 kind,

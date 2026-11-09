@@ -30,6 +30,10 @@ macro_rules! clips {
 
 /// Every clip, built into the game (3.5 MB of Ogg Vorbis).
 static CLIPS: &[(&str, &[u8])] = clips![
+    "atom_hum",
+    "atom_steam",
+    "atom_vent_1",
+    "atom_vent_2",
     "amb_city_day",
     "amb_city_night",
     "amb_park",
@@ -286,6 +290,8 @@ pub struct Scene<'a> {
     pub mast: crate::mastview::Heard,
     /// The rocket port's roar, hiss and moments.
     pub rocket: crate::rocketview::Heard,
+    /// The atomic plant's hum, steam and relief valve.
+    pub atom: crate::atomview::Heard,
 }
 
 /// The ambience layers and how loud each one plays at full share.
@@ -360,6 +366,8 @@ pub struct Soundscape {
     /// The rocket's engine and its venting.
     rocket_roar: Option<SoundId>,
     rocket_vent: Option<SoundId>,
+    /// The atomic plant's hum and its towers' steam.
+    atom_loops: [Option<SoundId>; 2],
     pub music: Music,
 }
 
@@ -395,6 +403,7 @@ impl Soundscape {
             mast_loops: [None, None],
             rocket_roar: None,
             rocket_vent: None,
+            atom_loops: [None, None],
             music: Music::new(),
         }
     }
@@ -422,6 +431,7 @@ impl Soundscape {
         self.tesla(world, s);
         self.mast(world, s);
         self.rocket(world, s);
+        self.atom(world, s);
         self.timed.retain(|(id, until)| {
             if s.now >= *until {
                 world.stop_sound(*id, 2.5);
@@ -458,6 +468,9 @@ impl Soundscape {
             world.stop_sound(v, 0.5);
         }
         for v in self.mast_loops.iter_mut().filter_map(Option::take) {
+            world.stop_sound(v, 0.5);
+        }
+        for v in self.atom_loops.iter_mut().filter_map(Option::take) {
             world.stop_sound(v, 0.5);
         }
         self.music.stop(world);
@@ -796,6 +809,67 @@ impl Soundscape {
                     .volume(power.max(0.5) * muffle)
                     .pitch(pitch)
                     .range(15.0, range);
+                world.play_sound(&c, p);
+            }
+        }
+    }
+
+    /// The atomic plant: the turbine hall's deep hum, the rush of steam
+    /// round the cooling towers, and the roar of the relief valve.
+    fn atom(&mut self, world: &mut World, s: &Scene) {
+        let muffle = if s.under != Under::No {
+            0.0
+        } else if s.indoors {
+            0.35
+        } else {
+            1.0
+        };
+        let loops = [
+            ("atom_hum", s.atom.hum, 0.7, 200.0),
+            ("atom_steam", s.atom.steam, 0.8, 260.0),
+        ];
+        for (k, (clip, at, loud, range)) in loops.into_iter().enumerate() {
+            match at {
+                Some(at) if muffle > 0.0 && at.distance(s.eye) < range => {
+                    let vol = loud * muffle;
+                    match self.atom_loops[k] {
+                        Some(v) => {
+                            let _ = self.bank.get(clip, s.now);
+                            let a = world.audio_mut();
+                            a.set_position(v, at);
+                            a.set_volume(v, vol);
+                        }
+                        None => {
+                            if let Some(c) = self.bank.get(clip, s.now) {
+                                let p = PlaySound::at(at)
+                                    .looped()
+                                    .volume(vol)
+                                    .range(15.0, range)
+                                    .fade_in(1.5);
+                                self.atom_loops[k] = Some(world.play_sound(&c, p));
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    if let Some(v) = self.atom_loops[k].take() {
+                        world.stop_sound(v, 1.5);
+                    }
+                }
+            }
+        }
+        for &at in &s.atom.vents {
+            if muffle <= 0.0 || at.distance(s.eye) > 500.0 {
+                continue;
+            }
+            self.cracks = self.cracks.wrapping_add(1);
+            let clip = ["atom_vent_1", "atom_vent_2"][(self.cracks % 2) as usize];
+            if let Some(c) = self.bank.get(clip, s.now) {
+                let pitch = 0.9 + 0.2 * self.rand() as f32;
+                let p = PlaySound::at(at)
+                    .volume(0.9 * muffle)
+                    .pitch(pitch)
+                    .range(20.0, 500.0);
                 world.play_sound(&c, p);
             }
         }
@@ -1382,6 +1456,7 @@ mod tests {
             tesla: Default::default(),
             mast: Default::default(),
             rocket: Default::default(),
+            atom: Default::default(),
         }
     }
 
