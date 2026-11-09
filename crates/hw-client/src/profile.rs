@@ -12,8 +12,10 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Profile {
     pub name: String,
-    /// The world you last played (its seed).
+    /// The world you last played (its seed), and about how many people
+    /// live in its city (picked in the title's city window).
     pub seed: u64,
+    pub people: f64,
     /// True once you have played a hero: the title then offers Continue.
     pub played: bool,
     /// Music and effect volumes, 0..1.
@@ -43,6 +45,7 @@ impl Default for Profile {
         Self {
             name: "Hero".into(),
             seed: 1,
+            people: hw_sim::DEFAULT_POPULATION,
             played: false,
             music: 0.8,
             sounds: 0.9,
@@ -99,6 +102,10 @@ impl Profile {
                 .filter(|s| !s.is_empty())
                 .unwrap_or(d.name),
             seed: v["seed"].as_u64().unwrap_or(d.seed),
+            people: v["people"]
+                .as_f64()
+                .filter(|p| p.is_finite())
+                .map_or(d.people, |p| p.clamp(10.0, 1e8)),
             played: v["played"].as_bool().unwrap_or(d.played),
             music: f("music", d.music),
             sounds: f("sounds", d.sounds),
@@ -125,6 +132,7 @@ impl Profile {
         json!({
             "name": self.name,
             "seed": self.seed,
+            "people": self.people,
             "played": self.played,
             "music": self.music,
             "sounds": self.sounds,
@@ -236,6 +244,7 @@ mod tests {
         let p = Profile {
             name: "Captain Comet".into(),
             seed: 42,
+            people: 1_000_000.0,
             played: true,
             music: 0.25,
             sounds: 0.5,
@@ -254,11 +263,12 @@ mod tests {
             }),
         };
         assert_eq!(Profile::from_json(&p.to_json()), p);
-        let junk = json!({"name": 7, "music": 9.0, "seed": "x", "quality": "max", "fov": 500});
+        let junk = json!({"name": 7, "music": 9.0, "seed": "x", "people": "many", "quality": "max", "fov": 500});
         let q = Profile::from_json(&junk);
         assert_eq!(q.name, "Hero");
         assert_eq!(q.music, 1.0);
         assert_eq!(q.seed, 1);
+        assert_eq!(q.people, hw_sim::DEFAULT_POPULATION);
         assert_eq!(q.quality, "high");
         assert_eq!(q.fov, 90.0);
         assert_eq!(q.hero, None);

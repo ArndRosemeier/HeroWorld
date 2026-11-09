@@ -41,7 +41,7 @@ use collision::{Body, Obstacles, BODY_HEIGHT};
 use combat::{Carried, CombatView, Drone, Enemy, Fighter, Fights, Kit, Rubble, Spot};
 use destruction::Damage;
 use glam::{DVec2, DVec3};
-use hw_core::{NetId, NetIdAllocator, Seed};
+use hw_core::{Cancel, Cancelled, NetId, NetIdAllocator, Seed};
 use hw_gen::building::BuildingPlan;
 use hw_gen::city::{CityParams, CityPlan};
 use hw_gen::urban::area::{Area, AREA_HALF};
@@ -246,22 +246,44 @@ pub struct GeneratedTown {
 impl GeneratedTown {
     /// The town of `seed` with about `population` people.
     pub fn generate(seed: Seed, population: f64) -> Self {
-        let world = Arc::new(TownWorld::generate(
+        Self::generate_or_stop(seed, population, &Cancel::new()).expect("nobody can cancel this")
+    }
+
+    /// [`GeneratedTown::generate`] that gives up between its steps once
+    /// `cancel` is set (a city behind the title the player no longer
+    /// wants). The same town when it is not cancelled.
+    pub fn generate_or_stop(
+        seed: Seed,
+        population: f64,
+        cancel: &Cancel,
+    ) -> Result<Self, Cancelled> {
+        let world = Arc::new(TownWorld::generate_or_stop(
             seed,
             TownParams::sample(seed, population),
-        ));
+            cancel,
+        )?);
+        cancel.check()?;
         let w = world.clone();
         // Open ground is what is drawn there: roads stand a few
         // centimetres above the terrain.
         let terrain = collision::Terrain(Arc::new(move |p| w.surface(p)));
         let (start, _) = world.spawn_line();
-        let area = Arc::new(Area::around(world.clone(), start, AREA_HALF));
+        // The collision below holds the underground: plan it where it can stop.
+        world.underground_or_stop(cancel)?;
+        let area = Arc::new(Area::around_or_stop(
+            world.clone(),
+            start,
+            AREA_HALF,
+            cancel,
+        )?);
+        cancel.check()?;
         let obstacles = Arc::new(Obstacles::from_town(&world, terrain));
-        Self {
+        cancel.check()?;
+        Ok(Self {
             world,
             area,
             obstacles,
-        }
+        })
     }
 
     pub fn population(&self) -> f64 {

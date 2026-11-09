@@ -19,6 +19,7 @@
 
 mod fun;
 
+use crate::citybuild::{size_of, City, SIZES};
 use crate::creator::Creator;
 use crate::profile::{clean_name, Profile};
 use actors_generator::{CharacterCatalog, CharacterConfig};
@@ -58,12 +59,14 @@ pub enum Choice {
     /// Play the remembered hero in the remembered world.
     Continue,
     /// A new hero: this name and these looks (none without the Actors
-    /// packs), in the world with this seed.
+    /// packs), in the city of the profile.
     NewHero {
         name: String,
-        seed: u64,
         look: Option<Box<CharacterConfig>>,
     },
+    /// OK in the city window: build this city now (it is in the profile
+    /// already).
+    City(City),
     /// Open our world to friends (and play in it).
     Host,
     /// Join a friend's world by room code or address.
@@ -134,7 +137,8 @@ pub struct Title {
     still: bool,
     panel: Panel,
     new_name: String,
-    new_seed: String,
+    /// The city window, while open: the seed as typed and the size picked.
+    city_window: Option<(String, usize)>,
     join_code: String,
     /// A line under the buttons: what is happening, or what went wrong.
     pub status: Option<(String, bool)>,
@@ -196,9 +200,9 @@ impl Title {
             .and_then(|s| s.parse::<f32>().ok())
             .unwrap_or(0.0);
         let still = profile.reduced_motion;
-        Self {
+        let mut title = Self {
             new_name: profile.name.clone(),
-            new_seed: profile.seed.to_string(),
+            city_window: None,
             still,
             profile,
             clock: start,
@@ -235,7 +239,12 @@ impl Title {
             dt: 0.0,
             world_ready: false,
             reveal_at: None,
+        };
+        // HW_TITLE_PANEL=city opens the city window (for screenshots).
+        if std::env::var("HW_TITLE_PANEL").as_deref() == Ok("city") {
+            title.open_city_window();
         }
+        title
     }
 
     /// True once the logo has landed on the cover: the heavy loading (props,
@@ -599,7 +608,8 @@ impl Title {
             if let Some(c) = choice.take() {
                 if c == Choice::Quit {
                     world.request_exit();
-                } else if ready {
+                } else if ready || matches!(c, Choice::City(_)) {
+                    // A new city starts building at once: that is what OK means.
                     choice = Some(c);
                 } else {
                     self.queued = Some(c);
@@ -760,20 +770,16 @@ impl Title {
                 let gap = bh * 0.28;
                 let mut y = tag_y + em_final * 0.62;
                 let played = self.profile.played;
+                let city = self.city_line();
                 let (main_label, main_sub) = if played {
-                    (
-                        "Continue",
-                        format!("{} in world {}", self.profile.name, self.profile.seed),
-                    )
+                    ("Continue", format!("{} in {city}", self.profile.name))
                 } else {
-                    (
-                        "Play",
-                        format!("as {} in world {}", self.profile.name, self.profile.seed),
-                    )
+                    ("Play", format!("as {} in {city}", self.profile.name))
                 };
-                let buttons: [(&str, Option<String>, bool); 6] = [
+                let buttons: [(&str, Option<String>, bool); 7] = [
                     (main_label, Some(main_sub), true),
                     ("New hero", None, false),
+                    ("Your city", None, false),
                     ("Play with friends", None, false),
                     ("Settings", None, false),
                     ("What's new", None, false),
@@ -815,9 +821,10 @@ impl Title {
                         match i {
                             0 => choice = Some(Choice::Continue),
                             1 => toggle(&mut self.panel, Panel::NewHero),
-                            2 => toggle(&mut self.panel, Panel::Friends),
-                            3 => toggle(&mut self.panel, Panel::Settings),
-                            4 => self.whats_new = true,
+                            2 => self.open_city_window(),
+                            3 => toggle(&mut self.panel, Panel::Friends),
+                            4 => toggle(&mut self.panel, Panel::Settings),
+                            5 => self.whats_new = true,
                             _ => choice = Some(Choice::Quit),
                         }
                     }
@@ -898,8 +905,147 @@ impl Title {
         }
         self.fun.draw_front(ctx, t);
         whats_new_modal(ctx, &mut self.whats_new);
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if let Some(c) = self.city_modal(ctx, sfx) {
+            choice = Some(c);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && self.city_window.is_none() {
             self.panel = Panel::None;
+        }
+        choice
+    }
+
+    /// "the Metropolis of world 7": the profile's city, for button lines.
+    fn city_line(&self) -> String {
+        format!(
+            "the {} of world {}",
+            size_of(self.profile.people).name.to_lowercase(),
+            self.profile.seed
+        )
+    }
+
+    fn open_city_window(&mut self) {
+        let size = SIZES
+            .iter()
+            .position(|s| s.name == size_of(self.profile.people).name)
+            .unwrap_or(0);
+        self.city_window = Some((self.profile.seed.to_string(), size));
+    }
+
+    /// The city window: world number and size. Nothing is built while it
+    /// is open; OK saves the choice and starts the build.
+    fn city_modal(&mut self, ctx: &egui::Context, sfx: &mut Vec<Sfx>) -> Option<Choice> {
+        let (seed_text, size) = self.city_window.as_mut()?;
+        let mut choice = None;
+        let mut close = false;
+        let modal = egui::Modal::new(egui::Id::new("city window"))
+            .frame(
+                egui::Frame::new()
+                    .fill(CREAM)
+                    .stroke(Stroke::new(3.0_f32, NAVY))
+                    .corner_radius(14.0)
+                    .inner_margin(egui::Margin::same(20)),
+            )
+            .show(ctx, |ui| {
+                comic_card_style(ui);
+                ui.set_width(520.0);
+                ui.label(
+                    egui::RichText::new("Your city")
+                        .font(FontId::new(28.0, ui_family()))
+                        .color(HERO_RED),
+                );
+                ui.label("Your world. Every number is a different planet.");
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(seed_text)
+                            .font(FontId::proportional(20.0))
+                            .desired_width(150.0),
+                    );
+                    if ui.button("Surprise me").clicked() {
+                        sfx.push(Sfx::Click);
+                        *seed_text = surprise_seed().to_string();
+                    }
+                });
+                let seed = seed_text.trim().parse::<u64>().ok();
+                if seed.is_none() {
+                    ui.colored_label(HERO_RED, "The world is a number, like 7 or 2026.");
+                }
+                ui.add_space(4.0);
+                ui.label("How big is the city you start in?");
+                for (i, s) in SIZES.iter().enumerate() {
+                    let picked = *size == i;
+                    let r = egui::Frame::new()
+                        .fill(if picked {
+                            Color32::from_rgb(255, 222, 140)
+                        } else {
+                            Color32::TRANSPARENT
+                        })
+                        .stroke(if picked {
+                            Stroke::new(2.0_f32, NAVY)
+                        } else {
+                            Stroke::NONE
+                        })
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::symmetric(10, 4))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(s.name)
+                                        .font(FontId::new(19.0, ui_family()))
+                                        .color(if picked { HERO_RED } else { NAVY }),
+                                );
+                                ui.label(format!("about {} people", people_words(s.people)));
+                            });
+                            ui.label(egui::RichText::new(s.blurb).size(15.0));
+                        })
+                        .response
+                        .interact(Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if r.clicked() && !picked {
+                        sfx.push(Sfx::Click);
+                        *size = i;
+                    }
+                }
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "OK starts building it behind the title; a {} takes {}.",
+                        SIZES[*size].name.to_lowercase(),
+                        SIZES[*size].wait
+                    ))
+                    .size(15.0),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        sfx.push(Sfx::Click);
+                        close = true;
+                    }
+                    let ok = ui.add_enabled(
+                        seed.is_some(),
+                        egui::Button::new(egui::RichText::new("OK").color(CREAM)).fill(HERO_RED),
+                    );
+                    if ok.clicked() {
+                        if let Some(seed) = seed {
+                            sfx.push(Sfx::Click);
+                            choice = Some(Choice::City(City {
+                                seed,
+                                people: SIZES[*size].people,
+                            }));
+                            close = true;
+                        }
+                    }
+                });
+            });
+        if modal.should_close() {
+            close = true;
+        }
+        if let Some(Choice::City(c)) = &choice {
+            self.profile.seed = c.seed;
+            self.profile.people = c.people;
+            self.profile.save();
+        }
+        if close {
+            self.city_window = None;
         }
         choice
     }
@@ -984,7 +1130,6 @@ impl Title {
                                 close = true;
                             }
                             let name = clean_name(&self.new_name);
-                            let seed = self.new_seed.trim().parse::<u64>().ok();
                             if existing {
                                 if ui.button("Keep these looks").clicked() {
                                     sfx.push(Sfx::Click);
@@ -993,7 +1138,7 @@ impl Title {
                                     close = true;
                                 }
                             } else {
-                                let ok = !name.is_empty() && seed.is_some();
+                                let ok = !name.is_empty();
                                 let go = ui.add_enabled(
                                     ok,
                                     egui::Button::new(
@@ -1002,13 +1147,10 @@ impl Title {
                                     .fill(HERO_RED),
                                 );
                                 if go.clicked() {
-                                    if let Some(seed) = seed {
-                                        choice = Some(Choice::NewHero {
-                                            name,
-                                            seed,
-                                            look: Some(Box::new(creator.look())),
-                                        });
-                                    }
+                                    choice = Some(Choice::NewHero {
+                                        name,
+                                        look: Some(Box::new(creator.look())),
+                                    });
                                 }
                             }
                         });
@@ -1093,34 +1235,23 @@ impl Title {
                                         .font(FontId::proportional(20.0))
                                         .desired_width(f32::INFINITY),
                                 );
-                                ui.label("Your world. Every number is a different planet.");
                                 ui.horizontal(|ui| {
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut self.new_seed)
-                                            .font(FontId::proportional(20.0))
-                                            .desired_width(150.0),
-                                    );
-                                    if ui.button("Surprise me").clicked() {
+                                    ui.label(format!("You start in {}.", self.city_line()));
+                                    if ui.button("Change city").clicked() {
                                         sfx.push(Sfx::Click);
-                                        self.new_seed = surprise_seed().to_string();
+                                        self.open_city_window();
                                     }
                                 });
-                                let seed = self.new_seed.trim().parse::<u64>().ok();
-                                if seed.is_none() {
-                                    ui.colored_label(HERO_RED, "The world is a number, like 7 or 2026.");
-                                }
                                 ui.add_space(4.0);
                                 let name = clean_name(&self.new_name);
-                                let ok = seed.is_some() && !name.is_empty();
+                                let ok = !name.is_empty();
                                 if self.no_people {
                                     // No Actors packs: no creator either.
                                     if ui
                                         .add_enabled(ok, egui::Button::new("Start the adventure"))
                                         .clicked()
                                     {
-                                        if let Some(seed) = seed {
-                                            choice = Some(Choice::NewHero { name, seed, look: None });
-                                        }
+                                        choice = Some(Choice::NewHero { name, look: None });
                                     }
                                 } else if let Some(cat) = self.catalog.clone() {
                                     if ui
@@ -1256,6 +1387,25 @@ impl CodeCase for String {
             self.to_ascii_uppercase()
         } else {
             self.clone()
+        }
+    }
+}
+
+/// "40 000", "1 million": a city's people in words.
+fn people_words(people: f64) -> String {
+    if people >= 1e6 {
+        let m = people / 1e6;
+        if m == 1.0 {
+            "1 million".into()
+        } else {
+            format!("{m} million")
+        }
+    } else {
+        let n = people.round() as u64;
+        if n >= 1000 {
+            format!("{} {:03}", n / 1000, n % 1000)
+        } else {
+            n.to_string()
         }
     }
 }

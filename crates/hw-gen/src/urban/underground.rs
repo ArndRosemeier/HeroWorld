@@ -336,11 +336,23 @@ pub(crate) fn spot_free(w: &TownWorld, p: DVec2, r: f64) -> bool {
     Ground::new(w, &all, p - around, p + around).free(p, r)
 }
 
+/// How far from the start the underground reaches (m).
+fn underground_reach(w: &TownWorld) -> f64 {
+    (w.half() * 0.35).clamp(250.0, 700.0)
+}
+
+/// The ground whose detail [`plan_underground`] reads: (lo, hi).
+pub(crate) fn underground_box(w: &TownWorld) -> (DVec2, DVec2) {
+    let (core, _) = w.spawn_line();
+    let around = DVec2::splat(underground_reach(w) + 520.0);
+    (core - around, core + around)
+}
+
 /// Plans the town's underground (deterministic: from the town alone).
 pub fn plan_underground(w: &TownWorld) -> Underground {
     let mut u = Underground::default();
     let (core, _) = w.spawn_line();
-    let reach = (w.half() * 0.35).clamp(250.0, 700.0);
+    let reach = underground_reach(w);
     let wet = |p: DVec2| w.ground(p) < DECK + 1.5;
     // Tunnels under the main roads of the centre.
     let mut tunnel_roads = Vec::new();
@@ -395,9 +407,9 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
     let tunnels = u.voids.len();
     u.index();
     // What stands round the centre: the quarters there, planned now.
-    let around = DVec2::splat(reach + 520.0);
-    let all = w.roads_in(core - around, core + around);
-    let ground = Ground::new(w, &all, core - around, core + around);
+    let (lo, hi) = underground_box(w);
+    let all = w.roads_in(lo, hi);
+    let ground = Ground::new(w, &all, lo, hi);
     // The tunnel point nearest `p`: (point, tunnel floor there).
     let nearest_tunnel = |u: &Underground, p: DVec2| -> Option<(DVec2, f64)> {
         let mut best: Option<(f64, DVec2, f64)> = None;

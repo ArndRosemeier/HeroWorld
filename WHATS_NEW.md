@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.107 (2026-11-09)
+
+- Choose your city's size: the new **Your city** button on the title (or "Change city" when making a hero) lets you pick anything from a hamlet of 300 people to a megalopolis of two million, and the world number. Press OK and the city is built behind the title; change your mind and the half-built one is thrown away. Your choice is remembered.
+- Big cities get the title up at once and are planned a little faster.
+
 ## 0.106 (2026-11-09)
 
 - Every town now has a rocket port just past its edge: a gleaming finned rocket beside an orange launch gantry, a domed blockhouse, fuel spheres and floodlights. Take a taxi to "The rocket port".

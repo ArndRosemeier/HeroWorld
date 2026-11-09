@@ -5,6 +5,7 @@
 pub mod bench;
 pub mod buildingmesh;
 pub mod carmesh;
+pub mod citybuild;
 pub mod citymesh;
 pub mod crash;
 pub mod creator;

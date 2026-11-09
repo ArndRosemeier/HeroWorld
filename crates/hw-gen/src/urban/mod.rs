@@ -52,7 +52,7 @@ pub use params::{Founding, PlanStyle, Preset, Site, TownParams};
 pub use roads::{Network, Road, RoadClass};
 
 use glam::DVec2;
-use hw_core::Seed;
+use hw_core::{Cancel, Cancelled, Seed};
 
 /// Tag of the town's outline (the edge of the built-up land) in [`Town::graph`].
 pub const OUTLINE: u32 = 100;
@@ -91,9 +91,24 @@ const DISTRICT_GAP: f64 = 650.0;
 
 impl Town {
     pub fn generate(seed: Seed, params: TownParams) -> Town {
+        Self::generate_or_stop(seed, params, &Cancel::new()).expect("nobody can cancel this")
+    }
+
+    /// [`Town::generate`] that gives up between its steps once `cancel` is
+    /// set (a city being planned behind the title that is no longer
+    /// wanted). The same town when it is not cancelled.
+    pub fn generate_or_stop(
+        seed: Seed,
+        params: TownParams,
+        cancel: &Cancel,
+    ) -> Result<Town, Cancelled> {
+        cancel.check()?;
         let land = Land::generate(seed, &params);
+        cancel.check()?;
         let growth = Growth::generate(seed, &params, &land);
+        cancel.check()?;
         let network = Network::generate(seed, &params, &land, &growth);
+        cancel.check()?;
         let g = &growth.time;
         // The outline: the edge of built land, villages and shores included.
         let mut mask = land::Grid::new(g.half(), g.cell, 1.0f32);
@@ -117,10 +132,12 @@ impl Town {
             lines.push(graph::TaggedLine { pts, tag: OUTLINE });
         }
         let graph = graph::Graph::build(&lines, 1.5);
+        cancel.check()?;
         let pieces = pieces_of(&graph, &land, &growth);
+        cancel.check()?;
         let dystopia =
             dystopia::Dystopia::plan(seed, &pieces, &growth, params.dystopia, params.population);
-        Town {
+        Ok(Town {
             dystopia,
             params,
             land,
@@ -128,7 +145,7 @@ impl Town {
             network,
             graph,
             pieces,
-        }
+        })
     }
 }
 

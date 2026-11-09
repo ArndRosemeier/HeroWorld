@@ -47,13 +47,13 @@
 //! built while you look); `HW_VIEW`, `HW_HOST` or `HW_JOIN` skip it,
 //! `HW_TITLE=0` too, and `HW_VIEW=title` forces it (`HW_TITLE_TIME=<s>` sets
 //! its clock, for screenshots; `HW_TITLE_PANEL=creator` opens the hero
-//! creator, `HW_CREATOR_SECTION=face|costume|colours` and
+//! creator, `=city` the city window, `HW_CREATOR_SECTION=face|costume|colours` and
 //! `HW_CREATOR_DETAILED=1` pick its tab). Your name, looks, world and sound
 //! levels are remembered between runs (see `profile.rs`).
 //!
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
-//! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
-//! players get the host's); `HW_NAME`; `HW_VIEW` =
+//! town: 300 a hamlet, 40000 the default, millions a metropolis; by default
+//! the city picked in the title's city window; joining players get the host's); `HW_NAME`; `HW_VIEW` =
 //! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the light over the first call, with `HW_INCIDENT`), `far` (a main road across town, where people and traffic must follow) or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
@@ -82,6 +82,7 @@ mod session;
 
 use engine::prelude::*;
 use glam::{DVec2, DVec3, Vec3};
+use hw_client::citybuild::{City, CityBuilds};
 use hw_client::citymesh;
 use hw_client::crowdview::CrowdView;
 use hw_client::damageview::DamageView;
@@ -279,7 +280,12 @@ fn main() -> EngineResult<()> {
     // On the title there is no session yet: the player starts one there.
     let people = env_num("HW_POP")
         .map(|p| p as f64)
-        .unwrap_or(hw_sim::DEFAULT_POPULATION);
+        .unwrap_or(profile.people);
+    // Cities planned behind the title (see `citybuild.rs`).
+    let mut builds = CityBuilds::default();
+    // A big city takes a while: the title opens at once on a hamlet behind
+    // its cover while the real one is planned on a worker.
+    let mut stand_in = false;
     let (mut session, mut generated, mut world_seed, mut world_people) =
         match std::env::var("HW_JOIN") {
             Ok(addr) if !title_mode => {
@@ -290,14 +296,32 @@ fn main() -> EngineResult<()> {
             }
             _ => {
                 let seed = Seed(env_num("HW_SEED").unwrap_or(profile.seed));
-                let generated = GeneratedTown::generate(seed, people);
-                let open = std::env::var_os("HW_HOST").is_some();
-                let session = if title_mode {
-                    None
+                if title_mode && people > hw_sim::DEFAULT_POPULATION {
+                    let small = hw_client::citybuild::SIZES[0].people;
+                    let generated = GeneratedTown::generate(seed, small);
+                    let live = City {
+                        seed: seed.0,
+                        people: small,
+                    };
+                    builds.want(
+                        City {
+                            seed: seed.0,
+                            people,
+                        },
+                        live,
+                    );
+                    stand_in = true;
+                    (None, generated, seed.0, small)
                 } else {
-                    Some(Session::single(seed, &generated, &name, open).map_err(io)?)
-                };
-                (session, generated, seed.0, people)
+                    let generated = GeneratedTown::generate(seed, people);
+                    let open = std::env::var_os("HW_HOST").is_some();
+                    let session = if title_mode {
+                        None
+                    } else {
+                        Some(Session::single(seed, &generated, &name, open).map_err(io)?)
+                    };
+                    (session, generated, seed.0, people)
+                }
             }
         };
     let mut solids = generated.obstacles.clone();
@@ -1113,7 +1137,14 @@ fn main() -> EngineResult<()> {
     let mut street_probe: Option<(engine::reflections::ReflectionProbeId, (i32, i32))> = None;
     // The title screen, while it shows; a town being generated for another
     // world (a new hero's, or a friend's); a joined session waiting for it.
-    let mut title_screen = title_mode.then(|| Title::new(profile.clone()));
+    // The title shows the city we start in (`HW_SEED`, `HW_POP` too).
+    let mut title_screen = title_mode.then(|| {
+        Title::new(Profile {
+            seed: world_seed,
+            people: if stand_in { people } else { world_people },
+            ..profile.clone()
+        })
+    });
     // Closed unexpectedly last time: say where the report is.
     if let Some(report) = hw_client::crash::take_unseen() {
         let line = format!(
@@ -1126,7 +1157,6 @@ fn main() -> EngineResult<()> {
         }
     }
     hw_client::crash::note("view", &view);
-    let mut switching: Option<std::sync::mpsc::Receiver<(u64, f64, GeneratedTown)>> = None;
     let mut waiting: Option<Waiting> = None;
     // Props and landmarks of the current town.
     let mut extras = TownExtras::default();
@@ -1299,18 +1329,20 @@ fn main() -> EngineResult<()> {
                         _ => true,
                     });
                 }
-                // Another world finished generating: swap it in.
-                if let Some((seed, people, g)) =
-                    switching.as_ref().and_then(|rx| rx.try_recv().ok())
-                {
-                    switching = None;
-                    hw_client::hitch::event(format!("world {seed} swapped in behind the title"));
+                // Another city finished planning: swap it in.
+                if let Some((city, g)) = builds.poll() {
+                    hw_client::hitch::event(format!(
+                        "world {} ({} people) swapped in behind the title",
+                        city.seed, city.people
+                    ));
                     hw_client::hitch::job("new world", None);
+                    stand_in = false;
                     town.clear(world);
                     extras.despawn(world);
-                    world_seed = seed;
-                    world_people = people;
-                    generated = g;
+                    world_seed = city.seed;
+                    world_people = city.people;
+                    // A big city takes a while to free: not on this thread.
+                    hw_client::citybuild::dispose(std::mem::replace(&mut generated, g));
                     solids = generated.obstacles.clone();
                     town = TownView::new(generated.world.clone());
                     minimap = hw_client::minimap::Minimap::new(generated.world.clone());
@@ -1332,7 +1364,7 @@ fn main() -> EngineResult<()> {
                     }
                     extras_loaded = false;
                 }
-                if !extras_loaded && extras_load.is_none() && t.wants_heavy() {
+                if !extras_loaded && extras_load.is_none() && t.wants_heavy() && !builds.busy() {
                     hw_client::hitch::event(
                         "props, trees and ground start loading behind the title",
                     );
@@ -1347,7 +1379,10 @@ fn main() -> EngineResult<()> {
                 let eye = world.camera().eye();
                 let eye = DVec2::new(eye.x as f64, eye.z as f64);
                 hw_client::hitch::mark("title town");
-                town.update_background(world, eye, TITLE_BUILD_MS);
+                // A hamlet standing in behind the cover is never seen.
+                if !(stand_in && builds.busy()) {
+                    town.update_background(world, eye, TITLE_BUILD_MS);
+                }
                 if let Some(v) = extras.props.as_mut() {
                     v.update(eye, TITLE_BUILD_MS * 0.5);
                     v.flush(world)?;
@@ -1356,62 +1391,88 @@ fn main() -> EngineResult<()> {
                     w.update(world, eye, true);
                 }
                 let (built, wanted) = town.progress(eye);
-                let (done, what) = if switching.is_some() {
-                    (0.0, "Building your world...")
-                } else if wanted == 0 {
-                    (1.0, "")
-                } else {
-                    (built as f32 / wanted as f32, "Building the city...")
+                let building = builds.coming();
+                let what = match building {
+                    Some(c) => format!(
+                        "Building the {}...",
+                        hw_client::citybuild::size_of(c.people).name.to_lowercase()
+                    ),
+                    None if wanted == 0 => String::new(),
+                    None => "Building the city...".into(),
                 };
-                t.set_world_ready(extras_loaded && switching.is_none(), done);
+                let done = if builds.busy() {
+                    0.0
+                } else if wanted == 0 {
+                    1.0
+                } else {
+                    built as f32 / wanted as f32
+                };
+                t.set_world_ready(extras_loaded && !builds.busy(), done);
                 hw_client::hitch::mark("title screen");
-                let mut choice = t.frame(world, frame, &generated.world, &solids, (done, what))?;
+                let mut choice = t.frame(world, frame, &generated.world, &solids, (done, &what))?;
                 // A joined world (or a new hero's) waits for its town.
-                if choice.is_none() && switching.is_none() && done >= 1.0 {
+                if choice.is_none() && !builds.busy() && done >= 1.0 {
                     match waiting.take() {
                         Some(Waiting::Joined(mut s)) => {
                             s.attach_town(&generated);
                             session = Some(*s);
                         }
                         Some(Waiting::Single) => choice = Some(Choice::Continue),
+                        Some(Waiting::Host) => choice = Some(Choice::Host),
                         None => {}
                     }
                 }
-                let mut want_world = |seed: u64, people: f64, then: Waiting| {
-                    if seed == world_seed && people == world_people {
+                let live = City {
+                    seed: world_seed,
+                    people: world_people,
+                };
+                let mine = City {
+                    seed: t.profile.seed,
+                    people: t.profile.people,
+                };
+                // Play in `city` once it is there: Some(then) when it is
+                // the one we have, else it is planned and `then` waits.
+                let mut want_world = |city: City, then: Waiting| {
+                    builds.want(city, live);
+                    if city == live {
                         return Some(then);
                     }
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    std::thread::spawn(move || {
-                        let _ =
-                            tx.send((seed, people, GeneratedTown::generate(Seed(seed), people)));
-                    });
-                    switching = Some(rx);
-                    hw_client::hitch::job("new world", Some(format!("seed {seed} generating")));
+                    hw_client::hitch::job(
+                        "new world",
+                        Some(format!("seed {}, {} people", city.seed, city.people)),
+                    );
                     waiting = Some(then);
                     None
                 };
                 hw_client::hitch::mark("title choice");
                 match choice {
                     Some(Choice::Continue) => {
-                        session = Some(
-                            Session::single(Seed(world_seed), &generated, &name, false)
-                                .map_err(io)?,
-                        );
+                        if want_world(mine, Waiting::Single).is_some() {
+                            session = Some(
+                                Session::single(Seed(world_seed), &generated, &name, false)
+                                    .map_err(io)?,
+                            );
+                        }
                     }
-                    Some(Choice::NewHero {
-                        name: n,
-                        seed,
-                        look,
-                    }) => {
+                    Some(Choice::City(city)) => {
+                        if matches!(waiting, Some(Waiting::Joined(_))) {
+                            // A friend's world is on its way: it comes first.
+                            t.status = Some((
+                                "You are joining a friend: your own city can wait.".into(),
+                                true,
+                            ));
+                        } else {
+                            builds.want(city, live);
+                        }
+                    }
+                    Some(Choice::NewHero { name: n, look }) => {
                         name = n;
                         t.profile.name = name.clone();
-                        t.profile.seed = seed;
                         t.profile.look = look.map(|l| *l);
                         // A new hero picks an origin first.
                         t.profile.hero = None;
                         hero_file = None;
-                        if want_world(seed, people, Waiting::Single).is_some() {
+                        if want_world(mine, Waiting::Single).is_some() {
                             session = Some(
                                 Session::single(Seed(world_seed), &generated, &name, false)
                                     .map_err(io)?,
@@ -1419,20 +1480,24 @@ fn main() -> EngineResult<()> {
                         }
                     }
                     Some(Choice::Host) => {
-                        match Session::single(Seed(world_seed), &generated, &name, true) {
-                            Ok(s) => session = Some(s),
-                            Err(e) => {
-                                t.status = Some((format!("Could not open your world: {e}"), true))
+                        if want_world(mine, Waiting::Host).is_some() {
+                            match Session::single(Seed(world_seed), &generated, &name, true) {
+                                Ok(s) => session = Some(s),
+                                Err(e) => {
+                                    t.status =
+                                        Some((format!("Could not open your world: {e}"), true))
+                                }
                             }
                         }
                     }
                     Some(Choice::Join(code)) => match Session::join(&code, &name) {
                         Ok((mut s, seed, people)) => {
-                            if seed == world_seed && people == world_people {
+                            let theirs = City { seed, people };
+                            if want_world(theirs, Waiting::Single).is_some() {
                                 s.attach_town(&generated);
                                 session = Some(s);
                             } else {
-                                want_world(seed, people, Waiting::Joined(Box::new(s)));
+                                waiting = Some(Waiting::Joined(Box::new(s)));
                             }
                         }
                         Err(e) => t.status = Some((format!("Could not join: {e}"), true)),
@@ -1448,6 +1513,9 @@ fn main() -> EngineResult<()> {
                     music_fade_at = Some(frame.time + 20.0);
                     t.profile.played = true;
                     t.profile.seed = world_seed;
+                    t.profile.people = world_people;
+                    // Nothing else is wanted now.
+                    builds.stop();
                     // A hero from before the creator keeps the clothes
                     // the game dressed them in.
                     if t.profile.look.is_none() {
@@ -3286,6 +3354,8 @@ fn note_for_hitches(
 enum Waiting {
     /// A new hero: plays alone once the town is there.
     Single,
+    /// Opens the world to friends once the town is there.
+    Host,
     /// Joined a friend whose world is not ours yet.
     Joined(Box<Session>),
 }

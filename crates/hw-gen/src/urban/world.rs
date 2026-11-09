@@ -11,6 +11,7 @@
 //! heights are metres above the water. All water stands at
 //! [`WATER_LEVEL`]; the land rises from it.
 
+use super::area::plan_all_or_stop;
 use super::deep::Deep;
 use super::growth::CentreKind;
 use super::land::{distance_to, Grid};
@@ -25,12 +26,12 @@ use super::roadgrid::RoadGrid;
 use super::roads::RoadClass;
 use super::streets::StreetStyle;
 use super::surface::{SurfaceTile, KEEP_SURFACE_TILES, SURFACE_TILE};
-use super::underground::{plan_underground, Underground};
+use super::underground::{plan_underground, underground_box, Underground};
 use super::waterfront::plan_waterfront;
 use super::{Town, TownParams};
 use crate::building::BuildingSite;
 use glam::DVec2;
-use hw_core::Seed;
+use hw_core::{Cancel, Cancelled, Seed};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -185,7 +186,18 @@ fn cells(lo: DVec2, hi: DVec2) -> impl Iterator<Item = (i64, i64)> {
 
 impl TownWorld {
     pub fn generate(seed: Seed, params: TownParams) -> TownWorld {
-        let town = Town::generate(seed, params);
+        Self::generate_or_stop(seed, params, &Cancel::new()).expect("nobody can cancel this")
+    }
+
+    /// [`TownWorld::generate`] that gives up between its steps once
+    /// `cancel` is set. The same world when it is not cancelled.
+    pub fn generate_or_stop(
+        seed: Seed,
+        params: TownParams,
+        cancel: &Cancel,
+    ) -> Result<TownWorld, Cancelled> {
+        let town = Town::generate_or_stop(seed, params, cancel)?;
+        cancel.check()?;
         let land = &town.land;
         // Water beds: deeper away from the shore.
         let to_land = distance_to(&land.cover, |c| !c.is_water());
@@ -225,6 +237,7 @@ impl TownWorld {
             underground: OnceLock::new(),
             pending: Mutex::new(Default::default()),
         };
+        cancel.check()?;
         let mut mains = Vec::new();
         for (i, r) in out.town.network.roads.iter().enumerate() {
             out.main_runs(&r.pts, r.class, i, &mut mains);
@@ -246,10 +259,12 @@ impl TownWorld {
                 }
             }
         }
+        cancel.check()?;
         out.main_bridges = out.bridges_of(&mains);
         out.main_roads = mains;
+        cancel.check()?;
         out.landmarks = plan_landmarks(&out);
-        out
+        Ok(out)
     }
 
     /// A main road (or district road) split into runs of one width: in an
@@ -658,6 +673,22 @@ impl TownWorld {
     /// the centre).
     pub fn underground(&self) -> &Underground {
         self.underground.get_or_init(|| plan_underground(self))
+    }
+
+    /// [`TownWorld::underground`], planning the detail it reads first on
+    /// every core, where `cancel` can stop it between units.
+    pub fn underground_or_stop(
+        self: &Arc<Self>,
+        cancel: &Cancel,
+    ) -> Result<&Underground, Cancelled> {
+        if let Some(u) = self.underground.get() {
+            return Ok(u);
+        }
+        let (lo, hi) = underground_box(self);
+        let units = self.units_in(lo, hi);
+        plan_all_or_stop(self, &units, cancel)?;
+        cancel.check()?;
+        Ok(self.underground())
     }
 
     /// Where heroes start: on a street near the town's core, and the way

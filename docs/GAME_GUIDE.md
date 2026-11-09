@@ -38,10 +38,19 @@ See section 14.
 ### Title screen (`hw-client/src/title.rs`)
 
 The town at golden hour, a camera drifting round the Aether Spire, flying taxis crossing,
-golden HEROWORLD letters. Buttons: **Play / Continue**, **New hero**, **Play with friends**
-(host your world, or join by room code), **Settings**, **What's new**, **Quit**. The town
-builds behind the title with a loading bar; pressing Play early starts the moment it is
-ready. Your hero poses on the title; click them to change their looks. A crash report from
+golden HEROWORLD letters. Buttons: **Play / Continue**, **New hero**, **Your city**,
+**Play with friends** (host your world, or join by room code), **Settings**, **What's new**,
+**Quit**. The town builds behind the title with a loading bar; pressing Play early starts the
+moment it is ready.
+
+**Your city** (also "Change city" in New hero) opens a window: the world number and the
+city's size, Hamlet (300 people), Village (3 000), Town (15 000), City (40 000, the default),
+Big city (250 000), Metropolis (1 million), Megalopolis (2 million). Nothing is built while the
+window is open; **OK** saves the choice in the profile and starts planning that city behind
+the title (`citybuild.rs`). Picking again before it is done cancels the plan on its way (a
+million-person plan stops within a second) and the next starts only once it has; only the
+last choice is ever used. The city you last played is built at start; one bigger than the
+default starts the title on a hamlet behind its cover so the window opens at once. Your hero poses on the title; click them to change their looks. A crash report from
 the last run is pointed out once on the title.
 
 ### New hero
@@ -414,8 +423,8 @@ limit).
 Each world seed gives one town. The planet layer (continents, regions, many towns, roads
 between them) is designed but not built; the town stands in endless streamed ground and sea.
 
-- **Size:** any size from hamlet to megalopolis; the game uses `HW_POP` people (40 000 by
-  default). Towns plan in fractions of a second; detail is planned per district on demand
+- **Size:** any size from hamlet to megalopolis; the player picks it in the title's city
+  window (saved in the profile; `HW_POP` overrides, 40 000 by default). Towns plan in fractions of a second; detail is planned per district on demand
   as you approach (`DetailId`, see streaming notes).
 - **Growth** (`hw-gen/src/urban/`): a town grows from an old core along roads, rivers and
   coasts, shaped by hills. Sites: river crossings, confluences, estuaries, bays, coasts,
@@ -767,7 +776,7 @@ run, or put them in a `.bat`.
 | Variable | Effect |
 | --- | --- |
 | `HW_SEED=n` | World seed (which town). |
-| `HW_POP=n` | Town population (default 40 000; 3 000+ gets a villain quarter). |
+| `HW_POP=n` | Town population (default: the profile's city, 40 000 at first; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
 | `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
@@ -781,7 +790,7 @@ run, or put them in a `.bat`.
 
 | Variable | Effect |
 | --- | --- |
-| `HW_TITLE=0` | Skip the title. `HW_TITLE_PANEL=new\|friends\|settings\|creator`, `HW_TITLE_TIME`, `HW_TITLE_AUTOSTART` drive it. |
+| `HW_TITLE=0` | Skip the title. `HW_TITLE_PANEL=new\|friends\|settings\|creator\|city`, `HW_TITLE_TIME`, `HW_TITLE_AUTOSTART` drive it. |
 | `HW_CREATOR_SECTION`, `HW_CREATOR_DETAILED=1` | Open the creator at a section, in the detailed view. |
 | `HW_MENU=main\|settings\|controls` | Open the Escape menu. |
 | `HW_WHATS_NEW=1` | Open "What's new". |

@@ -11,6 +11,7 @@ use super::quarter::{DetailId, Quarter, Streets, Unit};
 use super::waterfront::{QuayWall, WaterSteps};
 use super::world::{TownWorld, WorldBuilding, WorldRoad};
 use glam::DVec2;
+use hw_core::{Cancel, Cancelled};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -49,10 +50,20 @@ impl Area {
     /// The square of half side `half` round `centre`. Plans its units on
     /// all cores at once.
     pub fn around(world: Arc<TownWorld>, centre: DVec2, half: f64) -> Area {
+        Self::around_or_stop(world, centre, half, &Cancel::new()).expect("nobody can cancel this")
+    }
+
+    /// [`Area::around`] that gives up between units once `cancel` is set.
+    pub fn around_or_stop(
+        world: Arc<TownWorld>,
+        centre: DVec2,
+        half: f64,
+        cancel: &Cancel,
+    ) -> Result<Area, Cancelled> {
         let lo = centre - DVec2::splat(half);
         let hi = centre + DVec2::splat(half);
         let units = world.units_in(lo, hi);
-        let quarters = plan_all(&world, &units);
+        let quarters = plan_all_or_stop(&world, &units, cancel)?;
         let mut out = Area {
             roads: Vec::new(),
             buildings: Vec::new(),
@@ -103,7 +114,7 @@ impl Area {
             .enumerate()
             .map(|(i, id)| (*id, i))
             .collect();
-        out
+        Ok(out)
     }
 
     /// Does the square hold `p`?
@@ -124,6 +135,15 @@ impl Area {
 
 /// Plans units on every core.
 pub fn plan_all(world: &Arc<TownWorld>, units: &[Unit]) -> Vec<Arc<Quarter>> {
+    plan_all_or_stop(world, units, &Cancel::new()).expect("nobody can cancel this")
+}
+
+/// [`plan_all`] that gives up between units once `cancel` is set.
+pub fn plan_all_or_stop(
+    world: &Arc<TownWorld>,
+    units: &[Unit],
+    cancel: &Cancel,
+) -> Result<Vec<Arc<Quarter>>, Cancelled> {
     let threads = std::thread::available_parallelism()
         .map_or(2, |n| n.get())
         .clamp(1, 8);
@@ -131,11 +151,22 @@ pub fn plan_all(world: &Arc<TownWorld>, units: &[Unit]) -> Vec<Arc<Quarter>> {
     std::thread::scope(|s| {
         let jobs: Vec<_> = units
             .chunks(chunk)
-            .map(|part| s.spawn(move || part.iter().map(|u| world.quarter(*u)).collect::<Vec<_>>()))
+            .map(|part| {
+                s.spawn(move || {
+                    part.iter()
+                        .map(|u| {
+                            cancel.check()?;
+                            Ok(world.quarter(*u))
+                        })
+                        .collect::<Result<Vec<_>, Cancelled>>()
+                })
+            })
             .collect();
-        jobs.into_iter()
-            .flat_map(|j| j.join().expect("planning a unit"))
-            .collect()
+        let mut out = Vec::with_capacity(units.len());
+        for j in jobs {
+            out.extend(j.join().expect("planning a unit")?);
+        }
+        Ok(out)
     })
 }
 
