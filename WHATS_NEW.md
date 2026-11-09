@@ -3,6 +3,16 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.084 (2026-11-09)
+
+- Hero kits in the hero creator: capes (short, classic, long, bat wing, pointed) with a
+  standing or flared collar, masks (domino, bandit, cowl), belts (plain, buckle, utility belt
+  with pouches) and a raised chest emblem with a symbol of your choice. Eight ready-made kits
+  on the Simple tab; every colour, the emblem's size and a finish for each piece (satin,
+  leather, rubber, gloss, metal) on the Detailed tab.
+- Capes move: they swing as you walk, stream behind you when you run and fly, and billow in
+  your heroic pose.
+
 ## 0.083 (2026-11-09)
 
 - Traffic, people on the pavements, taxis and incidents now follow you across the whole

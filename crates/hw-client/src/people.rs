@@ -1226,6 +1226,7 @@ pub fn build(
     if hero {
         poses::add_flight_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::add_heroic_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+        poses::swing_cape(&mut c);
     }
     if matches!(who, Who::Villain(..)) {
         poses::add_cuffed_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;

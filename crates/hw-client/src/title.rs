@@ -271,10 +271,28 @@ impl Title {
                     c.0.section = match s.as_str() {
                         "face" => crate::creator::Section::Face,
                         "costume" => crate::creator::Section::Costume,
+                        "kit" => crate::creator::Section::Kit,
                         "colours" => crate::creator::Section::Colours,
                         _ => crate::creator::Section::Body,
                     };
                     c.0.set_detailed(std::env::var_os("HW_CREATOR_DETAILED").is_some());
+                }
+            }
+            if let Some(spin) = std::env::var("HW_CREATOR_SPIN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+            {
+                if let Some(c) = self.creator.as_mut() {
+                    c.0.spin = spin;
+                }
+            }
+            // A ready-made hero kit on the preview (screenshots), by number.
+            if let Some(k) = std::env::var("HW_CREATOR_KIT")
+                .ok()
+                .and_then(|k| k.parse::<usize>().ok())
+            {
+                if let (Some(c), Some(p)) = (self.creator.as_mut(), crate::creator::KITS.get(k)) {
+                    crate::creator::apply_kit(&mut c.0.config.costume, p);
                 }
             }
         }
@@ -369,14 +387,22 @@ impl Title {
         let up = right.cross(fwd);
         let th = (cam.fov_y_degrees().to_radians() * 0.5).tan();
         // How much of the screen's height the hero takes, and where.
-        let (fill, x_ndc, y_ndc) = if creating {
+        let (mut fill, x_ndc, y_ndc) = if creating {
             (0.66, 0.36, 0.0)
         } else {
             (0.46, 0.5, -0.1)
         };
+        // Close-ups for screenshots: HW_CREATOR_FILL (share of the screen's
+        // height) and HW_CREATOR_LOWER (metres the hero stands lower).
+        let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f32>().ok());
+        let mut lower = 0.0;
+        if creating {
+            fill = env("HW_CREATOR_FILL").unwrap_or(fill);
+            lower = env("HW_CREATOR_LOWER").unwrap_or(0.0);
+        }
         let d = 1.9 / (fill * 2.0 * th);
         let middle = eye + fwd * d + right * (x_ndc * th * aspect * d) + up * (y_ndc * th * d);
-        let feet = middle - Vec3::Y * 0.9;
+        let feet = middle - Vec3::Y * (0.9 + lower);
         let to_eye = eye - feet;
         let yaw = to_eye.x.atan2(to_eye.z).to_degrees() + spin;
         world.set_place(

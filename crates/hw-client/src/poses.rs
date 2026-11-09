@@ -178,6 +178,34 @@ struct Pose {
     lift: f32,
 }
 
+/// Gives the posed clips' capes their swing (Actors simulates the cloth
+/// once per clip): in level flight the air streams from the head to the feet
+/// (the game pitches the body about 80 degrees forward), hovering is nearly
+/// still, and the heroic stance gets a breeze from the front so the cape
+/// billows. A hero without a cape is left as is.
+pub fn swing_cape(c: &mut actors_engine::CharacterModel) {
+    use actors_engine::{swing_cape, CapeWind};
+    let Some(rig) = c.cape.clone() else { return };
+    let winds = [
+        ("fly", Vec3::new(0.0, 0.99, 0.14) * 14.0),
+        ("hover", Vec3::new(0.0, 0.3, 0.6)),
+        ("heroic", Vec3::new(0.6, 0.0, 2.6)),
+    ];
+    for (name, travel) in winds {
+        if let Some(i) = c.model.clips.iter().position(|k| k.name == name) {
+            swing_cape(
+                &mut c.model,
+                &rig,
+                i,
+                CapeWind {
+                    travel,
+                    root_motion: false,
+                },
+            );
+        }
+    }
+}
+
 /// Samples "idle" `duration` seconds long at 30 fps and lays `pose(t)` over
 /// it (`t` runs 0..1 over the loop).
 fn make_clip(

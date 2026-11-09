@@ -1,14 +1,19 @@
 //! The hero creator: the Actors web creator's sections, made for the game.
 //!
-//! Four sections (body, face and hair, costume, colours), each with a
+//! Five sections (body, face and hair, costume, hero kit, colours), each with a
 //! Simple tab (a few presets, enough to make a hero in a minute) and a
 //! Detailed tab (every slider). It edits an Actors `CharacterConfig` in
 //! what the hero catalog allows (see [`crate::people::hero_catalog`]); the
 //! title screen draws the card around it and the live preview beside it.
+//! The hero kit is Actors' costume: a cape (it swings), a collar, a mask, a
+//! belt and a chest emblem with its symbol, and a finish for every piece.
 
 use crate::looks;
 use crate::people;
-use actors_generator::{outfit_garments, tables, CharacterCatalog, CharacterConfig, SkinKind};
+use actors_generator::{
+    outfit_garments, tables, CharacterCatalog, CharacterConfig, CostumeLook, SkinKind,
+    COSTUME_FINISHES,
+};
 use actors_human::{body_types, shape_sliders, HumanParams, ADULT_MIN_AGE, MAX_AGE};
 use engine::ui::egui::{self, vec2, Color32, RichText, Stroke};
 use std::sync::Arc;
@@ -18,13 +23,15 @@ pub enum Section {
     Body,
     Face,
     Costume,
+    Kit,
     Colours,
 }
 
-pub const SECTIONS: [(Section, &str); 4] = [
+pub const SECTIONS: [(Section, &str); 5] = [
     (Section::Body, "Body"),
     (Section::Face, "Face & hair"),
     (Section::Costume, "Costume"),
+    (Section::Kit, "Hero kit"),
     (Section::Colours, "Colours"),
 ];
 
@@ -53,12 +60,14 @@ pub struct Creator {
     catalog: Arc<CharacterCatalog>,
     pub section: Section,
     /// Detailed tab per section (else Simple).
-    detailed: [bool; 4],
+    detailed: [bool; 5],
     /// The preview strikes the heroic pose (else stands at ease).
     pub heroic: bool,
     /// How far the preview is turned, in degrees (drag it round).
     pub spin: f32,
     rolls: u32,
+    /// The emblem preview's texture, with the looks it shows.
+    emblem: Option<(String, egui::TextureHandle)>,
 }
 
 impl Creator {
@@ -68,10 +77,11 @@ impl Creator {
             config: looks::hero_rules(&catalog, config),
             catalog,
             section: Section::Body,
-            detailed: [false; 4],
+            detailed: [false; 5],
             heroic: true,
             spin: 0.0,
             rolls: 0,
+            emblem: None,
         }
     }
 
@@ -96,6 +106,11 @@ impl Creator {
                 let o = *rng.pick(&fits);
                 c.outfit = outfit_garments(o, &c.body);
                 c.garment_colors = o.colors.clone().unwrap_or_default();
+            }
+            // Most costumed heroes wear a hero kit too: a cape, a mask, an emblem.
+            if rng.chance(0.8) {
+                let k = rng.range_int(1, KITS.len() as i64) as usize;
+                apply_kit(&mut c.costume, &KITS[k]);
             }
         }
         looks::hero_rules(catalog, &c)
@@ -160,6 +175,7 @@ impl Creator {
             Section::Body => body(ui, &cat, &mut self.config, detailed),
             Section::Face => face(ui, &cat, &mut self.config, detailed),
             Section::Costume => costume(ui, &cat, &mut self.config, detailed),
+            Section::Kit => kit(ui, &cat, &mut self.config, detailed, &mut self.emblem),
             Section::Colours => colours(ui, &cat, &mut self.config, detailed),
         }
         self.config != before
@@ -528,6 +544,313 @@ fn costume(ui: &mut egui::Ui, cat: &CharacterCatalog, c: &mut CharacterConfig, d
     }
 }
 
+/// Ready-made hero kits for the Simple tab: (name, cape, collar, mask, belt,
+/// emblem, symbol, cape, lining, emblem, symbol colours).
+type KitPreset = (&'static str, [&'static str; 6], [&'static str; 4]);
+pub const KITS: [KitPreset; 8] = [
+    (
+        "None",
+        ["none", "none", "none", "none", "none", "none"],
+        ["#c8202a", "#f2c230", "#c8202a", "#f2c230"],
+    ),
+    (
+        "Caped champion",
+        ["classic", "standing", "none", "buckle", "shield", "bolt"],
+        ["#c8202a", "#f2c230", "#c8202a", "#f2c230"],
+    ),
+    (
+        "Rocket ace",
+        ["short", "none", "domino", "utility", "circle", "rocket"],
+        ["#1f4fa8", "#e8e8f0", "#f2c230", "#1f4fa8"],
+    ),
+    (
+        "Atomic marvel",
+        ["long", "flared", "none", "plain", "hexagon", "atom"],
+        ["#4a1f7a", "#2bc4b4", "#2bc4b4", "#4a1f7a"],
+    ),
+    (
+        "Night watch",
+        ["scalloped", "flared", "cowl", "utility", "cutout", "eye"],
+        ["#1a1d2e", "#5a1020", "#f2c230", "#1a1d2e"],
+    ),
+    (
+        "Star spangled",
+        ["pointed", "standing", "domino", "buckle", "star", "none"],
+        ["#f4f4f4", "#c8202a", "#1f4fa8", "#f4f4f4"],
+    ),
+    (
+        "Masked rider",
+        ["none", "none", "bandit", "buckle", "none", "none"],
+        ["#c8202a", "#f2c230", "#c8202a", "#f2c230"],
+    ),
+    (
+        "Comet queen",
+        ["classic", "flared", "domino", "plain", "diamond", "comet"],
+        ["#e0407a", "#f8d2e0", "#f8d2e0", "#e0407a"],
+    ),
+];
+
+/// Puts a kit preset on the looks (colours of belt, mask and rim follow it).
+pub fn apply_kit(c: &mut CostumeLook, k: &KitPreset) {
+    let [cape, collar, mask, belt, emblem, symbol] = k.1;
+    let [cape_c, lining, emblem_c, symbol_c] = k.2;
+    c.cape = cape.into();
+    c.collar = collar.into();
+    c.mask = mask.into();
+    c.belt = belt.into();
+    c.emblem = emblem.into();
+    c.symbol = symbol.into();
+    c.cape_color = cape_c.into();
+    c.lining_color = lining.into();
+    c.emblem_color = emblem_c.into();
+    c.symbol_color = symbol_c.into();
+    c.rim_color = symbol_c.into();
+    c.mask_color = cape_c.into();
+    c.belt_color = lining.into();
+}
+
+fn kit_is(c: &CostumeLook, k: &KitPreset) -> bool {
+    let [cape, collar, mask, belt, emblem, symbol] = k.1;
+    c.cape == cape
+        && c.collar == collar
+        && c.mask == mask
+        && c.belt == belt
+        && c.emblem == emblem
+        && (c.symbol == symbol || emblem == "none")
+}
+
+const CAPES: [(&str, &str); 6] = [
+    ("none", "No cape"),
+    ("short", "Short"),
+    ("classic", "Classic"),
+    ("long", "Long"),
+    ("scalloped", "Bat wing"),
+    ("pointed", "Pointed"),
+];
+const COLLARS: [(&str, &str); 3] = [
+    ("none", "No collar"),
+    ("standing", "Standing"),
+    ("flared", "Flared"),
+];
+const MASKS: [(&str, &str); 4] = [
+    ("none", "No mask"),
+    ("domino", "Domino"),
+    ("bandit", "Bandit"),
+    ("cowl", "Cowl"),
+];
+const BELTS: [(&str, &str); 4] = [
+    ("none", "No belt"),
+    ("plain", "Plain"),
+    ("buckle", "Buckle"),
+    ("utility", "Utility"),
+];
+const EMBLEMS: [(&str, &str); 8] = [
+    ("none", "No emblem"),
+    ("circle", "Circle"),
+    ("shield", "Shield"),
+    ("diamond", "Diamond"),
+    ("star", "Star"),
+    ("hexagon", "Hexagon"),
+    ("badge", "Badge"),
+    ("cutout", "Symbol only"),
+];
+const SYMBOLS: [(&str, &str); 11] = [
+    ("none", "Plain"),
+    ("star", "Star"),
+    ("bolt", "Bolt"),
+    ("atom", "Atom"),
+    ("rocket", "Rocket"),
+    ("planet", "Planet"),
+    ("comet", "Comet"),
+    ("flame", "Flame"),
+    ("eye", "Eye"),
+    ("wings", "Wings"),
+    ("crown", "Crown"),
+];
+
+/// A row of choices for a style.
+fn styles(ui: &mut egui::Ui, label: &str, current: &mut String, list: &[(&str, &str)]) {
+    ui.label(RichText::new(label).strong());
+    ui.horizontal_wrapped(|ui| {
+        for (id, name) in list {
+            if ui.selectable_label(current == id, *name).clicked() {
+                *current = id.to_string();
+            }
+        }
+    });
+}
+
+/// Palette swatches and a free picker for a colour that is always set.
+fn colour_row(ui: &mut egui::Ui, label: &str, current: &mut String, cat: &CharacterCatalog) {
+    ui.horizontal_wrapped(|ui| {
+        ui.add_sized([96.0, 20.0], egui::Label::new(label).truncate());
+        let mut col = Some(current.clone());
+        swatches_only(
+            ui,
+            &mut col,
+            cat.garment_colors.iter().map(|h| (&h.id, &h.label)),
+        );
+        colour_pick(ui, &mut col, current);
+        if let Some(c) = col {
+            *current = c;
+        }
+    });
+}
+
+/// A finish for a piece: the default or one of Actors' finishes.
+fn finish_row(ui: &mut egui::Ui, label: &str, key: &str, c: &mut CostumeLook) {
+    let current = c.finishes.get(key).cloned();
+    let shown = current
+        .as_deref()
+        .and_then(|f| COSTUME_FINISHES.iter().find(|x| x.0 == f))
+        .map_or("Default", |x| x.1);
+    let mut pick = current.clone();
+    ui.horizontal(|ui| {
+        ui.add_sized([130.0, 20.0], egui::Label::new(label).truncate());
+        egui::ComboBox::from_id_salt(("finish", key))
+            .selected_text(shown)
+            .width(170.0)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut pick, None, "Default");
+                for f in COSTUME_FINISHES {
+                    ui.selectable_value(&mut pick, Some(f.0.to_string()), f.1);
+                }
+            });
+    });
+    if pick != current {
+        match pick {
+            Some(f) => {
+                c.finishes.insert(key.into(), f);
+            }
+            None => {
+                c.finishes.shift_remove(key);
+            }
+        }
+    }
+}
+
+/// The emblem as it will be painted, drawn from the same texture the model gets.
+fn emblem_preview(
+    ui: &mut egui::Ui,
+    c: &CostumeLook,
+    cache: &mut Option<(String, egui::TextureHandle)>,
+) {
+    let key = format!(
+        "{}|{}|{}|{}",
+        c.emblem, c.symbol, c.emblem_color, c.symbol_color
+    );
+    if cache.as_ref().is_none_or(|(k, _)| *k != key) {
+        let rgb = |h: &str| parse_hex(h).map_or([1.0; 3], |v| v.map(|x| x as f64 / 255.0));
+        let paint = actors_human::emblem::EmblemPaint {
+            shape: c.emblem.clone(),
+            symbol: c.symbol.clone(),
+            plate: rgb(&c.emblem_color),
+            ink: rgb(&c.symbol_color),
+        };
+        const SIZE: usize = 128;
+        let rgba = actors_human::emblem::emblem_texture(&paint, SIZE);
+        let image = egui::ColorImage::from_rgba_unmultiplied([SIZE, SIZE], &rgba);
+        let tex = ui
+            .ctx()
+            .load_texture("emblem-preview", image, egui::TextureOptions::LINEAR);
+        *cache = Some((key, tex));
+    }
+    if let Some((_, tex)) = cache {
+        ui.add(egui::Image::new((tex.id(), vec2(96.0, 96.0))));
+    }
+}
+
+fn kit(
+    ui: &mut egui::Ui,
+    cat: &CharacterCatalog,
+    c: &mut CharacterConfig,
+    detailed: bool,
+    emblem: &mut Option<(String, egui::TextureHandle)>,
+) {
+    let k = &mut c.costume;
+    if !detailed {
+        ui.label(RichText::new("Ready-made kits").strong());
+        ui.horizontal_wrapped(|ui| {
+            for p in &KITS {
+                if ui.selectable_label(kit_is(k, p), p.0).clicked() {
+                    apply_kit(k, p);
+                }
+            }
+        });
+        ui.separator();
+        styles(ui, "Cape", &mut k.cape, &CAPES);
+        styles(ui, "Mask", &mut k.mask, &MASKS);
+        styles(ui, "Chest emblem", &mut k.emblem, &EMBLEMS);
+        if k.emblem != "none" {
+            styles(ui, "Symbol", &mut k.symbol, &SYMBOLS);
+        }
+        ui.label(
+            "Detailed: collar, belt, every colour, the emblem's size and the finish of each piece.",
+        );
+        return;
+    }
+    styles(ui, "Cape", &mut k.cape, &CAPES);
+    if k.cape != "none" {
+        styles(ui, "Collar", &mut k.collar, &COLLARS);
+        colour_row(ui, "Cape", &mut k.cape_color, cat);
+        colour_row(ui, "Lining", &mut k.lining_color, cat);
+    }
+    ui.separator();
+    styles(ui, "Mask", &mut k.mask, &MASKS);
+    if k.mask != "none" {
+        colour_row(ui, "Mask", &mut k.mask_color, cat);
+    }
+    ui.separator();
+    styles(ui, "Belt", &mut k.belt, &BELTS);
+    if k.belt != "none" {
+        colour_row(ui, "Belt", &mut k.belt_color, cat);
+        if k.belt != "plain" {
+            colour_row(ui, "Buckle", &mut k.buckle_color, cat);
+        }
+    }
+    ui.separator();
+    styles(ui, "Chest emblem", &mut k.emblem, &EMBLEMS);
+    if k.emblem != "none" {
+        styles(ui, "Symbol", &mut k.symbol, &SYMBOLS);
+        ui.horizontal(|ui| {
+            emblem_preview(ui, k, emblem);
+            ui.vertical(|ui| {
+                slider(ui, "Size", &mut k.emblem_size, 0.0..=1.0);
+                colour_row(ui, "Emblem", &mut k.emblem_color, cat);
+                colour_row(ui, "Symbol", &mut k.symbol_color, cat);
+                colour_row(ui, "Rim", &mut k.rim_color, cat);
+            });
+        });
+    }
+    ui.separator();
+    egui::CollapsingHeader::new("Finishes: satin, leather, rubber, gloss, metal")
+        .id_salt("finishes")
+        .show(ui, |ui| {
+            let parts = [
+                ("cape", "Cape", k.cape != "none"),
+                ("mask", "Mask", k.mask != "none"),
+                ("belt", "Belt", k.belt != "none"),
+                (
+                    "buckle",
+                    "Buckle",
+                    k.belt == "buckle" || k.belt == "utility",
+                ),
+                ("emblem", "Emblem", k.emblem != "none"),
+                ("rim", "Emblem rim", k.emblem != "none"),
+            ];
+            for (key, label, on) in parts {
+                if on {
+                    finish_row(ui, label, key, k);
+                }
+            }
+            for id in &c.outfit {
+                if let Some(g) = cat.garment(id) {
+                    finish_row(ui, &g.label, id, k);
+                }
+            }
+        });
+}
+
 fn colours(ui: &mut egui::Ui, cat: &CharacterCatalog, c: &mut CharacterConfig, detailed: bool) {
     ui.label("A colour for each piece you wear.");
     let worn = c.outfit.clone();
@@ -603,6 +926,31 @@ fn swatches<'a>(
             }
         }
     });
+}
+
+/// Colour swatches of the palette only (a colour is always set).
+fn swatches_only<'a>(
+    ui: &mut egui::Ui,
+    current: &mut Option<String>,
+    palette: impl Iterator<Item = (&'a String, &'a String)>,
+) {
+    ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+    for (hex, label) in palette {
+        let Some(rgb) = parse_hex(hex) else { continue };
+        let on = current.as_deref() == Some(hex.as_str());
+        let (rect, r) = ui.allocate_exact_size(vec2(18.0, 18.0), egui::Sense::click());
+        let p = ui.painter();
+        p.rect_filled(rect, 4.0, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+        let stroke = if on {
+            Stroke::new(3.0_f32, Color32::from_rgb(226, 52, 48))
+        } else {
+            Stroke::new(1.0_f32, Color32::from_rgb(22, 26, 64))
+        };
+        p.rect_stroke(rect, 4.0, stroke, egui::StrokeKind::Inside);
+        if r.on_hover_text(label.as_str()).clicked() {
+            *current = Some(hex.clone());
+        }
+    }
 }
 
 /// A free colour picker for an optional sRGB hex colour.
