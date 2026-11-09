@@ -231,6 +231,26 @@ fn run(
     events
 }
 
+/// Ticks like `run` until `done` holds for the events so far and the
+/// clients, so a slow machine waits longer instead of failing; gives up
+/// after `max` ticks (several seconds).
+fn run_until(
+    host: &mut Host,
+    clients: &mut [&mut Connection],
+    input: InputState,
+    max: u32,
+    done: impl Fn(&[HostEvent], &[&mut Connection]) -> bool,
+) -> Vec<HostEvent> {
+    let mut events = Vec::new();
+    for _ in 0..max {
+        events.extend(run(host, clients, input, 1));
+        if done(&events, clients) {
+            break;
+        }
+    }
+    events
+}
+
 #[test]
 fn friends_join_by_room_code_and_play_through_the_relay() {
     let url = fake_hub();
@@ -255,7 +275,18 @@ fn friends_join_by_room_code_and_play_through_the_relay() {
         move_x: 1.0,
         ..Default::default()
     };
-    let events = run(&mut host, &mut [&mut a, &mut b], east, 40);
+    // Over WebSockets the joins take a varying number of ticks (a busy CI
+    // machine is slow): wait for both, not for a fixed count.
+    let events = run_until(&mut host, &mut [&mut a, &mut b], east, 1000, |ev, cs| {
+        let joined = ev
+            .iter()
+            .filter(|e| matches!(e, HostEvent::Joined { .. }))
+            .count();
+        joined == 2
+            && cs
+                .iter()
+                .all(|c| matches!(c.state, ConnState::Connected { .. }))
+    });
     let joined: Vec<&str> = events
         .iter()
         .filter_map(|e| match e {
@@ -281,7 +312,16 @@ fn friends_join_by_room_code_and_play_through_the_relay() {
 
     // Bob closes the game: the relay says he left, his hero goes.
     drop(b);
-    let events = run(&mut host, &mut [&mut a], InputState::default(), 30);
+    let events = run_until(
+        &mut host,
+        &mut [&mut a],
+        InputState::default(),
+        1000,
+        |ev, _| {
+            ev.iter()
+                .any(|e| matches!(e, HostEvent::Left { name, .. } if name == "Bob"))
+        },
+    );
     assert!(events
         .iter()
         .any(|e| matches!(e, HostEvent::Left { name, .. } if name == "Bob")));

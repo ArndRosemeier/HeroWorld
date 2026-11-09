@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.101 (2026-11-09)
+
+- Behind the scenes: a test of playing through the online relay no longer fails at random on a busy test machine.
+
 ## 0.100 (2026-11-09)
 
 - Feet stand on the ground you see: no more sinking a few centimetres into roads, kerbs, stairs, lawns or floors. Heroes and townspeople alike.
