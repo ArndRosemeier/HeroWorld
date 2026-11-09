@@ -23,6 +23,11 @@ const STREET_TOP: f64 = 0.26;
 /// instead of fighting with them.
 const BOULEVARD_TOP: f64 = 0.28;
 pub const BLOCK_TOP: f64 = 0.22;
+/// Top of a cut-open floor's room floors above the floor's elevation, close
+/// to where collision stands people (the slab under a floor ends at its
+/// elevation). 2 cm over the pavement where a ground floor meets it, so the
+/// two never fight; foot IK stands feet on the drawn floor.
+pub const ROOM_FLOOR_TOP: f64 = 0.04;
 /// Sand on a beach, below the promenade.
 const SAND_TOP: f64 = 0.08;
 /// Depth of rivers and the sea near the shore (m).
@@ -1105,10 +1110,12 @@ pub fn add_building(
             b.tex = Some(tex);
             let c = room.rect.center();
             let s = room.rect.size() - glam::DVec2::splat(0.002);
+            // From the floor line (where the walls below end) to just over
+            // where people stand (see ROOM_FLOOR_TOP).
             b.oriented_box(
-                to_city(c.x, y + 0.15, c.y),
+                to_city(c.x, y + ROOM_FLOOR_TOP * 0.5, c.y),
                 u,
-                DVec3::new(s.x * 0.5, 0.15, s.y * 0.5),
+                DVec3::new(s.x * 0.5, ROOM_FLOOR_TOP * 0.5, s.y * 0.5),
                 floor,
             );
         }
@@ -1116,7 +1123,7 @@ pub fn add_building(
         b.tex = Some(engine::texgen::FacadeLayer::Plaster.into());
         draw_cut_walls(b, f, y, facade, &|x, y, z| to_city(x, y, z), u);
         b.tex = None;
-        crate::interior::furnish(b, plan, shown_floors, y + 0.3, u);
+        crate::interior::furnish(b, plan, shown_floors, y + ROOM_FLOOR_TOP, u);
     }
 }
 

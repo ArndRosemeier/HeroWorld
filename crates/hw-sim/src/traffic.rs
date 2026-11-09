@@ -1484,7 +1484,8 @@ impl Traffic {
         } else {
             let (pf, _) = l.path.sample(s + 1.6);
             let (pb, _) = l.path.sample(s - 1.6);
-            let (yf, yb) = (road(pf), road(pb));
+            // Wheels on the drawn carriageway, not the bare road height.
+            let (yf, yb) = (self.world.surface(pf), self.world.surface(pb));
             let lift = if matches!(kind, VehicleKind::Car(CarModel::Hover, _)) {
                 0.25
             } else {

@@ -418,7 +418,7 @@ fn background_threads() -> usize {
 
 /// Engine streams the town's ground and water, and the country's woods
 /// drawn with the props' tree sets.
-fn set_town_stream(
+pub fn set_town_stream(
     world: &mut World,
     town: &Arc<TownWorld>,
     green: Arc<Greenery>,

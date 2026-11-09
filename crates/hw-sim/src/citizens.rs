@@ -505,7 +505,7 @@ impl Citizens {
     fn at(&self, id: u64, p: DVec2, facing: DVec2, speed: f64, look: u32) -> Citizen {
         Citizen {
             id,
-            pos: DVec3::new(p.x, self.world.road_height(p) + 0.06, p.y),
+            pos: DVec3::new(p.x, self.world.surface(p), p.y),
             facing: facing.normalize_or(DVec2::Y),
             speed,
             look,

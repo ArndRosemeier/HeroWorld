@@ -97,6 +97,8 @@ impl GrassView {
         let id = world.spawn_lod(levels)?;
         for e in world.lod_levels(id)? {
             world.set_casts_shadow(e, false)?;
+            // Blades bend under feet: they are not ground to stand on.
+            world.set_walkable(e, false);
         }
         Ok(id)
     }

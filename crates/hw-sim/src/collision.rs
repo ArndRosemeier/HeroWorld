@@ -1295,6 +1295,12 @@ fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
             for r in minus(below, plan.core) {
                 push(r, y - SLAB, y);
             }
+        } else {
+            // The ground floor stands on its own slab at the building's
+            // base, as drawn, not on the ground under it.
+            for r in minus(f.outline, plan.core) {
+                push(r, y - SLAB, y);
+            }
         }
         // Walls: every room edge, minus the doors on it. Shared edges come
         // twice; that is harmless for collision.

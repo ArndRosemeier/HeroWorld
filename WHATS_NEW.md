@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.100 (2026-11-09)
+
+- Feet stand on the ground you see: no more sinking a few centimetres into roads, kerbs, stairs, lawns or floors. Heroes and townspeople alike.
+- Floors inside buildings sit where they are drawn; you no longer walk a hand's width under them.
+- A new test walks a hero and a townsperson over streets, stairs, lawns, slopes, floors and tunnels on every update, so sinking feet stay fixed.
+
 ## 0.099 (2026-11-09)
 
 - The light over a call no longer hangs in mid-air: it is now a glowing column that rises from the trouble itself, with a ring of light on the ground round the spot. Faint at the bottom, so it never blocks your view up close.

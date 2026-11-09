@@ -30,8 +30,6 @@ pub const DISTANT_DETAIL: f64 = 620.0;
 pub const CUT_RADIUS: f64 = 110.0;
 /// Faces per mesh, well inside a GPU buffer.
 const MESH_FACES: usize = 250_000;
-/// Longest stretch of road between height samples (m).
-const ROAD_STEP: f64 = 3.0;
 
 /// The town's ground and water for Engine's world streaming, and the woods
 /// of the open country, streamed in tiles around the camera.
@@ -519,6 +517,14 @@ impl TownView {
         }
     }
 
+    /// Draws the cells around `p` in full detail now, on this thread (for
+    /// checks and tools that need a piece of the town, not a stream).
+    pub fn build_around(&mut self, world: &mut World, p: DVec2, r: f64) {
+        for k in self.cells_within(p, r + CELL * 0.75) {
+            self.build_cell(world, k, Detail::Near);
+        }
+    }
+
     /// The cells within `r` of `eye` on the town's ground.
     fn cells_within(&self, eye: DVec2, r: f64) -> Vec<CellKey> {
         let h = self.world.half();
@@ -861,59 +867,38 @@ fn centre(b: &hw_gen::urban::world::WorldBuilding) -> DVec2 {
     s.origin + s.along * s.size.x * 0.5 + s.inward * s.size.y * 0.5
 }
 
-/// The stretches of road `r` drawn by cell `k`: the road cut into steps of
-/// at most [`ROAD_STEP`], each step drawn by the cell holding its middle, so
-/// neighbouring cells' stretches meet end to end.
-fn runs_in(r: &WorldRoad, k: CellKey) -> Vec<Vec<DVec2>> {
-    let (lo, hi) = cell_box(k);
-    let (lo, hi) = (lo - DVec2::ONE, hi + DVec2::ONE);
+/// The stretches of road `r` drawn by cell `k`: the road's strip points
+/// ([`WorldRoad::strip_points`], steps of at most `ROAD_STEP`), each step
+/// drawn by the cell holding its middle, so neighbouring cells' stretches
+/// meet end to end.
+fn runs_in(r: &WorldRoad, k: CellKey) -> Vec<Vec<(DVec2, DVec2)>> {
     let mut out = Vec::new();
-    let mut run: Vec<DVec2> = Vec::new();
-    let mut flush = |run: &mut Vec<DVec2>| {
-        if run.len() >= 2 {
-            out.push(std::mem::take(run));
-        }
-        run.clear();
-    };
-    for w in r.pts.windows(2) {
-        let (a, b) = (w[0], w[1]);
-        let (s0, s1) = (a.min(b), a.max(b));
-        if s1.x < lo.x || s0.x > hi.x || s1.y < lo.y || s0.y > hi.y {
-            flush(&mut run);
-            continue;
-        }
-        let n = (a.distance(b) / ROAD_STEP).ceil().max(1.0) as usize;
-        for j in 0..n {
-            let p = a.lerp(b, j as f64 / n as f64);
-            let q = a.lerp(b, (j + 1) as f64 / n as f64);
-            if cell_of(p.lerp(q, 0.5)) == k {
-                if run.is_empty() {
-                    run.push(p);
-                }
-                run.push(q);
-            } else {
-                flush(&mut run);
+    let mut run: Vec<(DVec2, DVec2)> = Vec::new();
+    for w in r.strip_points().windows(2) {
+        if cell_of(w[0].0.lerp(w[1].0, 0.5)) == k {
+            if run.is_empty() {
+                run.push(w[0]);
             }
+            run.push(w[1]);
+        } else if run.len() >= 2 {
+            out.push(std::mem::take(&mut run));
+        } else {
+            run.clear();
         }
     }
-    flush(&mut run);
+    if run.len() >= 2 {
+        out.push(run);
+    }
     out
 }
 
-/// Which of four heights a road is drawn at, so crossing roads never fight.
-fn road_layer(r: &WorldRoad) -> usize {
-    ((r.id.0 ^ (r.id.0 >> 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 62) as usize
-}
-
 /// One road run: pavements, then the carriageway a little higher so it wins
-/// where roads cross. Strips are mitred along the run, so a bend has no
-/// overlap.
-fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &[DVec2]) {
+/// where roads cross; both at the heights people stand on
+/// ([`TownWorld::surface`] reads the same lifts and strips).
+fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &[(DVec2, DVec2)]) {
     if run.len() < 2 {
         return;
     }
-    // Crossing roads at slightly different heights never fight.
-    let lift = 0.02 + (road_layer(r) % 4) as f64 * 0.012;
     let asphalt = if r.main {
         rgb(58, 58, 62)
     } else {
@@ -922,7 +907,7 @@ fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &[DVec2]) {
     let pavement = rgb(165, 160, 150);
     let total = r.half + r.pavement;
     b.tex = Some(GroundLayer::Paving.into());
-    strip(b, w, run, -total, total, lift, pavement);
+    strip(b, w, run, -total, total, r.pavement_lift(), pavement);
     // Old lanes are cobbled.
     let lane = r.style == Some(hw_gen::urban::streets::StreetStyle::Lanes);
     b.tex = Some(if lane {
@@ -931,34 +916,25 @@ fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &[DVec2]) {
         GroundLayer::RoadAsphalt.into()
     });
     let asphalt = if lane { rgb(120, 116, 110) } else { asphalt };
-    strip(b, w, run, -r.half, r.half, lift + 0.05, asphalt);
+    strip(b, w, run, -r.half, r.half, r.carriage_lift(), asphalt);
     b.tex = None;
 }
 
-/// A ribbon from offset `a` to `b` (left negative) along `pts`, draped on
-/// the road height plus `lift`.
-fn strip(b: &mut MeshBuilder, w: &TownWorld, pts: &[DVec2], a: f64, bo: f64, lift: f64, c: Color) {
+/// A ribbon from offset `a` to `b` (left negative) along strip points
+/// `pts`, draped on the road height plus `lift`.
+fn strip(
+    b: &mut MeshBuilder,
+    w: &TownWorld,
+    pts: &[(DVec2, DVec2)],
+    a: f64,
+    bo: f64,
+    lift: f64,
+    c: Color,
+) {
     let n = pts.len();
-    let normal = |k: usize| -> DVec2 {
-        let d0 = if k > 0 {
-            (pts[k] - pts[k - 1]).normalize_or_zero()
-        } else {
-            DVec2::ZERO
-        };
-        let d1 = if k + 1 < n {
-            (pts[k + 1] - pts[k]).normalize_or_zero()
-        } else {
-            DVec2::ZERO
-        };
-        let m = (d0 + d1).normalize_or_zero().perp();
-        // Mitre, limited at sharp turns.
-        let d = if d1 != DVec2::ZERO { d1 } else { d0 };
-        m / m.dot(d.perp()).max(0.5)
-    };
     let at = |p: DVec2| DVec3::new(p.x, w.road_height(p) + lift, p.y);
     for k in 0..n - 1 {
-        let (n0, n1) = (normal(k), normal(k + 1));
-        let (p, q) = (pts[k], pts[k + 1]);
+        let ((p, n0), (q, n1)) = (pts[k], pts[k + 1]);
         let quad = [
             at(p + n0 * a),
             at(q + n1 * a),

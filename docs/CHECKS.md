@@ -27,12 +27,13 @@ A test that takes more than about 12 s in a debug build is marked
 `#[ignore = "slow: scripts/check.sh --full and CI run it"]`. They are not dropped: CI runs
 `--full` on every push to main, and you run `--full` yourself when you change what they
 cover (memory over long trips, soak and ten-bot play, z-fighting, textures, traffic at
-junctions). Today they are:
+junctions, feet on the ground). Today they are:
 
 | Test | Crate | Debug-build time |
 | --- | --- | --- |
 | `ten_bots_play_for_ten_minutes` | hw-sim | 72 s |
 | `the_empire_waits_until_the_team_can_take_it` | hw-sim | 64 s |
+| `feet_stand_on_what_is_drawn` (feet on roads, stairs, lawns, slopes, floors, tunnels) | hw-client | 60 s |
 | `the_city_has_no_z_fighting` | hw-client | 57 s |
 | `buildings_are_textured` | hw-client | 40 s |
 | `an_evening_of_co_op_play` (soak) | hw-sim | 37 s |

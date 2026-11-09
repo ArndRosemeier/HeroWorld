@@ -249,7 +249,9 @@ impl GeneratedTown {
             TownParams::sample(seed, population),
         ));
         let w = world.clone();
-        let terrain = collision::Terrain(Arc::new(move |p| w.ground(p)));
+        // Open ground is what is drawn there: roads stand a few
+        // centimetres above the terrain.
+        let terrain = collision::Terrain(Arc::new(move |p| w.surface(p)));
         let (start, _) = world.spawn_line();
         let area = Arc::new(Area::around(world.clone(), start, AREA_HALF));
         let obstacles = Arc::new(Obstacles::from_town(&world, terrain));

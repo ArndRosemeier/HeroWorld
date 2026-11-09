@@ -29,7 +29,7 @@ fn main() {
     );
     let t = Instant::now();
     let w = world.clone();
-    let terrain = hw_sim::collision::Terrain(Arc::new(move |p| w.ground(p)));
+    let terrain = hw_sim::collision::Terrain(Arc::new(move |p| w.surface(p)));
     let _o = hw_sim::collision::Obstacles::from_town(&world, terrain);
     println!("collision {:.2?}", t.elapsed());
     let area = Arc::new(area);

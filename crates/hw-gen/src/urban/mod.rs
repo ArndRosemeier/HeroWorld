@@ -37,6 +37,7 @@ pub mod quarter;
 mod roadgrid;
 pub mod roads;
 pub mod streets;
+pub mod surface;
 pub mod tensor;
 pub mod trace;
 pub mod underground;

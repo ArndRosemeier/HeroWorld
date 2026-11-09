@@ -24,6 +24,7 @@ use super::quarter::{
 use super::roadgrid::RoadGrid;
 use super::roads::RoadClass;
 use super::streets::StreetStyle;
+use super::surface::{SurfaceTile, KEEP_SURFACE_TILES, SURFACE_TILE};
 use super::underground::{plan_underground, Underground};
 use super::waterfront::plan_waterfront;
 use super::{Town, TownParams};
@@ -160,6 +161,8 @@ pub struct TownWorld {
     splits: Cache<usize, Split>,
     streets: Cache<Unit, Streets>,
     quarters: Cache<Unit, Quarter>,
+    /// Road surfaces by tile, for [`Self::surface`].
+    surfaces: Cache<(i64, i64), SurfaceTile>,
     /// Utility tunnels, lifts and Molehaven, below the centre (planned on
     /// first use).
     underground: OnceLock<Underground>,
@@ -217,6 +220,7 @@ impl TownWorld {
             splits: Cache::new(KEEP_SPLITS),
             streets: Cache::new(KEEP_STREETS),
             quarters: Cache::new(KEEP_QUARTERS),
+            surfaces: Cache::new(KEEP_SURFACE_TILES),
             underground: OnceLock::new(),
             pending: Mutex::new(Default::default()),
         };
@@ -292,6 +296,18 @@ impl TownWorld {
     /// and never below a deck over the water.
     pub fn road_height(&self, p: DVec2) -> f64 {
         (self.ground(p) + ROAD_LIFT).max(DECK + ROAD_LIFT)
+    }
+
+    /// The road surface over tile `k` (see [`Self::surface`]), made on
+    /// first ask and kept while there is room.
+    pub(super) fn surface_tile(&self, k: (i64, i64)) -> Arc<SurfaceTile> {
+        self.surfaces.get(k, || {
+            let lo = DVec2::new(k.0 as f64, k.1 as f64) * SURFACE_TILE;
+            let hi = lo + DVec2::splat(SURFACE_TILE);
+            // Mitred bends reach out further than a road's width.
+            let m = DVec2::splat(16.0);
+            SurfaceTile::new(&self.roads_in(lo - m, hi + m), k)
+        })
     }
 
     /// Does the town meet the sea?
