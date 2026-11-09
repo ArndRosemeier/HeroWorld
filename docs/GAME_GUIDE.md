@@ -106,7 +106,6 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | M | Town map with the radio's calls |
 | N | Minimap on or off |
 | O | Free camera |
-| C / F, Z / X | Cut buildings open / move the cut / pick the floor |
 | K | Knock nearby townspeople over (a ragdoll test, still in the game) |
 | Escape | Menu: back, settings, controls, quit; frees a locked mouse first |
 
@@ -647,7 +646,8 @@ on the way. Rides are free.
   the nearest small house down (a collapse rescue), blast a building, wreck cars, knock over lamps
   and trees or people, break the colossus's weak points one by one.
 - **World**: time of day (dawn to midnight), run the world on 10 s / 1 min / 5 min, free camera,
-  cut-open view, town map.
+  cut-open view (with floor down / up), town map. The cut-open view has no keys any more, so it cannot be
+  switched on by accident.
 
 `HW_DEBUG=<tab>` (`places`, `hero`, `events`, `world`) opens it at start. The environment
 variables below start the game in a state worth looking at. On Windows: `set HW_LEVEL=10` then

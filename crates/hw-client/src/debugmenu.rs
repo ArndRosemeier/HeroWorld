@@ -73,8 +73,10 @@ pub enum DebugAction {
     FastForward(u32),
     /// The free-flying camera on or off (O).
     FreeCamera,
-    /// Buildings cut open around where you look on or off (C).
+    /// Buildings cut open around the hero on or off.
     Cutaway,
+    /// Show the floor below (-1) or above (+1) in the cut-open buildings.
+    CutLevel(i32),
     /// The town map on or off (M).
     Map,
 }
@@ -386,8 +388,14 @@ fn world_tab(ui: &mut egui::Ui, info: &DebugInfo, out: &mut Vec<DebugAction>) {
         if ui.button("Free camera (O)").clicked() {
             out.push(DebugAction::FreeCamera);
         }
-        if ui.button("Cut buildings open (C)").clicked() {
+        if ui.button("Cut buildings open").clicked() {
             out.push(DebugAction::Cutaway);
+        }
+        if ui.button("Cut floor down").clicked() {
+            out.push(DebugAction::CutLevel(-1));
+        }
+        if ui.button("Cut floor up").clicked() {
+            out.push(DebugAction::CutLevel(1));
         }
         if ui.button("Town map (M)").clicked() {
             out.push(DebugAction::Map);

@@ -1437,6 +1437,11 @@ fn main() -> EngineResult<()> {
                             changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
                             town.rebuild(world, changed);
                         }
+                        A::CutLevel(step) => {
+                            town.cut_level = (town.cut_level as i32 + step).clamp(0, 40) as u32;
+                            let changed = town.cells_near(town.cut_focus, CUT_REACH);
+                            town.rebuild(world, changed);
+                        }
                         A::Map => town_map = !town_map,
                     }
                 }
@@ -1642,32 +1647,6 @@ fn main() -> EngineResult<()> {
                     .map(|s| s.name.as_str());
                 tube_status(&frame.ui, capsule.is_some(), riding, to, here.is_some());
             }
-
-            // Cut-open view.
-            let mut changed = BTreeSet::new();
-            if input.pressed(Key::C) {
-                town.cut_on = !town.cut_on;
-                changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
-            }
-            let look_from = world.camera().eye();
-            let look_dir = (world.camera().target() - look_from).normalize_or_zero();
-            if input.pressed(Key::F) {
-                if let Some(hit) = town.ground_hit(look_from, look_dir) {
-                    changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
-                    town.cut_focus = hit;
-                    town.cut_on = true;
-                    changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
-                }
-            }
-            if input.pressed(Key::Z) && town.cut_level > 0 {
-                town.cut_level -= 1;
-                changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
-            }
-            if input.pressed(Key::X) && town.cut_level < 40 {
-                town.cut_level += 1;
-                changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
-            }
-            town.rebuild(world, changed);
 
             // Hero input, relative to where the camera faces.
             let mut hero_input = hw_net::InputState::default();

@@ -1049,7 +1049,7 @@ dependencies = [
 [[package]]
 name = "engine"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Engine?branch=main#5386235a7938b52efda5fffb1d2910951be60cbf"
+source = "git+https://www.github.com/ArndRosemeier/Engine?branch=claude%2Fproject-thread-mt4g7d#269613da95c7ebfffe86266723a9e5fd4411d933"
 dependencies = [
  "bytemuck",
  "egui",
