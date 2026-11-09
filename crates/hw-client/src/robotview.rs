@@ -63,9 +63,50 @@ pub fn robots_dir() -> Option<PathBuf> {
     tries.into_iter().find(|p| has(p))
 }
 
-/// The loaded parts: each one mesh per material.
+/// The loaded parts: each one mesh per material, and once the world has
+/// them, a LOD model per mesh that every robot's copy shares (meshes and
+/// maps uploaded once, however many robots walk about).
 struct Kit {
     parts: HashMap<&'static str, Vec<Mesh>>,
+    models: HashMap<&'static str, Vec<LodId>>,
+}
+
+/// Camera distances (m) where a part's close, middle and far levels end:
+/// the colossus is seen from across town, a sentry from down the street.
+fn lod_ends(name: &str) -> [f32; 3] {
+    if name.starts_with("colossus") {
+        [70.0, 260.0, 2_000.0]
+    } else {
+        [28.0, 100.0, 600.0]
+    }
+}
+
+/// Shares of the close level's triangles at the middle and far levels.
+const LOD_SHARE: [f32; 2] = [0.22, 0.05];
+
+impl Kit {
+    /// The LOD models of every part, made the first time.
+    fn ensure_models(&mut self, world: &mut World) -> EngineResult<()> {
+        if !self.models.is_empty() {
+            return Ok(());
+        }
+        for (name, meshes) in &self.parts {
+            let ends = lod_ends(name);
+            let mut ids = Vec::new();
+            for m in meshes {
+                let levels = vec![
+                    LodLevel::new(m.clone(), ends[0]),
+                    LodLevel::new(m.simplified(LOD_SHARE[0]), ends[1]),
+                    LodLevel::new(m.simplified(LOD_SHARE[1]), ends[2]),
+                ];
+                ids.push(world.spawn_lod(levels)?);
+            }
+            self.models.insert(name, ids);
+        }
+        // The meshes now live in the world.
+        self.parts.values_mut().for_each(Vec::clear);
+        Ok(())
+    }
 }
 
 impl Kit {
@@ -85,14 +126,19 @@ impl Kit {
                 }
             }
         }
-        Some(Kit { parts })
+        Some(Kit {
+            parts,
+            models: HashMap::new(),
+        })
     }
 }
 
-/// One part on screen: its pivot and its meshes.
+/// One part on screen: its pivot and what hangs on it (LOD sets sharing
+/// the kit's models, or a stand-in box).
 #[derive(Clone)]
 struct Part {
     pivot: EntityId,
+    sets: Vec<LodId>,
     meshes: Vec<EntityId>,
 }
 
@@ -311,12 +357,13 @@ impl RobotView {
         let pivot = world.spawn_pivot(Place::default());
         world.attach(pivot, parent, place)?;
         let mut meshes = Vec::new();
-        match self.kit.as_ref().and_then(|k| k.parts.get(name)) {
+        let mut sets = Vec::new();
+        match self.kit.as_ref().and_then(|k| k.models.get(name)) {
             Some(list) => {
-                for m in list {
-                    let e = world.place(m.clone(), Place::default())?;
-                    world.attach(e, pivot, Place::default())?;
-                    meshes.push(e);
+                for &model in list {
+                    let set = world.spawn_lod_like(model, &[])?;
+                    world.attach_lod(set, pivot, Place::default())?;
+                    sets.push(set);
                 }
             }
             None => {
@@ -328,7 +375,11 @@ impl RobotView {
                 meshes.push(e);
             }
         }
-        Ok(Part { pivot, meshes })
+        Ok(Part {
+            pivot,
+            sets,
+            meshes,
+        })
     }
 
     fn pivot(world: &mut World, parent: EntityId, place: Place) -> EngineResult<EntityId> {
@@ -338,6 +389,9 @@ impl RobotView {
     }
 
     fn build(&mut self, world: &mut World, r: &EntityState) -> EngineResult<Drawn> {
+        if let Some(kit) = self.kit.as_mut() {
+            kit.ensure_models(world)?;
+        }
         let at = pos(r);
         let yaw = rotation_yaw(r.rot) as f32;
         let root = world.spawn_pivot(Place::new(at.x, at.y, at.z).with_yaw_deg(yaw.to_degrees()));
@@ -420,6 +474,7 @@ impl RobotView {
                         format!("hipyaw{k}"),
                         Part {
                             pivot: hy,
+                            sets: Vec::new(),
                             meshes: Vec::new(),
                         },
                     );
@@ -427,6 +482,7 @@ impl RobotView {
                         format!("kneeyaw{k}"),
                         Part {
                             pivot: ky,
+                            sets: Vec::new(),
                             meshes: Vec::new(),
                         },
                     );
@@ -480,6 +536,9 @@ impl RobotView {
         // tangents for them, which renders as white glare and black specks.)
         for e in std::mem::take(&mut p.meshes) {
             world.despawn(e);
+        }
+        for set in std::mem::take(&mut p.sets) {
+            world.despawn_lod(set);
         }
         for (k, colour) in [rgb(38, 72, 52), rgb(150, 118, 52), rgb(60, 62, 66)]
             .into_iter()

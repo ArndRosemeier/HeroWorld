@@ -9,6 +9,7 @@ pub mod alarms;
 pub mod balance;
 pub mod bubbles;
 pub mod citizens;
+pub mod clock;
 pub mod collision;
 pub mod combat;
 pub mod deepspots;

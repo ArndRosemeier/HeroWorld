@@ -47,6 +47,22 @@ pub enum Surf {
     /// Lit from inside: neon, signs, coils.
     Glow,
     Metal,
+    /// A window pane whose room lights come on with the hour: glass by
+    /// day, glowing on its Engine glow channel at night (see `daylight`).
+    Lit(u8),
+}
+
+impl Surf {
+    /// A small number per surface (for keys).
+    fn key(self) -> u8 {
+        match self {
+            Surf::Plain => 0,
+            Surf::Glass => 1,
+            Surf::Glow => 2,
+            Surf::Metal => 3,
+            Surf::Lit(ch) => 16 + ch,
+        }
+    }
 }
 
 /// Dirt that depends on where a face is on a building, in vertex colours
@@ -101,6 +117,8 @@ pub struct MeshBuilder {
     glass: Mesh,
     glow: Mesh,
     metal: Mesh,
+    /// Window panes by glow channel.
+    lit: Vec<(u8, Mesh)>,
     /// Plain faces with a texture, one mesh per texture.
     textured: Vec<(Tex, Mesh)>,
     /// Material for the faces added next.
@@ -160,6 +178,7 @@ impl MeshBuilder {
             glass: Mesh::new(),
             glow: Mesh::new(),
             metal: Mesh::new(),
+            lit: Vec::new(),
             textured: Vec::new(),
             surf: Surf::Plain,
             tex: None,
@@ -241,6 +260,16 @@ impl MeshBuilder {
             Surf::Glass => &mut self.glass,
             Surf::Glow => &mut self.glow,
             Surf::Metal => &mut self.metal,
+            Surf::Lit(ch) => {
+                let i = match self.lit.iter().position(|(k, _)| *k == ch) {
+                    Some(i) => i,
+                    None => {
+                        self.lit.push((ch, Mesh::new()));
+                        self.lit.len() - 1
+                    }
+                };
+                &mut self.lit[i].1
+            }
         }
     }
 
@@ -256,6 +285,7 @@ impl MeshBuilder {
                 .iter()
                 .map(|(_, m)| m.face_count())
                 .sum::<usize>()
+            + self.lit.iter().map(|(_, m)| m.face_count()).sum::<usize>()
     }
 
     /// Adds everything `other` holds, moved by `offset`, keeping its
@@ -272,6 +302,14 @@ impl MeshBuilder {
             if from.face_count() > 0 {
                 to.append_translated(&from, offset).expect("append part");
             }
+        }
+        for (ch, m) in other.lit {
+            let s = self.surf;
+            self.surf = Surf::Lit(ch);
+            self.target()
+                .append_translated(&m, offset)
+                .expect("append lit panes");
+            self.surf = s;
         }
         for (l, m) in other.textured {
             let (s, t) = (self.surf, self.tex);
@@ -328,7 +366,11 @@ impl MeshBuilder {
             metallic: 0.85,
             ..SurfaceMaterial::DEFAULT
         };
-        for (mut m, surface) in [(self.glass, glass), (self.glow, glow), (self.metal, metal)] {
+        let lit = std::mem::take(&mut self.lit)
+            .into_iter()
+            .map(|(ch, m)| (m, crate::daylight::pane_surface(ch)));
+        let fixed = [(self.glass, glass), (self.glow, glow), (self.metal, metal)];
+        for (mut m, surface) in fixed.into_iter().chain(lit) {
             if m.face_count() > 0 {
                 m.set_surface_material(surface);
                 self.mesh
@@ -543,7 +585,7 @@ impl MeshBuilder {
                 };
                 self.surf = surf;
                 let tex = self.cur_tex();
-                let key_surf = surf as u8;
+                let key_surf = surf.key();
                 let key_col = [color.r, color.g, color.b, color.a].map(f32::to_bits);
                 let face = order.map(|k| {
                     let (a, c) = corners[k];

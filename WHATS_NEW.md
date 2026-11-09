@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.085 (2026-11-09)
+
+- The day runs now: the game starts in the afternoon, dusk comes about ten minutes in, then night and a new morning.
+- At night the windows light up one by one, each building on its own habits, and go dark again late at night.
+- Damaged buildings keep their brick, stone and plaster when they break, instead of turning plain.
+- Robots draw faster from afar: their parts get simpler with distance.
+
 ## 0.084 (2026-11-09)
 
 - Hero kits in the hero creator: capes (short, classic, long, bat wing, pointed) with a

@@ -201,6 +201,29 @@ Not needed for the first playable city, but the design depends on them eventuall
   (decoded a few seconds ahead from the file) would keep that to a few hundred KB. And
   `Input` has no mouse wheel; the camera zoom reads egui's scroll delta instead.
 
+## Done for HeroWorld (2026-11-09, Engine 0.005)
+
+Engine PR #69, merged:
+
+- **A day that runs:** glow channels. `SurfaceMaterial::on_glow_channel(n)` (1 to 15) and
+  `World::set_glow_channel(n, strength, colour)` switch emissive surfaces at runtime. HeroWorld's
+  lit windows sit on 15 channels (3 light colours × 5 household habits, `hw-client/src/daylight.rs`).
+- **Breakable buildings keep their textures:** `BuildingPlan::add_texture` and `add_parts`
+  (one child entity per texture, GPU textures shared between buildings); `add_all` plans in
+  linear time (the quadratic re-index is gone).
+- **Articulated models that share their maps, with LODs:** `World::attach_lod(set, pivot, local)`
+  hangs a `spawn_lod_like` set on a pivot; `Mesh::simplified(share)` makes the lighter levels.
+  The robots use it (`robotview.rs`).
+- **Fog volumes that keep the base grade:** `FogVolume::grade_on_top` (`ColorGrade::layered`).
+- **Rubble mounds** of a collapse above the ground floor stay on the roof, with a low skirt on
+  the ground.
+- **White glare with black specks on chrome seen from above:** the sun's specular is capped
+  (it overflowed half-float range).
+
+Still open from the lists above: far sun shadows beyond the cascades, a physics-only build,
+grass on streamed ground, leaner static meshes (material index per vertex, dropping CPU copies),
+several textures in one mesh (texture arrays).
+
 ## Ground rules
 
 These stay in HeroWorld, not in Engine, so Engine stays a general game engine:

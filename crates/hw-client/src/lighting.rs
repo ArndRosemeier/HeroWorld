@@ -166,6 +166,7 @@ pub fn set_sky(world: &mut World, hour: f32) {
     } else {
         PhysicalSky::at_hour(hour)
     }));
+    crate::daylight::update(world, hour);
     if !styled() {
         return;
     }

@@ -105,30 +105,53 @@ const BUILD_BUDGET_MS: f64 = 6.0;
 const TITLE_BUILD_MS: f64 = 5.0;
 /// The hour the game is played at: mid-afternoon, a sun low enough to
 /// model the facades and throw long shadows (the title is at golden hour).
-const GAME_HOUR: f32 = 15.5;
+const GAME_HOUR: f32 = hw_sim::clock::START_HOUR as f32;
 
-/// The hour of day: `HW_HOUR` (0 to 24, e.g. 22 for night) or [`GAME_HOUR`],
-/// until the debug menu sets another ([`set_game_hour`]).
+/// `HW_HOUR` (0 to 24, e.g. 22 for night): the hour stands still there
+/// (for screenshots).
+fn fixed_hour() -> Option<f32> {
+    static HOUR: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    *HOUR.get_or_init(|| {
+        std::env::var("HW_HOUR")
+            .ok()
+            .and_then(|h| h.parse::<f32>().ok())
+            .filter(|h| (0.0..=24.0).contains(h))
+    })
+}
+
+/// Hours the debug menu moved the clock by (f32 bits).
+static HOUR_SHIFT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// The hour last shown (f32 bits; `u32::MAX`: none yet).
+static HOUR_NOW: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
+
+fn hour_shift() -> f32 {
+    f32::from_bits(HOUR_SHIFT.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The hour of day now: the last one [`hour_now`] worked out, or the
+/// start (`HW_HOUR` or [`GAME_HOUR`]) before the first frame.
 fn game_hour() -> f32 {
-    use std::sync::atomic::Ordering;
-    let bits = HOUR.load(Ordering::Relaxed);
-    if bits != u32::MAX {
-        return f32::from_bits(bits);
+    match HOUR_NOW.load(std::sync::atomic::Ordering::Relaxed) {
+        u32::MAX => (fixed_hour().unwrap_or(GAME_HOUR) + hour_shift()).rem_euclid(24.0),
+        bits => f32::from_bits(bits),
     }
-    let h = std::env::var("HW_HOUR")
-        .ok()
-        .and_then(|h| h.parse::<f32>().ok())
-        .filter(|h| (0.0..=24.0).contains(h))
-        .unwrap_or(GAME_HOUR);
-    set_game_hour(h);
+}
+
+/// The hour after `seconds` of game clock: the day runs (see
+/// `hw_sim::clock`) unless `HW_HOUR` holds it; the debug menu shifts it.
+fn hour_now(seconds: f64) -> f32 {
+    let base = fixed_hour().unwrap_or_else(|| hw_sim::clock::hour_at(seconds) as f32);
+    let h = (base + hour_shift()).rem_euclid(24.0);
+    HOUR_NOW.store(h.to_bits(), std::sync::atomic::Ordering::Relaxed);
     h
 }
 
-/// The hour of day as bits (`u32::MAX`: not read yet).
-static HOUR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
-
+/// Moves the clock so that it reads `h` now, and runs on from there.
 fn set_game_hour(h: f32) {
-    HOUR.store(h.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    use std::sync::atomic::Ordering;
+    let shift = hour_shift() + h - game_hour();
+    HOUR_SHIFT.store(shift.rem_euclid(24.0).to_bits(), Ordering::Relaxed);
+    HOUR_NOW.store(h.to_bits(), Ordering::Relaxed);
 }
 /// Seconds the camera takes to swoop from the title down to the hero.
 const SWOOP_SECONDS: f32 = 2.4;
@@ -226,11 +249,6 @@ fn save_hero(hero: Option<hw_net::Sheet>) {
 fn main() -> EngineResult<()> {
     // A crash leaves a report beside the profile (see `crash.rs`).
     hw_client::crash::install();
-    // Lit windows are baked into the buildings: decide before any is built.
-    hw_client::buildingmesh::NIGHT.store(
-        hw_client::nightlights::dark_at(game_hour()),
-        std::sync::atomic::Ordering::Relaxed,
-    );
     let env_num = |name: &str| std::env::var(name).ok().and_then(|s| s.parse::<u64>().ok());
     let view = std::env::var("HW_VIEW").unwrap_or_else(|_| "hero".into());
     let profile = Profile::load();
@@ -1399,18 +1417,10 @@ fn main() -> EngineResult<()> {
                             session.debug_break_colossus(colossus_breaks);
                         }
                         A::Hour(h) => {
-                            let was = hw_client::nightlights::dark_at(game_hour());
+                            // Windows follow by glow channel: no rebuild.
                             set_game_hour(h);
                             hw_client::lighting::set_sky(world, h);
                             citizens.set_hour(h as f64);
-                            let dark = hw_client::nightlights::dark_at(h);
-                            if dark != was {
-                                // Lit windows are baked into the buildings.
-                                hw_client::buildingmesh::NIGHT
-                                    .store(dark, std::sync::atomic::Ordering::Relaxed);
-                                let cells = town.built_cells();
-                                town.rebuild(world, cells);
-                            }
                         }
                         A::FastForward(s) => session.fast_forward(s * hw_sim::TICK_HZ),
                         A::FreeCamera => {
@@ -1456,8 +1466,14 @@ fn main() -> EngineResult<()> {
                 }
             }
             let creating = hero_file.is_none();
+            // The day runs: sky, grade, lit windows and the people out.
+            let hour = hour_now(session.time(tick_clock / hw_sim::DT));
+            if swoop.is_none() {
+                hw_client::lighting::set_sky(world, hour);
+            }
+            citizens.set_hour(hour as f64);
             if let (Some(lights), Some(props)) = (extras.lights.as_mut(), extras.props.as_ref()) {
-                let dark = swoop.is_none() && hw_client::nightlights::dark_at(game_hour());
+                let dark = swoop.is_none() && hw_client::nightlights::dark_at(hour);
                 lights.update(world, world.camera().eye(), dark, props)?;
             }
             if let Some(under) = extras.under.as_mut() {
@@ -2611,7 +2627,7 @@ fn main() -> EngineResult<()> {
                     from_yaw + turn * k,
                     from_pitch + (to_pitch - from_pitch) * k,
                 );
-                let hour = title::TITLE_HOUR + (game_hour() - title::TITLE_HOUR) * k;
+                let hour = title::TITLE_HOUR + (hour - title::TITLE_HOUR) * k;
                 hw_client::lighting::set_sky(world, hour);
                 if k >= 1.0 {
                     swoop = None;

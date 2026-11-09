@@ -561,6 +561,22 @@ pub fn breakable(
     frame: &Frame,
     mut dress: impl FnMut(usize, &Piece, &Element) -> Option<Mesh>,
 ) -> engine::error::EngineResult<Breakable> {
+    breakable_textured(plan, pieces, frame, &[], |i, p, e| {
+        dress(i, p, e).map(|m| vec![(m, None)]).unwrap_or_default()
+    })
+}
+
+/// [`breakable`] with textures: `textures` are meshes carrying the albedo
+/// and maps (registered on the plan in that order), and `dress` gives each
+/// element its meshes, each with the index of its texture (`None`: vertex
+/// colours only). An element with no meshes is a grey box.
+pub fn breakable_textured(
+    plan: &BuildingPlan,
+    pieces: &[Piece],
+    frame: &Frame,
+    textures: &[&Mesh],
+    mut dress: impl FnMut(usize, &Piece, &Element) -> Vec<(Mesh, Option<usize>)>,
+) -> engine::error::EngineResult<Breakable> {
     let floors = plan
         .floors
         .iter()
@@ -570,7 +586,12 @@ pub fn breakable(
         })
         .collect();
     let mut out = Breakable::new(floors, plan.site.seed.0)?;
+    let mut registered = Vec::with_capacity(textures.len());
+    for t in textures {
+        registered.push(out.add_texture_of(t)?);
+    }
     let grey = Color::rgb01_unchecked(0.6, 0.6, 0.6);
+    let mut elements = Vec::with_capacity(pieces.len());
     for (i, p) in pieces.iter().enumerate() {
         let (c, h) = element_box(p);
         let mut e = Element::new(
@@ -583,9 +604,19 @@ pub fn breakable(
         if p.outward != DVec2::ZERO {
             e = e.with_outward(frame.dir_to_engine(p.outward));
         }
-        let mesh = dress(i, p, &e);
-        out.add(e, mesh.as_ref(), grey)?;
+        let mut parts = dress(i, p, &e);
+        if parts.is_empty() {
+            parts.push((Mesh::box_at(e.center, e.half * 2.0, grey)?, None));
+        }
+        elements.push((e, parts));
     }
+    out.add_all(elements.iter().map(|(e, parts)| {
+        let parts = parts
+            .iter()
+            .map(|(m, t)| (m, t.and_then(|t| registered.get(t).copied().flatten())))
+            .collect();
+        (e.clone(), parts)
+    }))?;
     Ok(out)
 }
 

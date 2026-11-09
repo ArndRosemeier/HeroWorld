@@ -129,12 +129,14 @@ impl DamageView {
             };
             let frame = Frame::of(&plan.site, base);
             let pieces = destruction::pieces(&plan);
-            let mut looks = element_meshes(&plan, &pieces, &frame)?;
-            let bp = Arc::new(destruction::breakable(
+            let (textures, mut looks) = element_meshes(&plan, &pieces, &frame)?;
+            let textures: Vec<&Mesh> = textures.iter().collect();
+            let bp = Arc::new(destruction::breakable_textured(
                 &plan,
                 &pieces,
                 &frame,
-                |i, _, _| looks.get_mut(i).and_then(|m| m.take()),
+                &textures,
+                |i, _, _| looks.get_mut(i).map(std::mem::take).unwrap_or_default(),
             )?);
             let place = Place::new(frame.origin.x as f32, base as f32, frame.origin.y as f32)
                 .with_yaw_deg(frame.yaw().to_degrees() as f32);
@@ -176,18 +178,23 @@ fn boxed(center: Vec3, half: Vec3, c: Color) -> EngineResult<Mesh> {
 const PLASTER: [u8; 3] = [226, 220, 206];
 const CONCRETE: [u8; 3] = [176, 170, 160];
 
-/// Every element's look, by element. The outside is the town's own detailed
-/// mesh of the building (walls, windows, cornices, roof), each triangle
-/// given to the outer element it belongs to, so the building looks as it
-/// did before it broke; outer panels get a plastered inside face (with the
-/// window holes), and inside walls, slabs and columns plain boxes.
+/// An element's meshes, each with the index of its texture (None: plain).
+type Parts = Vec<(Mesh, Option<usize>)>;
+
+/// Every element's look, by element, and the textures they use (meshes
+/// carrying only an albedo and its maps). The outside is the town's own
+/// detailed, textured mesh of the building (walls, windows, cornices,
+/// roof), each triangle given to the outer element it belongs to, so the
+/// building looks as it did before it broke; outer panels get a plastered
+/// inside face (with the window holes), and inside walls, slabs and
+/// columns plain boxes.
 fn element_meshes(
     plan: &BuildingPlan,
     pieces: &[Piece],
     frame: &Frame,
-) -> EngineResult<Vec<Option<Mesh>>> {
-    let mut out: Vec<Option<Mesh>> = vec![None; pieces.len()];
-    facade(plan, pieces, frame, &mut out)?;
+) -> EngineResult<(Vec<Mesh>, Vec<Parts>)> {
+    let mut out: Vec<Parts> = vec![Vec::new(); pieces.len()];
+    let textures = facade(plan, pieces, frame, &mut out)?;
     for (i, p) in pieces.iter().enumerate() {
         let c = frame.to_engine((p.min + p.max) * 0.5);
         let h = ((p.max - p.min) * 0.5).as_vec3();
@@ -201,13 +208,22 @@ fn element_meshes(
             _ => Some(boxed(c, h, rgb3(PLASTER))?),
         };
         if let Some(m) = extra {
-            match out[i].as_mut() {
-                Some(have) => have.append_translated(&m, Vec3::ZERO)?,
-                None => out[i] = Some(m),
-            }
+            add_part(&mut out[i], m, None)?;
         }
     }
-    Ok(out)
+    Ok((textures, out))
+}
+
+/// Adds `m` to an element's meshes, merged with the one of the same
+/// texture.
+fn add_part(parts: &mut Parts, m: Mesh, tex: Option<usize>) -> EngineResult<()> {
+    match parts.iter_mut().find(|(_, t)| *t == tex) {
+        Some((have, _)) => have.append_translated(&m, Vec3::ZERO),
+        None => {
+            parts.push((m, tex));
+            Ok(())
+        }
+    }
 }
 
 fn rgb3(c: [u8; 3]) -> Color {
@@ -219,24 +235,54 @@ fn box_distance(p: &Piece, q: DVec3) -> f64 {
     (q - q.clamp(p.min, p.max)).length()
 }
 
-/// The town's mesh of the building's outside, cut up by element.
+/// The town's mesh of the building's outside, cut up by element; returns
+/// the textures it uses (see [`element_meshes`]).
 fn facade(
     plan: &BuildingPlan,
     pieces: &[Piece],
     frame: &Frame,
-    out: &mut [Option<Mesh>],
-) -> EngineResult<()> {
+    out: &mut [Parts],
+) -> EngineResult<Vec<Mesh>> {
     let mut b = MeshBuilder::new();
-    b.flat = true;
     exterior(&mut b, plan, plan.floors.len(), true, Detail::Near);
-    let built = b.finish().build();
     // Outer elements, in a grid for quick lookups.
     let outer: Vec<usize> = (0..pieces.len())
         .filter(|&i| pieces[i].outward != DVec2::ZERO || pieces[i].kind == ElementKind::Roof)
         .collect();
     if outer.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
+    let mut textures = Vec::new();
+    for part in b.finish_parts() {
+        let tex = match part.albedo() {
+            Some(a) => {
+                // Only the texture travels: the plan keeps one copy of it.
+                let mut t = Mesh::new();
+                t.set_albedo_rgba(a.width, a.height, a.rgba.clone())?;
+                if let Some(maps) = part.material_maps() {
+                    t.set_material_maps(maps.clone())?;
+                }
+                textures.push(t);
+                Some(textures.len() - 1)
+            }
+            None => None,
+        };
+        cut(&part.build(), tex, pieces, frame, &outer, plan, out)?;
+    }
+    Ok(textures)
+}
+
+/// Gives each triangle of `built` (the building's outside, in city space)
+/// to the outer element it lies on.
+fn cut(
+    built: &engine::mesh::BuiltMesh,
+    tex: Option<usize>,
+    pieces: &[Piece],
+    frame: &Frame,
+    outer: &[usize],
+    plan: &BuildingPlan,
+    out: &mut [Parts],
+) -> EngineResult<()> {
     const G: f64 = 4.0;
     let cell = |q: DVec3| {
         (
@@ -246,7 +292,7 @@ fn facade(
         )
     };
     let mut grid: BTreeMap<(i32, i32, i32), Vec<usize>> = BTreeMap::new();
-    for &i in &outer {
+    for &i in outer {
         let p = &pieces[i];
         let (lo, hi) = (cell(p.min - DVec3::ONE), cell(p.max + DVec3::ONE));
         for x in lo.0..=hi.0 {
@@ -277,7 +323,7 @@ fn facade(
     for tri in built.indices.chunks_exact(3) {
         let t = [tri[0], tri[1], tri[2]];
         let c = (pos[t[0] as usize] + pos[t[1] as usize] + pos[t[2] as usize]) / 3.0;
-        let near = grid.get(&cell(c)).map(|v| v.as_slice()).unwrap_or(&outer);
+        let near = grid.get(&cell(c)).map(|v| v.as_slice()).unwrap_or(outer);
         let best = near
             .iter()
             .copied()
@@ -332,10 +378,7 @@ fn facade(
             }
         }
         m.set_surface_material(surfaces[s]);
-        match out[i].as_mut() {
-            Some(have) => have.append_translated(&m, Vec3::ZERO)?,
-            None => out[i] = Some(m),
-        }
+        add_part(&mut out[i], m, tex)?;
     }
     Ok(())
 }

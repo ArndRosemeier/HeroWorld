@@ -56,16 +56,13 @@ fn shade(c: Rgb, k: f64) -> Color {
     rgb(f(c[0]), f(c[1]), f(c[2]))
 }
 
-/// Drawing in one building's coordinates.
-/// Night: some rooms have their lights on, their windows glowing. Set once
-/// before the town is built (the hour is fixed for a session).
-pub static NIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// The colour and surface of a window's glass: lit rooms glow at night.
-/// Every window of a room is lit or dark together.
+/// The colour and surface of a window's glass. Some rooms have their
+/// lights on after dark: every window of such a room sits on one of the
+/// glow channels (see `daylight`), glass by day and glowing from dusk, so
+/// the town's windows light up one by one as the evening comes.
 fn pane(plan: &BuildingPlan, look: &Look, op: &Opening, shop: bool) -> (Color, Surf) {
     let dark = (col(look.glass), Surf::Glass);
-    if !NIGHT.load(std::sync::atomic::Ordering::Relaxed) || op.kind == OpeningKind::Door {
+    if op.kind == OpeningKind::Door {
         return dark;
     }
     let o = plan.site.origin;
@@ -81,11 +78,12 @@ fn pane(plan: &BuildingPlan, look: &Look, op: &Opening, shop: bool) -> (Color, S
         return dark;
     }
     let tone = match h >> 40 & 7 {
-        0 => rgb(190, 214, 255),
-        1 | 2 => rgb(255, 190, 120),
-        _ => rgb(255, 214, 150),
+        0 => crate::daylight::Tone::Cool,
+        1 | 2 => crate::daylight::Tone::Lamp,
+        _ => crate::daylight::Tone::Warm,
     };
-    (tone, Surf::Glow)
+    let habit = (h >> 44) as usize % crate::daylight::HABITS;
+    (dark.0, Surf::Lit(crate::daylight::channel(tone, habit)))
 }
 
 struct Ctx<'a> {
@@ -556,7 +554,16 @@ fn far_floor(c: &mut Ctx, level: usize) {
     }
     if c.detail == Detail::Distant {
         // Runs of alike windows (same wall, height and look, under a
-        // window's width apart) become one band.
+        // window's width apart) become one band. Panes that only differ in
+        // when their room lights come on count as alike: the band lights
+        // with its first window (by day they are all glass anyway).
+        let alike = |a: Surf, b: Surf| {
+            a == b
+                || matches!(
+                    (a, b),
+                    (Surf::Glass | Surf::Lit(_), Surf::Glass | Surf::Lit(_))
+                )
+        };
         panes.sort_by(|a, b| {
             (a.0 as u8)
                 .cmp(&(b.0 as u8))
@@ -571,7 +578,7 @@ fn far_floor(c: &mut Ctx, level: usize) {
                         && (m.3 - p.3).abs() < 0.01
                         && (m.4 - p.4).abs() < 0.01
                         && m.5 == p.5
-                        && m.6 == p.6
+                        && alike(m.6, p.6)
                         && p.1 - m.2 < (p.2 - p.1).max(1.0) =>
                 {
                     m.2 = m.2.max(p.2);
