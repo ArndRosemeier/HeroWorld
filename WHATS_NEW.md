@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.074 (2026-11-09)
+
+- A debug menu for trying things out: Ctrl+Shift+F12 (single player). Jump to the town's
+  notable places (landmarks, the villains' quarter, Molehaven, open calls), set your level,
+  buy every power, change how the factions see you, start any incident near you, break
+  buildings and cars, and change the time of day. A hero changed there is not saved.
+
 ## 0.073 (2026-11-09)
 
 - R runs on by itself (autorun): steer with the mouse, A and D step aside, S or R stops. The

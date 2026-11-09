@@ -9,6 +9,7 @@ pub mod crash;
 pub mod creator;
 pub mod crowdview;
 pub mod damageview;
+pub mod debugmenu;
 pub mod dispatchview;
 pub mod dystopiaview;
 pub mod edgeview;

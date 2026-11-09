@@ -324,3 +324,29 @@ fn a_building_brought_down_traps_people_in_its_rubble() {
         .count();
     assert_eq!(n, 1);
 }
+
+#[test]
+fn the_debug_menu_starts_any_incident_at_once() {
+    use hw_sim::incidents::IncidentKind;
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    sim.spawn_hero(PlayerId(1), sim.spawn_point(1));
+    // Long before the first would come, and beyond how many may be open.
+    for kind in [
+        IncidentKind::Mugging,
+        IncidentKind::Fire,
+        IncidentKind::Rampage,
+        IncidentKind::Colossus,
+    ] {
+        let before = sim.incidents.open.len();
+        sim.incidents.forced = Some(kind);
+        let mut news = Vec::new();
+        run(&mut sim, 1.1, &mut news);
+        assert_eq!(
+            sim.incidents.open.len(),
+            before + 1,
+            "{kind:?} did not start"
+        );
+        assert_eq!(sim.incidents.open.last().unwrap().kind, kind);
+    }
+}

@@ -273,6 +273,11 @@ impl TownView {
         }
     }
 
+    /// Every cell built now (to redraw them all).
+    pub fn built_cells(&self) -> Vec<CellKey> {
+        self.built.keys().copied().collect()
+    }
+
     /// Redraws the given cells if they are built.
     pub fn rebuild(&mut self, world: &mut World, cells: impl IntoIterator<Item = CellKey>) {
         for k in cells {

@@ -418,6 +418,9 @@ pub struct Incidents {
     /// Screenshots: the next rescue starts with everyone out and the hurt
     /// one in the arms of the hero it started near, who stands beside it.
     pub carried_start: bool,
+    /// Start one of this kind at the next second, however many are open
+    /// and whenever the last one started (the debug menu).
+    pub forced: Option<IncidentKind>,
     /// Spots of incidents that ended, free to use again.
     free: Vec<usize>,
     /// When the colossus last came out.
@@ -465,6 +468,19 @@ impl Incidents {
         self.settle(world, tick, &heroes);
         for b in std::mem::take(&mut self.collapses) {
             self.start_collapse(world, tick, b);
+        }
+        if let Some(kind) = self.forced.take() {
+            // A few tries: a place can be taken by another incident.
+            let open = self.open.len();
+            for _ in 0..8 {
+                if heroes.is_empty() || self.open.len() > open {
+                    break;
+                }
+                self.next_kind = Some(kind);
+                self.start(world, tick, &heroes);
+            }
+            self.next_kind = None;
+            return;
         }
         if heroes.is_empty() || self.open.len() >= wanted(heroes.len()) {
             return;

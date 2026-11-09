@@ -70,6 +70,8 @@
 //! `HW_WAIT_PEOPLE=1` waits at the start until every character is built
 //! (for screenshots); `HW_PACKS` points at the Actors packs (default
 //! `assets/packs`, fetched by `scripts/fetch-packs`);
+//! Ctrl+Shift+F12 opens the debug menu (`debugmenu.rs`; `HW_DEBUG=<tab>`
+//! opens it at start);
 //! `ENGINE_ZFIGHT=1` marks z-fighting with magenta posts (the `zfight` tool
 //! checks a whole city without the game).
 
@@ -104,16 +106,28 @@ const TITLE_BUILD_MS: f64 = 20.0;
 /// model the facades and throw long shadows (the title is at golden hour).
 const GAME_HOUR: f32 = 15.5;
 
-/// The hour of day: `HW_HOUR` (0 to 24, e.g. 22 for night) or [`GAME_HOUR`].
+/// The hour of day: `HW_HOUR` (0 to 24, e.g. 22 for night) or [`GAME_HOUR`],
+/// until the debug menu sets another ([`set_game_hour`]).
 fn game_hour() -> f32 {
-    static HOUR: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-    *HOUR.get_or_init(|| {
-        std::env::var("HW_HOUR")
-            .ok()
-            .and_then(|h| h.parse::<f32>().ok())
-            .filter(|h| (0.0..=24.0).contains(h))
-            .unwrap_or(GAME_HOUR)
-    })
+    use std::sync::atomic::Ordering;
+    let bits = HOUR.load(Ordering::Relaxed);
+    if bits != u32::MAX {
+        return f32::from_bits(bits);
+    }
+    let h = std::env::var("HW_HOUR")
+        .ok()
+        .and_then(|h| h.parse::<f32>().ok())
+        .filter(|h| (0.0..=24.0).contains(h))
+        .unwrap_or(GAME_HOUR);
+    set_game_hour(h);
+    h
+}
+
+/// The hour of day as bits (`u32::MAX`: not read yet).
+static HOUR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(u32::MAX);
+
+fn set_game_hour(h: f32) {
+    HOUR.store(h.to_bits(), std::sync::atomic::Ordering::Relaxed);
 }
 /// Seconds the camera takes to swoop from the title down to the hero.
 const SWOOP_SECONDS: f32 = 2.4;
@@ -847,6 +861,15 @@ fn main() -> EngineResult<()> {
         hero_cam_yaw = 135.0;
     }
     let mut menu = hw_client::settings::GameMenu::new(&profile);
+    // The debug menu (Ctrl+Shift+F12). A hero it changed (or one from
+    // HW_LEVEL) is not saved; weak points of the colossus it broke.
+    let mut debug = hw_client::debugmenu::DebugMenu::new();
+    // `HW_DEBUG=<tab>` opens it at start (screenshots).
+    if let Ok(tab) = std::env::var("HW_DEBUG") {
+        debug.open_on(&tab);
+    }
+    let mut cheated = cheat_level.is_some();
+    let mut colossus_breaks = 0u8;
     // The world the crash reporter last noted.
     let mut crash_noted: Option<u64> = None;
     let mut hero_cam = HeroCamera {
@@ -1152,6 +1175,175 @@ fn main() -> EngineResult<()> {
                 world.request_exit();
             }
             hero_cam.look = menu.look;
+            // Ctrl+Shift+F12: the debug menu (see `debugmenu.rs`).
+            if hw_client::debugmenu::hotkey(frame.ui.ctx()) {
+                debug.open = !debug.open;
+                if debug.open {
+                    world.set_pointer_lock(false);
+                }
+            }
+            if debug.open {
+                use hw_client::debugmenu::{self as dm, DebugAction as A};
+                debug.find_places(
+                    world_seed ^ world_people.to_bits(),
+                    &generated.area,
+                    &solids,
+                );
+                let me = session.my_position(&drawn);
+                let mut calls: Vec<(u32, &'static str, f32)> = radio
+                    .calls
+                    .iter()
+                    .map(|(id, c)| {
+                        let d = me.map_or(0.0, |m| m.as_vec3().distance(c.at));
+                        (*id, c.kind.name(), d)
+                    })
+                    .collect();
+                calls.sort_by(|a, b| a.2.total_cmp(&b.2));
+                let info = dm::DebugInfo {
+                    sheet: &my_sheet,
+                    calls,
+                    hour: game_hour(),
+                    local: !session.joined(),
+                    unsaved: cheated,
+                };
+                let at = me.unwrap_or_else(|| world.camera().eye().as_dvec3());
+                for a in debug.ui(frame.ui.ctx(), &info) {
+                    // Puts the hero at `p`, looking along `facing`.
+                    let mut go = |session: &mut Session, p: glam::DVec3, facing: DVec2| {
+                        session.teleport(p);
+                        flying = false;
+                        hero_cam.yaw = facing.x.atan2(facing.y).to_degrees() as f32;
+                        hero_cam.pitch = -12.0;
+                    };
+                    match a {
+                        A::Go(i) => {
+                            let Some(p) = debug.places.get(i).cloned() else {
+                                continue;
+                            };
+                            if p.fly && !my_sheet.has(hw_net::Power::Flight) {
+                                fight.say("Flight first: Hero tab, Level 20, Buy all open");
+                                continue;
+                            }
+                            go(session, p.at, p.facing);
+                            if p.fly {
+                                hero_flies = true;
+                            }
+                            fight.say(&p.name);
+                        }
+                        A::GoCall(id) => {
+                            let Some(c) = radio.calls.get(&id) else {
+                                continue;
+                            };
+                            let c2 = DVec2::new(c.at.x as f64, c.at.z as f64);
+                            let p = c2 + c.facing * 14.0;
+                            let to = dm::clear_near(&solids, p, None).unwrap_or(glam::DVec3::new(
+                                p.x,
+                                ground(p) + 0.3,
+                                p.y,
+                            ));
+                            go(
+                                session,
+                                to,
+                                (c2 - DVec2::new(to.x, to.z)).normalize_or(DVec2::X),
+                            );
+                        }
+                        A::Level(l) => {
+                            cheated = true;
+                            session.debug_sheet(|s| dm::at_level(s, l));
+                        }
+                        A::Karma(k) => {
+                            cheated = true;
+                            session.debug_sheet(|mut s| {
+                                s.karma = s.karma.saturating_add(k);
+                                s
+                            });
+                        }
+                        A::BuyAll(theme) => {
+                            cheated = true;
+                            session.debug_sheet(|s| dm::buy_all(s, theme));
+                        }
+                        A::ClearPowers => {
+                            cheated = true;
+                            session.debug_sheet(dm::clear_powers);
+                        }
+                        A::Regard(f, by) => {
+                            cheated = true;
+                            session.debug_sheet(|s| dm::regard(s, f, by));
+                        }
+                        A::ResetRegard => {
+                            cheated = true;
+                            session.debug_sheet(dm::reset_regard);
+                        }
+                        A::Heal => session.debug_heal(),
+                        A::RestoreHero => {
+                            if let Some(s) = hero_file.clone() {
+                                session.send_sheet(s);
+                            }
+                            cheated = cheat_level.is_some();
+                        }
+                        A::Incident(hw_sim::incidents::IncidentKind::Collapse) => {
+                            if session.debug_collapse(at).is_none() {
+                                fight.say("No small building to bring down near here");
+                            }
+                        }
+                        A::Incident(k) => {
+                            session.debug_incident(k);
+                            fight.say(&format!("Starting: {} (Go to lists it)", k.name()));
+                        }
+                        A::BlastBuilding => {
+                            if session.debug_blast(at).is_none() {
+                                fight.say("No building near here");
+                            }
+                        }
+                        A::WreckCars => {
+                            let n = session.wreck_cars(at, 45.0);
+                            fight.say(&format!("Wrecked {n} cars"));
+                        }
+                        A::SmashProps => {
+                            let n = session.debug_smash_props(&generated, at, 25.0);
+                            fight.say(&format!("Knocked over {n} things"));
+                        }
+                        A::KnockPeople => {
+                            let n = crowd.knock_down(world, at.as_vec3() + Vec3::Y, 10.0);
+                            fight.say(&format!("Knocked over {n} people"));
+                        }
+                        A::BreakColossus => {
+                            colossus_breaks = (colossus_breaks + 1).min(8);
+                            session.debug_break_colossus(colossus_breaks);
+                        }
+                        A::Hour(h) => {
+                            let was = hw_client::nightlights::dark_at(game_hour());
+                            set_game_hour(h);
+                            hw_client::lighting::set_sky(world, h);
+                            citizens.set_hour(h as f64);
+                            let dark = hw_client::nightlights::dark_at(h);
+                            if dark != was {
+                                // Lit windows are baked into the buildings.
+                                hw_client::buildingmesh::NIGHT
+                                    .store(dark, std::sync::atomic::Ordering::Relaxed);
+                                let cells = town.built_cells();
+                                town.rebuild(world, cells);
+                            }
+                        }
+                        A::FastForward(s) => session.fast_forward(s * hw_sim::TICK_HZ),
+                        A::FreeCamera => {
+                            flying = !flying;
+                            if flying {
+                                fly.yaw_deg = hero_cam.yaw;
+                                fly.pitch_deg = hero_cam.pitch;
+                            }
+                        }
+                        A::Cutaway => {
+                            let mut changed = town.cells_near(town.cut_focus, CUT_REACH);
+                            town.cut_focus = DVec2::new(at.x, at.z);
+                            town.cut_on = !town.cut_on;
+                            changed.extend(town.cells_near(town.cut_focus, CUT_REACH));
+                            town.rebuild(world, changed);
+                        }
+                        A::Map => town_map = !town_map,
+                    }
+                }
+            }
             // Our looks go to the others once (a hero from before the
             // creator is dressed by name as soon as the catalog is in).
             if my_look.is_none() && title_screen.is_none() {
@@ -2016,7 +2208,7 @@ fn main() -> EngineResult<()> {
                 if hero_file.as_ref() == Some(&s) {
                     sheet_synced = true;
                 }
-                if sheet_synced && cheat_level.is_none() {
+                if sheet_synced && !cheated {
                     hero_file = Some(s.clone());
                     sheet_dirty = true;
                 }

@@ -545,9 +545,25 @@ on the way. Rides are free.
 
 ## 13. Trying things out: debug switches
 
-There is no in-game debug menu yet (one is requested: Ctrl+Shift+F12). Until then, these
-environment variables start the game in a state worth looking at. On Windows:
-`set HW_LEVEL=10` then run, or put them in a `.bat`.
+**The debug menu: Ctrl+Shift+F12** (single player). Four tabs:
+
+- **Go to**: open incidents on the radio, the town (start, taxi stands, Aether Spire, lighthouse,
+  park fountain, lobby of the tallest tower, a half-timbered house, high above the centre), the
+  villains (the quarter below the Tesla tower, a rooftop lookout, a villain corner, the Chrome
+  Jackets' hangout, the barricade, the graffiti wall, a lab) and underground (a lift, a utility
+  tunnel, Molehaven's hall and market).
+- **Hero**: set the level, add karma, buy every open power (either theme) or give them all back,
+  move each faction's standing, full health, back to the saved hero. A hero changed here is not
+  saved (until "Back to my saved hero").
+- **Events**: start any incident near you (fights come 150-800 m away; Go to lists them), bring
+  the nearest small house down (a collapse rescue), blast a building, wreck cars, knock over lamps
+  and trees or people, break the colossus's weak points one by one.
+- **World**: time of day (dawn to midnight), run the world on 10 s / 1 min / 5 min, free camera,
+  cut-open view, town map.
+
+`HW_DEBUG=<tab>` (`places`, `hero`, `events`, `world`) opens it at start. The environment
+variables below start the game in a state worth looking at. On Windows: `set HW_LEVEL=10` then
+run, or put them in a `.bat`.
 
 ### Hero and progress
 
@@ -626,6 +642,6 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | Destruction | Buildings, props, cars, self-repair, collateral tally | Collateral cost and careful-hero bonus, digging and craters |
 | Saves | Hero on each PC; world save in `hw-headless` and for host migration | World save for the single-player game |
 | Money | Karma only | Dollars for equipment (maybe) |
-| UI | HUD, radio, compass, map, minimap, autorun, powers, menu | In-game debug menu (requested) |
+| UI | HUD, radio, compass, map, minimap, autorun, powers, menu, debug menu (Ctrl+Shift+F12) | |
 | Sound | Title theme, colossus march, music by scenery and hour, city soundscape, combat and robot sounds | Streamed music decoding (Engine) |
 | Multiplayer | Room codes, UPnP, host migration, soak-tested by bots | A play test with people |

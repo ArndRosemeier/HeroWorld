@@ -168,6 +168,10 @@ pub const CONTROLS: &[(&str, &str)] = &[
         "Cut buildings open / move the cut / pick the floor",
     ),
     ("Escape", "This menu; frees the mouse when it is locked"),
+    (
+        "Ctrl+Shift+F12",
+        "Debug menu: go anywhere, levels, powers, events, time",
+    ),
 ];
 
 pub fn controls_ui(ui: &mut egui::Ui) {

@@ -651,6 +651,159 @@ impl Session {
         }
     }
 
+    /// Debug menu: our hero file changed by `f` (single player only).
+    pub fn debug_sheet(&mut self, f: impl FnOnce(Sheet) -> Sheet) {
+        if let Session::Local { host, me, .. } = self {
+            if let Some(s) = host.sim.sheet(*me) {
+                host.sim.set_sheet(*me, f(s));
+            }
+        }
+    }
+
+    /// Debug menu: our hero's health and energy full, standing again.
+    pub fn debug_heal(&mut self) {
+        if let Session::Local { host, me, .. } = self {
+            if let Some(id) = host.sim.hero_of(*me) {
+                if let Some(mut f) = host.sim.fighter(id) {
+                    f.health = f.max_health;
+                    f.energy = f.max_energy;
+                    f.status = hw_net::Status::Standing;
+                    f.revive = 0.0;
+                    host.sim.set_fighter(id, f);
+                }
+            }
+        }
+    }
+
+    /// Debug menu: an incident of `kind` starts near our hero within a
+    /// second.
+    pub fn debug_incident(&mut self, kind: hw_sim::incidents::IncidentKind) {
+        if let Session::Local { host, .. } = self {
+            host.sim.incidents.forced = Some(kind);
+        }
+    }
+
+    /// Debug menu: breaks the colossus's first `n` weak points (knees,
+    /// then the cannon).
+    pub fn debug_break_colossus(&mut self, n: u8) {
+        if let Session::Local { host, .. } = self {
+            host.sim.break_colossus(n);
+        }
+    }
+
+    /// Debug menu: the nearest building within `r` of `near` that our
+    /// powers can break: (its index, plan, base).
+    fn debug_building(
+        &mut self,
+        near: DVec3,
+        r: f64,
+        small: bool,
+    ) -> Option<(u64, std::sync::Arc<hw_gen::building::BuildingPlan>, f64)> {
+        use hw_sim::destruction::material_factor;
+        let Session::Local { host, .. } = self else {
+            return None;
+        };
+        let solids = host.sim.solids();
+        let p = DVec2::new(near.x, near.z);
+        solids
+            .buildings_near(p, r)
+            .into_iter()
+            .filter(|&i| !solids.is_damaged(i))
+            .filter_map(|i| {
+                let (plan, base) = solids.building(i)?;
+                let ok = !small
+                    || (plan.floors.len() >= 2
+                        && plan.floors.len() <= 4
+                        && material_factor(&plan) <= 1.3);
+                let s = &plan.site;
+                let c = s.origin + s.along * s.size.x * 0.5 + s.inward * s.size.y * 0.5;
+                ok.then_some((c.distance(p), i, plan, base))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, i, plan, base)| (i, plan, base))
+    }
+
+    /// Debug menu: brings the nearest small building down (its ground
+    /// floor punched out front and back): people are trapped in it.
+    /// Returns its centre.
+    pub fn debug_collapse(&mut self, near: DVec3) -> Option<DVec3> {
+        use hw_sim::destruction::{hero_power, Frame};
+        let (_, plan, base) = self.debug_building(near, 250.0, true)?;
+        let Session::Local { host, me, .. } = self else {
+            return None;
+        };
+        let power = hero_power(1);
+        let by = Some(*me);
+        let g = Frame::of(&plan.site, base);
+        for z in [0.0, plan.site.size.y] {
+            let mut x = 0.4;
+            while x < plan.site.size.x {
+                let at = g.to_world(DVec3::new(x, plan.floors[0].elevation + 1.6, z));
+                host.sim
+                    .hit_buildings(at, power.punch_radius, power.punch, by);
+                x += 1.0;
+            }
+        }
+        Some(g.to_world(DVec3::new(
+            plan.site.size.x * 0.5,
+            0.0,
+            plan.site.size.y * 0.5,
+        )))
+    }
+
+    /// Debug menu: a blast into the front of the nearest building, a floor
+    /// up. Returns where it struck.
+    pub fn debug_blast(&mut self, near: DVec3) -> Option<DVec3> {
+        use hw_sim::destruction::{hero_power, Frame};
+        let (_, plan, base) = self.debug_building(near, 120.0, false)?;
+        let Session::Local { host, me, .. } = self else {
+            return None;
+        };
+        let power = hero_power(20);
+        let f = Frame::of(&plan.site, base);
+        let floor = plan.floors.get(1).or(plan.floors.first())?;
+        let x = plan.site.size.x * 0.5;
+        let at = f.to_world(DVec3::new(x, floor.elevation + 1.8, 0.0));
+        let r = host
+            .sim
+            .hit_buildings(at, power.blast_radius, power.blast, Some(*me));
+        let into = f.to_world(DVec3::new(x, 0.0, 1.0)) - f.to_world(DVec3::new(x, 0.0, 0.0));
+        host.sim.damage.tell(ToClient::Impact {
+            at: at.as_vec3().to_array(),
+            dir: into.normalize().as_vec3().to_array(),
+            kind: hw_net::ImpactKind::Blast,
+            broke: r.broken > 0,
+        });
+        Some(at)
+    }
+
+    /// Debug menu: knocks the street props within `r` of `near` over.
+    /// Returns how many were struck.
+    pub fn debug_smash_props(&mut self, town: &GeneratedTown, near: DVec3, r: f64) -> usize {
+        use hw_sim::destruction::hero_power;
+        let Session::Local { host, .. } = self else {
+            return 0;
+        };
+        let tick = host.sim.tick;
+        let strong = hero_power(20);
+        let c = DVec2::new(near.x, near.z);
+        let mut n = 0;
+        for (k, p) in town.area.props.iter().enumerate() {
+            if p.pos.distance(c) > r {
+                continue;
+            }
+            let out = (p.pos - c).normalize_or(DVec2::X);
+            let side = out.perp() * if k % 2 == 0 { 0.4 } else { -0.4 };
+            let dir = (out + side).normalize();
+            let at = DVec3::new(p.pos.x, p.y + 1.0, p.pos.y);
+            host.sim
+                .street
+                .hit(at, DVec3::new(dir.x, 0.0, dir.y), 0.5, strong.punch, tick);
+            n += 1;
+        }
+        n
+    }
+
     /// Where friends on the internet reach a world we host, when the router
     /// forwards our port (UPnP).
     pub fn open_address(&self) -> Option<String> {
