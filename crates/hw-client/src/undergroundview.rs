@@ -11,13 +11,15 @@
 
 use crate::carmesh::lathe;
 use crate::citymesh::{MeshBuilder, Surf};
+use crate::tilestream::{Built, Glow, Key, Layer, Reach, Settings, UnderTiles, UnderView};
 use engine::prelude::*;
 use engine::texgen::{FacadeLayer, GroundLayer};
 use glam::{DVec2, DVec3, Vec3};
 use hw_gen::urban::underground::{Underground, Void, VoidKind};
 use hw_gen::urban::world::TownWorld;
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
+use std::sync::Arc;
 
 /// Lamps lit at once underground.
 const POOL: usize = 28;
@@ -71,97 +73,130 @@ pub fn density(u: &Underground, p: Vec3, ground: f32) -> f32 {
     d
 }
 
-struct Glow {
-    pos: DVec3,
-    color: Color,
-    strength: f32,
-    range: f32,
-}
+/// How the shallow underground streams: the pavilions on the street
+/// widely, the tunnels and Molehaven while the camera is down there or by a
+/// lift.
+pub const SETTINGS: Settings = Settings {
+    name: "underground",
+    size: CHUNK,
+    street: Reach {
+        load: 700.0,
+        drop: 900.0,
+    },
+    below: Reach {
+        load: 320.0,
+        drop: 480.0,
+    },
+    near: 80.0,
+    under: 1.0,
+    lamp_range: 90.0,
+    pool: POOL,
+};
 
-/// The underground's lamps, kept by the view once its meshes are in.
-pub struct UndergroundGlows(Vec<Glow>);
-
-/// What [`UndergroundView::parts`] makes: named meshes and the lamps.
-pub struct UndergroundParts {
-    /// Prepared where they are made, so putting one in is cheap.
-    pub meshes: Vec<(String, PreparedMesh)>,
-    pub glows: UndergroundGlows,
-}
-
-pub struct UndergroundView {
-    entities: Vec<EntityId>,
-    glows: Vec<Glow>,
-    lit: Vec<LampId>,
-    at: Option<(i32, i32, i32)>,
-}
+/// The town below the town in the world, streamed by distance.
+pub struct UndergroundView(pub UnderView);
 
 impl UndergroundView {
-    pub fn spawn(world: &mut World, town: &TownWorld) -> EngineResult<Self> {
-        let parts = Self::parts(town);
-        let entities = parts
-            .meshes
-            .into_iter()
-            .map(|(name, mesh)| Self::install(world, name, mesh))
-            .collect();
-        Ok(Self::with_entities(entities, parts.glows))
+    /// Starts the worker; tiles come in from the first update.
+    pub fn new(town: Arc<TownWorld>) -> Self {
+        Self(UnderView::new(Self::tiles(town)))
     }
 
-    /// Puts one of [`UndergroundParts::meshes`] into the world.
-    pub fn install(world: &mut World, name: String, mesh: PreparedMesh) -> EntityId {
-        let id = world.spawn_prepared(mesh);
-        world.set_name(id, name);
-        id
-    }
-
-    /// The view over meshes already in the world.
-    pub fn with_entities(entities: Vec<EntityId>, glows: UndergroundGlows) -> Self {
-        Self {
-            entities,
-            glows: glows.0,
-            lit: Vec::new(),
-            at: None,
-        }
-    }
-
-    /// The tunnels' and caverns' meshes and lamps. Pure data, no `World`:
-    /// the start makes them on a worker thread.
-    pub fn parts(town: &TownWorld) -> UndergroundParts {
+    /// The bookkeeping alone (no `World`): tests walk it across a town.
+    pub fn tiles(town: Arc<TownWorld>) -> UnderTiles {
+        // The chunks that hold anything (the plan is small and bounded).
         let u = town.underground();
-        let chunk = |p: DVec2| ((p.x / CHUNK).floor() as i64, (p.y / CHUNK).floor() as i64);
-        let mut builders: BTreeMap<(i64, i64), MeshBuilder> = BTreeMap::new();
-        let mut glows = Vec::new();
-        for (i, v) in u.voids.iter().enumerate() {
-            let c = v.world((v.min + v.max) * 0.5);
-            let b = builders.entry(chunk(c)).or_default();
-            lining(b, u, i, town);
-            if v.kind == VoidKind::Tunnel {
-                tunnel_fittings(b, u, i);
+        let mut used: BTreeSet<(i64, i64)> = u
+            .voids
+            .iter()
+            .map(|v| chunk_of(v.world((v.min + v.max) * 0.5)))
+            .collect();
+        used.extend(u.entrances.iter().map(|e| chunk_of(e.pos)));
+        used.extend(u.lamps.iter().map(|l| chunk_of(DVec2::new(l.x, l.z))));
+        used.extend(u.cavern.as_ref().map(|c| chunk_of(c.centre)));
+        UnderTiles::new(
+            SETTINGS,
+            move |k| used.contains(&k),
+            move |k| build(&town, k),
+        )
+    }
+
+    /// Builds the tiles round `eye` now (first frame, screenshots).
+    pub fn prime(&mut self, world: &mut World, town: &TownWorld, eye: Vec3) -> EngineResult<()> {
+        let g = town.ground(DVec2::new(eye.x as f64, eye.z as f64));
+        self.0.prime(world, eye, g, |k| build(town, k))
+    }
+
+    pub fn update(&mut self, world: &mut World, eye: Vec3, town: &TownWorld) -> EngineResult<()> {
+        let g = town.ground(DVec2::new(eye.x as f64, eye.z as f64));
+        self.0.update(world, eye, g)
+    }
+
+    pub fn clear(&mut self, world: &mut World) {
+        self.0.clear(world);
+    }
+}
+
+fn chunk_of(p: DVec2) -> (i64, i64) {
+    ((p.x / CHUNK).floor() as i64, (p.y / CHUNK).floor() as i64)
+}
+
+fn chunk_centre(k: (i64, i64)) -> DVec2 {
+    DVec2::new((k.0 as f64 + 0.5) * CHUNK, (k.1 as f64 + 0.5) * CHUNK)
+}
+
+/// One layer of one chunk: what belongs to the chunk holding its middle.
+/// Pure data, no `World`: runs on the stream's worker.
+pub fn build(town: &TownWorld, key: Key) -> Built {
+    let (layer, k) = (key.0, (key.1, key.2));
+    let u = town.underground();
+    let mut b = MeshBuilder::default();
+    let mut out = Built::default();
+    for e in u.entrances.iter().filter(|e| chunk_of(e.pos) == k) {
+        let col = if e.molehaven {
+            rgb(255, 170, 90)
+        } else {
+            rgb(130, 230, 255)
+        };
+        match layer {
+            Layer::Street => {
+                pavilion(&mut b, e.pos, e.door, e.top, e.molehaven);
+                collar(&mut b, e.pos, e.door, town);
+                lift_ring(&mut b, e.pos, e.top, col);
+                out.openings.push(e.pos);
+            }
+            Layer::Below => {
+                out.glows.push(Glow {
+                    pos: DVec3::new(e.pos.x, e.bottom + 2.6, e.pos.y),
+                    color: col,
+                    strength: 6.0,
+                    range: 10.0,
+                });
+                lift_ring(&mut b, e.pos, e.bottom, col);
             }
         }
-        for e in &u.entrances {
-            let b = builders.entry(chunk(e.pos)).or_default();
-            pavilion(b, e.pos, e.door, e.top, e.molehaven);
-            collar(b, e.pos, e.door, town);
-            let col = if e.molehaven {
-                rgb(255, 170, 90)
-            } else {
-                rgb(130, 230, 255)
-            };
-            glows.push(Glow {
-                pos: DVec3::new(e.pos.x, e.bottom + 2.6, e.pos.y),
-                color: col,
-                strength: 6.0,
-                range: 10.0,
-            });
-            lift_ring(b, e.pos, e.bottom, col);
-            lift_ring(b, e.pos, e.top, col);
+    }
+    if layer == Layer::Below {
+        for i in u.near(chunk_centre(k), CHUNK) {
+            let v = &u.voids[i];
+            if chunk_of(v.world((v.min + v.max) * 0.5)) != k {
+                continue;
+            }
+            lining(&mut b, u, i, town);
+            if v.kind == VoidKind::Tunnel {
+                tunnel_fittings(&mut b, u, i);
+            }
         }
-        for l in &u.lamps {
+        for l in u
+            .lamps
+            .iter()
+            .filter(|l| chunk_of(DVec2::new(l.x, l.z)) == k)
+        {
             let in_cavern = u
                 .cavern
                 .as_ref()
                 .is_some_and(|c| (l.y - c.floor).abs() < 4.0);
-            glows.push(Glow {
+            out.glows.push(Glow {
                 pos: *l,
                 color: if in_cavern {
                     rgb(150, 120, 255)
@@ -172,79 +207,12 @@ impl UndergroundView {
                 range: if in_cavern { 16.0 } else { 13.0 },
             });
         }
-        if let Some(c) = &u.cavern {
-            let b = builders.entry(chunk(c.centre)).or_default();
-            molehaven(b, u, &mut glows);
-        }
-        let mut meshes = Vec::new();
-        for (k, b) in builders {
-            for mesh in b.finish_parts() {
-                meshes.push((format!("underground {} {}", k.0, k.1), mesh.prepare()));
-            }
-        }
-        UndergroundParts {
-            meshes,
-            glows: UndergroundGlows(glows),
+        if u.cavern.as_ref().is_some_and(|c| chunk_of(c.centre) == k) {
+            molehaven(&mut b, u, &mut out.glows);
         }
     }
-
-    /// Lamps near the camera on while it is below ground or by a lift.
-    pub fn update(&mut self, world: &mut World, eye: Vec3, town: &TownWorld) -> EngineResult<()> {
-        let q = DVec2::new(eye.x as f64, eye.z as f64);
-        let below = (eye.y as f64) < town.ground(q) - 1.0;
-        let by_lift = town
-            .underground()
-            .entrances
-            .iter()
-            .any(|e| e.pos.distance(q) < 30.0);
-        if !below && !by_lift {
-            self.clear_lamps(world);
-            return Ok(());
-        }
-        let key = (
-            (eye.x / 6.0).round() as i32,
-            (eye.y / 6.0).round() as i32,
-            (eye.z / 6.0).round() as i32,
-        );
-        if self.at == Some(key) {
-            return Ok(());
-        }
-        self.at = Some(key);
-        let e = eye.as_dvec3();
-        let mut near: Vec<(f64, &Glow)> = self
-            .glows
-            .iter()
-            .map(|g| (g.pos.distance(e), g))
-            .filter(|(d, _)| *d < 90.0)
-            .collect();
-        near.sort_by(|a, b| a.0.total_cmp(&b.0));
-        near.truncate(POOL);
-        for (k, (_, g)) in near.iter().enumerate() {
-            let lamp = Lamp::point(g.pos.as_vec3(), g.color, g.strength, g.range);
-            match self.lit.get(k) {
-                Some(&id) => world.set_lamp(id, lamp)?,
-                None => self.lit.push(world.add_lamp(lamp)?),
-            }
-        }
-        for id in self.lit.drain(near.len()..) {
-            world.remove_lamp(id);
-        }
-        Ok(())
-    }
-
-    fn clear_lamps(&mut self, world: &mut World) {
-        for id in self.lit.drain(..) {
-            world.remove_lamp(id);
-        }
-        self.at = None;
-    }
-
-    pub fn clear(&mut self, world: &mut World) {
-        self.clear_lamps(world);
-        for e in self.entities.drain(..) {
-            world.despawn(e);
-        }
-    }
+    out.meshes = b.finish_parts().into_iter().map(|m| m.prepare()).collect();
+    out
 }
 
 pub(crate) fn v3(p: DVec2, y: f64) -> DVec3 {

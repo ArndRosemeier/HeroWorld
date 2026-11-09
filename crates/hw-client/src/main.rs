@@ -1642,7 +1642,7 @@ fn main() -> EngineResult<()> {
             }
             hw_client::hitch::mark("deep");
             if let Some(deep) = extras.deep.as_mut() {
-                deep.update(world, world.camera().eye())?;
+                deep.update(world, world.camera().eye(), &generated.world)?;
             }
             hw_client::hitch::mark("grass");
             if let Some(g) = extras.grass.as_mut() {

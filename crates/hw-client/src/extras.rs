@@ -1,6 +1,6 @@
 //! What stands in the town besides its roads and buildings: props,
-//! landmarks, the underground, grass, the pirates' roost and the streamed
-//! ground and woods.
+//! landmarks, grass, the pirates' roost and the streamed ground and woods;
+//! and the views that stream on their own (the underground's layers).
 //!
 //! Behind the title these load without stopping the window: a worker thread
 //! makes every mesh ([`ExtrasParts::build`], pure data, no `World`), and the
@@ -10,7 +10,7 @@
 //! 1. the worker's parts arrive (the only hand-over between the threads: one
 //!    message on a channel; the worker never touches the `World`);
 //! 2. the steps run strictly in the order queued: props, landmarks,
-//!    underground, grass, roost, then the ground stream, which draws the woods
+//!    grass, roost, then the ground stream, which draws the woods
 //!    with the props' tree sets (asserted to be in by then);
 //! 3. [`TownExtras`] is handed out only once every step is done and the
 //!    ground around the camera is loaded.
@@ -20,7 +20,7 @@ use crate::grassview::GrassView;
 use crate::landmarkview::LandmarkView;
 use crate::propview::{self, PropView};
 use crate::townmesh::TownGround;
-use crate::undergroundview::{UndergroundGlows, UndergroundParts, UndergroundView};
+use crate::undergroundview::UndergroundView;
 use engine::prelude::*;
 use engine::stream::{StreamSettings, WorldStream};
 use hw_gen::urban::greenery::Greenery;
@@ -95,7 +95,6 @@ pub struct ExtrasParts {
     /// One per kind of [`PropKind::all`], in that order.
     props: Vec<Vec<LodLevel>>,
     landmarks: Vec<(Vec<LodLevel>, Place)>,
-    under: UndergroundParts,
     grass: Vec<Vec<LodLevel>>,
     roost: Option<RoostParts>,
 }
@@ -107,7 +106,6 @@ impl ExtrasParts {
         Ok(Self {
             props: PropView::models(threads)?,
             landmarks: LandmarkView::models(town),
-            under: UndergroundView::parts(town),
             grass: GrassView::models(green)?,
             roost: factionview::roost_parts(town),
         })
@@ -118,9 +116,8 @@ impl ExtrasParts {
 enum Step {
     Prop(Vec<LodLevel>),
     Landmark(Vec<LodLevel>, Place),
-    Under(String, PreparedMesh),
     Grass(Vec<LodLevel>),
-    Roost(RoostParts),
+    Roost(Box<RoostParts>),
     /// The ground stream (needs every prop set: the woods use the trees').
     Stream,
     /// Waits until the stream has the ground around the camera.
@@ -132,7 +129,6 @@ impl Step {
         match self {
             Step::Prop(_) => "a prop model",
             Step::Landmark(..) => "a landmark",
-            Step::Under(..) => "an underground mesh",
             Step::Grass(_) => "a grass clump",
             Step::Roost(_) => "the roost",
             Step::Stream => "the ground stream",
@@ -156,8 +152,6 @@ pub struct ExtrasLoad {
     prop_sets: Vec<LodId>,
     prop_bounds: Vec<(Vec3, Vec3)>,
     landmark_sets: Vec<LodId>,
-    under_entities: Vec<EntityId>,
-    under_glows: Option<UndergroundGlows>,
     grass_sets: Vec<LodId>,
     roost_lods: Vec<LodId>,
     roost_entities: Vec<EntityId>,
@@ -251,11 +245,8 @@ impl ExtrasLoad {
         self.steps.extend(p.props.into_iter().map(Step::Prop));
         self.steps
             .extend(p.landmarks.into_iter().map(|(l, at)| Step::Landmark(l, at)));
-        self.steps
-            .extend(p.under.meshes.into_iter().map(|(n, m)| Step::Under(n, m)));
-        self.under_glows = Some(p.under.glows);
         self.steps.extend(p.grass.into_iter().map(Step::Grass));
-        self.steps.extend(p.roost.map(Step::Roost));
+        self.steps.extend(p.roost.map(|r| Step::Roost(Box::new(r))));
         self.steps.push_back(Step::Stream);
         self.steps.push_back(Step::Ground(None));
         self.total = self.steps.len();
@@ -271,12 +262,9 @@ impl ExtrasLoad {
             Step::Landmark(levels, at) => {
                 self.landmark_sets.push(world.spawn_lod_at(levels, &[at])?)
             }
-            Step::Under(name, mesh) => self
-                .under_entities
-                .push(UndergroundView::install(world, name, mesh)),
             Step::Grass(levels) => self.grass_sets.push(GrassView::install(world, levels)?),
             Step::Roost(r) => {
-                let (lods, entities) = factionview::install_roost(world, r)?;
+                let (lods, entities) = factionview::install_roost(world, *r)?;
                 self.roost_lods = lods;
                 self.roost_entities = entities;
             }
@@ -317,10 +305,6 @@ impl ExtrasLoad {
             std::mem::take(&mut self.prop_bounds),
         );
         let landmark_sets = std::mem::take(&mut self.landmark_sets);
-        let under = UndergroundView::with_entities(
-            std::mem::take(&mut self.under_entities),
-            self.under_glows.take().expect("the underground's lamps"),
-        );
         let grass = GrassView::with_sets(
             self.town.clone(),
             self.green.clone(),
@@ -330,7 +314,7 @@ impl ExtrasLoad {
         lods.append(&mut self.roost_lods);
         let entities = std::mem::take(&mut self.roost_entities);
         self.streamed = false;
-        assemble(&self.town, props, under, grass, lods, entities)
+        assemble(&self.town, props, grass, lods, entities)
     }
 
     /// Takes out what is already in (the title switched worlds).
@@ -347,11 +331,7 @@ impl ExtrasLoad {
         for id in lods.collect::<Vec<_>>() {
             world.despawn_lod(id);
         }
-        for e in self
-            .under_entities
-            .drain(..)
-            .chain(self.roost_entities.drain(..))
-        {
+        for e in self.roost_entities.drain(..) {
             world.despawn(e);
         }
     }
@@ -361,7 +341,6 @@ impl ExtrasLoad {
 fn assemble(
     town: &Arc<TownWorld>,
     props: PropView,
-    under: UndergroundView,
     grass: GrassView,
     lods: Vec<LodId>,
     entities: Vec<EntityId>,
@@ -374,8 +353,9 @@ fn assemble(
         lights: Some(crate::nightlights::NightLights::new(town.clone())),
         signals: Some(crate::signalview::SignalView::new()),
         props: Some(props),
-        under: Some(under),
-        // The deep tiles stream on their own worker from the first update.
+        // The underground's tiles stream on their own workers from the
+        // first update.
+        under: Some(UndergroundView::new(town.clone())),
         deep: Some(crate::deepview::DeepView::new(town.clone())),
         dystopia: Some(crate::dystopiaview::DystopiaView::new(town)),
     }
@@ -391,7 +371,7 @@ pub fn spawn_now(
     let t = Instant::now();
     let all = std::thread::available_parallelism().map_or(4, |n| n.get());
     let parts = ExtrasParts::build(&town, &green, all)?;
-    let mut load = ExtrasLoad::empty(town, green);
+    let mut load = ExtrasLoad::empty(town.clone(), green);
     load.queue(parts);
     let mut extras = loop {
         if let Some(e) = load.step(world, f64::INFINITY)? {
@@ -399,8 +379,12 @@ pub fn spawn_now(
         }
     };
     world.prepare_stream(PREPARE_S);
+    let eye = world.camera().eye();
+    if let Some(u) = extras.under.as_mut() {
+        u.prime(world, &town, eye)?;
+    }
     if let Some(d) = extras.deep.as_mut() {
-        d.prime(world, world.camera().eye())?;
+        d.prime(world, &town, eye)?;
     }
     eprintln!("town extras in {:.2} s", t.elapsed().as_secs_f64());
     Ok(extras)
@@ -417,8 +401,6 @@ impl ExtrasLoad {
             prop_sets: Vec::new(),
             prop_bounds: Vec::new(),
             landmark_sets: Vec::new(),
-            under_entities: Vec::new(),
-            under_glows: None,
             grass_sets: Vec::new(),
             roost_lods: Vec::new(),
             roost_entities: Vec::new(),
@@ -482,11 +464,10 @@ mod tests {
         let t = Instant::now();
         let p = ExtrasParts::build(&g.world, &green, background_threads()).expect("parts");
         eprintln!(
-            "extras parts in {:.2} s: {} prop models, {} landmark sets, {} underground meshes, {} grass clumps",
+            "extras parts in {:.2} s: {} prop models, {} landmark sets, {} grass clumps",
             t.elapsed().as_secs_f64(),
             p.props.len(),
             p.landmarks.len(),
-            p.under.meshes.len(),
             p.grass.len()
         );
         assert_eq!(p.props.len(), PropKind::all().len());

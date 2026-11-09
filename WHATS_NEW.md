@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.098 (2026-11-09)
+
+- The underground now comes and goes with you: the tunnels, Molehaven and the deep layers are built only near you and only while you are down there or close to a way down, so the game uses less memory up on the street.
+- Lift pavilions and tube kiosks still show from far along the street.
+
 ## 0.097 (2026-11-09)
 
 - A benchmark for checking how smoothly the game runs: `scripts\bench.bat` lets the hero run along the main roads and then fly over the town for a minute each, and writes how long every frame took to the `logs` folder.

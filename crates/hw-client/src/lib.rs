@@ -45,6 +45,7 @@ pub mod signalview;
 pub mod skins;
 pub mod soundscape;
 pub mod teslaview;
+pub mod tilestream;
 pub mod title;
 pub mod townmesh;
 pub mod trafficview;

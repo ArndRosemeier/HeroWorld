@@ -14,6 +14,7 @@
 use crate::carmesh::{lathe, slab, surface};
 use crate::citymesh::{MeshBuilder, Surf};
 use crate::skins::Tex;
+use crate::tilestream::{Built, Glow, Key, Layer, Reach, Settings, UnderTiles, UnderView};
 use crate::undergroundview::{self as uv, v3};
 use engine::prelude::*;
 use engine::texgen::{FacadeLayer, GroundLayer, MedievalLayer, NaturalLayer};
@@ -23,9 +24,7 @@ use hw_gen::urban::deep::{
 };
 use hw_gen::urban::underground::{Void, VoidKind, SHAFT_HALF};
 use hw_gen::urban::world::TownWorld;
-use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
-use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
 /// Tiles are loaded within this distance of the camera (plan), dropped
@@ -56,260 +55,68 @@ pub fn density(town: &TownWorld, p: Vec3, ground: f32) -> f32 {
     d
 }
 
-#[derive(Clone, Copy)]
-struct Glow {
-    pos: DVec3,
-    color: Color,
-    strength: f32,
-    range: f32,
-}
+/// How the deep underground streams: station pavilions and kiosks on the
+/// street widely, the rooms below while the camera is down there or at an
+/// opening.
+pub const SETTINGS: Settings = Settings {
+    name: "deep",
+    size: TILE,
+    // Pavilions and kiosks are small; planning a tile is not free.
+    street: Reach {
+        load: 500.0,
+        drop: 700.0,
+    },
+    below: Reach {
+        load: LOAD,
+        drop: DROP,
+    },
+    near: 80.0,
+    under: 0.5,
+    lamp_range: 80.0,
+    pool: POOL,
+};
 
-/// A tile's meshes, made on the worker.
-struct Built {
-    key: TileKey,
-    inner: Vec<Mesh>,
-    outer: Vec<Mesh>,
-    glows: Vec<Glow>,
-    /// Openings to the street: where the camera counts as "at" the deep
-    /// underground though above ground.
-    openings: Vec<DVec2>,
-}
-
-struct Loaded {
-    inner_meshes: Vec<Mesh>,
-    inner: Vec<EntityId>,
-    outer: Vec<EntityId>,
-    glows: Vec<Glow>,
-    openings: Vec<DVec2>,
-}
-
-pub struct DeepView {
-    town: Arc<TownWorld>,
-    tiles: BTreeMap<TileKey, Loaded>,
-    asked: BTreeSet<TileKey>,
-    jobs: Sender<TileKey>,
-    done: Receiver<Built>,
-    inside: bool,
-    lit: Vec<LampId>,
-    at: Option<(i32, i32, i32)>,
-}
+/// The deep underground in the world, streamed by distance.
+pub struct DeepView(pub UnderView);
 
 impl DeepView {
+    /// Starts the worker; tiles come in from the first update.
     pub fn new(town: Arc<TownWorld>) -> Self {
-        let (jobs, rx) = channel::<TileKey>();
-        let (tx, done) = channel::<Built>();
-        let worker_town = town.clone();
-        std::thread::Builder::new()
-            .name("deep tiles".into())
-            .spawn(move || {
-                while let Ok(k) = rx.recv() {
-                    let t = worker_town.deep_tile(k);
-                    if tx.send(build(&worker_town, &t)).is_err() {
-                        break;
-                    }
-                }
-            })
-            .expect("deep tile worker");
-        Self {
-            town,
-            tiles: BTreeMap::new(),
-            asked: BTreeSet::new(),
-            jobs,
-            done,
-            inside: false,
-            lit: Vec::new(),
-            at: None,
-        }
+        Self(UnderView::new(Self::tiles(town)))
+    }
+
+    /// The bookkeeping alone (no `World`): tests walk it across a town.
+    pub fn tiles(town: Arc<TownWorld>) -> UnderTiles {
+        let t = town.clone();
+        UnderTiles::new(
+            SETTINGS,
+            move |k| town.deep_in_land(k),
+            move |k| build(&t, k),
+        )
     }
 
     /// Builds the tiles round `eye` now (for the first frame and
     /// screenshots), then streams as usual.
-    pub fn prime(&mut self, world: &mut World, eye: Vec3) -> EngineResult<()> {
-        let q = DVec2::new(eye.x as f64, eye.z as f64);
-        for k in self.wanted(q) {
-            if !self.tiles.contains_key(&k) {
-                let t = self.town.deep_tile(k);
-                let b = build(&self.town, &t);
-                self.install(world, b);
-            }
-        }
-        self.update(world, eye)
+    pub fn prime(&mut self, world: &mut World, town: &TownWorld, eye: Vec3) -> EngineResult<()> {
+        let g = town.ground(DVec2::new(eye.x as f64, eye.z as f64));
+        self.0.prime(world, eye, g, |k| build(town, k))
     }
 
-    fn wanted(&self, q: DVec2) -> Vec<TileKey> {
-        let (a, b) = (
-            tile_of(q - DVec2::splat(LOAD + TILE)),
-            tile_of(q + DVec2::splat(LOAD + TILE)),
-        );
-        let mut out = Vec::new();
-        for x in a.0..=b.0 {
-            for y in a.1..=b.1 {
-                let c = hw_gen::urban::deep::tile_centre((x, y));
-                let near = (q - c).abs() - DVec2::splat(TILE * 0.5);
-                if near.max(DVec2::ZERO).length() < LOAD && self.town.deep_in_land((x, y)) {
-                    out.push((x, y));
-                }
-            }
-        }
-        out.sort_by_key(|k| {
-            let c = hw_gen::urban::deep::tile_centre(*k);
-            (c.distance(q) * 10.0) as i64
-        });
-        out
-    }
-
-    fn install(&mut self, world: &mut World, b: Built) {
-        let mut outer = Vec::new();
-        for mesh in b.outer {
-            let id = world.spawn(mesh);
-            world.set_name(id, format!("deep street {} {}", b.key.0, b.key.1));
-            outer.push(id);
-        }
-        let mut l = Loaded {
-            inner_meshes: b.inner,
-            inner: Vec::new(),
-            outer,
-            glows: b.glows,
-            openings: b.openings,
-        };
-        if self.inside {
-            spawn_inner(world, b.key, &mut l);
-        }
-        self.asked.remove(&b.key);
-        self.tiles.insert(b.key, l);
-    }
-
-    /// Streams tiles round the camera, shows the rooms while it is below,
-    /// and lights the lamps near it.
-    pub fn update(&mut self, world: &mut World, eye: Vec3) -> EngineResult<()> {
-        let q = DVec2::new(eye.x as f64, eye.z as f64);
-        while let Ok(b) = self.done.try_recv() {
-            let c = hw_gen::urban::deep::tile_centre(b.key);
-            if c.distance(q) < DROP + TILE {
-                self.install(world, b);
-            } else {
-                self.asked.remove(&b.key);
-            }
-        }
-        for k in self.wanted(q) {
-            if !self.tiles.contains_key(&k) && self.asked.insert(k) {
-                let _ = self.jobs.send(k);
-            }
-        }
-        let far: Vec<TileKey> = self
-            .tiles
-            .keys()
-            .copied()
-            .filter(|k| hw_gen::urban::deep::tile_centre(*k).distance(q) > DROP + TILE * 0.5)
-            .collect();
-        for k in far {
-            if let Some(mut l) = self.tiles.remove(&k) {
-                despawn(world, &mut l);
-            }
-        }
-        // Below ground, or at an opening to the street.
-        let ground = self.town.ground(q);
-        let at_opening = self
-            .tiles
-            .values()
-            .any(|l| l.openings.iter().any(|o| o.distance(q) < 30.0))
-            && (eye.y as f64) < ground + 40.0;
-        let inside = (eye.y as f64) < ground - 0.5 || at_opening;
-        if inside != self.inside {
-            self.inside = inside;
-            for (k, l) in self.tiles.iter_mut() {
-                if inside {
-                    spawn_inner(world, *k, l);
-                } else {
-                    for id in l.inner.drain(..) {
-                        world.despawn(id);
-                    }
-                }
-            }
-            if !inside {
-                self.clear_lamps(world);
-            }
-        }
-        if inside {
-            // Tiles that came in while inside got their rooms in install.
-            for (k, l) in self.tiles.iter_mut() {
-                if l.inner.is_empty() && !l.inner_meshes.is_empty() {
-                    spawn_inner(world, *k, l);
-                }
-            }
-            self.light(world, eye)?;
-        }
-        Ok(())
-    }
-
-    fn light(&mut self, world: &mut World, eye: Vec3) -> EngineResult<()> {
-        let key = (
-            (eye.x / 5.0).round() as i32,
-            (eye.y / 5.0).round() as i32,
-            (eye.z / 5.0).round() as i32,
-        );
-        if self.at == Some(key) {
-            return Ok(());
-        }
-        self.at = Some(key);
-        let e = eye.as_dvec3();
-        let mut near: Vec<(f64, Glow)> = self
-            .tiles
-            .values()
-            .flat_map(|l| l.glows.iter())
-            .map(|g| (g.pos.distance(e), *g))
-            .filter(|(d, _)| *d < 80.0)
-            .collect();
-        near.sort_by(|a, b| a.0.total_cmp(&b.0));
-        near.truncate(POOL);
-        for (k, (_, g)) in near.iter().enumerate() {
-            let lamp = Lamp::point(g.pos.as_vec3(), g.color, g.strength, g.range);
-            match self.lit.get(k) {
-                Some(&id) => world.set_lamp(id, lamp)?,
-                None => self.lit.push(world.add_lamp(lamp)?),
-            }
-        }
-        for id in self.lit.drain(near.len()..) {
-            world.remove_lamp(id);
-        }
-        Ok(())
-    }
-
-    fn clear_lamps(&mut self, world: &mut World) {
-        for id in self.lit.drain(..) {
-            world.remove_lamp(id);
-        }
-        self.at = None;
+    /// Streams tiles round the camera, the rooms while it is below, and
+    /// lights the lamps near it.
+    pub fn update(&mut self, world: &mut World, eye: Vec3, town: &TownWorld) -> EngineResult<()> {
+        let g = town.ground(DVec2::new(eye.x as f64, eye.z as f64));
+        self.0.update(world, eye, g)
     }
 
     /// Takes everything out of the world.
     pub fn clear(&mut self, world: &mut World) {
-        self.clear_lamps(world);
-        for (_, mut l) in std::mem::take(&mut self.tiles) {
-            despawn(world, &mut l);
-        }
+        self.0.clear(world);
     }
 
-    /// Tiles loaded now (bounded by the load distance).
+    /// Tiles in the world now (bounded by the load distances).
     pub fn loaded(&self) -> usize {
-        self.tiles.len()
-    }
-}
-
-fn spawn_inner(world: &mut World, k: TileKey, l: &mut Loaded) {
-    if !l.inner.is_empty() {
-        return;
-    }
-    for mesh in &l.inner_meshes {
-        let id = world.spawn(mesh.clone());
-        world.set_name(id, format!("deep {} {}", k.0, k.1));
-        l.inner.push(id);
-    }
-}
-
-fn despawn(world: &mut World, l: &mut Loaded) {
-    for id in l.inner.drain(..).chain(l.outer.drain(..)) {
-        world.despawn(id);
+        self.0.loaded()
     }
 }
 
@@ -335,10 +142,13 @@ fn elsewhere(town: &TownWorld, key: TileKey, i: usize, p: DVec3) -> bool {
     })
 }
 
-/// Everything of one tile.
-fn build(town: &TownWorld, t: &DeepTile) -> Built {
+/// One layer of one tile. Pure data, no `World`: runs on the stream's worker.
+pub fn build(town: &TownWorld, key: Key) -> Built {
+    let t = town.deep_tile((key.1, key.2));
+    if key.0 == Layer::Street {
+        return street(town, &t);
+    }
     let mut inner = MeshBuilder::default();
-    let mut outer = MeshBuilder::default();
     let mut glows: Vec<Glow> = t
         .lamps
         .iter()
@@ -417,21 +227,8 @@ fn build(town: &TownWorld, t: &DeepTile) -> Built {
             }
         }
     }
-    let mut openings = Vec::new();
     for e in &t.entrances {
-        openings.push(e.pos);
-        let (glow_col, roof) = match e.kind {
-            EntranceKind::Tube => (rgb(255, 214, 130), rgb(196, 52, 44)),
-            EntranceKind::Kiosk => (rgb(255, 120, 90), rgb(60, 92, 70)),
-        };
-        match e.kind {
-            EntranceKind::Tube => {
-                uv::pavilion_in(&mut outer, e.pos, e.door, e.top, roof, glow_col);
-                uv::collar(&mut outer, e.pos, e.door, town);
-            }
-            EntranceKind::Kiosk => kiosk(&mut outer, e.pos, e.door, e.top),
-        }
-        uv::lift_ring(&mut outer, e.pos, e.top, glow_col);
+        let glow_col = entrance_glow(e.kind);
         uv::lift_ring(&mut inner, e.pos, e.bottom, glow_col);
         glows.push(Glow {
             pos: DVec3::new(e.pos.x, e.bottom + 2.6, e.pos.y),
@@ -441,10 +238,42 @@ fn build(town: &TownWorld, t: &DeepTile) -> Built {
         });
     }
     Built {
-        key: t.key,
-        inner: inner.finish_parts(),
-        outer: outer.finish_parts(),
+        meshes: prepared(inner),
         glows,
+        openings: Vec::new(),
+    }
+}
+
+fn prepared(b: MeshBuilder) -> Vec<PreparedMesh> {
+    b.finish_parts().into_iter().map(|m| m.prepare()).collect()
+}
+
+fn entrance_glow(k: EntranceKind) -> Color {
+    match k {
+        EntranceKind::Tube => rgb(255, 214, 130),
+        EntranceKind::Kiosk => rgb(255, 120, 90),
+    }
+}
+
+/// What a tile has on the street: station pavilions and kiosks.
+fn street(town: &TownWorld, t: &DeepTile) -> Built {
+    let mut outer = MeshBuilder::default();
+    let mut openings = Vec::new();
+    for e in &t.entrances {
+        openings.push(e.pos);
+        let glow_col = entrance_glow(e.kind);
+        match e.kind {
+            EntranceKind::Tube => {
+                uv::pavilion_in(&mut outer, e.pos, e.door, e.top, rgb(196, 52, 44), glow_col);
+                uv::collar(&mut outer, e.pos, e.door, town);
+            }
+            EntranceKind::Kiosk => kiosk(&mut outer, e.pos, e.door, e.top),
+        }
+        uv::lift_ring(&mut outer, e.pos, e.top, glow_col);
+    }
+    Built {
+        meshes: prepared(outer),
+        glows: Vec::new(),
         openings,
     }
 }
@@ -2741,9 +2570,8 @@ mod tests {
         for dx in -1..=1 {
             for dy in -1..=1 {
                 let k = tile_of(core);
-                let t = w.deep_tile((k.0 + dx, k.1 + dy));
-                let b = build(&w, &t);
-                tris += b.inner.iter().map(|m| m.face_count()).sum::<usize>();
+                let b = build(&w, (Layer::Below, k.0 + dx, k.1 + dy));
+                tris += b.meshes.iter().map(|m| m.triangle_count()).sum::<usize>();
             }
         }
         assert!(tris > 10_000, "{tris} triangles");
