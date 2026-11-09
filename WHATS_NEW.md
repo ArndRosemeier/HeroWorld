@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.075 (2026-11-09)
+
+- Big cities start in seconds: setting up the traffic of a city of a million took five
+  minutes, now it takes one second.
+
 ## 0.074 (2026-11-09)
 
 - A debug menu for trying things out: Ctrl+Shift+F12 (single player). Jump to the town's

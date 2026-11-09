@@ -532,23 +532,49 @@ impl Traffic {
                 self.ground[lb as usize].path.len(),
             );
             pts.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.total_cmp(&y.1)));
-            // Runs of nearby points are one crossing.
+            // Runs of nearby points are one crossing. The points come in
+            // order along lane a, so only runs with a point less than 3 m
+            // back can take the next one (a long loop crossing itself
+            // has thousands of points: comparing all of them took minutes).
+            let near = |q: &(f64, f64), p: &(f64, f64)| {
+                ahead(q.0, p.0, len_a).min(ahead(p.0, q.0, len_a)) < 3.0
+                    && ahead(q.1, p.1, len_b).min(ahead(p.1, q.1, len_b)) < 3.0
+            };
             let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
+            let mut open: Vec<usize> = Vec::new();
             for p in pts {
-                let joined = runs.iter_mut().any(|r| {
-                    let near = r.iter().any(|q| {
-                        ahead(q.0, p.0, len_a).min(ahead(p.0, q.0, len_a)) < 3.0
-                            && ahead(q.1, p.1, len_b).min(ahead(p.1, q.1, len_b)) < 3.0
-                    });
-                    if near {
-                        r.push(p);
-                    }
-                    near
+                open.retain(|&r| runs[r].last().is_some_and(|q| q.0 >= p.0 - 3.0));
+                let hit = open.iter().copied().find(|&r| {
+                    runs[r]
+                        .iter()
+                        .rev()
+                        .take_while(|q| q.0 >= p.0 - 3.0)
+                        .any(|q| near(q, &p))
                 });
-                if !joined {
-                    runs.push(vec![p]);
+                match hit {
+                    Some(r) => runs[r].push(p),
+                    None => {
+                        open.push(runs.len());
+                        runs.push(vec![p]);
+                    }
                 }
             }
+            // A crossing over the loop's start: its two ends are one run.
+            let mut k = 0;
+            while k < runs.len() {
+                if runs[k].first().is_some_and(|q| q.0 < 3.0) {
+                    let wraps = (0..runs.len()).filter(|&j| j != k).find(|&j| {
+                        runs[j].last().is_some_and(|q| q.0 > len_a - 3.0)
+                            && runs[j].iter().any(|q| runs[k].iter().any(|p| near(q, p)))
+                    });
+                    if let Some(j) = wraps {
+                        let moved = std::mem::take(&mut runs[k]);
+                        runs[j].extend(moved);
+                    }
+                }
+                k += 1;
+            }
+            runs.retain(|r| !r.is_empty());
             for r in runs {
                 // The stretch on each lane: from the first point to the
                 // last (round the loop), a little wider.
