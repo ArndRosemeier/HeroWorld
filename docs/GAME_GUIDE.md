@@ -1,7 +1,7 @@
 # HeroWorld game guide
 
 What the game is and does **today**, read from the code on `main` at version 0.069
-(2026-11-08; powers and levels updated for 0.077). [DESIGN.md](DESIGN.md) says what HeroWorld is meant to become and
+(2026-11-08; powers and levels updated for 0.077, five new powers and the power tray for 0.117). [DESIGN.md](DESIGN.md) says what HeroWorld is meant to become and
 [MILESTONES.md](MILESTONES.md) how we get there; this guide says what is actually built,
 with the numbers the code uses, and marks what is still only planned. Several threads are
 changing the game in parallel (sounds, autorun and minimap, the level cap, the costume
@@ -111,10 +111,9 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | Ctrl / Shift | Sink / faster when flying (Ctrl also sinks in a lift); Shift also runs at full tilt with Super Speed |
 | Mouse wheel | Zoom in / out (all the way in: first person) |
 | Tab | Target the nearest villain in view; again: the next nearest not yet picked, round and round |
-| Left mouse / 1 | Strike |
-| Q / 2 | Energy Bolt |
-| 3 / 4 / 5 / 6 | Binding Hold / Force Shield / Lift and Throw / Shockwave |
-| 7 / 8 / 9 / 0 | Mend / Beam / Meteor / Nova (tiers 4 to 7) |
+| Left mouse | Strike |
+| Q | Energy Bolt |
+| 1 to 0, Alt+1 to Alt+0 | The power in that slot of the power tray (see below) |
 | B | Powers and karma window (also faction standings) |
 | E (hold) | Revive a downed teammate; help trapped people out; pick up the hurt |
 | H | Call the medical drone when you are down |
@@ -129,6 +128,15 @@ On foot the hero steps up and down ledges up to 0.45 m (`collision::STEP`) witho
 leaving the ground, so slopes, kerbs and stairs never count as a fall; a bigger drop
 does. The fall pose shows only after 0.15 s off the ground (`heroview::AIR_GRACE`),
 a jump at once.
+
+**The power tray** (`hw-client/src/tray.rs`): twenty slots at the bottom of the screen, 1 to 0
+and Alt+1 to Alt+0 (the Alt row shows above the number row once it holds anything, or while
+something is dragged). A power you buy takes its usual key if that is free (Strike 1, Bolt 2,
+Hold 3, Shield 4, Lift 5, Shockwave 6, Mend 7, Beam 8, Meteor 9, Nova 0), otherwise the first
+free slot. Rearrange it with the mouse: drag a power from the powers window (B, the "⠿" handle)
+onto a slot, drag a slot onto another (they swap), or drag a slot off the tray (it stays off
+until you drag it back). Clicking a slot fires its power. The tray is saved with the profile on
+this PC; passive powers never go on it.
 
 Without a target, left mouse punches what is in front of you (walls, props, cars) and Q
 fires a blast down the crosshair (up to 90 m), so the same keys fight villains and break the
@@ -215,11 +223,16 @@ grows with the same ×(1 + 0.1 per level).
 | 3 | **Binding Hold**: *Gravity Cuffs* (Science) / *Binding Sigils* (Mystic) | 2 | 12 damage, 30 m, 12 energy, 6 s recharge; pins the villain for 7 s. |
 | 4 | **Force Shield**: *Force Field* (Science) / *Guardian Aegis* (Guardian) | 2 | 16 energy, 26 s recharge; for 18 s you and allies within 12 m take half damage. |
 | 5 | **Lift and Throw**: *Mighty Heave* (Might) / *Telekinesis* (Mystic) | 2 | First press picks up a car, bench, prop or torn-up rubble within 6 m; second throws it where you aim, at the target if there is one (60 damage, 30 m, 12 energy, 3 s, knockback). Not thrown within 8 s (`CARRY_SECONDS`), it slips free and drops just ahead, and the power recharges as after a throw; it also falls if the hero is knocked down or gives the power up. |
+| tray | **Freeze Ray**: *Cryo Ray* (Science) / *Frost Sigil* (Mystic) | 2 | A cone of frost, 16 m long (to the first wall), widening as it goes: 12 damage to every villain in it; 14 energy, 16 s. Minions freeze solid in a block of ice for 3.5 s (they cannot move or attack); tougher villains are chilled for 6 s (half speed, attacks wind up 1.6× slower). The next blow on a frozen villain shatters the ice for double damage. A cone at a burning house douses the fire: the trapped get out 40% quicker and the fire waits 2 more minutes. |
+| tray | **Teleport**: *Matter Transmitter* (Science) / *Aether Step* (Mystic) | 3 | Up to 40 m along where you look, stopping short of the first wall, roof or ground, and only where a person fits (never inside anything); 10 energy, 3 s. No room: nothing happens and nothing is spent. |
+| tray | **Rescue Bubble**: *Force Bubble* (Science) / *Guardian Orb* (Guardian) | 3 | At a fire or crash, a glowing bubble takes the trapped person nearest your aim (within 30 m) out to the street in 3 s (karma as if freed by hand); the hurt one, or the last one out, floats straight to the ambulance (double karma, the rescue done); 12 energy, 8 s. With nobody to rescue it does not fire. |
 | passive / V | **Flight**: *Jet Pack* / *Soaring Cape* | 3 | Fly at 22 m/s, 60 m/s with Shift, climb 10 m/s, ceiling 900 m. |
 | 6 | **Shockwave**: *Thunderclap* (Might) / *Sonic Boom* (Science) | 3 | 34 damage to everyone within 8 m, knocks them all down; 26 energy, 12 s. |
 | passive / Shift | **Super Speed**: *Lightning Legs* / *Rocket Skates* | 4 | Run at 18 m/s, 32 m/s with Shift; a crackling trail. |
+| tray | **Robot Sidekick**: *Tin Pal* (Science; chrome and red, visor) / *Brass Squire* (Guardian; brass and blue, optics) | 4 | Calls a small robot (an Actors robot at 0.62 of a person's size) to your side; 30 energy, 30 s. It keeps behind and beside you, fights whatever you fight or whoever goes for either of you within 18 m, punching for 14 (grows with level) every 1.1 s, and has 60% of your health. Pressed again while it is out (free) it goes for your target. Left 30 m behind, or stuck 2 s behind a wall, it beams back to you. Beaten, it powers down and is taken away 3 s later; one at a time; it goes when you give the power up. |
 | 7 | **Mend**: *Vital Ray* (Science) / *Healing Light* (Guardian) | 4 | Heals you and allies within 14 m by 30 (grows with level); 18 energy, 20 s. |
 | 8 | **Beam**: *Disintegrator* (Science) / *Spirit Lance* (Mystic) | 5 | 50 damage to every villain in a 36 m line (to the first wall), knocks them all back; 22 energy, 7 s. |
+| tray | **Hypno Ray**: *Hypno Spiral* (Science) / *Charm* (Mystic) | 5 | A minion (8 s) or lieutenant (3.2 s) within 30 m fights for you: it attacks the nearest villain within 25 m, and the villain it strikes turns on it (the rest of the group keeps at you); a spiral turns over its head. Bosses and machines are too strong-willed. 20 energy, 30 s. Karma for what it beats is yours. |
 | passive | **Vitality**: *Aether Vitality* (Mystic) / *Iron Constitution* (Might) | 5 | 2% of your health back every second, in a fight too. |
 | 9 | **Meteor**: *Orbital Ray* (Science) / *Starfall* (Mystic) | 6 | Marks the target's spot; 1.2 s later a strike from the sky does 32 damage to everyone within 5.5 m (walls give no cover) and cracks the street; 30 energy, 18 s. |
 | passive | **Invulnerable**: *Steel Hide* (Might) / *Unbreakable Will* (Justice) | 6 | Every blow does half. |
@@ -875,7 +888,7 @@ run, or put them in a `.bat`.
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
 | `HW_VIEW=fight` | Places a test group of minions near the spawn (the game starts without one). |
-| `HW_AUTOFIGHT=1` | The hero fights on its own (for screenshots). |
+| `HW_AUTOFIGHT=1` | The hero fights on its own (for screenshots); `HW_AUTOFIGHT=17,20` uses only those powers (codes: Freeze 17, Teleport 18, Bubble 19, Sidekick 20, Hypno 21). `HW_CAM_DIST` and `HW_CAM_PITCH` set the hero camera for close-ups. |
 | `HW_WRECK=n` | n frames in, the cars near the camera are wrecked. |
 
 ### World and camera
@@ -925,7 +938,7 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | Time | Fixed mid-afternoon; `HW_HOUR` for others | A day/night cycle |
 | Zones | One villain quarter (+2/+3 levels), Jackets' band | Level bands across the world, robot armies, liberation that slips back |
 | Underground | Utility tunnels, Molehaven, the Aether Tube with stations, the Doctor's lab, buried ruins, the Deeps | Sewers, more lairs, townsfolk riding the tube |
-| Heroes | 20 levels, 8 powers in 3 tiers, two themes each, 5 origins and affinities | Powers in tiers 4–7, super speed, more themes, power roles and budget balancing; a level-cap/tier thread is working on this now |
+| Heroes | 20 levels, 21 powers in 7 tiers (Freeze Ray, Teleport, Rescue Bubble, Robot Sidekick and Hypno Ray since 0.117), two themes each, a drag-and-drop power tray, 5 origins and affinities | More themes, power roles and budget balancing |
 | Looks | Creator with six costumes and sliders | Full costume creator, capes, masks (in progress) |
 | Combat | Minions, lieutenant, boss, colossus, drones, revive, hospital; Hero Hall's five heroes give tips and answer ignored fights | Teaming up with the town's heroes, the Doctor in person |
 | Factions | Eight factions, regard, turf warnings; mole folk, sky pirates and the Iron Legion with their own incidents and homes | Patrol units, turf changing hands |

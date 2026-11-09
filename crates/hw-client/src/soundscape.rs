@@ -112,6 +112,12 @@ pub static FIGHT_CLIPS: &[(&str, &[u8])] = clips![
     "bind",
     "shield",
     "fanfare",
+    "freeze",
+    "shatter",
+    "teleport",
+    "bubble",
+    "hypno",
+    "robot",
 ];
 
 /// Seconds a decoded clip is kept after it was last wanted.

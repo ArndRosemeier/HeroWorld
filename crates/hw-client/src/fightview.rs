@@ -8,13 +8,14 @@
 //! The server decides everything; this only shows the entity states and
 //! fight events it sends, and turns keys into input.
 
+use crate::tray::{self, Tray};
 use engine::prelude::*;
 use engine::ui::egui;
 use glam::{Mat4, Vec3};
 use hw_core::NetId;
 use hw_net::{
-    EntityKind, EntityState, Fx, FxKind, Power, Sheet, Status, EFFECT_HELD, EFFECT_RALLIED,
-    EFFECT_SHIELD, EFFECT_SUPER_SPEED,
+    EntityKind, EntityState, Fx, FxKind, Power, Sheet, Status, EFFECT_CHARMED, EFFECT_CHILLED,
+    EFFECT_FROZEN, EFFECT_HELD, EFFECT_RALLIED, EFFECT_SHIELD, EFFECT_SUPER_SPEED,
 };
 use hw_sim::combat::{power_spec, EnemyKind, Kit, POWERS};
 use hw_sim::progress::{is_movement, themes};
@@ -88,44 +89,28 @@ struct Sounds {
     bind: Sound,
     shield: Sound,
     fanfare: Sound,
+    freeze: Sound,
+    shatter: Sound,
+    teleport: Sound,
+    bubble: Sound,
+    hypno: Sound,
+    robot: Sound,
 }
 
-/// The power keys: 1 to 0 (Strike and Energy Bolt also on the left mouse
-/// button and Q). Movement and passive powers need no key.
-pub const POWER_KEYS: [(Key, Power); 10] = [
-    (Key::Digit1, Power::Strike),
-    (Key::Digit2, Power::Bolt),
-    (Key::Digit3, Power::Hold),
-    (Key::Digit4, Power::Shield),
-    (Key::Digit5, Power::Lift),
-    (Key::Digit6, Power::Shockwave),
-    (Key::Digit7, Power::Mend),
-    (Key::Digit8, Power::Beam),
-    (Key::Digit9, Power::Meteor),
-    (Key::Digit0, Power::Nova),
-];
-
-/// The label of a power key on the tray.
-pub fn key_label(key: Key) -> &'static str {
-    match key {
-        Key::Digit1 => "1",
-        Key::Digit2 => "2",
-        Key::Digit3 => "3",
-        Key::Digit4 => "4",
-        Key::Digit5 => "5",
-        Key::Digit6 => "6",
-        Key::Digit7 => "7",
-        Key::Digit8 => "8",
-        Key::Digit9 => "9",
-        _ => "0",
-    }
-}
+/// How far the tray's second row sits above the first (px).
+const ROW_STEP: f32 = 46.0;
 
 /// Powers aimed at the target (the others work round the hero).
 pub fn aimed(p: Power) -> bool {
     matches!(
         p,
-        Power::Strike | Power::Bolt | Power::Hold | Power::Beam | Power::Meteor
+        Power::Strike
+            | Power::Bolt
+            | Power::Hold
+            | Power::Beam
+            | Power::Meteor
+            | Power::Freeze
+            | Power::Hypno
     )
 }
 
@@ -166,6 +151,16 @@ fn theme_bytes(p: Power, theme: u8) -> ([u8; 3], [u8; 3]) {
         (Power::Invulnerable, _) => ([140, 190, 255], [60, 110, 230]),
         (Power::SuperSpeed, 0) => ([255, 240, 120], [255, 200, 40]),
         (Power::SuperSpeed, _) => ([255, 150, 90], [230, 80, 40]),
+        (Power::Freeze, 0) => ([200, 240, 255], [90, 180, 255]),
+        (Power::Freeze, _) => ([220, 250, 255], [150, 130, 255]),
+        (Power::Teleport, 0) => ([180, 255, 230], [40, 210, 190]),
+        (Power::Teleport, _) => ([235, 190, 255], [150, 70, 240]),
+        (Power::Bubble, 0) => ([170, 225, 255], [255, 170, 230]),
+        (Power::Bubble, _) => ([255, 225, 140], [255, 190, 70]),
+        (Power::Sidekick, 0) => ([200, 230, 255], [230, 60, 50]),
+        (Power::Sidekick, _) => ([255, 215, 120], [60, 110, 220]),
+        (Power::Hypno, 0) => ([255, 120, 220], [170, 110, 255]),
+        (Power::Hypno, _) => ([255, 190, 235], [210, 120, 255]),
         _ => ([255, 236, 170], [255, 200, 120]),
     }
 }
@@ -234,12 +229,27 @@ pub struct FightView {
     clock: f32,
     /// Where robots' guns are this frame (rays start there).
     pub muzzles: BTreeMap<NetId, Vec3>,
+    /// A tray slot clicked with the mouse: fired like its key.
+    clicked: Option<Power>,
+    /// The ice round each frozen villain.
+    ices: BTreeMap<NetId, EntityId>,
+    /// Rescue bubbles in the air.
+    bubbles: crate::powerfx::Bubbles,
 }
 
 impl Default for FightView {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The hero's powers as the tray shows them: what they own, where each sits,
+/// and whether Alt (the second row) is held.
+#[derive(Clone, Copy)]
+pub struct Bar<'a> {
+    pub sheet: Option<&'a Sheet>,
+    pub tray: &'a Tray,
+    pub alt: bool,
 }
 
 impl FightView {
@@ -267,6 +277,9 @@ impl FightView {
             cross: false,
             clock: 0.0,
             muzzles: BTreeMap::new(),
+            clicked: None,
+            ices: BTreeMap::new(),
+            bubbles: Default::default(),
         }
     }
 
@@ -281,8 +294,9 @@ impl FightView {
         all: &[EntityState],
         eye: Vec3,
         look: Vec3,
-        sheet: Option<&Sheet>,
+        powers: Bar,
     ) -> FightInput {
+        let Bar { sheet, tray, alt } = powers;
         let kit = sheet.map_or_else(|| Kit::of(&hw_sim::progress::starter()), Kit::of);
         let mut out = FightInput::default();
         // A target that fell or left is dropped.
@@ -309,17 +323,26 @@ impl FightView {
         self.rallied = me
             .and_then(|m| m.combat)
             .is_some_and(|c| c.effects & EFFECT_RALLIED != 0);
-        for (key, power) in POWER_KEYS {
-            let alt = match power {
-                Power::Strike => input.mouse_clicked(MouseButton::Left),
-                Power::Bolt => input.pressed(Key::Q),
-                _ => false,
-            };
-            if !(input.pressed(key) || alt) || down {
+        // A tray slot's key (Alt for the second row), and Strike and Energy
+        // Bolt on the left mouse button and Q wherever they sit.
+        let mut fired: Vec<(Power, bool)> = tray
+            .filled()
+            .filter(|&(n, _)| tray::alt(n) == alt && input.pressed(tray::key(n)))
+            .map(|(_, p)| (p, true))
+            .chain(self.clicked.take().map(|p| (p, true)))
+            .collect();
+        if input.mouse_clicked(MouseButton::Left) {
+            fired.push((Power::Strike, false));
+        }
+        if input.pressed(Key::Q) {
+            fired.push((Power::Bolt, false));
+        }
+        for (power, keyed) in fired {
+            if down {
                 continue;
             }
             if !kit.has(power) {
-                if input.pressed(key) {
+                if keyed {
                     self.say(&format!(
                         "You don't have {} yet (B: powers)",
                         power_spec(power).name
@@ -335,6 +358,16 @@ impl FightView {
             // No target yet: take the one nearest the crosshair.
             if aimed && self.target.is_none() {
                 self.target = pick_target(all, eye, look);
+            }
+            if power == Power::Hypno {
+                let immune = self
+                    .target
+                    .and_then(|t| all.iter().find(|e| e.id == t))
+                    .and_then(|t| hw_sim::combat::EnemyKind::from_entity(t.kind))
+                    .is_some_and(|k| !hw_sim::combat::charmable(k));
+                if immune {
+                    self.say("Too strong-willed to hypnotise");
+                }
             }
             if let Some(m) = me {
                 if let Some(t) = self
@@ -658,6 +691,142 @@ impl FightView {
                         impact(world, at, core, 1.0);
                         self.blow(e, at, mine, on_me, theme_ui_colour(Power::Nova, e.theme));
                     }
+                }
+                FxKind::Freeze => {
+                    let (core, edge) = theme_colours(Power::Freeze, e.theme);
+                    if e.from == e.to {
+                        // The cone, out to where it stopped.
+                        self.act(e.from, "spell cast", 0.6);
+                        crate::powerfx::frost_cone(
+                            world,
+                            origin,
+                            at,
+                            core,
+                            edge,
+                            power_spec(Power::Freeze).area as f32,
+                        );
+                        self.play(
+                            world,
+                            |s| &s.freeze,
+                            origin,
+                            1.0,
+                            if e.theme == 1 { 0.85 } else { 1.0 },
+                        );
+                        if mine {
+                            self.recharging(Power::Freeze);
+                        }
+                    } else {
+                        crate::powerfx::chill(world, at);
+                        let ui = theme_ui_colour(Power::Freeze, e.theme);
+                        self.blow(e, at, mine, on_me, ui);
+                        if e.knock {
+                            self.float(at + Vec3::Y * 0.9, "Frozen!".into(), ui, false);
+                        }
+                    }
+                }
+                FxKind::Shatter => {
+                    crate::powerfx::shatter(world, at);
+                    self.play(world, |s| &s.shatter, at, 1.0, 1.0);
+                    self.float(
+                        at + Vec3::Y * 1.1,
+                        "Shattered!".into(),
+                        egui::Color32::from_rgb(200, 240, 255),
+                        false,
+                    );
+                }
+                FxKind::TeleportOut | FxKind::TeleportIn => {
+                    let (core, edge) = theme_colours(Power::Teleport, e.theme);
+                    let arriving = e.kind == FxKind::TeleportIn;
+                    crate::powerfx::teleport(world, at, core, edge, arriving);
+                    if arriving {
+                        self.play(
+                            world,
+                            |s| &s.teleport,
+                            at,
+                            1.0,
+                            if e.theme == 1 { 0.8 } else { 1.0 },
+                        );
+                        if mine {
+                            self.recharging(Power::Teleport);
+                        }
+                    }
+                }
+                FxKind::Bubble => {
+                    let gold = e.theme == 1;
+                    let (core, edge) = theme_colours(Power::Bubble, e.theme);
+                    self.act(e.from, "spell cast", 0.6);
+                    beam(world, origin, at + Vec3::Y * 1.0, core, edge);
+                    let who = if e.defeat {
+                        // The hurt one, still lying down.
+                        crate::radioview::lying_person(e.amount as u32)
+                    } else {
+                        crate::radioview::person(e.amount as u32)
+                    };
+                    self.bubbles.start(world, at, who, gold, e.from.0);
+                    self.play(world, |s| &s.bubble, at, 1.0, if gold { 0.85 } else { 1.0 });
+                    if mine {
+                        self.recharging(Power::Bubble);
+                        self.say(if e.defeat {
+                            "Off to the ambulance!"
+                        } else {
+                            "Floated to safety!"
+                        });
+                    }
+                }
+                FxKind::BubbleLand => {
+                    self.bubbles.land(e.from.0, at);
+                }
+                FxKind::SidekickCall => {
+                    let (core, edge) = theme_colours(Power::Sidekick, e.theme);
+                    if e.from == e.to {
+                        // Called: it beams in at the hero's side.
+                        self.act(e.from, "spell cast", 0.5);
+                        crate::powerfx::teleport(world, at, core, edge, true);
+                        self.play(world, |s| &s.robot, at, 1.0, 1.0);
+                        if mine {
+                            self.recharging(Power::Sidekick);
+                        }
+                    } else if all
+                        .iter()
+                        .any(|x| x.id == e.to && x.kind == EntityKind::Sidekick)
+                        && at.distance(all.iter().find(|x| x.id == e.to).map_or(at, pos)) > 3.0
+                    {
+                        // Sent at a villain: a cheerful beep from the hero.
+                        self.play(world, |s| &s.robot, at, 0.6, 1.25);
+                    } else {
+                        // Beamed back to its hero's side.
+                        crate::powerfx::teleport(world, at, core, edge, true);
+                        self.play(world, |s| &s.teleport, at, 0.6, 1.3);
+                    }
+                }
+                FxKind::Hypno => {
+                    let (core, edge) = theme_colours(Power::Hypno, e.theme);
+                    self.act(e.from, "spell cast", 0.6);
+                    beam(world, origin, at, core, edge);
+                    crate::powerfx::spiral(world, at + Vec3::Y * 0.9, core, edge, 1.0);
+                    self.play(
+                        world,
+                        |s| &s.hypno,
+                        at,
+                        1.0,
+                        if e.theme == 1 { 1.2 } else { 1.0 },
+                    );
+                    let ui = theme_ui_colour(Power::Hypno, e.theme);
+                    self.float(at + Vec3::Y * 1.0, "Hypnotised!".into(), ui, false);
+                    if mine {
+                        self.recharging(Power::Hypno);
+                        if self.target == Some(e.to) {
+                            self.target = None;
+                        }
+                    }
+                }
+                FxKind::HypnoEnd => {
+                    self.float(
+                        at + Vec3::Y * 1.0,
+                        "Snaps out of it!".into(),
+                        egui::Color32::from_rgb(255, 170, 120),
+                        false,
+                    );
                 }
                 FxKind::Warn => {
                     // A gang warns a hero off its turf: everyone near hears it.
@@ -1134,6 +1303,8 @@ impl FightView {
         }
         // Held villains stand in glowing rings; shields sparkle.
         let mut held = Vec::new();
+        let mut frozen = Vec::new();
+        self.bubbles.update(world, dt);
         self.sparkle -= dt;
         let sparkle = self.sparkle <= 0.0;
         if sparkle {
@@ -1159,6 +1330,36 @@ impl FightView {
             }
             if c.effects & EFFECT_SHIELD != 0 && sparkle {
                 shell(world, pos(e) + Vec3::Y * 1.0, rgb(140, 220, 255), 14);
+            }
+            // Frozen solid: a block of ice round them.
+            if c.effects & EFFECT_FROZEN != 0 {
+                frozen.push(e.id);
+                let p = pos(e);
+                let yaw = (e.id.0 % 360) as f32;
+                let place = Place::new(p.x, p.y, p.z).with_yaw_deg(yaw);
+                match self.ices.get(&e.id) {
+                    Some(&ice) => {
+                        let _ = world.set_place(ice, place);
+                    }
+                    None => {
+                        if let Ok(ice) = world.place(crate::powerfx::ice_block(), place) {
+                            self.ices.insert(e.id, ice);
+                        }
+                    }
+                }
+            }
+            if c.effects & EFFECT_CHILLED != 0 && sparkle {
+                crate::powerfx::chill(world, pos(e) + Vec3::Y * 1.0);
+            }
+            // Hypnotised: spirals turning over the head.
+            if c.effects & EFFECT_CHARMED != 0 && sparkle {
+                crate::powerfx::spiral(
+                    world,
+                    pos(e) + Vec3::Y * 2.15,
+                    rgb(255, 120, 220),
+                    rgb(170, 110, 255),
+                    0.55,
+                );
             }
             // A Rally aura: warm motes circling the feet of everyone in it.
             if c.effects & EFFECT_RALLIED != 0 && sparkle {
@@ -1187,6 +1388,18 @@ impl FightView {
         for id in freed {
             if let Some(d) = self.holds.remove(&id) {
                 world.remove_decal(d);
+            }
+        }
+        // Thawed (or shattered, or gone): the ice goes.
+        let thawed: Vec<NetId> = self
+            .ices
+            .keys()
+            .filter(|id| !frozen.contains(id))
+            .copied()
+            .collect();
+        for id in thawed {
+            if let Some(ice) = self.ices.remove(&id) {
+                world.despawn(ice);
             }
         }
         // The target ring, in the target's con colour.
@@ -1223,14 +1436,16 @@ impl FightView {
     /// The fight's screen: bars and power tray, the target frame, floating
     /// numbers and names over villains, and what to do when someone is down.
     pub fn hud(
-        &self,
+        &mut self,
         ctx: &egui::Context,
         view_proj: Mat4,
         me: Option<&EntityState>,
         all: &[EntityState],
         names: &dyn Fn(&EntityState) -> String,
-        sheet: Option<&Sheet>,
-    ) {
+        powers: Bar,
+    ) -> Option<tray::Change> {
+        let Bar { sheet, tray, .. } = powers;
+        let mut changed = None;
         let screen = ctx.screen_rect();
         let starter = hw_sim::progress::starter();
         let sheet = sheet.unwrap_or(&starter);
@@ -1373,19 +1588,18 @@ impl FightView {
             }
         }
 
-        // Our hero: health, energy and the power tray, bottom centre.
+        // Our hero: health, energy and the power tray, bottom centre. The
+        // tray is ten slots (1 to 0), and a second row (Alt) above it once
+        // that holds anything or a power is being dragged.
         if let Some(c) = me.and_then(|m| m.combat) {
-            let tray: Vec<(Key, Power)> = POWER_KEYS
-                .iter()
-                .filter(|(_, p)| kit.has(*p))
-                .copied()
-                .collect();
-            // Ten powers still fit a narrow window: the slots shrink.
-            let room = (screen.width() - 40.0 - 18.0) / tray.len().max(1) as f32 - 6.0;
-            let slot_w = room.clamp(70.0, 104.0);
-            let w = (12.0 + tray.len() as f32 * (slot_w + 6.0) + 6.0).max(340.0);
-            let base = egui::pos2(screen.center().x - w * 0.5, screen.bottom() - 112.0);
-            let panel = egui::Rect::from_min_size(base, egui::vec2(w, 98.0));
+            let dragging = egui::DragAndDrop::has_payload_of_type::<tray::Drag>(ctx);
+            let rows = if tray.second_row() || dragging { 2 } else { 1 };
+            let room = (screen.width() - 40.0 - 18.0) / 10.0 - 6.0;
+            let slot_w = room.clamp(64.0, 104.0);
+            let w = 12.0 + 10.0 * (slot_w + 6.0) + 6.0;
+            let extra = (rows - 1) as f32 * ROW_STEP;
+            let base = egui::pos2(screen.center().x - w * 0.5, screen.bottom() - 112.0 - extra);
+            let panel = egui::Rect::from_min_size(base, egui::vec2(w, 98.0 + extra));
             painter.rect_filled(panel, 8.0, dark);
             let label = |y: f32, t: &str| {
                 painter.text(
@@ -1418,16 +1632,87 @@ impl FightView {
             );
             let energy = c.energy as f32 / 255.0 * 100.0;
             let carrying = c.effects & hw_net::EFFECT_CARRYING != 0;
-            for (n, &(k, power)) in tray.iter().enumerate() {
-                let spec = power_spec(power);
+            let shown = if rows == 2 { tray::SLOTS } else { 10 };
+            for k in 0..shown {
+                // The Alt row sits above the number row.
+                let row = if tray::alt(k) { 0.0 } else { (rows - 1) as f32 };
                 let slot = egui::Rect::from_min_size(
-                    base + egui::vec2(12.0 + n as f32 * (slot_w + 6.0), 48.0),
+                    base + egui::vec2(
+                        12.0 + (k % 10) as f32 * (slot_w + 6.0),
+                        48.0 + row * ROW_STEP,
+                    ),
                     egui::vec2(slot_w, 40.0),
                 );
+                let power = tray.slots[k].filter(|p| kit.has(*p));
+                // Drag and drop, and a click fires it.
+                let resp = egui::Area::new(egui::Id::new(("tray slot", k)))
+                    .fixed_pos(slot.min)
+                    .order(egui::Order::Middle)
+                    .show(ctx, |ui| {
+                        ui.allocate_exact_size(slot.size(), egui::Sense::click_and_drag())
+                            .1
+                    })
+                    .inner;
+                if let Some(p) = power {
+                    resp.dnd_set_drag_payload(tray::Drag::Slot(k));
+                    if resp.clicked() {
+                        self.clicked = Some(p);
+                    }
+                    if resp.dragged() {
+                        if let Some(at) = ctx.pointer_interact_pos() {
+                            let fg = ctx.layer_painter(egui::LayerId::new(
+                                egui::Order::Tooltip,
+                                egui::Id::new("tray drag"),
+                            ));
+                            let r = egui::Rect::from_center_size(at, egui::vec2(slot_w, 26.0));
+                            fg.rect_filled(r, 5.0, egui::Color32::from_rgb(52, 60, 92));
+                            fg.text(
+                                r.center(),
+                                egui::Align2::CENTER_CENTER,
+                                power_name(p, sheet.theme(p)),
+                                font(12.5),
+                                egui::Color32::WHITE,
+                            );
+                        }
+                    }
+                }
+                if let Some(d) = resp.dnd_release_payload::<tray::Drag>() {
+                    if *d != tray::Drag::Slot(k) {
+                        changed = Some(tray::Change::Drop(*d, k));
+                    }
+                }
+                let hovered = resp.dnd_hover_payload::<tray::Drag>().is_some();
+                let Some(power) = power else {
+                    // An empty slot: a dim outline and its key.
+                    painter.rect_stroke(
+                        slot,
+                        5.0,
+                        egui::Stroke::new(
+                            1.0_f32,
+                            if hovered {
+                                egui::Color32::from_rgb(255, 214, 90)
+                            } else {
+                                egui::Color32::from_gray(60)
+                            },
+                        ),
+                        egui::StrokeKind::Inside,
+                    );
+                    painter.text(
+                        slot.min + egui::vec2(8.0, 6.0),
+                        egui::Align2::LEFT_TOP,
+                        tray::label(k),
+                        font(12.0),
+                        egui::Color32::from_gray(110),
+                    );
+                    continue;
+                };
+                let spec = power_spec(power);
                 let cd = self.cooldown[(power.code() - 1) as usize];
                 let ready =
                     cd <= 0.0 && (energy + 0.5 >= spec.cost || carrying && power == Power::Lift);
-                let fill = if ready {
+                let fill = if hovered {
+                    egui::Color32::from_rgb(80, 86, 130)
+                } else if ready {
                     egui::Color32::from_rgb(52, 60, 92)
                 } else {
                     egui::Color32::from_rgb(40, 40, 46)
@@ -1446,7 +1731,7 @@ impl FightView {
                     5.0,
                     egui::Stroke::new(
                         1.5_f32,
-                        if ready {
+                        if ready || hovered {
                             egui::Color32::from_rgb(255, 214, 90)
                         } else {
                             egui::Color32::from_gray(90)
@@ -1454,20 +1739,22 @@ impl FightView {
                     ),
                     egui::StrokeKind::Inside,
                 );
+                let key = tray::label(k);
                 painter.text(
                     slot.min + egui::vec2(8.0, 6.0),
                     egui::Align2::LEFT_TOP,
-                    key_label(k),
+                    &key,
                     font(12.0),
                     egui::Color32::from_rgb(255, 214, 90),
                 );
+                let name_x = if tray::alt(k) { 40.0 } else { 20.0 };
                 let name = if power == Power::Lift && carrying {
                     "Throw!"
                 } else {
                     power_name(power, sheet.theme(power))
                 };
                 painter.text(
-                    slot.min + egui::vec2(20.0, 6.0),
+                    slot.min + egui::vec2(name_x, 6.0),
                     egui::Align2::LEFT_TOP,
                     name,
                     font(12.5),
@@ -1479,12 +1766,23 @@ impl FightView {
                     "free".into()
                 };
                 painter.text(
-                    slot.min + egui::vec2(20.0, 24.0),
+                    slot.min + egui::vec2(name_x, 24.0),
                     egui::Align2::LEFT_TOP,
                     cost,
                     font(11.0),
                     egui::Color32::from_gray(180),
                 );
+            }
+            // A slot dragged off the tray and let go: it leaves the tray.
+            if changed.is_none() && ctx.input(|i| i.pointer.any_released()) {
+                if let Some(d) = egui::DragAndDrop::payload::<tray::Drag>(ctx) {
+                    let over = ctx
+                        .pointer_interact_pos()
+                        .is_some_and(|p| panel.contains(p));
+                    if let (tray::Drag::Slot(k), false) = (*d, over) {
+                        changed = Some(tray::Change::Clear(k));
+                    }
+                }
             }
             painter.text(
                 egui::pos2(screen.center().x, base.y - 8.0),
@@ -1574,6 +1872,7 @@ impl FightView {
                 egui::Color32::from_rgb(255, 230, 150).gamma_multiply(a),
             );
         }
+        changed
     }
 }
 
@@ -2133,6 +2432,12 @@ fn make_sounds() -> Sounds {
         whoosh: clip("whoosh"),
         chime: clip("chime"),
         hum: clip("power_hum"),
+        freeze: clip("freeze"),
+        shatter: clip("shatter"),
+        teleport: clip("teleport"),
+        bubble: clip("bubble"),
+        hypno: clip("hypno"),
+        robot: clip("robot"),
     }
 }
 

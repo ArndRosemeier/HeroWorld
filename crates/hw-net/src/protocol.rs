@@ -95,10 +95,21 @@ pub enum Power {
     /// Tier 7, passive: the hero and friends near hit harder and get their
     /// energy back sooner.
     Rally,
+    /// Tier 2: a cone of cold that freezes minions solid and slows the rest;
+    /// a frozen villain shatters for double damage. Puts out fires.
+    Freeze,
+    /// Tier 3: blinks the hero to where they aim.
+    Teleport,
+    /// Tier 3: floats a trapped or hurt person out to safety in a bubble.
+    Bubble,
+    /// Tier 4: a small robot sidekick that follows and fights.
+    Sidekick,
+    /// Tier 5: a villain fights on the hero's side for a while.
+    Hypno,
 }
 
 impl Power {
-    pub const ALL: [Power; 16] = [
+    pub const ALL: [Power; 21] = [
         Power::Strike,
         Power::Bolt,
         Power::SuperJump,
@@ -115,6 +126,11 @@ impl Power {
         Power::Invulnerable,
         Power::Nova,
         Power::Rally,
+        Power::Freeze,
+        Power::Teleport,
+        Power::Bubble,
+        Power::Sidekick,
+        Power::Hypno,
     ];
 
     pub fn code(self) -> u8 {
@@ -135,6 +151,11 @@ impl Power {
             Power::Invulnerable => 14,
             Power::Nova => 15,
             Power::Rally => 16,
+            Power::Freeze => 17,
+            Power::Teleport => 18,
+            Power::Bubble => 19,
+            Power::Sidekick => 20,
+            Power::Hypno => 21,
         }
     }
 
@@ -255,6 +276,9 @@ pub enum EntityKind {
     /// One of the town's own heroes from Hero Hall (`mount`: its own ID
     /// and which of them it is).
     NpcHero,
+    /// A hero's robot sidekick; its `owner` is the hero's player (`mount`:
+    /// its own ID and the theme).
+    Sidekick,
 }
 
 impl EntityKind {
@@ -281,6 +305,7 @@ impl EntityKind {
             EntityKind::Praetorian => 18,
             EntityKind::Capsule => 19,
             EntityKind::NpcHero => 20,
+            EntityKind::Sidekick => 21,
         }
     }
 
@@ -307,6 +332,7 @@ impl EntityKind {
             18 => Ok(EntityKind::Praetorian),
             19 => Ok(EntityKind::Capsule),
             20 => Ok(EntityKind::NpcHero),
+            21 => Ok(EntityKind::Sidekick),
             _ => Err(WireError),
         }
     }
@@ -539,6 +565,12 @@ pub const EFFECT_SUPER_SPEED: u16 = 256;
 pub const EFFECT_RALLIED: u16 = 512;
 /// Owns Invulnerable (blows glance off; a sheen).
 pub const EFFECT_TOUGH: u16 = 1024;
+/// Frozen solid in a block of ice (cannot move; the next blow shatters it).
+pub const EFFECT_FROZEN: u16 = 2048;
+/// Chilled: slowed by a freeze ray.
+pub const EFFECT_CHILLED: u16 = 4096;
+/// Hypnotised: fighting for the heroes for now.
+pub const EFFECT_CHARMED: u16 = 8192;
 
 /// Bytes a [`CombatState`] takes.
 const COMBAT_BYTES: usize = 10;
@@ -797,6 +829,27 @@ pub enum FxKind {
     /// One of the town's heroes gives a newcomer a tip (`from` speaks to
     /// `to`; `amount`: which tip).
     Tip,
+    /// A freeze ray's cone from `from` toward `at` (its far end); on a
+    /// villain it caught, `to` is that villain (`knock`: frozen solid, else
+    /// chilled).
+    Freeze,
+    /// A frozen villain's ice shattered under a blow (`to`).
+    Shatter,
+    /// `from` blinked away from `at`.
+    TeleportOut,
+    /// `from` arrived at `at`.
+    TeleportIn,
+    /// `from` wrapped a trapped or hurt person at `at` in a bubble
+    /// (`amount`: incident id's low bits; `defeat`: the hurt one).
+    Bubble,
+    /// The bubble set them down safe at `at`.
+    BubbleLand,
+    /// `from` called its sidekick (`to`) to its side at `at`.
+    SidekickCall,
+    /// `from` hypnotised `to` (`amount`: seconds it lasts).
+    Hypno,
+    /// A hypnotised villain `to` came to its senses.
+    HypnoEnd,
 }
 
 impl FxKind {
@@ -838,6 +891,15 @@ impl FxKind {
             FxKind::Nova => 34,
             FxKind::Calmed => 35,
             FxKind::Tip => 36,
+            FxKind::Freeze => 37,
+            FxKind::Shatter => 38,
+            FxKind::TeleportOut => 39,
+            FxKind::TeleportIn => 40,
+            FxKind::Bubble => 41,
+            FxKind::BubbleLand => 42,
+            FxKind::SidekickCall => 43,
+            FxKind::Hypno => 44,
+            FxKind::HypnoEnd => 45,
         }
     }
 
@@ -879,6 +941,15 @@ impl FxKind {
             34 => FxKind::Nova,
             35 => FxKind::Calmed,
             36 => FxKind::Tip,
+            37 => FxKind::Freeze,
+            38 => FxKind::Shatter,
+            39 => FxKind::TeleportOut,
+            40 => FxKind::TeleportIn,
+            41 => FxKind::Bubble,
+            42 => FxKind::BubbleLand,
+            43 => FxKind::SidekickCall,
+            44 => FxKind::Hypno,
+            45 => FxKind::HypnoEnd,
             _ => return Err(WireError),
         })
     }

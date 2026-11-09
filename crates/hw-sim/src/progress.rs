@@ -313,6 +313,66 @@ pub fn themes(p: Power) -> [Theme; 2] {
                 Some(Guardian),
             ),
         ],
+        Power::Freeze => [
+            t(
+                "Cryo Ray",
+                "A frosty blast from a chrome nozzle. Hoodlums on the rocks.",
+                Some(Science),
+            ),
+            t(
+                "Frost Sigil",
+                "A rune of winter: breath freezes, then everything else.",
+                Some(Mystic),
+            ),
+        ],
+        Power::Teleport => [
+            t(
+                "Matter Transmitter",
+                "A hum, a sparkle, and you're over there.",
+                Some(Science),
+            ),
+            t(
+                "Aether Step",
+                "Step through a fold in the Aether.",
+                Some(Mystic),
+            ),
+        ],
+        Power::Bubble => [
+            t(
+                "Force Bubble",
+                "A floating sphere of force carries them out of harm's way.",
+                Some(Science),
+            ),
+            t(
+                "Guardian Orb",
+                "A golden orb lifts the helpless to safety.",
+                Some(Guardian),
+            ),
+        ],
+        Power::Sidekick => [
+            t(
+                "Tin Pal",
+                "A pint-sized chrome robot with a big heart and bigger fists.",
+                Some(Science),
+            ),
+            t(
+                "Brass Squire",
+                "A loyal little brass knight-robot at your side.",
+                Some(Guardian),
+            ),
+        ],
+        Power::Hypno => [
+            t(
+                "Hypno Spiral",
+                "Look into the spiral. You are now on our side.",
+                Some(Science),
+            ),
+            t(
+                "Charm",
+                "A whisper from the Aether turns a foe into a friend.",
+                Some(Mystic),
+            ),
+        ],
     }
 }
 
@@ -320,10 +380,10 @@ pub fn themes(p: Power) -> [Theme; 2] {
 pub fn tier(p: Power) -> u8 {
     match p {
         Power::Strike | Power::Bolt | Power::SuperJump => 1,
-        Power::Hold | Power::Shield | Power::Lift => 2,
-        Power::Flight | Power::Shockwave => 3,
-        Power::SuperSpeed | Power::Mend => 4,
-        Power::Beam | Power::Vitality => 5,
+        Power::Hold | Power::Shield | Power::Lift | Power::Freeze => 2,
+        Power::Flight | Power::Shockwave | Power::Teleport | Power::Bubble => 3,
+        Power::SuperSpeed | Power::Mend | Power::Sidekick => 4,
+        Power::Beam | Power::Vitality | Power::Hypno => 5,
         Power::Meteor | Power::Invulnerable => 6,
         Power::Nova | Power::Rally => 7,
     }

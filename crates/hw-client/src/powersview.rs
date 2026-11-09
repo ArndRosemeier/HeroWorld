@@ -6,6 +6,7 @@
 //! again, so this only asks.
 
 use crate::fightview::theme_ui_colour;
+use crate::tray::{self, Tray};
 use engine::ui::egui;
 use hw_net::{Power, Sheet};
 use hw_sim::combat::power_spec;
@@ -53,7 +54,7 @@ pub enum PowerAction {
 }
 
 /// The powers a hero can buy, in the order the window lists them (by tier).
-pub const SHOP: [Power; 15] = [
+pub const SHOP: [Power; 20] = [
     Power::Bolt,
     Power::SuperJump,
     Power::Hold,
@@ -69,6 +70,11 @@ pub const SHOP: [Power; 15] = [
     Power::Invulnerable,
     Power::Nova,
     Power::Rally,
+    Power::Freeze,
+    Power::Teleport,
+    Power::Bubble,
+    Power::Sidekick,
+    Power::Hypno,
 ];
 
 const GOLD: egui::Color32 = egui::Color32::from_rgb(255, 214, 90);
@@ -86,6 +92,9 @@ pub struct PowersView {
     /// The origin card: chosen origin and first power.
     origin: usize,
     first: (Power, u8),
+    /// Which key fires which power (kept in line by the game, shown and
+    /// changed here).
+    pub tray: Tray,
 }
 
 impl Default for PowersView {
@@ -103,6 +112,7 @@ impl PowersView {
             banner: None,
             origin: 0,
             first: (Power::Bolt, 0),
+            tray: Tray::default(),
         }
     }
 
@@ -351,6 +361,9 @@ impl PowersView {
                             }
                         }
                         ui.label(egui::RichText::new("owned").color(GOLD));
+                        if tray::keyed(p) {
+                            self.tray_handle(ui, p);
+                        }
                     } else {
                         match can_buy(sheet, p, theme) {
                             Ok(price) => {
@@ -413,6 +426,30 @@ impl PowersView {
                 });
             }
         });
+    }
+
+    /// Where an owned power sits on the tray, as a handle to drag it there
+    /// (onto any slot; the power there swaps over).
+    fn tray_handle(&self, ui: &mut egui::Ui, p: Power) {
+        let text = match self.tray.slot_of(p) {
+            Some(s) => format!("⠿ key {}", tray::label(s)),
+            None => "⠿ drag to tray".to_string(),
+        };
+        ui.dnd_drag_source(
+            egui::Id::new(("tray drag", p.code())),
+            tray::Drag::Power(p),
+            |ui| {
+                egui::Frame::new()
+                    .fill(egui::Color32::from_rgb(70, 78, 120))
+                    .corner_radius(4.0)
+                    .inner_margin(egui::Margin::symmetric(6, 2))
+                    .show(ui, |ui| {
+                        ui.label(egui::RichText::new(text).size(12.0).color(GOLD));
+                    });
+            },
+        )
+        .response
+        .on_hover_text("Drag onto a slot of the power tray");
     }
 
     /// The card a new hero starts with: where the powers came from, and
@@ -636,6 +673,28 @@ pub fn what_it_does(p: Power) -> String {
             "Passive: you and friends within {:.0} m hit {:.0}% harder and recharge faster.",
             s.area,
             (hw_sim::combat::RALLY_DAMAGE - 1.0) * 100.0
+        ),
+        Power::Freeze => format!(
+            "A {:.0} m cone of cold: minions freeze solid for {:.0} s (the next blow shatters them for double), the rest slow down. Puts out fires. {:.0} energy.",
+            s.range, s.lasts, s.cost
+        ),
+        Power::Teleport => format!(
+            "Blink up to {:.0} m to where you aim, never into a wall. {:.0} energy.",
+            s.range, s.cost
+        ),
+        Power::Bubble => format!(
+            "Floats a trapped person within {:.0} m out to the street, or the hurt one straight to the ambulance. {:.0} energy.",
+            s.range, s.cost
+        ),
+        Power::Sidekick => format!(
+            "Calls a little robot that follows you and fights at your side; press again to send it at your target. {:.0} energy to call.",
+            s.cost
+        ),
+        Power::Hypno => format!(
+            "A minion fights for you for {:.0} s (a lieutenant {:.0} s); bosses shrug it off. {:.0} energy.",
+            s.lasts,
+            s.lasts * hw_sim::combat::CHARM_LIEUTENANT,
+            s.cost
         ),
     }
 }

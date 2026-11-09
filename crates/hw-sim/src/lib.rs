@@ -31,6 +31,7 @@ pub mod robots;
 pub mod rocket;
 pub mod roosts;
 pub mod save;
+pub mod sidekick;
 pub mod streets;
 pub mod taxi;
 pub mod traffic;
@@ -984,6 +985,7 @@ impl Sim {
     pub fn step(&mut self) {
         self.schedule.run(&mut self.world);
         combat::step(&mut self.world, self.tick);
+        sidekick::step(&mut self.world, self.tick);
         npcheroes::step(&mut self.world, self.tick, &self.incidents.open);
         self.machines_break_the_city();
         self.incidents.step(&mut self.world, self.tick);
@@ -1817,6 +1819,7 @@ impl Sim {
                     Has<incidents::Bystander>,
                     Option<&tube::Passenger>,
                     Option<&npcheroes::NpcHero>,
+                    Option<&sidekick::Sidekick>,
                 ),
             )>()
             .iter(&self.world)
@@ -1827,7 +1830,7 @@ impl Sim {
                     h,
                     o,
                     (prop, enemy, drone, view),
-                    (c, fare, mount, bystander, rider, npc),
+                    (c, fare, mount, bystander, rider, npc, sidekick),
                 )| {
                     (
                         EntityState {
@@ -1846,6 +1849,8 @@ impl Sim {
                                 EntityKind::Bystander
                             } else if npc.is_some() {
                                 EntityKind::NpcHero
+                            } else if sidekick.is_some() {
+                                EntityKind::Sidekick
                             } else {
                                 EntityKind::Hero
                             },
@@ -1857,10 +1862,12 @@ impl Sim {
                             owner: h
                                 .map(|h| h.owner)
                                 .or(fare.map(|f| f.0))
-                                .or(rider.map(|r| r.0)),
+                                .or(rider.map(|r| r.0))
+                                .or(sidekick.map(|s| s.player)),
                             mount: mount
                                 .map(|m| (m.on, m.part))
-                                .or(npc.map(|h| (n.0, h.index))),
+                                .or(npc.map(|h| (n.0, h.index)))
+                                .or(sidekick.map(|s| (s.owner, s.theme))),
                         },
                         c.0,
                     )

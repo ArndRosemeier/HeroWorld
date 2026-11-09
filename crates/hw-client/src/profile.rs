@@ -4,6 +4,7 @@
 //! user's settings folder (`%APPDATA%\HeroWorld` on Windows,
 //! `~/.config/heroworld` elsewhere). A missing or broken file is a fresh start.
 
+use crate::tray::Tray;
 use actors_generator::CharacterConfig;
 use hw_net::{OwnedPower, Power, Sheet};
 use serde_json::{json, Value};
@@ -38,6 +39,8 @@ pub struct Profile {
     /// The hero's looks, as made in the creator. None for a profile from
     /// before the creator (the game then dresses the hero itself, once).
     pub look: Option<CharacterConfig>,
+    /// Which key fires which power (see `tray`).
+    pub tray: Tray,
 }
 
 impl Default for Profile {
@@ -58,6 +61,7 @@ impl Default for Profile {
             invert_y: false,
             hero: None,
             look: None,
+            tray: Tray::default(),
         }
     }
 }
@@ -125,6 +129,7 @@ impl Profile {
             invert_y: v["invert_y"].as_bool().unwrap_or(d.invert_y),
             hero: sheet_from_json(&v["hero"]),
             look: serde_json::from_value::<CharacterConfig>(v["look"].clone()).ok(),
+            tray: Tray::from_json(&v["tray"]),
         }
     }
 
@@ -145,6 +150,7 @@ impl Profile {
             "invert_y": self.invert_y,
             "hero": self.hero.as_ref().map(sheet_to_json),
             "look": self.look.as_ref().and_then(|l| serde_json::to_value(l).ok()),
+            "tray": self.tray.to_json(),
         })
     }
 
@@ -261,6 +267,12 @@ mod tests {
                 outfit: vec!["future-suit".into()],
                 ..CharacterConfig::default()
             }),
+            tray: {
+                let mut t = Tray::default();
+                t.sync(&hw_sim::progress::starter());
+                t.put(Power::Strike, 14);
+                t
+            },
         };
         assert_eq!(Profile::from_json(&p.to_json()), p);
         let junk = json!({"name": 7, "music": 9.0, "seed": "x", "people": "many", "quality": "max", "fov": 500});

@@ -356,3 +356,86 @@ fn the_debug_menu_starts_any_incident_at_once() {
         assert_eq!(sim.incidents.open.last().unwrap().kind, kind);
     }
 }
+
+#[test]
+fn rescue_bubbles_float_people_out_and_the_freeze_ray_douses_the_fire() {
+    use hw_net::{InputState, Power};
+    use hw_sim::incidents::IncidentKind;
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    let me = PlayerId(1);
+    let sheet = hw_sim::balance::hero_sheet(10, &[Power::Bubble, Power::Freeze]);
+    let hero = sim.spawn_hero_with(me, sim.spawn_point(1), sheet);
+    sim.incidents.next_kind = Some(IncidentKind::Fire);
+    let mut news = Vec::new();
+    run(&mut sim, incidents::FIRST_SECONDS + 2.0, &mut news);
+    let inc = sim.incidents.open[0].clone();
+    assert_eq!((inc.kind, inc.left), (IncidentKind::Fire, 3));
+    let karma = sim.sheet(me).unwrap().karma;
+    // In the street in front, facing the burning front.
+    let f = DVec3::new(inc.facing.x, 0.0, inc.facing.y).normalize_or(DVec3::X);
+    let stand = inc.at + f * 10.0;
+    let stand = DVec3::new(stand.x, inc.at.y, stand.z);
+    let place = |sim: &mut Sim| {
+        sim.set_body(
+            hero,
+            Body {
+                pos: stand + DVec3::Y * 0.1,
+                vel: DVec3::ZERO,
+                grounded: true,
+            },
+        );
+    };
+    place(&mut sim);
+    let aim_at = |p: DVec3| {
+        (p - (stand + DVec3::Y * 1.3))
+            .normalize()
+            .as_vec3()
+            .to_array()
+    };
+    // A freeze cone at the front puts the fire out (the news says so).
+    sim.set_input(
+        me,
+        InputState {
+            power: Power::Freeze.code(),
+            aim: aim_at(inc.at + DVec3::Y * 2.0),
+            ..Default::default()
+        },
+    );
+    run(&mut sim, 0.5, &mut news);
+    assert!(sim.incidents.open[0].doused, "not doused");
+    assert!(news
+        .iter()
+        .any(|n| n.0 == inc.id && n.3 == incidents::DOUSED));
+    // One bubble per person, every recharge: the first two float out to
+    // the street, the last (hurt) one straight to the ambulance.
+    for k in (0..3u8).rev() {
+        place(&mut sim);
+        let next = *sim.incidents.open[0]
+            .victims()
+            .last()
+            .expect("someone inside");
+        sim.set_input(
+            me,
+            InputState {
+                power: Power::Bubble.code(),
+                aim: aim_at(next),
+                ..Default::default()
+            },
+        );
+        run(&mut sim, 0.5, &mut news);
+        sim.set_input(me, InputState::default());
+        assert_eq!(
+            sim.incidents.open.first().map_or(0, |i| i.left),
+            k,
+            "bubble {k} missed"
+        );
+        let fx_wait = hw_sim::combat::power_spec(Power::Bubble).recharge + 0.5;
+        run(&mut sim, fx_wait, &mut news);
+    }
+    assert!(
+        news.iter().any(|n| n.0 == inc.id && n.3 == 1),
+        "the fire was not resolved"
+    );
+    assert!(sim.sheet(me).unwrap().karma > karma + 30, "no karma for it");
+}

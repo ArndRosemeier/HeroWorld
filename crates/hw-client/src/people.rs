@@ -44,6 +44,20 @@ pub const HERO_CLIPS: &[&str] = &[
     "fight stance",
     "hit to chest",
 ];
+/// A sidekick walks, runs, jumps and punches.
+pub const SIDEKICK_CLIPS: &[&str] = &[
+    "idle",
+    "walk",
+    "jog",
+    "sprint",
+    "jump start",
+    "jump",
+    "jump land",
+    "punch jab",
+    "punch cross",
+    "fight stance",
+    "hit to chest",
+];
 /// Villains walk, run, brawl and shoot; "cuffed" (hanging from a police
 /// drone) is made here.
 pub const VILLAIN_CLIPS: &[&str] = &[
@@ -87,6 +101,9 @@ pub enum Who {
     /// One of the town's own heroes from Hero Hall, by index (see
     /// [`hw_sim::npcheroes::NAMES`]).
     NpcHero(u8),
+    /// A hero's robot sidekick, by the power's theme (0 Tin Pal, 1 Brass
+    /// Squire): an Actors robot, drawn small ([`hw_sim::sidekick::SIZE`]).
+    Sidekick(u8),
 }
 
 /// Looks per kind of villain.
@@ -854,6 +871,43 @@ pub fn golden_age(catalog: &CharacterCatalog, seed: u32, hero: bool) -> Characte
 
 /// A villain of the mad scientist: a person of the town changed by his
 /// experiments (the brute) or one of his staff (the technician).
+/// A robot sidekick's looks: a sturdy little robot of the 1950s toy shop.
+/// Tin Pal (theme 0) is chrome with red trim, a visor and pod ears; Brass
+/// Squire (theme 1) is polished brass with blue trim, round optics and
+/// antennae. Both have a glowing chest core.
+pub fn sidekick(builder: &CharacterBuilder, theme: u8) -> CharacterConfig {
+    let mut c = builder.default_config();
+    c.robot = true;
+    c.body.gender = 0.5;
+    c.body.muscle = 0.7;
+    c.body.weight = 0.65;
+    c.body.age_years = 30.0;
+    let r = &mut c.robot_look;
+    r.plating = "segmented".into();
+    r.thickness = 0.8;
+    r.core = true;
+    r.glow_strength = 0.85;
+    r.finish = "metallic".into();
+    if theme == 0 {
+        r.head = "visor".into();
+        r.ears = "pods".into();
+        r.paint = "#d9dde3".into();
+        r.trim = "#c8262c".into();
+        r.frame = "#2a2d33".into();
+        r.metal = "#9aa3ad".into();
+        r.glow = "#5fe0ff".into();
+    } else {
+        r.head = "optics".into();
+        r.ears = "antennae".into();
+        r.paint = "#c9a24a".into();
+        r.trim = "#2c5aa8".into();
+        r.frame = "#2b2620".into();
+        r.metal = "#8a6a32".into();
+        r.glow = "#ffc860".into();
+    }
+    c
+}
+
 pub fn villain(
     builder: &CharacterBuilder,
     kind: VillainKind,
@@ -1263,8 +1317,12 @@ pub fn build_sharing(
         ),
         Who::Villain(..) => (false, 0),
         Who::NpcHero(i) => (true, 7_000 + *i as u32),
+        Who::Sidekick(theme) => (false, 9_000 + *theme as u32),
     };
     let mut allowed = allow(hero);
+    if matches!(who, Who::Sidekick(_)) {
+        allowed.races = Some(Flags::List(vec!["human".into(), "robot".into()]));
+    }
     if let Who::Villain(kind, _) = who {
         if kind.any_clothes() {
             // Helms, breastplates, pirate boots: the whole wardrobe.
@@ -1275,6 +1333,7 @@ pub fn build_sharing(
     let config = match (who, config) {
         (Who::Villain(kind, look), _) => villain(builder, *kind, *look),
         (Who::NpcHero(i), _) => npc_hero(builder, *i),
+        (Who::Sidekick(theme), _) => sidekick(builder, *theme),
         (Who::Citizen(look), _) if *look >= hw_sim::citizens::LOOKS => {
             mole_person(builder, *look - hw_sim::citizens::LOOKS)
         }
@@ -1285,6 +1344,7 @@ pub fn build_sharing(
     let clips: &[&str] = match who {
         Who::Hero(_) | Who::Look(_) | Who::NpcHero(_) => HERO_CLIPS,
         Who::Villain(..) => VILLAIN_CLIPS,
+        Who::Sidekick(_) => SIDEKICK_CLIPS,
         Who::Citizen(_) => CITIZEN_CLIPS,
     };
     let options = BuildOptions {

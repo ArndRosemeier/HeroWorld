@@ -78,6 +78,12 @@ seam.
 | `works_crane.ogg` | shot | The sound of an overhead electric crane hoist motor starting and running for two seconds, a rising whine with gear clatter |
 | `works_boot.ogg` | shot | The sound of a 1950s toy robot powering up: rising electronic warble, three cheerful beeps and a click |
 | `works_step.ogg` | shot | The sound of a single small metal robot foot stepping on a steel floor, a light clank with a servo whirr |
+| `freeze.ogg` | shot | The sound of a blast of freezing cold spray from a chrome nozzle, icy hiss and crackling frost spreading fast, 1950s science fiction |
+| `shatter.ogg` | shot | The sound of a large block of ice shattering into many pieces, crisp glassy crunch and tinkling shards falling |
+| `teleport.ogg` | shot | The sound of a magical blink teleport, quick swirling whoosh with a bright chime and an airy pop |
+| `bubble.ogg` | shot | The sound of a glowing force field sphere swelling up, warm resonant hum and a soft rising bloop |
+| `hypno.ogg` | shot | The sound of a hypnotic theremin wobble, woozy swirling oscillating tone, 1950s science fiction mind control ray |
+| `robot.ogg` | shot | The sound of a small friendly toy robot powering up, servo whirr, a few cheerful electronic beeps and boops |
 
 ## From Scale
 

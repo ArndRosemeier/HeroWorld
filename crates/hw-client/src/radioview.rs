@@ -828,6 +828,11 @@ impl Radio {
 /// The medic's look in [`person`]: all in white.
 const MEDIC_LOOK: u32 = 4;
 
+/// Someone hurt, lying on their back (for a rescue bubble).
+pub fn lying_person(look: u32) -> Mesh {
+    lying(look)
+}
+
 /// Someone hurt, lying on their back along x (carried across the arms).
 fn lying(look: u32) -> Mesh {
     let shirt = [rgb(70, 130, 190), rgb(210, 190, 90), rgb(150, 80, 120)][look as usize % 3];
@@ -842,7 +847,7 @@ fn lying(look: u32) -> Mesh {
 
 /// Someone in trouble: plain clothes in one of a few colours, an arm up
 /// waving for help.
-fn person(look: u32) -> Mesh {
+pub fn person(look: u32) -> Mesh {
     const SHIRTS: [(u8, u8, u8); 5] = [
         (70, 130, 190),
         (210, 190, 90),

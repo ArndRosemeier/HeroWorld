@@ -23,8 +23,9 @@ use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
 use hw_net::{
     CombatState, EntityKind, Fx, FxKind, InputState, PlayerId, Power, Sheet, Status,
-    EFFECT_ARMOURED, EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_HELD, EFFECT_RALLIED, EFFECT_SHIELD,
-    EFFECT_SUPER_JUMP, EFFECT_SUPER_SPEED, EFFECT_TOUGH,
+    EFFECT_ARMOURED, EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_CHARMED, EFFECT_CHILLED,
+    EFFECT_FROZEN, EFFECT_HELD, EFFECT_RALLIED, EFFECT_SHIELD, EFFECT_SUPER_JUMP,
+    EFFECT_SUPER_SPEED, EFFECT_TOUGH,
 };
 use std::collections::BTreeMap;
 
@@ -231,8 +232,74 @@ pub fn power_spec(p: Power) -> PowerSpec {
             area: RALLY_RADIUS,
             ..none
         },
+        // A cone toward the target: range its length, area the tangent of
+        // its half angle, lasts how long a minion stays frozen.
+        Power::Freeze => PowerSpec {
+            name: "Freeze Ray",
+            damage: 12.0,
+            cost: 14.0,
+            recharge: 16.0,
+            range: 16.0,
+            area: 0.42,
+            lasts: FROZEN_SECONDS,
+            ..none
+        },
+        Power::Teleport => PowerSpec {
+            name: "Teleport",
+            cost: 10.0,
+            recharge: 3.0,
+            range: TELEPORT_RANGE,
+            ..none
+        },
+        Power::Bubble => PowerSpec {
+            name: "Rescue Bubble",
+            cost: 12.0,
+            recharge: 8.0,
+            range: BUBBLE_RANGE,
+            ..none
+        },
+        // Damage is the sidekick's punch, recharge the wait before a
+        // beaten one can be called again.
+        Power::Sidekick => PowerSpec {
+            name: "Robot Sidekick",
+            damage: crate::sidekick::PUNCH_DAMAGE,
+            cost: 30.0,
+            recharge: 30.0,
+            range: 40.0,
+            ..none
+        },
+        // Lasts is how long a minion fights for the hero.
+        Power::Hypno => PowerSpec {
+            name: "Hypno Ray",
+            cost: 20.0,
+            recharge: 30.0,
+            range: 30.0,
+            lasts: CHARM_SECONDS,
+            ..none
+        },
     }
 }
+
+/// A minion frozen by a freeze ray stays in its ice this long (s); one hit
+/// while frozen shatters it for this much more damage.
+pub const FROZEN_SECONDS: f64 = 3.5;
+pub const SHATTER: f32 = 2.0;
+/// Tougher villains (and the rest of a cone) are chilled instead: slower
+/// on their feet and slower to swing, for this long (s).
+pub const CHILL_SECONDS: f64 = 6.0;
+pub const CHILL_SPEED: f32 = 0.5;
+pub const CHILL_WINDUP: f64 = 1.6;
+/// How far a teleport reaches (m).
+pub const TELEPORT_RANGE: f64 = 40.0;
+/// How far a rescue bubble reaches (m), and how long it floats (s).
+pub const BUBBLE_RANGE: f64 = 30.0;
+pub const BUBBLE_SECONDS: f64 = 3.0;
+/// A hypnotised minion fights for the hero this long (s); a lieutenant for
+/// this share of it; a boss shrugs it off.
+pub const CHARM_SECONDS: f64 = 8.0;
+pub const CHARM_LIEUTENANT: f64 = 0.4;
+/// A hypnotised villain looks for foes this far round it (m).
+pub const CHARM_REACH: f64 = 25.0;
 
 /// Seconds between calling a meteor down and its landing.
 pub const METEOR_DELAY: f64 = 1.2;
@@ -630,6 +697,13 @@ pub struct Fighter {
     pub marks: u16,
     /// Inside a Rally aura this tick (a hero's own counts).
     pub rallied: bool,
+    /// Frozen solid in ice until this tick (a freeze ray).
+    pub frozen_until: u64,
+    /// Slowed by cold until this tick.
+    pub chilled_until: u64,
+    /// Fighting for the heroes until this tick (a hypno ray), and for whom.
+    pub charmed_until: u64,
+    pub charmed_by: Option<NetId>,
 }
 
 impl Fighter {
@@ -656,6 +730,10 @@ impl Fighter {
             carry_until: 0,
             marks: 0,
             rallied: false,
+            frozen_until: 0,
+            chilled_until: 0,
+            charmed_until: 0,
+            charmed_by: None,
         }
     }
 
@@ -688,6 +766,21 @@ impl Fighter {
     /// Shielded at `tick`.
     pub fn shielded(&self, tick: u64) -> bool {
         tick < self.shield_until
+    }
+
+    /// Frozen in ice at `tick`.
+    pub fn frozen(&self, tick: u64) -> bool {
+        tick < self.frozen_until
+    }
+
+    /// Slowed by cold at `tick` (frozen counts).
+    pub fn chilled(&self, tick: u64) -> bool {
+        tick < self.chilled_until || self.frozen(tick)
+    }
+
+    /// Hypnotised: fighting for the heroes at `tick`.
+    pub fn charmed(&self, tick: u64) -> bool {
+        tick < self.charmed_until
     }
 
     fn enemy(kind: EnemyKind, level: u8) -> Self {
@@ -741,6 +834,9 @@ impl Fighter {
                 | (self.kit.has(Power::SuperSpeed) as u16 * EFFECT_SUPER_SPEED)
                 | (self.kit.has(Power::Invulnerable) as u16 * EFFECT_TOUGH)
                 | (self.rallied as u16 * EFFECT_RALLIED)
+                | (self.frozen(tick) as u16 * EFFECT_FROZEN)
+                | ((self.chilled(tick) && !self.frozen(tick)) as u16 * EFFECT_CHILLED)
+                | (self.charmed(tick) as u16 * EFFECT_CHARMED)
                 | self.marks,
         }
     }
@@ -955,6 +1051,14 @@ pub struct Fights {
     pub streets: Option<std::sync::Arc<crate::streets::Streets>>,
     /// Each colossus's route along them: (planned at tick, points left).
     pub routes: BTreeMap<NetId, (u64, Vec<DVec2>)>,
+    /// Where people wait to be rescued (trapped, or lying hurt), set by the
+    /// incidents each tick: a rescue bubble needs one in reach.
+    pub rescue_points: Vec<DVec3>,
+    /// Rescue bubbles sent this tick (the incidents carry them out).
+    pub rescues: Vec<Rescue>,
+    /// Freeze-ray cones this tick: (from, direction, length); a fire in
+    /// one goes out.
+    pub cold: Vec<(DVec3, DVec3, f64)>,
 }
 
 impl Default for Fights {
@@ -973,6 +1077,9 @@ impl Default for Fights {
             city: Vec::new(),
             streets: None,
             routes: BTreeMap::new(),
+            rescue_points: Vec::new(),
+            rescues: Vec::new(),
+            cold: Vec::new(),
         }
     }
 }
@@ -995,6 +1102,10 @@ pub(crate) struct Actor {
     pub(crate) regard: [i8; hw_net::FACTIONS],
     /// One of the town's own heroes ([`crate::npcheroes`]).
     pub(crate) npc: bool,
+    /// A hero's robot sidekick ([`crate::sidekick`]).
+    pub(crate) sidekick: Option<crate::sidekick::Sidekick>,
+    /// Its ice shattered under a blow this tick.
+    pub(crate) shattered: bool,
 }
 
 impl Actor {
@@ -1216,6 +1327,21 @@ struct Out {
     city: Vec<(DVec3, f32, f32)>,
     rewards: Vec<Reward>,
     deeds: Vec<Deed>,
+    /// Sidekicks called: (owner, player, theme, where, level).
+    summons: Vec<(NetId, PlayerId, u8, DVec3, u8)>,
+    /// Rescue bubbles sent (see [`Fights::rescues`]).
+    rescues: Vec<Rescue>,
+    /// Freeze-ray cones (see [`Fights::cold`]).
+    cold: Vec<(DVec3, DVec3, f64)>,
+}
+
+/// A rescue bubble sent: the hero, and the trapped or hurt person's place
+/// it was sent to (the rescue there takes them out).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rescue {
+    pub hero: NetId,
+    pub level: u8,
+    pub at: DVec3,
 }
 
 /// One tick of every fight in `world` (after heroes moved).
@@ -1224,6 +1350,8 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     world.resource_mut::<Fights>().rewards.clear();
     world.resource_mut::<Fights>().deeds.clear();
     world.resource_mut::<Fights>().friends.clear();
+    world.resource_mut::<Fights>().rescues.clear();
+    world.resource_mut::<Fights>().cold.clear();
     let solids = world.resource::<Solids>().0.clone();
     let mut actors: Vec<Actor> = world
         .query::<(
@@ -1238,11 +1366,12 @@ pub(crate) fn step(world: &mut World, tick: u64) {
                 Option<&Colossus>,
                 Option<&Progress>,
                 Has<crate::npcheroes::NpcHero>,
+                Option<&crate::sidekick::Sidekick>,
             ),
         )>()
         .iter(world)
         .map(
-            |(e, n, m, f, en, h, (mount, colossus, progress, npc))| Actor {
+            |(e, n, m, f, en, h, (mount, colossus, progress, npc, sidekick))| Actor {
                 e,
                 id: n.0,
                 body: m.0,
@@ -1254,6 +1383,8 @@ pub(crate) fn step(world: &mut World, tick: u64) {
                 colossus: colossus.copied(),
                 regard: progress.map_or([0; hw_net::FACTIONS], |p| p.sheet.regard),
                 npc,
+                sidekick: sidekick.copied(),
+                shattered: false,
             },
         )
         .collect();
@@ -1271,8 +1402,11 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     let mut sky = std::mem::take(&mut world.resource_mut::<Fights>().sky);
 
     rally(&mut actors);
-    heroes_act(&mut actors, &solids, tick, &mut out);
+    let rescue_points = std::mem::take(&mut world.resource_mut::<Fights>().rescue_points);
+    heroes_act(&mut actors, &solids, &rescue_points, tick, &mut out);
+    world.resource_mut::<Fights>().rescue_points = rescue_points;
     npc_heroes_act(&mut actors, tick, &mut out);
+    sidekicks_act(&mut actors, tick, &mut out);
     land_throws(&mut actors, &mut throws, tick, &mut out);
     throws.append(&mut out.throws);
     land_sky(&mut actors, &mut sky, &solids, tick, &mut out);
@@ -1293,6 +1427,12 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     routes.retain(|id, _| actors.iter().any(|a| a.id == *id && a.colossus.is_some()));
     world.resource_mut::<Fights>().routes = routes;
     statuses(&mut actors, &drones, tick, &mut out, &mut spawn_drones);
+    // Ice broken by a blow this tick.
+    for a in actors.iter_mut().filter(|a| a.shattered) {
+        a.shattered = false;
+        out.fx
+            .push(event(tick, FxKind::Shatter, a.id, a.id, a.chest()));
+    }
     regenerate(&mut actors, tick);
     pay_out(&actors, &mut out);
     // Villains gone (carried off) need no path.
@@ -1651,12 +1791,18 @@ pub(crate) fn step(world: &mut World, tick: u64) {
             f.spots[i].respawn_at = Some(tick);
         }
     }
+    // Sidekicks called to their heroes' side.
+    for (owner, player, theme, at, level) in std::mem::take(&mut out.summons) {
+        crate::sidekick::spawn(world, owner, player, theme, at, level, tick);
+    }
     robots::tidy(world, tick);
     let mut f = world.resource_mut::<Fights>();
     f.events = fx;
     f.rewards = out.rewards;
     f.deeds = out.deeds;
     f.city = city;
+    f.rescues = out.rescues;
+    f.cold = out.cold;
 }
 
 pub(crate) fn event(tick: u64, kind: FxKind, from: NetId, to: NetId, at: impl Into<DVec3>) -> Fx {
@@ -1689,6 +1835,13 @@ pub(crate) fn hit(
 ) -> (bool, bool, f32) {
     let from_id = actors[from].id;
     let from_pos = actors[from].body.pos;
+    // A hypnotised villain's or a sidekick's win is their hero's.
+    let credit = actors[from]
+        .f
+        .charmed_by
+        .filter(|_| actors[from].f.charmed(tick))
+        .or(actors[from].sidekick.map(|s| s.owner))
+        .unwrap_or(from_id);
     actors[from].f.last_combat = tick;
     let t = &mut actors[to];
     let mut dealt = if t.f.shielded(tick) {
@@ -1696,6 +1849,12 @@ pub(crate) fn hit(
     } else {
         damage
     };
+    // Frozen: the ice shatters, and the blow lands twice as hard.
+    if t.f.frozen(tick) {
+        dealt *= SHATTER;
+        t.f.frozen_until = 0;
+        t.shattered = true;
+    }
     // Shut armour: blows glance off.
     if t.f.marks & EFFECT_ARMOURED != 0 {
         dealt *= robots::ARMOUR_LETS_THROUGH;
@@ -1722,7 +1881,9 @@ pub(crate) fn hit(
         }
         t.f.queued = None;
         t.f.held_until = 0;
-        t.beaten_by = Some((from_id, affinity));
+        t.f.frozen_until = 0;
+        t.f.charmed_until = 0;
+        t.beaten_by = Some((credit, affinity));
     } else if defeated {
         t.f.status = Status::Down;
         t.f.until = tick + ticks(MEDIC_DELAY);
@@ -1745,8 +1906,11 @@ pub(crate) fn hit(
             t.f.target = Some(from_id);
         }
     }
-    // The whole group joins in.
-    if let Some(spot) = actors[to].enemy.map(|e| e.spot) {
+    // The whole group joins in, except against one of their own turned by
+    // the Hypno Ray: only the one it struck turns on it, the rest keep at
+    // the hero.
+    let turned = actors[from].f.charmed(tick);
+    if let Some(spot) = actors[to].enemy.map(|e| e.spot).filter(|_| !turned) {
         for a in actors.iter_mut() {
             if a.enemy.is_some_and(|e| e.spot == spot) && a.f.target.is_none() && a.f.fighting() {
                 a.f.target = Some(from_id);
@@ -1789,9 +1953,71 @@ fn npc_heroes_act(actors: &mut [Actor], tick: u64, out: &mut Out) {
     }
 }
 
+/// Sidekicks fight: the villain they were sent at, else their hero's
+/// target, else one going for their hero or them. They punch when close
+/// (`sidekick` walks them there).
+fn sidekicks_act(actors: &mut [Actor], tick: u64, out: &mut Out) {
+    use crate::sidekick::{GUARD_REACH, PUNCH_EVERY, PUNCH_REACH};
+    for i in 0..actors.len() {
+        let Some(sk) = actors[i].sidekick else {
+            continue;
+        };
+        if !actors[i].f.standing() {
+            continue;
+        }
+        let owner = actors.iter().position(|a| a.id == sk.owner);
+        let here = actors[i].body.pos;
+        let valid = |a: &Actor| hittable(a) && a.body.pos.distance(here) < 40.0;
+        let mut foe = actors[i]
+            .f
+            .target
+            .and_then(|t| actors.iter().position(|a| a.id == t))
+            .filter(|&j| valid(&actors[j]));
+        if foe.is_none() {
+            foe = owner
+                .and_then(|o| actors[o].f.target)
+                .and_then(|t| actors.iter().position(|a| a.id == t))
+                .filter(|&j| valid(&actors[j]) && actors[j].f.target.is_some());
+        }
+        if foe.is_none() {
+            let me = actors[i].id;
+            foe = (0..actors.len())
+                .filter(|&j| valid(&actors[j]))
+                .filter(|&j| actors[j].f.target == Some(sk.owner) || actors[j].f.target == Some(me))
+                .map(|j| (j, actors[j].body.pos.distance(here)))
+                .filter(|&(_, d)| d < GUARD_REACH)
+                .min_by(|x, y| x.1.total_cmp(&y.1).then(x.0.cmp(&y.0)))
+                .map(|(j, _)| j);
+        }
+        actors[i].f.target = foe.map(|j| actors[j].id);
+        let Some(j) = foe else {
+            continue;
+        };
+        if tick < actors[i].f.busy_until || actors[j].body.pos.distance(here) > PUNCH_REACH {
+            continue;
+        }
+        let damage = power_spec(Power::Sidekick).damage * level_scale(actors[i].f.level);
+        let affinity = themes(Power::Sidekick)[sk.theme as usize & 1].affinity;
+        let (knock, defeat, dealt) = hit(actors, i, j, damage, false, tick, affinity);
+        actors[i].f.busy_until = tick + ticks(PUNCH_EVERY);
+        let mut e = event(
+            tick,
+            FxKind::Strike,
+            actors[i].id,
+            actors[j].id,
+            actors[j].chest(),
+        );
+        e.amount = dealt.round() as u16;
+        e.knock = knock;
+        e.defeat = defeat;
+        e.theme = sk.theme;
+        out.fx.push(e);
+    }
+}
+
 /// Is `a` (by index) a valid target for heroes?
 fn hittable(a: &Actor) -> bool {
-    a.enemy.is_some() && a.f.fighting()
+    a.enemy.is_some() && a.f.fighting() && a.f.charmed_by.is_none()
 }
 
 /// The nearest villain within `range` of `from` that can be hit, if any.
@@ -1811,7 +2037,13 @@ fn power_affinity(kit: Kit, p: Power) -> Option<Affinity> {
     themes(p)[kit.theme(p) as usize].affinity
 }
 
-fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out) {
+fn heroes_act(
+    actors: &mut [Actor],
+    solids: &Obstacles,
+    rescue_points: &[DVec3],
+    tick: u64,
+    out: &mut Out,
+) {
     for i in 0..actors.len() {
         let Some((_, input)) = actors[i].hero else {
             continue;
@@ -1849,9 +2081,18 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
         let spec = power_spec(power);
         let theme = kit.theme(power);
         let throwing = power == Power::Lift && actors[i].f.carrying.is_some();
+        // A freeze ray goes where the hero aims when nothing is targeted
+        // (at a fire, say), so it needs no target either.
+        let free_aim = throwing || power == Power::Freeze;
         let aimed = matches!(
             power,
-            Power::Strike | Power::Bolt | Power::Hold | Power::Beam | Power::Meteor
+            Power::Strike
+                | Power::Bolt
+                | Power::Hold
+                | Power::Beam
+                | Power::Meteor
+                | Power::Freeze
+                | Power::Hypno
         ) || throwing;
         // The picked target, or else the nearest villain in reach (for a
         // ranged power, one near where the hero aims).
@@ -1896,7 +2137,14 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
                     target = None;
                 }
             }
-            if target.is_none() && !throwing {
+            if target.is_none() && !free_aim {
+                continue;
+            }
+            // Bosses and machines shrug off hypnosis.
+            if power == Power::Hypno
+                && target.is_some_and(|t| actors[t].enemy.is_none_or(|e| !charmable(e.kind)))
+            {
+                actors[i].f.queued = None;
                 continue;
             }
             // From here the blow is the villain's, whether it lands now or
@@ -1908,10 +2156,37 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
         {
             actors[i].f.engaged = true;
         }
+        // A sidekick already out is sent at the target: free and at once.
+        let my_sidekick = actors
+            .iter()
+            .position(|a| a.sidekick.is_some_and(|s| s.owner == actors[i].id) && a.f.fighting());
+        let commanding = power == Power::Sidekick && my_sidekick.is_some();
+        // Where a teleport lands, and which rescue a bubble goes to: none,
+        // and the power waits (and then lapses) without costing anything.
+        let blink = if power == Power::Teleport {
+            match teleport_to(solids, actors[i].body.pos, aim) {
+                Some(p) => Some(p),
+                None => continue,
+            }
+        } else {
+            None
+        };
+        let rescue = if power == Power::Bubble {
+            match nearest_rescue(rescue_points, actors[i].chest(), aim) {
+                Some(p) => Some(p),
+                None => continue,
+            }
+        } else {
+            None
+        };
         let me = &actors[i].f;
         // Lifting paid for the throw; a lift waits for the last throw's recharge.
-        let cost = if throwing { 0.0 } else { spec.cost };
-        let ready = throwing || tick >= me.ready[slot(power)];
+        let cost = if throwing || commanding {
+            0.0
+        } else {
+            spec.cost
+        };
+        let ready = throwing || commanding || tick >= me.ready[slot(power)];
         if tick < me.busy_until || !ready || me.energy < cost {
             continue;
         }
@@ -1920,7 +2195,7 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
         me.queued = None;
         me.energy -= cost;
         me.busy_until = tick + ticks(ACTION_LOCK);
-        if power != Power::Lift || throwing {
+        if (power != Power::Lift || throwing) && !commanding {
             let haste = if me.rallied { RALLY_HASTE } else { 1.0 };
             me.ready[slot(power)] = tick + ticks(spec.recharge / haste);
         }
@@ -2129,6 +2404,159 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
                 e.theme = theme;
                 out.fx.push(e);
             }
+            Power::Freeze => {
+                let from = actors[i].chest();
+                let dir = match target {
+                    Some(t) => (actors[t].chest() - from).normalize_or(DVec3::X),
+                    None if aim != DVec3::ZERO => aim,
+                    None => continue,
+                };
+                if let Some(t) = target {
+                    actors[i].f.target = Some(actors[t].id);
+                }
+                // The cone runs to its full length or the first wall.
+                let mut len = spec.range;
+                for s in 1..=(spec.range / 0.5) as usize {
+                    if solids.solid_at(from + dir * (s as f64 * 0.5)) {
+                        len = s as f64 * 0.5;
+                        break;
+                    }
+                }
+                let mut caught: Vec<(usize, f64)> = (0..actors.len())
+                    .filter(|&k| hittable(&actors[k]))
+                    .filter_map(|k| {
+                        let to = actors[k].chest() - from;
+                        let along = to.dot(dir);
+                        let off = (to - dir * along).length();
+                        let wide = 0.8 + along * spec.area;
+                        (along > 0.0 && along <= len + 0.6 && off <= wide).then_some((k, along))
+                    })
+                    .filter(|&(k, _)| clear_line(solids, from, actors[k].chest()))
+                    .collect();
+                caught.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+                for (k, _) in caught {
+                    let (_, defeat, dealt) = hit(actors, i, k, damage, false, tick, affinity);
+                    // Minions freeze solid; tougher ones (and the big
+                    // machines) only slow down.
+                    let freezes = actors[k].enemy.is_some_and(|e| freezable(e.kind));
+                    if !defeat {
+                        let f = &mut actors[k].f;
+                        if freezes {
+                            f.frozen_until = tick + ticks(spec.lasts);
+                            f.held_until = 0;
+                            if let Some(en) = actors[k].enemy.as_mut() {
+                                en.windup = None;
+                            }
+                        }
+                        actors[k].f.chilled_until = tick + ticks(CHILL_SECONDS);
+                    }
+                    let mut e = event(tick, FxKind::Freeze, me_id, actors[k].id, actors[k].chest());
+                    e.amount = dealt.round() as u16;
+                    e.knock = freezes && !defeat;
+                    e.defeat = defeat;
+                    e.theme = theme;
+                    out.fx.push(e);
+                }
+                actors[i].f.last_combat = tick;
+                out.cold.push((from, dir, len));
+                let mut e = event(tick, FxKind::Freeze, me_id, me_id, from + dir * len);
+                e.theme = theme;
+                out.fx.push(e);
+            }
+            Power::Teleport => {
+                let Some(to) = blink else {
+                    continue;
+                };
+                let from = actors[i].body.pos;
+                let mut e = event(tick, FxKind::TeleportOut, me_id, me_id, from);
+                e.theme = theme;
+                out.fx.push(e);
+                let b = &mut actors[i].body;
+                b.pos = to;
+                // Arrives at rest (falls if it is in the air).
+                b.vel = DVec3::ZERO;
+                b.grounded = false;
+                let mut e = event(tick, FxKind::TeleportIn, me_id, me_id, to);
+                e.theme = theme;
+                out.fx.push(e);
+            }
+            Power::Bubble => {
+                let Some(at) = rescue else {
+                    continue;
+                };
+                out.rescues.push(Rescue {
+                    hero: me_id,
+                    level,
+                    at,
+                });
+            }
+            Power::Sidekick => {
+                // The villain to go for: the hero's target, else the
+                // nearest one near the hero.
+                let foe = target
+                    .or_else(|| {
+                        actors[i]
+                            .f
+                            .target
+                            .and_then(|t| actors.iter().position(|a| a.id == t))
+                    })
+                    .filter(|&t| hittable(&actors[t]))
+                    .or_else(|| nearest_enemy(actors, pos, 20.0))
+                    .map(|t| actors[t].id);
+                match my_sidekick {
+                    Some(k) => {
+                        if let Some(f) = foe {
+                            actors[k].f.target = Some(f);
+                        }
+                        let mut e = event(tick, FxKind::SidekickCall, me_id, actors[k].id, pos);
+                        e.theme = theme;
+                        out.fx.push(e);
+                    }
+                    None => {
+                        let Some((player, _)) = actors[i].hero else {
+                            continue;
+                        };
+                        // At the hero's side, a step back.
+                        let back = DVec3::new(-aim.x, 0.0, -aim.z).normalize_or(DVec3::Z);
+                        let side = DVec3::new(back.z, 0.0, -back.x);
+                        let mut at = pos + back * 1.4 + side * 1.2;
+                        if solids.solid_at(at + DVec3::Y * 0.6) {
+                            at = pos;
+                        }
+                        out.summons.push((me_id, player, theme, at, level));
+                        let mut e = event(tick, FxKind::SidekickCall, me_id, me_id, at);
+                        e.theme = theme;
+                        out.fx.push(e);
+                    }
+                }
+            }
+            Power::Hypno => {
+                let Some(t) = target else {
+                    continue;
+                };
+                let lieutenant = actors[t]
+                    .enemy
+                    .is_some_and(|e| enemy_spec(e.kind).rank != "Minion");
+                let secs = spec.lasts * if lieutenant { CHARM_LIEUTENANT } else { 1.0 };
+                let v = &mut actors[t];
+                v.f.charmed_until = tick + ticks(secs);
+                v.f.charmed_by = Some(me_id);
+                v.f.target = None;
+                v.f.held_until = 0;
+                if let Some(en) = v.enemy.as_mut() {
+                    en.windup = None;
+                }
+                let charmed = actors[t].id;
+                // Nobody keeps after the hero's new friend's old target.
+                if actors[i].f.target == Some(charmed) {
+                    actors[i].f.target = None;
+                }
+                actors[i].f.last_combat = tick;
+                let mut e = event(tick, FxKind::Hypno, me_id, charmed, actors[t].chest());
+                e.amount = secs.round() as u16;
+                e.theme = theme;
+                out.fx.push(e);
+            }
             Power::SuperJump
             | Power::Flight
             | Power::SuperSpeed
@@ -2137,6 +2565,76 @@ fn heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out
             | Power::Rally => {}
         }
     }
+}
+
+/// Minions freeze solid; lieutenants, bosses and machines only slow down.
+pub fn freezable(k: EnemyKind) -> bool {
+    enemy_spec(k).rank == "Minion" && !k.heavy()
+}
+
+/// Bosses and machines cannot be hypnotised.
+pub fn charmable(k: EnemyKind) -> bool {
+    matches!(enemy_spec(k).rank, "Minion" | "Lieutenant") && !k.heavy()
+}
+
+/// Where a teleport from feet at `from` along `aim` lands: as far as
+/// [`TELEPORT_RANGE`], stopping short of the first wall, roof or ground,
+/// and only where a person fits (never inside anything). None when there
+/// is no room even a few metres on.
+pub fn teleport_to(solids: &Obstacles, from: DVec3, aim: DVec3) -> Option<DVec3> {
+    if aim == DVec3::ZERO {
+        return None;
+    }
+    let eye = from + DVec3::Y * (BODY_HEIGHT * 0.8);
+    let step = 0.5;
+    let mut reach = TELEPORT_RANGE;
+    for s in 1..=(TELEPORT_RANGE / step) as usize {
+        let p = eye + aim * (s as f64 * step);
+        let ground = solids.ground_for(DVec2::new(p.x, p.z), p.y);
+        if solids.solid_at(p) || p.y < ground + 0.2 {
+            reach = s as f64 * step;
+            break;
+        }
+    }
+    // Back off from what stopped it until a body fits, feet on whatever is
+    // underneath if that is near.
+    let mut d = reach - 0.8;
+    while d >= 3.0 {
+        let p = eye + aim * d;
+        let flat = DVec2::new(p.x, p.z);
+        let floor = solids.floor_under(flat, p.y + 0.4);
+        let feet = if p.y - floor < BODY_HEIGHT * 0.8 {
+            floor
+        } else {
+            p.y - BODY_HEIGHT * 0.8
+        };
+        let fits = [0.15, 0.6, 1.1, BODY_HEIGHT - 0.1]
+            .iter()
+            .all(|h| !solids.solid_at(DVec3::new(p.x, feet + h, p.z)))
+            && feet >= solids.ground_for(flat, feet + 0.5) - 0.05;
+        if fits {
+            return Some(DVec3::new(p.x, feet + 0.02, p.z));
+        }
+        d -= 0.5;
+    }
+    None
+}
+
+/// The trapped or hurt person a rescue bubble goes to: within reach, the
+/// one nearest where the hero aims.
+fn nearest_rescue(points: &[DVec3], chest: DVec3, aim: DVec3) -> Option<DVec3> {
+    points
+        .iter()
+        .copied()
+        .filter(|p| p.distance(chest) <= BUBBLE_RANGE)
+        .min_by(|a, b| {
+            let off = |p: DVec3| {
+                let to = p - chest;
+                let along = to.dot(aim).max(0.0);
+                (to - aim * along).length() + to.length() * 0.05
+            };
+            off(*a).total_cmp(&off(*b))
+        })
 }
 
 /// A blast all round a point (shockwave, nova, a meteor landing).
@@ -2398,18 +2896,42 @@ fn enemies_act(
         let ranged = en.kind.ranged();
         let mut input = InputState::default();
         let getting_up = tick < actors[i].f.busy_until;
-        let held = actors[i].f.held(tick);
+        let held = actors[i].f.held(tick) || actors[i].f.frozen(tick);
+        let charmed = actors[i].f.charmed(tick);
+        if actors[i].f.chilled(tick) {
+            spec.windup *= CHILL_WINDUP;
+            spec.speed *= CHILL_SPEED as f64;
+        }
         if actors[i].f.standing() && !getting_up && !held {
             // Who to fight: the foe while it stands and is not led too far
-            // from home, else the nearest standing hero it notices.
+            // from home, else the nearest standing hero it notices. A
+            // hypnotised villain fights its own kind instead, and its own
+            // kind fights it.
             let leash = 45.0;
-            let foe_ok = |a: &Actor| (a.hero.is_some() || a.npc) && a.f.standing();
+            let foe_ok = |a: &Actor| {
+                if charmed {
+                    hittable(a)
+                } else {
+                    (a.hero.is_some() || a.npc || a.sidekick.is_some() || a.f.charmed(tick))
+                        && a.f.standing()
+                }
+            };
             let mut foe = actors[i]
                 .f
                 .target
                 .and_then(|t| actors.iter().position(|a| a.id == t))
-                .filter(|&j| foe_ok(&actors[j]) && actors[j].body.pos.distance(en.home) < leash);
-            if foe.is_none() {
+                .filter(|&j| {
+                    foe_ok(&actors[j]) && (charmed || actors[j].body.pos.distance(en.home) < leash)
+                });
+            if foe.is_none() && charmed {
+                let me = actors[i].chest();
+                foe = (0..actors.len())
+                    .filter(|&j| j != i && hittable(&actors[j]))
+                    .map(|j| (j, actors[j].body.pos.distance(actors[i].body.pos)))
+                    .filter(|&(j, d)| d < CHARM_REACH && clear_line(solids, me, actors[j].chest()))
+                    .min_by(|x, y| x.1.total_cmp(&y.1).then(x.0.cmp(&y.0)))
+                    .map(|(j, _)| j);
+            } else if foe.is_none() {
                 let me = actors[i].chest();
                 let mut noticed: Vec<(usize, f64)> = heroes
                     .iter()
@@ -2462,7 +2984,7 @@ fn enemies_act(
                     }
                     fx.push(event(tick, FxKind::Warn, actors[i].id, hero_id, me));
                 }
-                if let Some(j) = foe {
+                if let Some(j) = foe.filter(|&j| !charmed && !actors[j].f.charmed(tick)) {
                     // Friends close by come along.
                     let (spot, foe_id) = (en.spot, actors[j].id);
                     for a in actors.iter_mut() {
@@ -2707,6 +3229,24 @@ fn statuses(
         drones.iter().any(|d| d.3.carry == id) || spawn.iter().any(|d| d.0 == id)
     };
     for i in 0..actors.len() {
+        // A hypnotised villain comes to its senses (or was beaten).
+        if actors[i].f.charmed_by.is_some() && !actors[i].f.charmed(tick) {
+            let a = &mut actors[i];
+            let by = a.f.charmed_by.take().unwrap_or(a.id);
+            a.f.charmed_until = 0;
+            a.f.target = None;
+            if a.f.fighting() {
+                out.fx
+                    .push(event(tick, FxKind::HypnoEnd, by, a.id, a.chest()));
+            }
+        }
+        // A beaten sidekick lies there until `sidekick` takes it away.
+        if actors[i].sidekick.is_some() {
+            if actors[i].f.status == Status::Knocked && tick >= actors[i].f.until {
+                actors[i].f.status = Status::Standing;
+            }
+            continue;
+        }
         match actors[i].f.status {
             Status::Knocked if tick >= actors[i].f.until => {
                 actors[i].f.status = Status::Standing;

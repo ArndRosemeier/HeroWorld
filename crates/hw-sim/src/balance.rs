@@ -41,13 +41,16 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
     let foes: Vec<_> = sim
         .enemies()
         .into_iter()
-        .filter(|(_, _, _, e)| matches!(e.status, Status::Standing | Status::Knocked))
+        // A hypnotised villain fights on our side for now.
+        .filter(|(_, _, _, e)| {
+            matches!(e.status, Status::Standing | Status::Knocked) && !e.charmed(tick)
+        })
         .collect();
     let nearest = foes
         .iter()
         .min_by(|a, b| a.2.distance(me).total_cmp(&b.2.distance(me)))
         .copied();
-    let Some((target, _, at, foe)) = nearest else {
+    let Some((target, kind, at, foe)) = nearest else {
         if let Some(g) = goal {
             let d = DVec2::new(g.x - me.x, g.z - me.z);
             if d.length() > 2.0 {
@@ -101,6 +104,16 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
         input.power = Power::Meteor.code();
     } else if ready(sim, hero, Power::Beam) && d <= 30.0 {
         input.power = Power::Beam.code();
+    } else if ready(sim, hero, Power::Sidekick) && d <= 40.0 {
+        input.power = Power::Sidekick.code();
+    } else if ready(sim, hero, Power::Hypno)
+        && foes.len() >= 2
+        && d <= 28.0
+        && crate::combat::charmable(kind)
+    {
+        input.power = Power::Hypno.code();
+    } else if ready(sim, hero, Power::Freeze) && d <= 14.0 && !foe.frozen(tick) {
+        input.power = Power::Freeze.code();
     } else if ready(sim, hero, Power::Shield) && !shielded && d < 25.0 {
         input.power = Power::Shield.code();
     } else if ready(sim, hero, Power::Shockwave) && close >= 2 {
@@ -349,11 +362,21 @@ pub fn run() -> Vec<PowerResult> {
         .collect()
 }
 
+/// Powers that are no help in a standard fight (getting about, rescues):
+/// measured, but held to no fight budget.
+pub fn is_utility(p: Power) -> bool {
+    matches!(p, Power::Teleport | Power::Bubble)
+}
+
 /// The powers that fall outside their tier's budget, with why.
 pub fn outliers(results: &[PowerResult]) -> Vec<String> {
     let mut out = Vec::new();
     for r in results {
         let name = power_spec(r.power).name;
+        // Teleport and the rescue bubble do not fight: nothing to weigh.
+        if is_utility(r.power) {
+            continue;
+        }
         if is_movement(r.power) {
             // Each movement power must beat the one below it.
             if r.worth < 1.3 {

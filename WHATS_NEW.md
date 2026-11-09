@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.117 (2026-11-09)
+
+- Five new powers. **Freeze Ray** (tier 2) sprays a cone of frost: minions freeze in a block of ice, tougher villains slow down, and the next punch shatters the ice for double damage. Spray it at a burning house and the fire dies down.
+- **Teleport** (tier 3) blinks you up to 40 m where you look, and never into a wall.
+- **Rescue Bubble** (tier 3) floats a trapped person out of a fire or crash in a glowing bubble, and the hurt one straight to the ambulance.
+- **Robot Sidekick** (tier 4) calls a small robot pal, chrome and red or brass and blue, who follows you, fights at your side and beams back if you leave it behind. Press it again to send it at your target.
+- **Hypno Ray** (tier 5) makes a minion fight its own friends for a while.
+- The power tray: twenty slots, 1 to 0 and Alt+1 to Alt+0. Drag powers from the powers window (B) onto it, swap slots by dragging, drag one off to take it away, or click a slot to use it. Your layout is remembered.
+
 ## 0.116 (2026-11-09)
 
 - Cars have people in them: a driver at the wheel, and now and then a passenger or a whole family. Taxi drivers carry their fares in the back seat, and the flying taxis have a cabbie too.

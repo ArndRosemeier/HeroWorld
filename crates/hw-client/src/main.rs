@@ -65,7 +65,7 @@
 //! with every power open bought (`HW_THEME=1` the second themes);
 //! `HW_VIEW=powers` opens the powers window, `HW_VIEW=origin` shows a new
 //! hero's origin card.
-//! `HW_VIEW=fight` starts in front of the minions, `HW_AUTOFIGHT=1`
+//! `HW_VIEW=fight` starts in front of the minions, `HW_AUTOFIGHT=1` (or a list of power codes)
 //! fights them on its own (both for screenshots);
 //! `HW_WRECK=<frames>` wrecks the cars near the camera that many frames in;
 //! `HW_VIEW=riders` looks in at the driver of the nearest car
@@ -82,7 +82,7 @@
 //! checks a whole city without the game).
 //! Stutters are written to `logs/hitches.log` (see `hitch.rs`; `HW_HITCH_LOG`,
 //! `HW_HITCH_MS`); `HW_AT=x,y,z` with `HW_YAW` starts the hero at a spot a
-//! report names.
+//! report names; `HW_CAM_DIST` and `HW_CAM_PITCH` set the hero camera.
 
 mod session;
 
@@ -259,6 +259,13 @@ fn save_hero(hero: Option<hw_net::Sheet>) {
     p.save();
 }
 
+/// Keeps the power tray in the profile on this PC.
+fn save_tray(tray: &hw_client::tray::Tray) {
+    let mut p = Profile::load();
+    p.tray = tray.clone();
+    p.save();
+}
+
 fn main() -> EngineResult<()> {
     // A crash leaves a report beside the profile (see `crash.rs`).
     hw_client::crash::install();
@@ -279,6 +286,14 @@ fn main() -> EngineResult<()> {
     // R: the hero runs on by itself until S or R.
     let mut autorun = false;
     let auto_fight = std::env::var_os("HW_AUTOFIGHT").is_some();
+    // `HW_AUTOFIGHT=17,20` uses those powers in turn (codes, see `Power`;
+    // `1` alone keeps the usual round of every power).
+    let auto_turn: Vec<u8> = std::env::var("HW_AUTOFIGHT")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|c| c.trim().parse().ok())
+        .filter(|&c| c > 1)
+        .collect();
     let io = |e: std::io::Error| EngineError::InvalidValue(e.to_string());
 
     // A joining player learns the world seed from the host first.
@@ -425,6 +440,7 @@ fn main() -> EngineResult<()> {
     // hero picks an origin), the sheet as the host last confirmed it, and
     // the powers window.
     let mut powers = PowersView::new();
+    powers.tray = profile.tray.clone();
     let mut hero_file: Option<hw_net::Sheet> = profile.hero.clone();
     // HW_LEVEL=n starts a hero at level n with karma to spend (for trying
     // powers out); it is not saved.
@@ -1244,6 +1260,14 @@ fn main() -> EngineResult<()> {
         },
         distance: 7.0,
     };
+    // `HW_CAM_DIST` and `HW_CAM_PITCH` set the hero camera (close-up screenshots).
+    let cam_env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f32>().ok());
+    if let Some(d) = cam_env("HW_CAM_DIST") {
+        hero_cam.distance = d.clamp(0.0, HeroCamera::MAX_DISTANCE);
+    }
+    if let Some(p) = cam_env("HW_CAM_PITCH") {
+        hero_cam.pitch = p.clamp(-80.0, 80.0);
+    }
     // Each hero's entity, and whether it is the Actors character yet.
     let mut hero_entities: BTreeMap<hw_core::NetId, (EntityId, bool)> = BTreeMap::new();
     // Taxi canopies: the hinged part, and how far open (0 shut, 1 up).
@@ -2197,7 +2221,19 @@ fn main() -> EngineResult<()> {
                     .and_then(|id| drawn.iter().find(|e| e.id == id));
                 let cam = world.camera();
                 let look = (cam.target() - cam.eye()).normalize_or_zero();
-                let f = fight.input(input, me_state, &drawn, cam.eye(), look, Some(&my_sheet));
+                let alt = frame.ui.ctx().input(|i| i.modifiers.alt);
+                let f = fight.input(
+                    input,
+                    me_state,
+                    &drawn,
+                    cam.eye(),
+                    look,
+                    fightview::Bar {
+                        sheet: Some(&my_sheet),
+                        tray: &powers.tray,
+                        alt,
+                    },
+                );
                 if f.power != 0 && !(on_ui && f.power == hw_net::Power::Strike.code()) {
                     pending_power = f.power;
                 }
@@ -2216,7 +2252,12 @@ fn main() -> EngineResult<()> {
                                 < 2.6
                         });
                     // Every power the hero has, in turn; punches up close.
-                    let turn = [3u8, 2, 6, 11, 2, 5, 13, 2, 4, 10, 2, 15, 5];
+                    let every = [3u8, 2, 6, 11, 2, 5, 13, 2, 4, 10, 2, 15, 5];
+                    let turn = if auto_turn.is_empty() {
+                        &every[..]
+                    } else {
+                        &auto_turn[..]
+                    };
                     let k = (frame.time / 0.75) as usize % turn.len();
                     let want = hw_net::Power::from_code(turn[k]).filter(|p| my_sheet.has(*p));
                     pending_power = match want {
@@ -2803,6 +2844,8 @@ fn main() -> EngineResult<()> {
                 // The mutant alpha is a brute a head and a half taller.
                 let size = if h.kind == hw_net::EntityKind::Alpha {
                     1.35
+                } else if h.kind == hw_net::EntityKind::Sidekick {
+                    hw_sim::sidekick::SIZE
                 } else {
                     1.0
                 };
@@ -2813,7 +2856,7 @@ fn main() -> EngineResult<()> {
                 let mut d = anim.step(
                     vel,
                     h.grounded,
-                    if villain || bystander {
+                    if villain || bystander || h.kind == hw_net::EntityKind::Sidekick {
                         Some(false)
                     } else {
                         flying
@@ -2849,6 +2892,10 @@ fn main() -> EngineResult<()> {
                     hw_net::EntityKind::Bystander => Who::Citizen(h.id.0 % hw_sim::citizens::LOOKS),
                     // One of Hero Hall's own heroes.
                     hw_net::EntityKind::NpcHero => Who::NpcHero(h.mount.map_or(0, |m| m.1)),
+                    // A hero's robot sidekick, by the power's theme.
+                    hw_net::EntityKind::Sidekick => {
+                        Who::Sidekick(h.mount.map_or(0, |m| m.1).min(1))
+                    }
                     // A hero in their looks, once they arrived (ours we
                     // know); until then a stand-in, the same on every machine.
                     _ => {
@@ -3322,14 +3369,22 @@ fn main() -> EngineResult<()> {
                         .and_then(|o| session.player_name(o))
                         .unwrap_or_else(|| "Your teammate".into())
                 };
-                fight.hud(
+                let moved = fight.hud(
                     frame.ui.ctx(),
                     view_proj,
                     me_state,
                     &heroes,
                     &names,
-                    Some(&my_sheet),
+                    fightview::Bar {
+                        sheet: Some(&my_sheet),
+                        tray: &powers.tray,
+                        alt: false,
+                    },
                 );
+                if let Some(c) = moved {
+                    powers.tray.apply(c);
+                    save_tray(&powers.tray);
+                }
                 let fighting = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
                 hw_client::hitch::mark("radio");
                 radio.me = mine.map(|m| m.0);
@@ -3480,6 +3535,10 @@ fn main() -> EngineResult<()> {
                             save_hero(hero_file.clone());
                         }
                     }
+                }
+                // Powers bought or given up take or free their keys.
+                if powers.tray.sync(&my_sheet) {
+                    save_tray(&powers.tray);
                 }
             }
             drawn = heroes;

@@ -27,6 +27,7 @@ use hw_core::{NetId, Seed};
 use hw_gen::building::BuildingUse;
 use hw_gen::urban::area::Area;
 use hw_gen::urban::landmarks::LandmarkKind;
+use hw_net::FxKind;
 use hw_net::{Power, ToClient};
 use std::sync::Arc;
 
@@ -71,6 +72,14 @@ pub const RESCUE_REACH: f64 = 3.5;
 const MEDIC_CLEAR: f64 = 15.0;
 /// Carrying the hurt this near the medic hands them over (m).
 pub const MEDIC_REACH: f64 = 5.0;
+/// The state an open fire's news carries once a freeze ray put it out.
+pub const DOUSED: u8 = 3;
+/// A doused fire: this much longer before it ends on its own (s), and the
+/// people come out this much quicker.
+pub const DOUSED_GRACE: f64 = 120.0;
+pub const DOUSED_QUICKER: f64 = 0.6;
+/// A freeze ray puts out a fire whose front it passes this near (m).
+pub const DOUSE_REACH: f64 = 4.5;
 /// Seconds of holding the help key to lift someone lying hurt.
 pub const LIFT_SECONDS: f64 = 1.0;
 /// The ambulance waits about this far from a rescue (m).
@@ -327,6 +336,9 @@ pub struct Incident {
     pub nearest: f64,
     /// A hero is on the way until this tick (see [`COMING_REACH`]).
     pub coming_until: u64,
+    /// A fire put out by a freeze ray: it burns no longer (the people
+    /// inside hold out much longer, and come out sooner).
+    pub doused: bool,
 }
 
 impl Incident {
@@ -356,7 +368,10 @@ impl Incident {
             kind: self.kind.code(),
             at: self.at.as_vec3().to_array(),
             level: self.level,
-            state: self.state.code(),
+            state: match self.state {
+                State::Open if self.doused => DOUSED,
+                s => s.code(),
+            },
             yaw: crate::props::yaw_to_byte(self.facing.x.atan2(self.facing.y)),
             left: self.left,
         }
@@ -589,7 +604,10 @@ impl Incidents {
         if self.town.is_none() {
             return;
         }
+        self.douse(world, tick);
+        self.bubbles(world, tick);
         self.rescue(world);
+        self.publish_rescue_points(world);
         self.calm(world, tick);
         walk_bystanders(world, tick);
         if !tick.is_multiple_of(TICK_HZ as u64) {
@@ -706,12 +724,134 @@ impl Incidents {
             calmed: None,
             nearest: f64::INFINITY,
             coming_until: 0,
+            doused: false,
         }
     }
 
     /// Heroes holding the help key next to the next trapped person get
     /// them out, one after another; the last one out is carried to the
     /// medic.
+    /// Freeze-ray cones this tick put out the fires they pass.
+    fn douse(&mut self, world: &mut World, tick: u64) {
+        let cold = world.resource::<Fights>().cold.clone();
+        if cold.is_empty() {
+            return;
+        }
+        for inc in self
+            .open
+            .iter_mut()
+            .filter(|i| i.kind == IncidentKind::Fire && !i.doused && i.state == State::Open)
+        {
+            let f = DVec3::new(inc.facing.x, 0.0, inc.facing.y).normalize_or(DVec3::X);
+            let front = inc.at - f * 3.0 + DVec3::Y * 2.0;
+            let hit = cold.iter().any(|&(from, dir, len)| {
+                let along = (front - from).dot(dir).clamp(0.0, len);
+                (from + dir * along).distance(front) < DOUSE_REACH
+            });
+            if hit {
+                inc.doused = true;
+                inc.answered = true;
+                inc.expires = inc.expires.max(tick) + ticks(DOUSED_GRACE);
+                self.news.push(inc.news());
+            }
+        }
+    }
+
+    /// Rescue bubbles sent this tick: each takes the trapped person it was
+    /// sent to out to the street (karma as if freed by hand), or the hurt
+    /// one straight to the ambulance (the rescue done).
+    fn bubbles(&mut self, world: &mut World, tick: u64) {
+        let sent = world.resource::<Fights>().rescues.clone();
+        if sent.is_empty() {
+            return;
+        }
+        let near: Vec<(NetId, DVec3, u8)> = world
+            .query::<(&Hero, &Net, &Motion, &Fighter)>()
+            .iter(world)
+            .map(|(_, n, m, f)| (n.0, m.0.pos, f.level))
+            .collect();
+        let mut rewards = Vec::new();
+        let mut fx = Vec::new();
+        for r in sent {
+            let Some(inc) = self.open.iter_mut().find(|i| {
+                i.medic.is_some()
+                    && (i.victims().iter().any(|v| v.distance(r.at) < 0.5)
+                        || matches!(i.hurt, Some(Hurt::Lying(p)) if p.distance(r.at) < 0.5))
+            }) else {
+                continue;
+            };
+            let (medic, _) = inc.medic.expect("a rescue");
+            let base = combat::enemy_spec(EnemyKind::Brute).karma;
+            let mut pay = |x: f32, at: DVec3| {
+                for h in near
+                    .iter()
+                    .filter(|h| h.1.distance(at) < REWARD || h.0 == r.hero)
+                {
+                    let one = progress::defeat_karma(base, inc.level, h.2) as f32;
+                    rewards.push(combat::Reward {
+                        hero: h.0,
+                        karma: (one * inc.kind.bonus() * x).round() as u32,
+                        deed: Some(Affinity::Guardian),
+                        lean: 0,
+                    });
+                }
+            };
+            inc.answered = true;
+            let lying = matches!(inc.hurt, Some(Hurt::Lying(p)) if p.distance(r.at) < 0.5);
+            let last = inc.left == 1 && !lying;
+            let mut e = combat::event(tick, FxKind::Bubble, r.hero, r.hero, r.at);
+            e.amount = (inc.id & 0xffff) as u16;
+            e.defeat = lying || last;
+            fx.push(e);
+            if lying || last {
+                // The hurt one floats straight to the medic.
+                if last {
+                    inc.left = 0;
+                    inc.freeing = 0.0;
+                    pay(1.0, r.at);
+                    self.news.push(inc.news());
+                }
+                inc.hurt = None;
+                pay(2.0, medic);
+                let news = inc.casualty(true);
+                self.news.extend(news);
+                fx.push(combat::event(
+                    tick,
+                    FxKind::BubbleLand,
+                    r.hero,
+                    r.hero,
+                    medic,
+                ));
+            } else {
+                // Out to the street in front of the place.
+                inc.left -= 1;
+                inc.freeing = 0.0;
+                pay(1.0, r.at);
+                self.news.push(inc.news());
+                let f = DVec3::new(inc.facing.x, 0.0, inc.facing.y).normalize_or(DVec3::X);
+                let out = DVec3::new(r.at.x, inc.at.y, r.at.z) + f * 7.0;
+                fx.push(combat::event(tick, FxKind::BubbleLand, r.hero, r.hero, out));
+            }
+        }
+        let mut fights = world.resource_mut::<Fights>();
+        fights.rewards.extend(rewards);
+        fights.events.extend(fx);
+    }
+
+    /// Where people wait to be rescued, for rescue bubbles to find.
+    fn publish_rescue_points(&self, world: &mut World) {
+        let mut points = Vec::new();
+        for inc in self.open.iter().filter(|i| i.medic.is_some()) {
+            if let Some(Hurt::Lying(p)) = inc.hurt {
+                points.push(p);
+            }
+            if inc.hurt.is_none() {
+                points.extend(inc.victims());
+            }
+        }
+        world.resource_mut::<Fights>().rescue_points = points;
+    }
+
     fn rescue(&mut self, world: &mut World) {
         if self.open.iter().all(|i| i.medic.is_none()) {
             return;
@@ -795,7 +935,8 @@ impl Incidents {
             };
             inc.answered = true;
             inc.freeing += DT;
-            if inc.freeing + 1e-9 < inc.kind.rescue_seconds() {
+            let quicker = if inc.doused { DOUSED_QUICKER } else { 1.0 };
+            if inc.freeing + 1e-9 < inc.kind.rescue_seconds() * quicker {
                 continue;
             }
             inc.freeing = 0.0;
@@ -1279,6 +1420,7 @@ impl Incidents {
             calmed: None,
             nearest: f64::INFINITY,
             coming_until: 0,
+            doused: false,
         };
         if kind == IncidentKind::Colossus {
             self.last_colossus = Some(tick);
