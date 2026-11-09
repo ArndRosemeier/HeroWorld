@@ -258,7 +258,7 @@ fn facade(
             Some(a) => {
                 // Only the texture travels: the plan keeps one copy of it.
                 let mut t = Mesh::new();
-                t.set_albedo_rgba(a.width, a.height, a.rgba.clone())?;
+                t.set_albedo_rgba(a.width, a.height, a.rgba.to_vec())?;
                 if let Some(maps) = part.material_maps() {
                     t.set_material_maps(maps.clone())?;
                 }

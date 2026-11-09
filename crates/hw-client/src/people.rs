@@ -18,9 +18,15 @@ use actors_generator::{
 };
 use engine::anim::AnimatedModel;
 use engine::mesh::AlbedoMap;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// The people thread lets go of the character builder (and its caches)
+/// after this long with nothing to build.
+pub const IDLE_DROP: Duration = Duration::from_secs(20);
 
 /// The clips a hero has (baked from the packs), plus "fly" and "hover"
 /// made here (see [`poses`]).
@@ -252,18 +258,26 @@ impl People {
         std::thread::Builder::new()
             .name("people".into())
             .spawn(move || {
-                let t0 = std::time::Instant::now();
-                let mut builder = match CharacterBuilder::load(&packs) {
+                let load = || {
+                    let t0 = std::time::Instant::now();
+                    let b = CharacterBuilder::load(&packs)
+                        .map_err(|e| format!("loading {}: {e}", packs.display()));
+                    if b.is_ok() {
+                        eprintln!("Actors packs loaded in {:.1} s", t0.elapsed().as_secs_f64());
+                    }
+                    b
+                };
+                let mut builder = match load() {
                     Ok(b) => b,
                     Err(e) => {
-                        let _ = tx.send(Err(format!("loading {}: {e}", packs.display())));
+                        let _ = tx.send(Err(e));
                         return;
                     }
                 };
-                eprintln!("Actors packs loaded in {:.1} s", t0.elapsed().as_secs_f64());
                 // What heroes may wear, for the creator.
                 builder.allow(&allow(true));
                 let _ = cat_tx.send(hero_catalog(builder.catalog()));
+                let mut builder = Some((builder, Halves::default()));
                 // Heroes before villains before citizens, whatever order
                 // they were asked in.
                 let mut queue: Vec<Job> = Vec::new();
@@ -272,9 +286,17 @@ impl People {
                         queue.push(j);
                     }
                     if queue.is_empty() {
-                        match rx.recv() {
+                        // Idle: the builder's caches (decoded pack textures,
+                        // garment meshes: most of a gigabyte after the
+                        // start-up looks) go; the next job loads it anew.
+                        let next = match builder {
+                            Some(_) => rx.recv_timeout(IDLE_DROP),
+                            None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                        };
+                        match next {
                             Ok(j) => queue.push(j),
-                            Err(_) => return,
+                            Err(RecvTimeoutError::Timeout) => builder = None,
+                            Err(RecvTimeoutError::Disconnected) => return,
                         }
                         continue;
                     }
@@ -292,8 +314,23 @@ impl People {
                         .or_else(|| queue.iter().position(|j| matches!(j.who, Who::Villain(..))))
                         .unwrap_or(0);
                     let job = queue.remove(i);
+                    let (b, halves) = match &mut builder {
+                        Some(b) => (&mut b.0, &mut b.1),
+                        None => match load() {
+                            Ok(b) => {
+                                let b = builder.insert((b, Halves::default()));
+                                (&mut b.0, &mut b.1)
+                            }
+                            Err(e) => {
+                                if tx.send(Err(e)).is_err() {
+                                    return;
+                                }
+                                continue;
+                            }
+                        },
+                    };
                     let t = std::time::Instant::now();
-                    let r = build(&mut builder, &job.who, job.seed, job.config.as_ref());
+                    let r = build_sharing(b, halves, &job.who, job.seed, job.config.as_ref());
                     if let Ok(b) = &r {
                         eprintln!(
                             "built {:?} in {:.2} s ({} meshes, {} MB of maps)",
@@ -1126,6 +1163,33 @@ pub fn mole_person(builder: &CharacterBuilder, look: u32) -> actors_generator::C
 /// Citizens' maps are halved down to no smaller than this (texels).
 const CROWD_MAP_MIN: u32 = 512;
 
+/// Citizens' and villains' half-size maps, by the texels of the full-size
+/// map they came from: characters that wear the same garment texture (or
+/// eyes, teeth, hair) share one half-size copy instead of each holding its
+/// own. Kept with the character builder, and only the half-size maps (which
+/// the characters hold anyway); emptied when it grows past [`Halves::MAX`].
+#[derive(Default)]
+pub struct Halves(BTreeMap<(u64, u32, u32), AlbedoMap>);
+
+impl Halves {
+    const MAX: usize = 512;
+
+    /// `map` at half size (see [`halve`]), shared with any character that
+    /// was given a map with the same texels.
+    fn halve(&mut self, map: &mut AlbedoMap, min: u32) {
+        let key = (map.rgba.content_hash(), map.width, map.height);
+        if let Some(half) = self.0.get(&key) {
+            *map = half.clone();
+            return;
+        }
+        halve(map, min);
+        if self.0.len() >= Self::MAX {
+            self.0.clear();
+        }
+        self.0.insert(key, map.clone());
+    }
+}
+
 /// Halves `map` (2x2 box filter) if both sides stay at least `min`.
 fn halve(map: &mut AlbedoMap, min: u32) {
     if map.width / 2 >= min && map.height / 2 >= min {
@@ -1146,7 +1210,7 @@ fn halve(map: &mut AlbedoMap, min: u32) {
         *map = AlbedoMap {
             width: w,
             height: h,
-            rgba: out,
+            rgba: out.into(),
         };
     }
 }
@@ -1172,6 +1236,18 @@ pub fn map_bytes(model: &AnimatedModel) -> usize {
 /// Builds one character (on the worker); `config` is a made hero's looks.
 pub fn build(
     builder: &mut CharacterBuilder,
+    who: &Who,
+    seed: u64,
+    config: Option<&CharacterConfig>,
+) -> Result<Built, String> {
+    build_sharing(builder, &mut Halves::default(), who, seed, config)
+}
+
+/// [`build`], with half-size maps shared through `halves` (keep it as long
+/// as the builder).
+pub fn build_sharing(
+    builder: &mut CharacterBuilder,
+    halves: &mut Halves,
     who: &Who,
     seed: u64,
     config: Option<&CharacterConfig>,
@@ -1249,7 +1325,7 @@ pub fn build(
             .into_iter()
             .flatten()
             {
-                halve(map, CROWD_MAP_MIN);
+                halves.halve(map, CROWD_MAP_MIN);
             }
         }
     }
@@ -1283,7 +1359,7 @@ mod tests {
         let mut small = AlbedoMap {
             width: 2,
             height: 2,
-            rgba: vec![9; 16],
+            rgba: vec![9; 16].into(),
         };
         halve(&mut small, 2);
         assert_eq!((small.width, small.height, small.rgba.len()), (2, 2, 16));

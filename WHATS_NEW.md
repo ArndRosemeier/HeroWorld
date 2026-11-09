@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.114 (2026-11-09)
+
+- The townsfolk need far less memory: people who wear the same clothes now share one copy of the cloth's picture instead of each carrying their own, the crowds in the distance borrow the pictures of the people up close, and the character workshop tidies away its leftovers once everyone is built. People went from about 1.6 GB to about 0.55 GB in a test, and the whole game peaked about 1.4 GB lower. They look exactly the same.
+- Engine's animation and drawing now use all CPU cores.
+
 ## 0.113 (2026-11-09)
 
 - The mad scientist now has a robot works in his quarter. Robo-sentries ride an assembly line out of a streamlined hall: a crane lowers each one's dish, welding arms seam it in a shower of sparks, a second crane hangs its gun, and on the test arch it wakes up, spins its dish and raises its gun before marching off into the dispatch shed.

@@ -21,7 +21,7 @@ checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 [[package]]
 name = "actors-core"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Actors?rev=000f41754c9ec7eba139d4d469da28c33a99dcec#000f41754c9ec7eba139d4d469da28c33a99dcec"
+source = "git+https://github.com/ArndRosemeier/Actors?rev=121503bacc8dada956f5535b67677dc0407a38e5#121503bacc8dada956f5535b67677dc0407a38e5"
 dependencies = [
  "indexmap",
  "regex",
@@ -33,7 +33,7 @@ dependencies = [
 [[package]]
 name = "actors-engine"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Actors?rev=000f41754c9ec7eba139d4d469da28c33a99dcec#000f41754c9ec7eba139d4d469da28c33a99dcec"
+source = "git+https://github.com/ArndRosemeier/Actors?rev=121503bacc8dada956f5535b67677dc0407a38e5#121503bacc8dada956f5535b67677dc0407a38e5"
 dependencies = [
  "actors-core",
  "actors-generator",
@@ -47,7 +47,7 @@ dependencies = [
 [[package]]
 name = "actors-generator"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Actors?rev=000f41754c9ec7eba139d4d469da28c33a99dcec#000f41754c9ec7eba139d4d469da28c33a99dcec"
+source = "git+https://github.com/ArndRosemeier/Actors?rev=121503bacc8dada956f5535b67677dc0407a38e5#121503bacc8dada956f5535b67677dc0407a38e5"
 dependencies = [
  "actors-core",
  "actors-human",
@@ -59,7 +59,7 @@ dependencies = [
 [[package]]
 name = "actors-human"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Actors?rev=000f41754c9ec7eba139d4d469da28c33a99dcec#000f41754c9ec7eba139d4d469da28c33a99dcec"
+source = "git+https://github.com/ArndRosemeier/Actors?rev=121503bacc8dada956f5535b67677dc0407a38e5#121503bacc8dada956f5535b67677dc0407a38e5"
 dependencies = [
  "actors-core",
  "indexmap",
@@ -1049,7 +1049,7 @@ dependencies = [
 [[package]]
 name = "engine"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Engine?branch=main#4e46d9ad9675387d1e7a27673126de2325b26b18"
+source = "git+https://github.com/ArndRosemeier/Engine?branch=main#ab0a0c26ffa2c64f257d8b69571f5b9f2dfc8e2b"
 dependencies = [
  "bytemuck",
  "egui",
