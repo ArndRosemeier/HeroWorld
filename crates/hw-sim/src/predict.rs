@@ -184,40 +184,49 @@ impl Interpolator {
         } else {
             self.render_tick += off * (1.0 - 0.02f64.powf(frame_dt));
         }
-        let t = self.render_tick;
-        let after = self.buffer.iter().position(|(tick, _)| *tick as f64 >= t);
-        let (a, b) = match after {
-            Some(0) | None => {
-                let i = if after.is_none() {
-                    self.buffer.len() - 1
-                } else {
-                    0
-                };
-                return self.buffer[i].1.clone();
-            }
-            Some(i) => (&self.buffer[i - 1], &self.buffer[i]),
-        };
-        let f = (t - a.0 as f64) / (b.0 - a.0) as f64;
-        b.1.iter()
-            .map(|eb| match a.1.iter().find(|ea| ea.id == eb.id) {
-                Some(ea) => {
-                    let pa = DVec3::from_array(ea.pos);
-                    let pb = DVec3::from_array(eb.pos);
-                    EntityState {
-                        pos: pa.lerp(pb, f).to_array(),
-                        rot: nlerp(ea.rot, eb.rot, f as f32),
-                        ..*eb
-                    }
-                }
-                None => *eb,
-            })
-            .collect()
+        blend_at(&self.buffer, self.render_tick)
     }
 
     /// The newest known state of one entity.
     pub fn latest(&self, id: NetId) -> Option<EntityState> {
         self.buffer.back()?.1.iter().find(|e| e.id == id).copied()
     }
+}
+
+/// Farther than this in a tick is a jump (a respawn, a ride's start or a
+/// teleport), drawn at once: the fastest hero flies 2 m a tick.
+pub const SNAP_PER_TICK: f64 = 8.0;
+
+/// Every entity of `buffer` (snapshots by server tick, oldest first) at
+/// tick `t`, between the two snapshots round it: before the oldest or
+/// after the newest, as that one has it. An entity only in the later
+/// snapshot, or one that jumped, is drawn where that has it.
+pub fn blend_at(buffer: &VecDeque<(u64, Vec<EntityState>)>, t: f64) -> Vec<EntityState> {
+    let after = buffer.iter().position(|(tick, _)| *tick as f64 >= t);
+    let (a, b) = match after {
+        None => return buffer.back().map(|b| b.1.clone()).unwrap_or_default(),
+        Some(0) => return buffer[0].1.clone(),
+        Some(i) => (&buffer[i - 1], &buffer[i]),
+    };
+    let ticks = (b.0 - a.0) as f64;
+    let f = (t - a.0 as f64) / ticks;
+    b.1.iter()
+        .map(|eb| match a.1.iter().find(|ea| ea.id == eb.id) {
+            Some(ea) => {
+                let pa = DVec3::from_array(ea.pos);
+                let pb = DVec3::from_array(eb.pos);
+                if pa.distance(pb) > SNAP_PER_TICK * ticks {
+                    return *eb;
+                }
+                EntityState {
+                    pos: pa.lerp(pb, f).to_array(),
+                    rot: nlerp(ea.rot, eb.rot, f as f32),
+                    ..*eb
+                }
+            }
+            None => *eb,
+        })
+        .collect()
 }
 
 /// Blends two rotations (quaternions x, y, z, w) the short way round.

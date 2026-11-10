@@ -391,9 +391,13 @@ impl Session {
     }
 
     /// Everything to draw this frame. Our own hero comes first if present.
-    pub fn entities(&mut self, frame_dt: f64) -> Vec<EntityState> {
+    /// `frac` is how far into the next tick the frame is
+    /// ([`hw_sim::hostthread::TickClock::frac`]): in single player
+    /// everyone is drawn between the server's ticks at that time, so they
+    /// move on every frame.
+    pub fn entities(&mut self, frame_dt: f64, frac: f64) -> Vec<EntityState> {
         match self {
-            Session::Local { host, .. } => host.view().entities.clone(),
+            Session::Local { host, .. } => host.entities_at(frac),
             Session::Remote {
                 conn,
                 predictor,

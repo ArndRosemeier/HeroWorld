@@ -2768,7 +2768,7 @@ fn main() -> EngineResult<()> {
 
             hw_client::hitch::mark("heroes");
             // Draw heroes.
-            let heroes = session.entities(frame.dt as f64);
+            let heroes = session.entities(frame.dt as f64, tick_clock.frac());
             anims.retain(|id, _| heroes.iter().any(|h| h.id == *id));
             hero_entities.retain(|id, (e, _)| {
                 let keep = heroes.iter().any(|h| h.id == *id);

@@ -30,7 +30,7 @@
 use crate::host::{Host, PlayerInfo};
 use hw_core::NetId;
 use hw_net::{EntityState, InputState, PlayerId, ToClient};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -74,6 +74,14 @@ struct Published {
     fx: Vec<hw_net::Fx>,
     sheet: Option<hw_net::Sheet>,
 }
+
+/// How far behind the ticks sent everything is drawn, in ticks: a frame
+/// that sends one tick still has the tick after the drawn time in its
+/// view, so it draws between two known ticks.
+pub const DRAW_DELAY: f64 = 2.0;
+
+/// Views kept to draw between ticks.
+const HISTORY: usize = 6;
 
 /// Paces the fixed server ticks to the frames: each frame adds its time,
 /// runs the whole ticks that fit (at most [`TickClock::MAX_TICKS`]; a longer
@@ -120,6 +128,9 @@ pub struct HostThread {
     sent: u64,
     /// `sent` when the view on its way was asked for.
     asked_at: u64,
+    /// The last few views' entities by tick, oldest first, to draw them
+    /// between ticks ([`Self::entities_at`]).
+    history: VecDeque<(u64, Vec<EntityState>)>,
     view: HostView,
     news: Vec<ToClient>,
     fx: Vec<hw_net::Fx>,
@@ -144,6 +155,7 @@ impl HostThread {
             asked: false,
             sent: 0,
             asked_at: 0,
+            history: VecDeque::new(),
             view: HostView::default(),
             news: Vec::new(),
             fx: Vec::new(),
@@ -180,6 +192,21 @@ impl HostThread {
         let waited = t.elapsed();
         self.ask();
         waited
+    }
+
+    /// The server tick everything is drawn at this frame, `frac` of a tick
+    /// on from the ticks sent: [`DRAW_DELAY`] behind them, so the view
+    /// (which lags the ticks sent by this frame's ticks) is past it unless
+    /// a frame ran more than one tick.
+    pub fn draw_tick(&self, frac: f64) -> f64 {
+        self.sent as f64 + frac - DRAW_DELAY
+    }
+
+    /// Every entity as it stood at [`Self::draw_tick`], between the two
+    /// ticks round it: a hero, a fighter or a taxi moves on every frame,
+    /// not in steps of a tick.
+    pub fn entities_at(&self, frac: f64) -> Vec<EntityState> {
+        crate::predict::blend_at(&self.history, self.draw_tick(frac))
     }
 
     /// The world as last published.
@@ -248,7 +275,18 @@ impl HostThread {
         // The view stands where every tick sent before it was asked for
         // has run; the ticks sent since come on top. (The host's own tick
         // can jump, e.g. when a save is loaded: the clock follows it.)
+        let jumped = p.view.tick != self.asked_at;
         self.sent = p.view.tick + (self.sent - self.asked_at);
+        if jumped || self.history.back().is_some_and(|(t, _)| p.view.tick < *t) {
+            // The host's clock jumped: what came before is another time.
+            self.history.clear();
+        }
+        if self.history.back().is_none_or(|(t, _)| p.view.tick > *t) {
+            self.history.push_back((p.view.tick, p.view.entities.clone()));
+            while self.history.len() > HISTORY {
+                self.history.pop_front();
+            }
+        }
         let players = if p.players_changed {
             p.view.players
         } else {
@@ -352,6 +390,7 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::DVec3;
     use hw_core::Seed;
 
     fn walk(k: u32) -> InputState {
@@ -446,6 +485,72 @@ mod tests {
         t.tick(InputState::default());
         t.sync();
         assert_eq!(t.sent_tick(), t.call(|h, _| h.sim.tick));
+    }
+
+    /// Heroes, fighters and taxis are drawn between ticks, every frame:
+    /// exactly where the host had them, blended between the two ticks
+    /// round the drawing clock, at any frame rate up to a tick a frame.
+    /// (Until 0.133 single player drew them as the last view had them: at
+    /// 144 Hz they stood still four frames and leapt on the fifth.)
+    #[test]
+    fn entities_are_drawn_between_ticks() {
+        let mut plain = Host::new(Seed(9));
+        let me = plain.join_local("solo");
+        let mut threaded = Host::new(Seed(9));
+        threaded.join_local("solo");
+        let mut t = HostThread::spawn(threaded, me);
+        let hero = plain.sim.hero_of(me).expect("a hero");
+        let start = t.sent_tick();
+        assert_eq!(start, plain.sim.tick);
+        // What the host had after each tick from the start.
+        let mut by_tick = vec![plain.sim.snapshot()];
+        let at = |snap: &[EntityState]| {
+            DVec3::from_array(snap.iter().find(|e| e.id == hero).expect("hero").pos)
+        };
+        let mut clock = TickClock::default();
+        let mut k = 0;
+        let mut was: Option<DVec3> = None;
+        let mut moved_frames = 0;
+        for frame in 0..400u32 {
+            let dt = match frame / 100 {
+                0 => 1.0 / 144.0,
+                1 => 1.0 / 60.0,
+                2 => 1.0 / 40.0,
+                _ => [0.004, 0.021, 0.013, 0.031, 0.009][frame as usize % 5],
+            };
+            for _ in 0..clock.advance(dt) {
+                let input = InputState {
+                    move_z: 1.0,
+                    move_x: if k % 60 < 30 { 0.4 } else { -0.4 },
+                    ..Default::default()
+                };
+                t.tick(input);
+                plain.sim.set_input(me, input);
+                plain.tick();
+                by_tick.push(plain.sim.snapshot());
+                k += 1;
+            }
+            t.sync();
+            let r = t.draw_tick(clock.frac()) - start as f64;
+            if r < 0.0 {
+                continue;
+            }
+            let i = r.floor() as usize;
+            let f = r - i as f64;
+            let want = at(&by_tick[i]).lerp(at(&by_tick[(i + 1).min(by_tick.len() - 1)]), f);
+            let drawn = at(&t.entities_at(clock.frac()));
+            assert!(
+                drawn.distance(want) < 1e-6,
+                "frame {frame}: drawn {drawn:?}, the host had {want:?} at tick {r:.3}"
+            );
+            if let Some(w) = was {
+                if drawn.distance(w) > 1e-9 {
+                    moved_frames += 1;
+                }
+            }
+            was = Some(drawn);
+        }
+        assert!(moved_frames > 350, "the hero moved in only {moved_frames} frames");
     }
 
     /// A long frame runs at most `MAX_TICKS` and drops the rest.

@@ -298,6 +298,9 @@ flowchart LR
 Clients send inputs up and receive state changes down. The world itself is never sent.
 
 - **Authority:** the server decides gameplay. Clients predict their own hero and interpolate everything else.
+  In single player the server runs on its own thread (`hw_sim::hostthread`) and the game
+  draws every entity two ticks behind the ticks sent, blended between the server's ticks
+  (`HostThread::entities_at`), so heroes, fighters and taxis move on every frame.
 - **Determinism where it pays:** world generation is identical everywhere. Debris physics is cosmetic on each client; only what matters for gameplay (a collapse, settled rubble, broken elements) is authoritative and synced.
 - **Bubbles:** one detailed simulation area per player or group, merged when players are close. Each bubble has a budget and fills in less when the host struggles. Ten bubbles is the worst case.
 - **The rest of the planet** runs at an abstract level: villain organizations, incidents and news as pure functions of time.

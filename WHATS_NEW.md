@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.133 (2026-11-10)
+
+- Fixed: your hero, other heroes, villains and hero taxis moved in small steps (30 a second) instead of every frame. They now glide smoothly too, and so does the camera that follows you.
+
 ## 0.132 (2026-11-10)
 
 - Fixed: cars, hover cars and the people in them moved in little jumps, a step back and a leap forward, whenever the game clock ticked. They now glide smoothly every frame, at any frame rate.
