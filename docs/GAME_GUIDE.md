@@ -339,7 +339,7 @@ shows where you stand.
 | The Doctor's Lab | the mad scientist's mutants, technicians and robots | Unfriendly (−40) | Hates the Patrol and the Syndicate. |
 | Chrome Jackets | greaser street gang | Unfriendly (−30) | At war with the Syndicate. |
 | Velvet Syndicate | pinstriped gunsels, organised crime | Neutral (−10) | Keeps the peace when it suits business. |
-| Moles | Molehaven's mole folk | Neutral (0) | Hate the Lab and the Empire. Delvers guard Molehaven's lift and sometimes surface in town, frightened: hold E near them for 3 s to talk them down (+6 with Molehaven), or fight them (no friends made). |
+| Moles | Molehaven's mole folk | Neutral (0) | Hate the Lab and the Empire. Delvers guard Molehaven's lift. Their surfacing event (talk them down with E for +6 Molehaven) is parked until it is redesigned: it no longer comes up on its own (HW_INCIDENT=moles still forces it). |
 | Sky Pirates | an airship crew | Unfriendly (−30) | Moor over the harbour with lookouts on the quay (warn, then fight); raid shops from an airship moored over the street (12 m reach). |
 | Iron-Masked Empire | the Iron Legion, from beyond the sea | Unfriendly (−55) | Hates everyone. Lands in iron capsules and holds two townsfolk captive (20 m reach); only once the team is level 2 and has two heroes, or rarely alone. Never attacks an unknown hero on sight. |
 

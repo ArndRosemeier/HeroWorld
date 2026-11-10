@@ -1386,7 +1386,10 @@ impl Incidents {
             (IncidentKind::CarCrash, 0.14),
             (IncidentKind::Fire, 0.14),
             (IncidentKind::Colossus, 0.08),
-            (IncidentKind::Surfacing, 0.1),
+            // Parked (Arnd 2026-11-10): the mole folk have no reason to
+            // come up yet. Only forced (HW_INCIDENT=moles, tests) until the
+            // event is redesigned; then give it its weight back (was 0.1).
+            (IncidentKind::Surfacing, 0.0),
             (IncidentKind::PirateRaid, if hot { 0.05 } else { 0.1 }),
             (IncidentKind::IronLanding, 0.07),
         ];
@@ -1431,6 +1434,9 @@ impl Incidents {
             IncidentKind::IronLanding => iron_ok && !streets.is_empty(),
             IncidentKind::Fire => !homes.is_empty(),
             IncidentKind::Colossus => colossus_ok,
+            IncidentKind::Surfacing => {
+                self.next_kind == Some(IncidentKind::Surfacing) && !streets.is_empty()
+            }
             _ => !streets.is_empty(),
         });
         let total: f64 = kinds.iter().map(|k| k.1).sum();

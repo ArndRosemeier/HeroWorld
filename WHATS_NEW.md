@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.156 (2026-11-10)
+
+- Mole folk no longer burst up through the street out of nowhere. That call is resting until we
+  give them a proper reason to come up.
+
 ## 0.155 (2026-11-10)
 
 - Long sessions should stay smoother: textures for buildings and things that were streamed out are now freed instead of piling up in video memory (Engine 0.048).

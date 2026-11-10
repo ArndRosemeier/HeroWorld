@@ -87,6 +87,9 @@ fn an_unanswered_incident_times_out_and_more_follow() {
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let mut sim = Sim::for_town(Seed(3), &town);
     sim.spawn_hero(PlayerId(1), sim.spawn_point(1));
+    // A rescue: an unanswered fight far from players is taken on by the
+    // town's NPC heroes (see `hw_sim::npcheroes`), so it would not time out.
+    sim.incidents.next_kind = Some(incidents::IncidentKind::CarCrash);
     let mut news = Vec::new();
     run(
         &mut sim,
