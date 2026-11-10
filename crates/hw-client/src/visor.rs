@@ -686,16 +686,20 @@ fn on_screen(view_proj: Mat4, p: Vec3, screen: egui::Rect) -> Option<egui::Pos2>
 }
 
 /// Which way to point at something out of sight: a unit vector in screen
-/// terms (x right, y down).
+/// terms (x right, y down). Clip x and y before the divide are the camera's
+/// own right and up scaled, with the right signs in front and behind (the
+/// divide by a negative w is what mirrors). Something behind gets an arrow
+/// at the side to turn to, tipped a little down, never up: up and down mean
+/// little for a thing at your back, and an arrow at the top read as "in the
+/// sky".
 fn off_screen_dir(view_proj: Mat4, p: Vec3) -> Vec2 {
     let c = view_proj * p.extend(1.0);
-    let mut v = Vec2::new(c.x, -c.y);
-    if c.w < 0.0 {
-        // Behind: clip space mirrors, so turn it back.
-        v = -v;
+    if c.w <= 0.05 {
+        let side = if c.x < 0.0 { -1.0 } else { 1.0 };
+        return Vec2::new(side, 0.35).normalize();
     }
-    if v.length_squared() < 1e-6 {
-        // Straight behind: point down, toward "turn round".
+    let v = Vec2::new(c.x, -c.y);
+    if v.length_squared() < 1e-9 {
         return Vec2::Y;
     }
     v.normalize()
@@ -704,6 +708,31 @@ fn off_screen_dir(view_proj: Mat4, p: Vec3) -> Vec2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A camera at the origin looking down +Z, 60 degrees wide.
+    fn camera() -> Mat4 {
+        let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::Z, Vec3::Y);
+        glam::camera::rh::proj::directx::perspective(1.0, 16.0 / 9.0, 0.1, 1000.0) * view
+    }
+
+    #[test]
+    fn calls_behind_point_to_the_side_never_up() {
+        let vp = camera();
+        // Behind and a little to the left, on the ground below the eye: the
+        // bug drew an arrow at the top of the screen, in the sky.
+        let behind_left = off_screen_dir(vp, Vec3::new(30.0, -5.0, -200.0));
+        let behind_right = off_screen_dir(vp, Vec3::new(-30.0, -5.0, -200.0));
+        assert!(behind_left.y >= 0.0 && behind_right.y >= 0.0);
+        assert!(behind_left.x * behind_right.x < 0.0, "opposite sides");
+        // The camera looks down +Z with +Y up, so its right is -X.
+        assert!(behind_right.x > 0.0);
+        // Ahead but far to the right: an arrow on the right.
+        let right = off_screen_dir(vp, Vec3::new(-500.0, 0.0, 50.0));
+        assert!(right.x > 0.9);
+        // Ahead and below the view: down.
+        let below = off_screen_dir(vp, Vec3::new(0.0, -500.0, 50.0));
+        assert!(below.y > 0.9);
+    }
 
     #[test]
     fn it_forms_and_dissolves_through_a_line() {

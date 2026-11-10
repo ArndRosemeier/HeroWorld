@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.159 (2026-11-10)
+
+- Fixed: a call behind you showed on the visor as an arrow up in the sky (and on the wrong side). Now the arrow sits at the side you should turn to.
+
 ## 0.158 (2026-11-10)
 
 - Leaving the title, the camera now waits on the title view (turning slowly) until the streets around your hero are fully drawn, then flies a smooth arc up over the town and down behind your hero. No more choppy zoom along a strange path, and nothing pops in on the way.
