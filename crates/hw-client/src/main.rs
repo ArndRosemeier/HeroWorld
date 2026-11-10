@@ -2624,7 +2624,7 @@ fn main() -> EngineResult<()> {
             // `HW_BENCH`: the hero goes the benchmark's way, then the report.
             if let Some(b) = bench.as_mut() {
                 use hw_client::bench::{Route, Step};
-                match b.step(frame.time) {
+                match b.step(frame.time, world) {
                     Step::Wait => {}
                     Step::Go { at, dir, height } => {
                         let o = world.occlusion_stats();

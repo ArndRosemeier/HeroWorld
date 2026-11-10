@@ -12,6 +12,14 @@
 //! `HW_BENCH_SECS` sets how long the measured run is (default 60 s); the
 //! first `HW_BENCH_WARMUP` seconds (default 20) the hero stands at the
 //! start while the town around it loads, and are not measured.
+//!
+//! `HW_BENCH_LAPS=N` makes it a long run: the hero goes the route
+//! (`HW_BENCH_SECS` long) and back N times, over the same ground each lap.
+//! The report then has a line per lap with the frame time, memory and
+//! Engine's resource census, and names every count that kept growing from
+//! the second lap to the last: on the same ground, nothing should (a frame
+//! rate that falls over a session is something piling up). Hold the hour
+//! (`HW_HOUR`) so night does not change the picture.
 //! `scripts/bench.bat` (or `bench.sh`) runs both routes, once plain and once
 //! with Engine's GPU and CPU timings (`ENGINE_GPU_PROFILE_EVERY`,
 //! `ENGINE_CPU_TRACE`), which go to the console.
@@ -80,6 +88,20 @@ pub struct Bench {
     memory_start: Option<u64>,
     memory_peak: u64,
     memory_read_at: f32,
+    /// Out-and-back laps (`HW_BENCH_LAPS`), 0 for one way.
+    laps: u32,
+    /// Measured frames so far, and each finished lap.
+    frames: usize,
+    lap_records: Vec<Lap>,
+}
+
+/// One finished lap of a long run.
+#[derive(Clone, Debug)]
+pub struct Lap {
+    /// Frames measured before the lap ended.
+    pub end_frame: usize,
+    pub memory_mb: f64,
+    pub census: engine::census::ResourceCensus,
 }
 
 impl Bench {
@@ -101,6 +123,7 @@ impl Bench {
                 .unwrap_or(default)
         };
         let secs = num("HW_BENCH_SECS", 60.0).max(1.0);
+        let laps = num("HW_BENCH_LAPS", 0.0).round() as u32;
         let warmup = num("HW_BENCH_WARMUP", 20.0);
         let length = route.speed() * f64::from(secs) + 50.0;
         let roads: Vec<&[DVec2]> = world
@@ -138,6 +161,9 @@ impl Bench {
             memory_start: None,
             memory_peak: 0,
             memory_read_at: f32::NEG_INFINITY,
+            laps,
+            frames: 0,
+            lap_records: Vec::new(),
         })
     }
 
@@ -148,7 +174,7 @@ impl Bench {
 
     /// Where the hero is at game time `time` (seconds since the window
     /// opened). Starts and ends the hitch guard's gathering.
-    pub fn step(&mut self, time: f32) -> Step {
+    pub fn step(&mut self, time: f32, world: &engine::prelude::World) -> Step {
         if time < self.warmup {
             return Step::Wait;
         }
@@ -164,10 +190,44 @@ impl Bench {
                 self.memory_peak = self.memory_peak.max(m.resident);
             }
         }
+        self.frames += 1;
+        if self.laps > 0 {
+            return self.lap_step(t, world);
+        }
         if t >= self.secs {
             return Step::Done;
         }
         let (at, dir) = self.at(self.route.speed() * f64::from(t));
+        Step::Go {
+            at,
+            dir,
+            height: self.route.height(),
+        }
+    }
+
+    /// A long run: out along the route and back, `laps` times.
+    fn lap_step(&mut self, t: f32, world: &engine::prelude::World) -> Step {
+        let leg = (self.route.speed() * f64::from(self.secs)).min(self.length());
+        let d = self.route.speed() * f64::from(t);
+        let lap = (d / (2.0 * leg)).floor() as usize;
+        if lap > self.lap_records.len() {
+            self.lap_records.push(Lap {
+                end_frame: self.frames,
+                memory_mb: crate::hitch::Memory::now()
+                    .map_or(0.0, |m| m.resident as f64 / 1048576.0),
+                census: world.resource_census(),
+            });
+        }
+        if lap >= self.laps as usize {
+            return Step::Done;
+        }
+        let pos = d - lap as f64 * 2.0 * leg;
+        let (at, dir) = if pos <= leg {
+            self.at(pos)
+        } else {
+            let (at, dir) = self.at(2.0 * leg - pos);
+            (at, -dir)
+        };
         Step::Go {
             at,
             dir,
@@ -293,6 +353,9 @@ impl Bench {
                 total / n.max(1) as f64
             );
         }
+        if !self.lap_records.is_empty() {
+            s.push_str(&self.laps_report(stats));
+        }
         if !stats.counts.is_empty() {
             let mut counts = stats.counts.clone();
             counts.sort_by_key(|c| std::cmp::Reverse(c.1));
@@ -304,6 +367,40 @@ impl Bench {
             let _ = writeln!(s, "  counted: {}", c.join(", "));
         }
         s.push('\n');
+        s
+    }
+
+    /// A long run's lines: each lap, then what grew from the second lap to
+    /// the last (the first lap includes the town loading around the start).
+    fn laps_report(&self, stats: &crate::hitch::Stats) -> String {
+        let mut s = String::new();
+        let _ = writeln!(s, "  laps (out and back over the same ground):");
+        let mut from = 0;
+        let mut means = Vec::new();
+        for (i, lap) in self.lap_records.iter().enumerate() {
+            let end = lap.end_frame.min(stats.wall_ms.len());
+            let w = &stats.wall_ms[from.min(end)..end];
+            let mean = w.iter().map(|&x| f64::from(x)).sum::<f64>() / w.len().max(1) as f64;
+            means.push(mean);
+            let _ = writeln!(
+                s,
+                "    lap {}: {} frames, {:.1} ms a frame on average, {:.0} MB in use\n      holds: {}",
+                i + 1,
+                w.len(),
+                mean,
+                lap.memory_mb,
+                lap.census
+            );
+            from = end;
+        }
+        let grew = lap_growth(&self.lap_records, &means);
+        if self.lap_records.len() < 3 {
+            let _ = writeln!(s, "  growth: needs three laps or more to judge");
+        } else if grew.is_empty() {
+            let _ = writeln!(s, "  growth: none (frame time and every count level off)");
+        } else {
+            let _ = writeln!(s, "  growth from lap 2 to the last: {}", grew.join(", "));
+        }
         s
     }
 
@@ -446,6 +543,34 @@ fn offset(path: &[DVec2], d: f64) -> Vec<DVec2> {
         .collect()
 }
 
+/// What grew from the second lap to the last by more than a tenth (and
+/// more than a little): `name a -> b`. `means` are the laps' frame times.
+pub fn lap_growth(laps: &[Lap], means: &[f64]) -> Vec<String> {
+    let mut out = Vec::new();
+    if laps.len() < 3 {
+        return out;
+    }
+    let (a, b) = (&laps[1], &laps[laps.len() - 1]);
+    let grows = |x: f64, y: f64, slack: f64| y > x * 1.1 && y - x > slack;
+    if let (Some(&x), Some(&y)) = (means.get(1), means.last()) {
+        if grows(x, y, 1.0) {
+            out.push(format!("frame time {x:.1} -> {y:.1} ms"));
+        }
+    }
+    if grows(a.memory_mb, b.memory_mb, 200.0) {
+        out.push(format!(
+            "memory {:.0} -> {:.0} MB",
+            a.memory_mb, b.memory_mb
+        ));
+    }
+    for ((name, x), (_, y)) in a.census.fields().into_iter().zip(b.census.fields()) {
+        if grows(x as f64, y as f64, 8.0) {
+            out.push(format!("{name} {x} -> {y}"));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,5 +611,34 @@ mod tests {
         assert_eq!(s.median, 51.0);
         assert!((s.p95 - 95.0).abs() <= 1.0);
         assert!((s.mean - 50.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn lap_growth_names_what_keeps_climbing() {
+        let lap = |entities: usize, textures: usize, mb: f64| Lap {
+            end_frame: 0,
+            memory_mb: mb,
+            census: engine::census::ResourceCensus {
+                entities,
+                textures,
+                ..Default::default()
+            },
+        };
+        // Flat (lap 1 is loading and ignored): nothing.
+        let flat = [
+            lap(100, 5, 1000.0),
+            lap(8000, 90, 4000.0),
+            lap(8010, 92, 4050.0),
+        ];
+        assert!(lap_growth(&flat, &[30.0, 16.0, 16.5]).is_empty());
+        // Textures and memory and frame time keep climbing: all three named.
+        let leak = [
+            lap(100, 5, 1000.0),
+            lap(8000, 90, 4000.0),
+            lap(8000, 900, 5000.0),
+        ];
+        let grew = lap_growth(&leak, &[30.0, 16.0, 25.0]);
+        assert_eq!(grew.len(), 3, "{grew:?}");
+        assert!(grew.iter().any(|g| g.starts_with("textures 90 -> 900")));
     }
 }

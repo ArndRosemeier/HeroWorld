@@ -114,6 +114,9 @@ fn log_path() -> Option<PathBuf> {
     }
 }
 
+/// Frames between two resource counts.
+const CENSUS_FRAMES: u64 = 120;
+
 /// Call first thing every frame. The frame before is judged here, so a
 /// report also covers Engine's work after the game's update (animation,
 /// uploads, drawing). The update's time ends when the returned value is
@@ -122,6 +125,9 @@ fn log_path() -> Option<PathBuf> {
 pub fn begin(world: &mut engine::prelude::World, frame_time: f32) -> FrameScope {
     with(|g| {
         g.begin(frame_time);
+        if g.frame_no.is_multiple_of(CENSUS_FRAMES) {
+            g.census = Some(world.resource_census());
+        }
         // Engine's own block (animation, uploads, drawing) goes into the
         // same file, while the usual frame is well inside Engine's limit
         // (else every frame would be one) and the minute's reports last.
@@ -291,6 +297,10 @@ struct Guard {
     context: Vec<(&'static str, String)>,
     minute: Minute,
     last_memory: Option<(f32, Memory)>,
+    /// Engine's resource census (counts of what the world and the GPU
+    /// hold), taken now and then; the minute's summary writes it, so a
+    /// count that keeps climbing over a session shows.
+    census: Option<engine::census::ResourceCensus>,
     full: bool,
     /// Engine's hitch limit (`ENGINE_HITCH_MS`, work per frame), and
     /// whether Engine writes into our log now.
@@ -332,6 +342,7 @@ impl Guard {
             context: Vec::new(),
             minute: Minute::default(),
             last_memory: None,
+            census: None,
             full: false,
             engine_ms: std::env::var("ENGINE_HITCH_MS")
                 .ok()
@@ -564,6 +575,9 @@ impl Guard {
         }
         if let Some(mem) = Memory::now() {
             let _ = write!(s, ", {:.0} MB in use", mem.resident as f64 / 1048576.0);
+        }
+        if let Some(c) = &self.census {
+            let _ = write!(s, "\n   holds: {c}");
         }
         s.push_str("\n\n");
         s

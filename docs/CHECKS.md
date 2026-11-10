@@ -95,3 +95,23 @@ Measured in a fresh 4-core cloud sandbox:
 
 Release builds (`start.bat`, the Windows zip) are not affected, apart from using the
 pinned Rust.
+
+## Long sessions: does anything pile up?
+
+A frame rate that falls the longer one plays is something made and never freed. Two
+tools find it:
+
+- **The hitch log** (`logs/hitches.log`) ends every minute's summary with a `holds:` line,
+  Engine's resource census: entities, LOD sets, textures, lamps, decals, crowd agents,
+  sounds, GPU meshes and batches, texture-table slots, characters, video memory. Compare
+  the lines of a long session: in a streamed world every count should level off.
+- **A lap run**: `HW_BENCH=flight HW_BENCH_LAPS=6 HW_BENCH_SECS=60 HW_HOUR=15` flies the
+  same route out and back six times. `logs/bench-flight.txt` has a line per lap (frame
+  time, memory, census) and names whatever grew from the second lap to the last ("growth:
+  none" is the pass). In a cloud sandbox add `ENGINE_FIXED_DT=0.25 ENGINE_WIDTH=320
+  ENGINE_HEIGHT=180` and a profile with quality low and 10 000 people (a 4-lap run of
+  1.6 km legs takes about 30 minutes and stays under 12 GB); the GPU counts there lag
+  by up to 30 frames, so a small GPU-side difference between laps is noise.
+
+Found this way (2026-11-10, Engine 0.048): textures Engine made for meshes were never
+freed after their meshes were despawned.

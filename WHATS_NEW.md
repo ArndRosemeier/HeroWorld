@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.155 (2026-11-10)
+
+- Long sessions should stay smoother: textures for buildings and things that were streamed out are now freed instead of piling up in video memory (Engine 0.048).
+- The hitch log now notes every minute how much the game holds (things, textures, video memory), so anything that keeps growing over a long session shows up.
+
 ## 0.154 (2026-11-10)
 
 - A car crash traps one person now, and they look trapped: half under the wreck with their legs pinned, pushing and tugging to get free, wincing. People buried by a collapse struggle the same way.
