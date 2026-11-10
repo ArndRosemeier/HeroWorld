@@ -142,6 +142,15 @@ pub enum VillainKind {
     /// An Iron-Masked praetorian: a crested bronze helm, breastplate,
     /// greaves over a blood-red uniform, a shock lance.
     Praetorian,
+    /// The mad scientist's shield bearer: a bulkier mutant in iron
+    /// shoulder plates and gauntlets, behind a riveted shield.
+    Bulwark,
+    /// The mad scientist's grenadier: olive work overalls, goggles, a
+    /// brass bandolier of bombs.
+    Grenadier,
+    /// The mad scientist's lab orderly: mint-green scrubs, white gloves
+    /// and shoes, a mending ray.
+    Orderly,
     /// The mutant alpha who leads a rampage: the heaviest brute there is,
     /// darker, bald, with long tusks and blazing eyes (drawn a head and a
     /// half taller). One look, built when an alpha first shows.
@@ -169,6 +178,9 @@ impl VillainKind {
             K::Legionary => VillainKind::Legionary,
             K::Praetorian => VillainKind::Praetorian,
             K::Doctor => VillainKind::Doctor,
+            K::Bulwark => VillainKind::Bulwark,
+            K::Grenadier => VillainKind::Grenadier,
+            K::Orderly => VillainKind::Orderly,
             _ => return None,
         })
     }
@@ -1016,6 +1028,67 @@ pub fn villain(
             colour(&mut c, "worksuit", "#18181c");
             colour(&mut c, "gauntlet-gloves", "#2a2c24");
             colour(&mut c, "cuffed-knee-boots", "#101012");
+        }
+        VillainKind::Bulwark => {
+            let b = &mut c.body;
+            b.gender = 1.0;
+            b.age_years = rng.range(28.0, 45.0);
+            b.muscle = 1.0;
+            b.weight = rng.range(0.75, 0.9);
+            b.height = rng.range(0.9, 1.0);
+            b.proportions = 0.3;
+            // The serum's green, like the brutes, under iron.
+            c.skin = actors_generator::SkinKind::Procedural;
+            let greens = ["#5f8c49", "#6f9a4c", "#577f43"];
+            c.skin_color = Some(greens[(look as usize) % greens.len()].to_string());
+            c.eye_color = Some("#e8ff5a".into());
+            c.eye_glow = 0.7;
+            c.tusks = 0.35;
+            c.beard = "none".into();
+            c.outfit = keep(&[
+                "tank-top",
+                "cargo-pants",
+                "med-pauldrons",
+                "gauntlet-gloves",
+                "work-boots",
+            ]);
+            colour(&mut c, "tank-top", "#3a3630");
+            colour(&mut c, "cargo-pants", "#4a4438");
+            colour(&mut c, "med-pauldrons", "#6a5a4a");
+            colour(&mut c, "gauntlet-gloves", "#5a4c40");
+            colour(&mut c, "work-boots", "#1e1a16");
+        }
+        VillainKind::Grenadier => {
+            let b = &mut c.body;
+            b.age_years = rng.range(22.0, 40.0);
+            b.muscle = rng.range(0.45, 0.65);
+            b.weight = rng.range(0.4, 0.55);
+            c.beard = "none".into();
+            c.outfit = keep(&[
+                "worksuit",
+                "leather-helmet",
+                "tinted-glasses",
+                "gloves-medium",
+                "med-belt",
+                "work-boots",
+            ]);
+            colour(&mut c, "worksuit", "#545c3a");
+            colour(&mut c, "leather-helmet", "#3a2a1c");
+            colour(&mut c, "gloves-medium", "#2e2418");
+            // The bandolier: brass.
+            colour(&mut c, "med-belt", "#b08a3c");
+            colour(&mut c, "work-boots", "#1e1a16");
+        }
+        VillainKind::Orderly => {
+            let b = &mut c.body;
+            b.age_years = rng.range(24.0, 50.0);
+            b.muscle = rng.range(0.3, 0.45);
+            b.weight = rng.range(0.35, 0.5);
+            c.outfit = keep(&["worksuit", "gloves-short", "round-glasses", "black-shoes"]);
+            // Mint scrubs: the one in pale green is the medic.
+            colour(&mut c, "worksuit", "#a8dcc4");
+            colour(&mut c, "gloves-short", "#f2f2ee");
+            colour(&mut c, "black-shoes", "#eeeeea");
         }
         VillainKind::Technician => {
             let b = &mut c.body;

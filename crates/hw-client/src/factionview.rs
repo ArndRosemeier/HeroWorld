@@ -763,9 +763,200 @@ pub fn weapon(kind: hw_net::EntityKind) -> Option<Mesh> {
         K::Captain => cutlass(&mut b, true),
         K::Praetorian => lance(&mut b),
         K::Doctor => tesla_staff(&mut b),
+        K::Bulwark => shield(&mut b),
+        K::Grenadier => bomb(&mut b, DVec3::Y * 0.1),
+        K::Orderly => mender(&mut b),
         _ => return None,
     }
     Some(b.finish())
+}
+
+/// The bone a villain's weapon hangs from: the shield on the left arm,
+/// everything else in the right hand.
+pub fn weapon_bone(kind: hw_net::EntityKind) -> &'static str {
+    if kind == hw_net::EntityKind::Bulwark {
+        "hand_l"
+    } else {
+        "hand_r"
+    }
+}
+
+/// A shield bearer's shield: a riveted steel lens 0.9 m across, domed to
+/// the front, with a brass rim and the Doctor's glowing atom on its boss.
+/// Its axis is the hand's x (out from the arm), the grip at the middle.
+fn shield(b: &mut MeshBuilder) {
+    let steel = rgb(92, 96, 104);
+    let brass = rgb(176, 140, 70);
+    let atom = rgb(120, 255, 140);
+    // The left hand's -X points away from the body: the face looks out.
+    let axis = -DVec3::X;
+    let o = DVec3::new(-0.06, 0.1, 0.0);
+    lathe(
+        b,
+        o,
+        axis,
+        &[
+            (0.0, -0.02),
+            (0.3, -0.03),
+            (0.43, -0.012),
+            (0.455, 0.008),
+            (0.44, 0.03),
+            (0.4, 0.045),
+            (0.25, 0.08),
+            (0.1, 0.095),
+            (0.0, 0.1),
+        ],
+        32,
+        |k| match k {
+            2..=4 => metal(brass),
+            _ => metal(steel),
+        },
+    );
+    // The boss and the atom's ring on it.
+    lathe(
+        b,
+        o + axis * 0.09,
+        axis,
+        &[
+            (0.0, 0.0),
+            (0.09, 0.0),
+            (0.08, 0.03),
+            (0.04, 0.05),
+            (0.0, 0.055),
+        ],
+        24,
+        |_| metal(brass),
+    );
+    for k in 0..3 {
+        let a = PI * k as f64 / 3.0;
+        let (u, v) = (
+            DVec3::new(0.0, a.cos(), a.sin()),
+            DVec3::new(0.0, -a.sin(), a.cos()),
+        );
+        let ring: Vec<DVec3> = (0..=24)
+            .map(|i| {
+                let t = TAU * i as f64 / 24.0;
+                o + axis * 0.12 + u * (0.2 * t.cos()) + v * (0.07 * t.sin())
+            })
+            .collect();
+        tube(b, &ring, (0.008, 0.008), 6, glow(atom));
+    }
+    // Rivets round the rim.
+    for k in 0..16 {
+        let a = TAU * k as f64 / 16.0;
+        let p = o + axis * 0.035 + DVec3::new(0.0, a.cos(), a.sin()) * 0.38;
+        lathe(
+            b,
+            p,
+            axis,
+            &[(0.0, 0.0), (0.014, 0.0), (0.01, 0.01), (0.0, 0.014)],
+            8,
+            |_| metal(brass),
+        );
+    }
+}
+
+/// A grenadier's bomb: a black iron ball with a brass cap and a lit fuse,
+/// centred at `at`. The same ball flies when it is lobbed.
+pub fn bomb(b: &mut MeshBuilder, at: DVec3) {
+    let iron = rgb(30, 32, 36);
+    let brass = rgb(190, 150, 70);
+    let spark = rgb(255, 200, 90);
+    let r = 0.11;
+    let profile: Vec<(f64, f64)> = (0..=12)
+        .map(|i| {
+            let a = PI * i as f64 / 12.0;
+            (r * a.sin(), -r * a.cos())
+        })
+        .collect();
+    lathe(b, at, DVec3::Y, &profile, 24, |_| metal(iron));
+    lathe(
+        b,
+        at + DVec3::Y * (r - 0.01),
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.035, 0.0),
+            (0.035, 0.03),
+            (0.02, 0.04),
+            (0.0, 0.04),
+        ],
+        16,
+        |_| metal(brass),
+    );
+    let fuse = [
+        at + DVec3::Y * (r + 0.03),
+        at + DVec3::new(0.02, r + 0.07, 0.0),
+        at + DVec3::new(0.05, r + 0.09, 0.01),
+    ];
+    tube(b, &fuse, (0.006, 0.006), 6, plain(rgb(120, 100, 70)));
+    lathe(
+        b,
+        fuse[2],
+        DVec3::Y,
+        &[(0.0, -0.015), (0.015, 0.0), (0.0, 0.015)],
+        8,
+        |_| glow(spark),
+    );
+}
+
+/// The bomb alone, for one in the air.
+pub fn bomb_mesh() -> Mesh {
+    let mut b = MeshBuilder::new();
+    bomb(&mut b, DVec3::ZERO);
+    b.finish()
+}
+
+/// A lab orderly's mending ray: a cream bakelite grip, a chrome barrel
+/// and a green glass bulb that glows.
+fn mender(b: &mut MeshBuilder) {
+    let cream = rgb(232, 224, 200);
+    let chrome = rgb(210, 214, 222);
+    let green = rgb(110, 255, 150);
+    lathe(
+        b,
+        DVec3::Y * -0.04,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.022, 0.0),
+            (0.02, 0.1),
+            (0.024, 0.12),
+            (0.0, 0.13),
+        ],
+        12,
+        |_| plain(cream),
+    );
+    lathe(
+        b,
+        DVec3::new(0.0, 0.1, 0.0),
+        DVec3::Z,
+        &[
+            (0.0, -0.05),
+            (0.03, -0.05),
+            (0.026, 0.06),
+            (0.04, 0.09),
+            (0.03, 0.12),
+            (0.0, 0.12),
+        ],
+        16,
+        |k| {
+            if k == 3 {
+                metal(rgb(176, 140, 70))
+            } else {
+                metal(chrome)
+            }
+        },
+    );
+    let bulb: Vec<(f64, f64)> = (0..=8)
+        .map(|i| {
+            let a = PI * i as f64 / 8.0;
+            (0.035 * a.sin(), -0.035 * a.cos())
+        })
+        .collect();
+    lathe(b, DVec3::new(0.0, 0.1, 0.155), DVec3::Z, &bulb, 16, |_| {
+        glow(green)
+    });
 }
 
 /// A miner's pick: an ash handle and a curved iron head.

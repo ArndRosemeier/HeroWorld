@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.126 (2026-11-10)
+
+- The Doctor's bigger groups now have roles you can tell apart at a glance:
+  - **Mutant Bulwark** carries a big brass shield. Bolts from afar clang off it; get close or go round it.
+  - **Lab Grenadier** lobs fizzing bombs. A red ring shows where one will burst: step out of it.
+  - **Lab Orderly** in mint overalls patches up hurt friends with a green beam. Take it out first.
+
 ## 0.125 (2026-11-10)
 
 - Daytime streets come alive. Shops put out cafe tables with striped parasols, newspaper stands and striped awnings, and old-town shops hang round neon signs over the pavement.

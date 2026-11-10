@@ -1450,6 +1450,29 @@ impl Sim {
         i
     }
 
+    /// Like [`Self::add_fight_spot`], but `size` villains all of `kind`
+    /// (tests of one kind's rules).
+    pub fn add_fight_spot_of(
+        &mut self,
+        at: DVec3,
+        facing: DVec2,
+        kind: combat::EnemyKind,
+        size: u32,
+    ) -> usize {
+        let i = {
+            let mut f = self.world.resource_mut::<Fights>();
+            f.spots.push(Spot {
+                only: Some(kind),
+                size: Some(size),
+                ..Spot::fight(at, facing)
+            });
+            f.spots.len() - 1
+        };
+        let heroes = self.world.query::<&Hero>().iter(&self.world).count();
+        combat::spawn_group(&mut self.world, self.tick, i, heroes.max(1));
+        i
+    }
+
     /// An ambient corner (in the mad scientist's quarter): a group `extra`
     /// levels above the team stands there while a hero is within `wake` m.
     /// Returns the spot's index.

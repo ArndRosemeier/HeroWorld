@@ -394,6 +394,15 @@ pub enum EnemyKind {
     /// (see [`DOCTOR_STORM_EVERY`]). Only the last chapter of his story
     /// brings him out (see [`crate::story`]).
     Doctor,
+    /// The mad scientist's shield bearer: blows from afar glance off its
+    /// shield; up close it is a brute like the rest.
+    Bulwark,
+    /// The mad scientist's grenadier: lobs a bomb at where a hero stands,
+    /// which bursts a moment later (step out of the red ring).
+    Grenadier,
+    /// The mad scientist's lab orderly: no fighter, it patches up the most
+    /// hurt of its group from the back row. Beat it first.
+    Orderly,
 }
 
 /// The Doctor's Aether storm: how long he charges it (the telegraph: get
@@ -606,6 +615,44 @@ pub fn enemy_spec(k: EnemyKind) -> EnemySpec {
             aggro: 26.0,
             karma: 24.0,
         },
+        EnemyKind::Bulwark => EnemySpec {
+            name: "Mutant Bulwark",
+            rank: "Minion",
+            health: 52.0,
+            damage: 7.0,
+            attack_every: 2.2,
+            windup: 0.55,
+            reach: 2.4,
+            speed: 0.7,
+            aggro: 15.0,
+            karma: 8.0,
+        },
+        EnemyKind::Grenadier => EnemySpec {
+            name: "Lab Grenadier",
+            rank: "Minion",
+            health: 32.0,
+            // The burst, on everyone in it.
+            damage: 11.0,
+            attack_every: 4.2,
+            windup: 0.7,
+            reach: 18.0,
+            speed: 0.6,
+            aggro: 20.0,
+            karma: 7.0,
+        },
+        EnemyKind::Orderly => EnemySpec {
+            name: "Lab Orderly",
+            rank: "Minion",
+            health: 30.0,
+            // A weak ray between mendings ([`ORDERLY_MENDS`]).
+            damage: 5.0,
+            attack_every: 2.6,
+            windup: 0.7,
+            reach: 20.0,
+            speed: 0.65,
+            aggro: 18.0,
+            karma: 7.0,
+        },
     }
 }
 
@@ -627,6 +674,9 @@ impl EnemyKind {
             EnemyKind::Legionary => EntityKind::Legionary,
             EnemyKind::Praetorian => EntityKind::Praetorian,
             EnemyKind::Doctor => EntityKind::Doctor,
+            EnemyKind::Bulwark => EntityKind::Bulwark,
+            EnemyKind::Grenadier => EntityKind::Grenadier,
+            EnemyKind::Orderly => EntityKind::Orderly,
         }
     }
 
@@ -642,6 +692,9 @@ impl EnemyKind {
                 | EnemyKind::Buccaneer
                 | EnemyKind::Gunner
                 | EnemyKind::Legionary
+                | EnemyKind::Bulwark
+                | EnemyKind::Grenadier
+                | EnemyKind::Orderly
         )
     }
 
@@ -655,7 +708,14 @@ impl EnemyKind {
                 | EnemyKind::Gunner
                 | EnemyKind::Legionary
                 | EnemyKind::Doctor
+                | EnemyKind::Orderly
         )
+    }
+
+    /// Keeps to the back row and its distance, like a shooter: the
+    /// shooters, the grenadier and the orderly.
+    pub fn back_row(self) -> bool {
+        self.ranged() || matches!(self, EnemyKind::Grenadier | EnemyKind::Orderly)
     }
 
     /// Lifted away by a police drone when beaten (people and sentries).
@@ -680,6 +740,9 @@ impl EnemyKind {
             EntityKind::Legionary => Some(EnemyKind::Legionary),
             EntityKind::Praetorian => Some(EnemyKind::Praetorian),
             EntityKind::Doctor => Some(EnemyKind::Doctor),
+            EntityKind::Bulwark => Some(EnemyKind::Bulwark),
+            EntityKind::Grenadier => Some(EnemyKind::Grenadier),
+            EntityKind::Orderly => Some(EnemyKind::Orderly),
             _ => None,
         }
     }
@@ -1089,7 +1152,38 @@ pub struct Fights {
     /// Freeze-ray cones this tick: (from, direction, length); a fire in
     /// one goes out.
     pub cold: Vec<(DVec3, DVec3, f64)>,
+    /// Grenadiers' bombs in the air.
+    pub bombs: Vec<Bomb>,
 }
+
+/// A grenadier's bomb on its way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Bomb {
+    /// The tick it bursts.
+    pub land: u64,
+    pub from: NetId,
+    /// Where it bursts (on the ground where its target stood).
+    pub at: DVec3,
+    pub damage: f32,
+}
+
+/// A bomb bursts this long after the grenadier starts its throw (s): the
+/// windup plus the flight. Long enough to step out of the ring.
+pub const BOMB_SECONDS: f64 = 1.9;
+/// Everyone this near the burst is caught (m).
+pub const BOMB_AREA: f64 = 2.6;
+/// A shield bearer's shield stops blows from farther than this (m) that
+/// come from in front (within [`SHIELD_ARC`] degrees of its foe's way).
+pub const SHIELD_REACH: f64 = 3.5;
+pub const SHIELD_ARC: f64 = 70.0;
+/// What a blow on the shield still does.
+pub const SHIELD_LETS_THROUGH: f32 = 0.25;
+/// A lab orderly mends this often (s), a villain of its group within this
+/// reach (m) below this share of its health, by this much (at its level).
+pub const ORDERLY_EVERY: f64 = 4.0;
+pub const ORDERLY_REACH: f64 = 14.0;
+pub const ORDERLY_BELOW: f32 = 0.8;
+pub const ORDERLY_MENDS: f32 = 14.0;
 
 impl Default for Fights {
     fn default() -> Self {
@@ -1110,6 +1204,7 @@ impl Default for Fights {
             rescue_points: Vec::new(),
             rescues: Vec::new(),
             cold: Vec::new(),
+            bombs: Vec::new(),
         }
     }
 }
@@ -1136,6 +1231,8 @@ pub(crate) struct Actor {
     pub(crate) sidekick: Option<crate::sidekick::Sidekick>,
     /// Its ice shattered under a blow this tick.
     pub(crate) shattered: bool,
+    /// Blows its shield stopped this tick: (from, what got through).
+    pub(crate) blocked: Vec<(NetId, f32)>,
 }
 
 impl Actor {
@@ -1164,6 +1261,37 @@ pub fn roster(seed: Seed, size: u32, level: u8) -> Vec<(EnemyKind, u8)> {
             (kind, level)
         })
         .collect()
+}
+
+/// The mad scientist's groups get roles (by `seed`): a shield bearer in
+/// place of a brute from four up; from five, a grenadier in place of a
+/// technician or an orderly in place of a brute, both from seven. Other
+/// factions' crews keep their own two kinds.
+pub fn with_roles(seed: Seed, group: &mut [(EnemyKind, u8)]) {
+    let mut rng = seed.child("roles").rng();
+    let n = group.len();
+    let mut swap = |k: usize, from: EnemyKind, to: EnemyKind| {
+        if let Some(g) = group.get_mut(k).filter(|g| g.0 == from) {
+            g.0 = to;
+        }
+    };
+    if n >= 4 {
+        swap(2, EnemyKind::Brute, EnemyKind::Bulwark);
+    }
+    let (grenadier, orderly) = match n {
+        0..=4 => (false, false),
+        5 | 6 => {
+            let g = rng.chance(0.5);
+            (g, !g)
+        }
+        _ => (true, true),
+    };
+    if grenadier {
+        swap(3, EnemyKind::Technician, EnemyKind::Grenadier);
+    }
+    if orderly {
+        swap(4, EnemyKind::Brute, EnemyKind::Orderly);
+    }
 }
 
 /// Group size for `heroes` players: bigger groups, not tougher minions.
@@ -1227,6 +1355,9 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
             (kind, level)
         })
         .collect();
+    if spot.only.is_none() && spot.crew.is_none() {
+        with_roles(gseed, &mut group);
+    }
     // A lieutenant or boss takes the place of the first in line.
     if let (Some(lead), Some(first)) = (spot.lead, group.first_mut()) {
         *first = (
@@ -1238,7 +1369,7 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
     for (k, (kind, level)) in group.into_iter().enumerate() {
         // Brutes in a loose front row, shooters a few metres behind.
         let row = match kind {
-            k if k.ranged() => -3.5,
+            k if k.back_row() => -3.5,
             EnemyKind::Colossus => 0.0,
             _ => 1.5,
         };
@@ -1419,6 +1550,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
                 npc,
                 sidekick: sidekick.copied(),
                 shattered: false,
+                blocked: Vec::new(),
             },
         )
         .collect();
@@ -1434,6 +1566,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     let mut paths = std::mem::take(&mut world.resource_mut::<Fights>().paths);
     let mut throws = std::mem::take(&mut world.resource_mut::<Fights>().throws);
     let mut sky = std::mem::take(&mut world.resource_mut::<Fights>().sky);
+    let mut bombs = std::mem::take(&mut world.resource_mut::<Fights>().bombs);
 
     rally(&mut actors);
     let rescue_points = std::mem::take(&mut world.resource_mut::<Fights>().rescue_points);
@@ -1445,7 +1578,15 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     throws.append(&mut out.throws);
     land_sky(&mut actors, &mut sky, &solids, tick, &mut out);
     sky.append(&mut out.sky);
-    enemies_act(&mut actors, &solids, tick, &mut out.fx, &mut paths);
+    enemies_act(
+        &mut actors,
+        &solids,
+        tick,
+        &mut out.fx,
+        &mut paths,
+        &mut bombs,
+    );
+    land_bombs(&mut actors, &mut bombs, &solids, tick, &mut out);
     let mut city = std::mem::take(&mut out.city);
     let streets = world.resource::<Fights>().streets.clone();
     let mut routes = std::mem::take(&mut world.resource_mut::<Fights>().routes);
@@ -1467,6 +1608,14 @@ pub(crate) fn step(world: &mut World, tick: u64) {
         out.fx
             .push(event(tick, FxKind::Shatter, a.id, a.id, a.chest()));
     }
+    // Blows that hit a shield.
+    for a in actors.iter_mut() {
+        for (from, through) in std::mem::take(&mut a.blocked) {
+            let mut e = event(tick, FxKind::Block, from, a.id, a.chest());
+            e.amount = through.round() as u16;
+            out.fx.push(e);
+        }
+    }
     regenerate(&mut actors, tick);
     pay_out(&actors, &mut out);
     // Villains gone (carried off) need no path.
@@ -1476,6 +1625,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
         f.paths = paths;
         f.throws = throws;
         f.sky = sky;
+        f.bombs = bombs;
     }
     let mut fx = std::mem::take(&mut out.fx);
 
@@ -1867,6 +2017,36 @@ pub(crate) fn hit(
     tick: u64,
     affinity: Option<Affinity>,
 ) -> (bool, bool, f32) {
+    strike(actors, from, to, damage, knock, tick, affinity, false)
+}
+
+/// [`hit`] for a single aimed blow (a bolt, a punch, a beam from Hero
+/// Hall's heroes): a shield
+/// bearer's shield stops it when it comes from afar and from in front.
+/// Bursts, beams, throws and meteors go round or through a shield.
+pub(crate) fn hit_aimed(
+    actors: &mut [Actor],
+    from: usize,
+    to: usize,
+    damage: f32,
+    knock: bool,
+    tick: u64,
+    affinity: Option<Affinity>,
+) -> (bool, bool, f32) {
+    strike(actors, from, to, damage, knock, tick, affinity, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn strike(
+    actors: &mut [Actor],
+    from: usize,
+    to: usize,
+    damage: f32,
+    knock: bool,
+    tick: u64,
+    affinity: Option<Affinity>,
+    blockable: bool,
+) -> (bool, bool, f32) {
     let from_id = actors[from].id;
     let from_pos = actors[from].body.pos;
     // A hypnotised villain's or a sidekick's win is their hero's.
@@ -1877,6 +2057,12 @@ pub(crate) fn hit(
         .or(actors[from].sidekick.map(|s| s.owner))
         .unwrap_or(from_id);
     actors[from].f.last_combat = tick;
+    // A shield bearer holds its shield toward the one it fights.
+    let shield_way = actors[to]
+        .f
+        .target
+        .and_then(|f| actors.iter().find(|a| a.id == f))
+        .map(|f| f.body.pos);
     let t = &mut actors[to];
     let mut dealt = if t.f.shielded(tick) {
         damage * (1.0 - SHIELD_BLOCKS)
@@ -1898,7 +2084,12 @@ pub(crate) fn hit(
         dealt *= TOUGH_LETS_THROUGH;
     }
     let heavy = t.enemy.is_some_and(|e| e.kind.heavy());
-    let knock = knock && !heavy;
+    let mut knock = knock && !heavy;
+    if blockable && on_shield(t, shield_way, from_pos, tick) {
+        dealt *= SHIELD_LETS_THROUGH;
+        knock = false;
+        t.blocked.push((from_id, dealt));
+    }
     // The town's own heroes are never beaten (they go home first).
     let floor = if t.npc { 1.0 } else { 0.0 };
     t.f.health = (t.f.health - dealt).max(floor);
@@ -1972,7 +2163,7 @@ fn npc_heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut
             continue;
         };
         let damage = BOLT_DAMAGE * level_scale(actors[i].f.level);
-        let (knocked, defeated, dealt) = hit(actors, i, j, damage, false, tick, None);
+        let (knocked, defeated, dealt) = hit_aimed(actors, i, j, damage, false, tick, None);
         actors[i].f.busy_until = tick + ticks(BOLT_EVERY);
         let mut e = event(
             tick,
@@ -2276,7 +2467,10 @@ fn heroes_act(
                     continue;
                 };
                 actors[i].f.target = Some(actors[t].id);
-                let (knock, defeat, dealt) = hit(actors, i, t, damage, spec.knock, tick, affinity);
+                // A bolt or a punch can meet a shield; a hold's field
+                // closes round it.
+                let blow = if power == Power::Hold { hit } else { hit_aimed };
+                let (knock, defeat, dealt) = blow(actors, i, t, damage, spec.knock, tick, affinity);
                 if power == Power::Hold && !defeat {
                     // Tougher villains shake a hold off sooner.
                     let con = actors[t].f.level as f64 - actors[i].f.level as f64;
@@ -2934,6 +3128,7 @@ fn enemies_act(
     tick: u64,
     fx: &mut Vec<Fx>,
     paths: &mut BTreeMap<NetId, Path>,
+    bombs: &mut Vec<Bomb>,
 ) {
     let heroes: Vec<usize> = (0..actors.len())
         .filter(|&i| actors[i].hero.is_some())
@@ -3125,7 +3320,11 @@ fn enemies_act(
                             }
                         }
                     } else {
-                        let (near, far) = if ranged { (7.0, 16.0) } else { (0.0, 1.6) };
+                        let (near, far) = if en.kind.back_row() {
+                            (7.0, 16.0)
+                        } else {
+                            (0.0, 1.6)
+                        };
                         // The alpha leaps onto a hero who keeps away.
                         if en.kind == EnemyKind::Alpha
                             && tick >= en.next_trick
@@ -3165,7 +3364,30 @@ fn enemies_act(
                             go = -dir * spec.speed * 0.8;
                         }
                         let can_attack = dist <= spec.reach && seen && tick >= en.next_attack;
-                        if can_attack {
+                        // An orderly patches up its friends now and then
+                        // (its own clock), and shoots in between.
+                        if en.kind == EnemyKind::Orderly
+                            && tick >= en.next_trick
+                            && mend_friend(actors, i, solids, tick, fx)
+                        {
+                            en.next_trick = tick + ticks(ORDERLY_EVERY);
+                            en.next_attack = en.next_attack.max(tick + ticks(1.0));
+                        } else if can_attack && en.kind == EnemyKind::Grenadier {
+                            // A bomb lobbed at where the foe stands now: it
+                            // bursts there a moment later.
+                            let at = actors[j].body.pos;
+                            bombs.push(Bomb {
+                                land: tick + ticks(BOMB_SECONDS),
+                                from: id,
+                                at,
+                                damage: spec.damage * level_scale(actors[i].f.level),
+                            });
+                            en.next_attack = tick + ticks(spec.attack_every);
+                            let mut e = event(tick, FxKind::Lob, id, actors[j].id, at);
+                            e.amount = (BOMB_SECONDS * 1000.0) as u16;
+                            fx.push(e);
+                            go = DVec2::ZERO;
+                        } else if can_attack {
                             let at = tick + ticks(spec.windup);
                             en.windup = Some((at, actors[j].id));
                             en.next_attack = at + ticks(spec.attack_every);
@@ -3229,6 +3451,113 @@ fn enemies_act(
             actors[i].body = body;
         }
     }
+}
+
+/// Does the blow on `t` from `from` (a position) hit its shield? Only a
+/// standing shield bearer's, facing its foe at `foe`, and only blows from
+/// afar that come from in front.
+fn on_shield(t: &Actor, foe: Option<DVec3>, from: DVec3, tick: u64) -> bool {
+    let Some(foe) = foe else {
+        return false;
+    };
+    if t.enemy.is_none_or(|e| e.kind != EnemyKind::Bulwark)
+        || !t.f.standing()
+        || t.f.held(tick)
+        || t.f.frozen(tick)
+    {
+        return false;
+    }
+    let flat = |p: DVec3| DVec2::new(p.x - t.body.pos.x, p.z - t.body.pos.z);
+    let (facing, towards) = (flat(foe), flat(from));
+    if towards.length() <= SHIELD_REACH || facing.length() < 1e-6 {
+        return false;
+    }
+    facing.normalize().dot(towards.normalize()) >= SHIELD_ARC.to_radians().cos()
+}
+
+/// Bombs that burst this tick catch everyone near (heroes, their
+/// sidekicks, Hero Hall's heroes) with a clear line to the burst.
+fn land_bombs(
+    actors: &mut [Actor],
+    bombs: &mut Vec<Bomb>,
+    solids: &Obstacles,
+    tick: u64,
+    out: &mut Out,
+) {
+    let due: Vec<Bomb> = bombs.iter().copied().filter(|b| b.land <= tick).collect();
+    bombs.retain(|b| b.land > tick);
+    for b in due {
+        out.fx.push(event(tick, FxKind::Bomb, b.from, b.from, b.at));
+        // A thrower already beaten and gone: the bomb still bursts, harmless.
+        let Some(i) = actors.iter().position(|a| a.id == b.from) else {
+            continue;
+        };
+        let centre = b.at + DVec3::Y * 0.5;
+        for k in 0..actors.len() {
+            let a = &actors[k];
+            let foe = a.hero.is_some() || a.npc || a.sidekick.is_some();
+            if !foe || !a.f.standing() || a.body.pos.distance(b.at) > BOMB_AREA {
+                continue;
+            }
+            if !clear_line(solids, centre, a.chest()) {
+                continue;
+            }
+            let (knock, defeat, dealt) = hit(actors, i, k, b.damage, false, tick, None);
+            let mut e = event(tick, FxKind::Bomb, b.from, actors[k].id, actors[k].chest());
+            e.amount = dealt.round() as u16;
+            e.knock = knock;
+            e.defeat = defeat;
+            out.fx.push(e);
+        }
+    }
+}
+
+/// A lab orderly's turn: the most hurt of its group in reach and in
+/// sight gets patched up. Returns whether it mended anyone.
+fn mend_friend(
+    actors: &mut [Actor],
+    i: usize,
+    solids: &Obstacles,
+    tick: u64,
+    fx: &mut Vec<Fx>,
+) -> bool {
+    let Some(en) = actors[i].enemy else {
+        return false;
+    };
+    let me = actors[i].chest();
+    let hurt = (0..actors.len())
+        .filter(|&k| k != i)
+        .filter(|&k| {
+            let a = &actors[k];
+            a.enemy.is_some_and(|e| e.spot == en.spot)
+                && a.f.standing()
+                && a.f.charmed_by.is_none()
+                && a.f.health < a.f.max_health * ORDERLY_BELOW
+                && a.body.pos.distance(actors[i].body.pos) <= ORDERLY_REACH
+        })
+        .filter(|&k| clear_line(solids, me, actors[k].chest()))
+        .min_by(|&x, &y| {
+            let share = |a: &Actor| a.f.health / a.f.max_health.max(1.0);
+            share(&actors[x])
+                .total_cmp(&share(&actors[y]))
+                .then(x.cmp(&y))
+        });
+    let Some(k) = hurt else {
+        return false;
+    };
+    let mend = ORDERLY_MENDS * level_scale(actors[i].f.level);
+    let before = actors[k].f.health;
+    actors[k].f.health = (before + mend).min(actors[k].f.max_health);
+    let mut e = event(
+        tick,
+        FxKind::Patch,
+        actors[i].id,
+        actors[k].id,
+        actors[k].chest(),
+    );
+    e.amount = (actors[k].f.health - before).round() as u16;
+    fx.push(e);
+    true
 }
 
 /// The alpha's leap: it lands on the hero who kept away (between these

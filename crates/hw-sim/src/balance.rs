@@ -13,7 +13,9 @@
 //! `tests/powers.rs` keeps it green.
 
 use crate::collision::Obstacles;
-use crate::combat::{power_spec, COMBAT_SECONDS, HEALTH_REGEN, HERO_HEALTH};
+use crate::combat::{
+    power_spec, EnemyKind, BOMB_AREA, COMBAT_SECONDS, HEALTH_REGEN, HERO_HEALTH, SHIELD_REACH,
+};
 use crate::progress::{self, is_movement, tier};
 use crate::{Sim, GROUND_Y, TICK_HZ};
 use glam::{DVec2, DVec3};
@@ -46,9 +48,20 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
             matches!(e.status, Status::Standing | Status::Knocked) && !e.charmed(tick)
         })
         .collect();
+    // Whom to fight: an orderly first (it mends the rest), then the
+    // nearest; a shield bearer only when nothing else is left or it is
+    // right there (blows from afar glance off its shield).
+    let rank = |k: EnemyKind, d: f64| match k {
+        EnemyKind::Orderly if d < 16.0 => 0,
+        EnemyKind::Bulwark if d > SHIELD_REACH => 2,
+        _ => 1,
+    };
     let nearest = foes
         .iter()
-        .min_by(|a, b| a.2.distance(me).total_cmp(&b.2.distance(me)))
+        .min_by(|a, b| {
+            let (da, db) = (a.2.distance(me), b.2.distance(me));
+            rank(a.1, da).cmp(&rank(b.1, db)).then(da.total_cmp(&db))
+        })
         .copied();
     let Some((target, kind, at, foe)) = nearest else {
         if let Some(g) = goal {
@@ -87,6 +100,17 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
         input.move_x = flat.x as f32;
         input.move_z = flat.y as f32;
     }
+    // A bomb coming down here: out of its ring first.
+    let bombs = &sim.fights().bombs;
+    // People notice a bomb late: the last moment before it bursts.
+    if let Some(b) = bombs.iter().find(|b| {
+        b.land <= tick + (TICK_HZ as f64 * 0.6) as u64
+            && DVec2::new(me.x - b.at.x, me.z - b.at.z).length() < BOMB_AREA + 0.8
+    }) {
+        let away = DVec2::new(me.x - b.at.x, me.z - b.at.z).normalize_or(DVec2::X);
+        input.move_x = away.x as f32;
+        input.move_z = away.y as f32;
+    }
     // Press a key every few ticks, as people do.
     if !tick.is_multiple_of(4) {
         return input;
@@ -118,7 +142,18 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
         input.power = Power::Shield.code();
     } else if ready(sim, hero, Power::Shockwave) && close >= 2 {
         input.power = Power::Shockwave.code();
-    } else if ready(sim, hero, Power::Hold) && !foe.held(tick) && d <= 25.0 {
+    } else if let Some(bind) = ready(sim, hero, Power::Hold)
+        .then(|| {
+            // Bind the nearest one that hits hard, not a medic.
+            foes.iter()
+                .filter(|x| !x.3.held(tick) && x.2.distance(me) <= 25.0)
+                .filter(|x| !matches!(x.1, EnemyKind::Orderly | EnemyKind::Grenadier))
+                .min_by(|a, b| a.2.distance(me).total_cmp(&b.2.distance(me)))
+                .map(|x| x.0)
+        })
+        .flatten()
+    {
+        input.target = Some(bind);
         input.power = Power::Hold.code();
     } else if ready(sim, hero, Power::Lift) && d <= 25.0 {
         input.power = Power::Lift.code();

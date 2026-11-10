@@ -117,6 +117,7 @@ pub fn of_enemy(kind: EnemyKind) -> Faction {
         | EnemyKind::Colossus
         | EnemyKind::WeakPoint
         | EnemyKind::Doctor => Faction::Lab,
+        EnemyKind::Bulwark | EnemyKind::Grenadier | EnemyKind::Orderly => Faction::Lab,
         EnemyKind::Greaser => Faction::Jackets,
         EnemyKind::Gunsel => Faction::Syndicate,
         EnemyKind::Delver => Faction::Moles,

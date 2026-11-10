@@ -282,6 +282,15 @@ pub enum EntityKind {
     /// The Doctor himself: the mad scientist, an archvillain with a Tesla
     /// staff (the last chapter of his story).
     Doctor,
+    /// The mad scientist's shield bearer: a mutant behind a riveted shield
+    /// that stops blows from afar.
+    Bulwark,
+    /// The mad scientist's grenadier: lobs Aether bombs that burst where
+    /// they land.
+    Grenadier,
+    /// The mad scientist's lab orderly: patches up hurt villains with a
+    /// mending ray.
+    Orderly,
 }
 
 impl EntityKind {
@@ -310,6 +319,9 @@ impl EntityKind {
             EntityKind::NpcHero => 20,
             EntityKind::Sidekick => 21,
             EntityKind::Doctor => 22,
+            EntityKind::Bulwark => 23,
+            EntityKind::Grenadier => 24,
+            EntityKind::Orderly => 25,
         }
     }
 
@@ -338,6 +350,9 @@ impl EntityKind {
             20 => Ok(EntityKind::NpcHero),
             21 => Ok(EntityKind::Sidekick),
             22 => Ok(EntityKind::Doctor),
+            23 => Ok(EntityKind::Bulwark),
+            24 => Ok(EntityKind::Grenadier),
+            25 => Ok(EntityKind::Orderly),
             _ => Err(WireError),
         }
     }
@@ -363,6 +378,9 @@ impl EntityKind {
                 | EntityKind::Legionary
                 | EntityKind::Praetorian
                 | EntityKind::Doctor
+                | EntityKind::Bulwark
+                | EntityKind::Grenadier
+                | EntityKind::Orderly
         )
     }
 
@@ -387,6 +405,9 @@ impl EntityKind {
                 | EntityKind::Captain
                 | EntityKind::Praetorian
                 | EntityKind::Doctor
+                | EntityKind::Bulwark
+                | EntityKind::Grenadier
+                | EntityKind::Orderly
         )
     }
 
@@ -869,6 +890,17 @@ pub enum FxKind {
     /// A fight won with little harm to the street: `to` gets the
     /// careful-hero bonus (`amount`: its karma, paid as a Karma event too).
     Careful,
+    /// A shield bearer `to` stopped a blow from `from` on its shield (at
+    /// `at`; `amount`: what got through).
+    Block,
+    /// A grenadier `from` lobbed a bomb at `to`: it bursts at `at` (where
+    /// `to` stood) after `amount` milliseconds.
+    Lob,
+    /// A lobbed bomb burst at `at` (`from` threw it; `to` is `from`, or a
+    /// hero it caught, with `amount` the damage).
+    Bomb,
+    /// A lab orderly `from` patched up villain `to` (`amount`: health).
+    Patch,
 }
 
 impl FxKind {
@@ -920,6 +952,10 @@ impl FxKind {
             FxKind::Hypno => 44,
             FxKind::HypnoEnd => 45,
             FxKind::Careful => 46,
+            FxKind::Block => 47,
+            FxKind::Lob => 48,
+            FxKind::Bomb => 49,
+            FxKind::Patch => 50,
         }
     }
 
@@ -971,6 +1007,10 @@ impl FxKind {
             44 => FxKind::Hypno,
             45 => FxKind::HypnoEnd,
             46 => FxKind::Careful,
+            47 => FxKind::Block,
+            48 => FxKind::Lob,
+            49 => FxKind::Bomb,
+            50 => FxKind::Patch,
             _ => return Err(WireError),
         })
     }

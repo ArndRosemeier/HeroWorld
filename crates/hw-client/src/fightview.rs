@@ -40,6 +40,25 @@ const RECOIL_SECONDS: f32 = 0.32;
 /// A blow doing this much damage or more counts as heavy.
 const HEAVY_BLOW: u16 = 25;
 
+/// A grenadier's bomb in the air, as drawn.
+struct Lobbed {
+    ent: EntityId,
+    from: Vec3,
+    to: Vec3,
+    /// Seconds since thrown, and in the air.
+    age: f32,
+    flight: f32,
+}
+
+impl Lobbed {
+    /// Where it is `t` seconds after the throw: a high arc.
+    fn at(&self, t: f32) -> Vec3 {
+        let u = (t / self.flight).clamp(0.0, 1.0);
+        let rise = 2.5 + self.from.distance(self.to) * 0.25;
+        self.from.lerp(self.to, u) + Vec3::Y * (4.0 * rise * u * (1.0 - u))
+    }
+}
+
 /// The recoil's shape over time, 0 to 1: a snap back, then easing home.
 fn recoil_shape(t: f32) -> f32 {
     const SNAP: f32 = 0.05;
@@ -254,6 +273,10 @@ pub struct FightView {
     ices: BTreeMap<NetId, EntityId>,
     /// Rescue bubbles in the air.
     bubbles: crate::powerfx::Bubbles,
+    /// Grenadiers' bombs in the air.
+    lobs: Vec<Lobbed>,
+    /// The hint about shields was shown.
+    told_shield: bool,
     /// The solid town: Tab and aimed powers pick only villains in sight.
     pub solids: Option<std::sync::Arc<hw_sim::collision::Obstacles>>,
     /// A short recoil per struck villain: (direction, seconds since).
@@ -303,6 +326,8 @@ impl FightView {
             clicked: None,
             ices: BTreeMap::new(),
             bubbles: Default::default(),
+            lobs: Vec::new(),
+            told_shield: false,
             solids: None,
             recoils: BTreeMap::new(),
         }
@@ -529,6 +554,7 @@ impl FightView {
                     | FxKind::Nova
                     | FxKind::Shockwave
                     | FxKind::Shatter
+                    | FxKind::Bomb
             );
             if struck && e.amount > 0 && e.from != e.to && !e.knock && !e.defeat {
                 let d = at - origin;
@@ -893,6 +919,110 @@ impl FightView {
                         if self.target == Some(e.to) {
                             self.target = None;
                         }
+                    }
+                }
+                FxKind::Block => {
+                    // Clang: the blow glances off the shield.
+                    sparks(
+                        world,
+                        at,
+                        (origin - at).normalize_or_zero(),
+                        30,
+                        rgb(220, 235, 255),
+                    );
+                    self.play(world, |s| &s.punch, at, 1.0, 1.7);
+                    self.play(world, |s| &s.shield, at, 0.6, 1.4);
+                    self.float(
+                        at + Vec3::Y * 0.5,
+                        "Blocked!".into(),
+                        egui::Color32::from_rgb(200, 215, 235),
+                        mine,
+                    );
+                    if mine && !self.told_shield {
+                        self.told_shield = true;
+                        self.note = Some((
+                            "The shield stops blows from afar: get in close, or go round it".into(),
+                            5.0,
+                        ));
+                    }
+                }
+                FxKind::Lob => {
+                    // A bomb lobbed high, and a red ring where it will burst.
+                    self.act(e.from, "hook", 0.8);
+                    let flight = e.amount as f32 / 1000.0;
+                    let ring = Decal::new(
+                        DecalKind::Power,
+                        at + Vec3::Y * 0.2,
+                        Vec3::Y,
+                        hw_sim::combat::BOMB_AREA as f32 * 2.0,
+                    )
+                    .tint(rgb(255, 70, 40))
+                    .emission(4.0)
+                    .depth(1.5)
+                    .lifetime(flight + 0.1)
+                    .fade(0.15, 0.1);
+                    let _ = world.spawn_decal(ring);
+                    rings(world, at + Vec3::Y * 0.3, rgb(255, 90, 50), 0.8);
+                    self.play(world, |s| &s.whoosh, origin, 0.8, 0.8);
+                    if let Ok(ent) = world.place(
+                        crate::factionview::bomb_mesh(),
+                        Place::new(origin.x, origin.y, origin.z),
+                    ) {
+                        self.lobs.push(Lobbed {
+                            ent,
+                            from: origin,
+                            to: at + Vec3::Y * 0.15,
+                            age: 0.0,
+                            flight,
+                        });
+                    }
+                    if on_me {
+                        self.say("Bomb! Step out of the red ring");
+                    }
+                }
+                FxKind::Bomb => {
+                    let fire = rgb(255, 140, 50);
+                    if e.from == e.to {
+                        impact(world, at + Vec3::Y * 0.5, fire, 2.0);
+                        shockwave(
+                            world,
+                            at,
+                            fire,
+                            rgb(255, 220, 120),
+                            hw_sim::combat::BOMB_AREA as f32,
+                        );
+                        let d = Decal::new(DecalKind::Scorch, at + Vec3::Y * 0.2, Vec3::Y, 2.4)
+                            .angle((at.x * 5.0 + at.z * 3.0).sin() * 3.0)
+                            .depth(1.0)
+                            .opacity(0.85)
+                            .lifetime(25.0)
+                            .fade(0.0, 4.0);
+                        let _ = world.spawn_decal(d);
+                        self.play(world, |s| &s.boom, at, 1.0, 1.25);
+                        let near = me
+                            .and_then(|m| all.iter().find(|x| x.id == m))
+                            .is_some_and(|m| pos(m).distance(at) < 12.0);
+                        if near {
+                            self.shake = self.shake.max(0.6);
+                        }
+                    } else {
+                        self.blow(e, at, mine, on_me, egui::Color32::from_rgb(255, 150, 60));
+                    }
+                }
+                FxKind::Patch => {
+                    // The orderly's mending ray: green, and health back.
+                    let green = rgb(120, 255, 160);
+                    self.act(e.from, "pistol shoot", 0.5);
+                    beam(world, origin, at, green, rgb(220, 255, 230));
+                    rings(world, at, green, 0.7);
+                    self.play(world, |s| &s.chime, at, 0.7, 1.5);
+                    if e.amount > 0 {
+                        self.float(
+                            at + Vec3::Y * 0.4,
+                            format!("+{}", e.amount),
+                            egui::Color32::from_rgb(120, 240, 150),
+                            false,
+                        );
                     }
                 }
                 FxKind::Careful => {
@@ -1350,7 +1480,8 @@ impl FightView {
         };
         if let Ok(w) = world.place(mesh, Place::new(0.0, 0.0, 0.0)) {
             let local = crate::factionview::weapon_grip();
-            if world.attach_to_bone(w, e, "hand_r", local).is_ok() {
+            let bone = crate::factionview::weapon_bone(kind);
+            if world.attach_to_bone(w, e, bone, local).is_ok() {
                 self.guns.insert(e, w);
             } else {
                 world.despawn(w);
@@ -1407,6 +1538,24 @@ impl FightView {
         let mut held = Vec::new();
         let mut frozen = Vec::new();
         self.bubbles.update(world, dt);
+        // Bombs fly their arcs and are gone when they burst (the burst is
+        // the server's Bomb event).
+        self.lobs.retain_mut(|l| {
+            l.age += dt;
+            if l.age >= l.flight {
+                world.despawn(l.ent);
+                return false;
+            }
+            let p = l.at(l.age);
+            let spin = l.age * 540.0;
+            let _ = world.set_place(
+                l.ent,
+                Place::new(p.x, p.y, p.z)
+                    .with_yaw_deg(spin * 0.5)
+                    .with_pitch_deg(spin),
+            );
+            true
+        });
         self.sparkle -= dt;
         let sparkle = self.sparkle <= 0.0;
         if sparkle {
@@ -2509,6 +2658,9 @@ pub fn villain_placeholder(kind: EntityKind) -> Mesh {
         EntityKind::Buccaneer | EntityKind::Gunner => (rgb(91, 36, 32), rgb(224, 186, 150)),
         EntityKind::Captain => (rgb(28, 40, 72), rgb(224, 186, 150)),
         EntityKind::Legionary | EntityKind::Praetorian => (rgb(37, 38, 43), rgb(108, 111, 118)),
+        EntityKind::Bulwark => (rgb(70, 60, 52), rgb(110, 160, 80)),
+        EntityKind::Grenadier => (rgb(84, 92, 58), rgb(224, 186, 150)),
+        EntityKind::Orderly => (rgb(170, 220, 200), rgb(224, 186, 150)),
         _ => (rgb(236, 234, 226), rgb(224, 186, 150)),
     };
     let mut m = Mesh::new();

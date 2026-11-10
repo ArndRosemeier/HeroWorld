@@ -273,6 +273,10 @@ targeting, ragdolls, nobody dies.
   eases back out (`hw-client/src/camclip.rs`).
 - **Telegraphs:** every villain attack has a visible windup before it lands (0.45 to 0.8 s
   for minions, longer for the big ones), so you can step out of the way.
+- **Roles you can read:** a shield bearer's shield clangs and sparks ("Blocked!") when it
+  stops a blow; a grenadier's bomb arcs through the air while a red ring marks where it will
+  burst; an orderly's mending is a green beam with a "+N". The first time each happens a hint
+  says what to do (see section 6).
 - **Regeneration:** health 14/s and energy 25/s out of combat; 1/s and 6/s while in
   combat (within 6 s of the last blow given or taken).
 - **Knockdown:** knocked fighters tumble as ragdolls for 2.2 s and need 1.4 s to stand; they
@@ -349,11 +353,17 @@ Numbers at level 1; health and damage scale with the villain's level like a hero
 | Legionary | Empire | Minion | 48 | 7.5 every 2.6 s | 28 m | 8 | Iron mask and cuirass, shock rifle. |
 | The Doctor | Lab | Archvillain | 1 400 | 15 every 2 s | 30 m | 220 | Only in the last chapter of his story, in his lab. White lab coat, wild white hair, goggles, a Tesla staff. Throws lightning; when a hero comes within 13 m he **charges an Aether storm** (1.8 s, a green ring on the ground) that hits every hero still inside for 1.6× his blow, every 9 s or so. |
 | Praetorian | Empire | Lieutenant | 190 | 12 every 2.2 s | 3 m | 24 | Gilded mask and cuirass, shock lance. Leads landings. |
+| Mutant Bulwark | Lab | Minion | 52 | 7 every 2.2 s | 2.4 m | 8 | A brute with a big brass atom shield on its left arm. Aimed blows (bolts, beams) from more than 3.5 m in front mostly clang off the shield (a quarter gets through); blasts, holds and anything from close by or from the side get through. Get close, or go round it. |
+| Lab Grenadier | Lab | Minion | 32 | 11 every 4.2 s | 18 m | 7 | Olive overalls and a leather helmet. Lobs a fizzing bomb where you stand: a red ring shows where, and it bursts 1.9 s later (2.6 m round). Step out of the ring. |
+| Lab Orderly | Lab | Minion | 30 | 5 every 2.6 s | 20 m | 7 | Mint overalls, white gloves. Every 4 s it patches up a hurt friend within 14 m (14 health at level 1, a green beam); in between it shoots. Take it out first. |
 | Weak point | – | Part | 240 | – | – | 25 | A breakable part of a robot: the colossus's knees and cannon, the sentry's dish. Tab to it. |
 
-Brutes, technicians, Jackets and gunsels are knocked down by knockback powers; the sentry,
+Brutes, bulwarks, grenadiers, orderlies, technicians, Jackets and gunsels are knocked down by knockback powers; the sentry,
 alpha and colossus are "heavy" and are not. Mixed Lab groups are three brutes to two
-technicians; one in four of a group is a level above the rest.
+technicians. **Roles** (`combat::with_roles`): in a Lab group of four or more, one brute
+carries a shield (bulwark); a group of five or six also gets a grenadier or an orderly (by
+the seed), and seven or more get both, so each group has someone to rush, someone to shoot
+and someone to deal with first. Groups with a set crew (a rampage, a corner gang) keep it. One in four of a group is a level above the rest.
 
 The **mad scientist** himself, the Doctor, shows only at the end of his story (below).
 
@@ -1027,7 +1037,7 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | Underground | Utility tunnels, Molehaven, the Aether Tube with stations, the Doctor's lab, buried ruins, the Deeps | Sewers, more lairs, townsfolk riding the tube |
 | Heroes | 20 levels, 21 powers in 7 tiers (Freeze Ray, Teleport, Rescue Bubble, Robot Sidekick and Hypno Ray since 0.117), two themes each, a drag-and-drop power tray, 5 origins and affinities | More themes, power roles and budget balancing |
 | Looks | Creator with six costumes and sliders | Full costume creator, capes, masks (in progress) |
-| Combat | Minions, lieutenant, boss, colossus, drones, revive, hospital; Hero Hall's five heroes give tips and answer ignored fights | Teaming up with the town's heroes, the Doctor in person |
+| Combat | Minions with roles (shield bearer, grenadier, orderly), lieutenant, boss, colossus, drones, revive, hospital; Hero Hall's five heroes give tips and answer ignored fights | Teaming up with the town's heroes, the Doctor in person |
 | Factions | Eight factions, regard, turf warnings; mole folk, sky pirates and the Iron Legion with their own incidents and homes | Patrol units, turf changing hands |
 | Co-op | Host's level for all | Per-player sidekick and exemplar levels |
 | Destruction | Buildings, props, cars, self-repair, collateral tally, careful-hero bonus | Collateral cost, digging and craters |
