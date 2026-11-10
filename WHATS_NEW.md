@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.122 (2026-11-10)
+
+- Fixed: after the medical drone brought your hero to hospital, the hero hung stiffly in the drone's pose and played no animations any more. Walking, idling and fighting work again after a revive.
+
 ## 0.121 (2026-11-10)
 
 - Settings, Picture: the vertical sync switch is now labelled "VSync". Switch it off to draw as many frames as your graphics card can (the picture may tear).

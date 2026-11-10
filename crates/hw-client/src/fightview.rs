@@ -1102,6 +1102,13 @@ impl FightView {
                 .statuses
                 .insert(s.id, c.status)
                 .unwrap_or(Status::Standing);
+            // Set down by the drone (in hospital, or revived): the hanging
+            // pose ends. Before the body check, since the body carried off
+            // was despawned and a fresh one may not be drawn yet; a pose left
+            // behind would hold every later clip off for good.
+            if was == Status::Carried && c.status != Status::Carried {
+                self.actions.remove(&s.id);
+            }
             let Some(&(e, animated)) = ents.get(&s.id) else {
                 continue;
             };
@@ -2593,6 +2600,40 @@ mod tests {
             cycle_target(&[v], Vec3::ZERO, Vec3::ZERO, Vec3::X, None, &mut cycled),
             None
         );
+    }
+
+    #[test]
+    fn a_hero_set_down_from_the_drone_animates_again() {
+        // Down, carried off to hospital, standing again: the drone's
+        // hanging pose must not outlive the ride (it held every clip off).
+        let mut world = World::new();
+        let mut fight = FightView::new();
+        let id = NetId(7);
+        let mut hero = EntityState {
+            id,
+            kind: EntityKind::Hero,
+            combat: Some(CombatState {
+                health: 255,
+                level: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut ents = BTreeMap::new();
+        let body = world
+            .place(crate::citymesh::hero_mesh(true), Place::new(0.0, 0.0, 0.0))
+            .expect("body");
+        ents.insert(id, (body, false));
+        fight.statuses(&mut world, &[hero], &mut ents);
+        for status in [Status::Down, Status::Carried] {
+            hero.combat.as_mut().unwrap().status = status;
+            fight.statuses(&mut world, &[hero], &mut ents);
+        }
+        assert_eq!(fight.action(id), Some("hover"), "hangs from the drone");
+        assert!(ents.is_empty(), "the body on the ground is gone");
+        hero.combat.as_mut().unwrap().status = Status::Standing;
+        fight.statuses(&mut world, &[hero], &mut ents);
+        assert_eq!(fight.action(id), None, "walks, idles and fights again");
     }
 
     #[test]
