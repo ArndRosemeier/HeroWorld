@@ -843,6 +843,28 @@ ground nearby, so the layers keep level under hills.
   the tubes and across junctions (`TubeNet::path`), speeding up at 6 m/s² to 32 m/s and
   slowing to a stop; you step out in the far station's hall. G on the way gets you out on
   the walkway (`hw-sim/src/tube.rs`). G works as the taxi key everywhere else.
+- **Along the tube** (`hw-gen/src/urban/deep/nooks.rs`, drawn by `hw-client/src/tubenooks.rs`):
+  every 75 m of line is a slot for a nook (not within 100 m of a station, 55 m of another
+  line or near the lab). Every third slot tries for a **way up**: a short passage to a lift
+  under a little green pavilion on the pavement, a lit green sign (arrow up, lift) over the
+  mouth. Where the street has no room, the next slots try in turn, so in a 40 000 town a
+  way up (exit or station) comes every 300 m or so along a line. The other slots hold, by
+  how much the mole folk have made that stretch theirs: a row of **mole homes** (round
+  doors in a stone front, lit round windows, lanterns, washing, barrels, a rug), a
+  **market cave** the walkway runs straight through (striped stalls both sides, strings of
+  bulbs), a **workers' shop** (tiled room, bench, pump with gauges, a mine cart), a
+  **mushroom shrine** round a carved mole idol, a **burrow** dug through the tube's wall to
+  a den round a fire, or nothing. Mole folk (and a few townsfolk working or shopping) stand
+  at their doors and stalls, chat, and walk to the walkway and back (`Citizens::tube_folk`,
+  up to 48 within 90 m while the camera is below the ground). By their homes the sound is
+  Molehaven's; elsewhere in the tube, the tunnels'.
+- **Tube sections:** every 260 m of line has its own paint (six schemes: cream and red,
+  mint and chrome, sky blue with tiles, salmon and teal, black-and-white tiles, butter and
+  maroon), lamp colour and lamp spacing (`TubeNet::livery`). About a third of the sections
+  are the mole folk's: amber lamps, painted glyphs (spirals, claws, mushrooms, suns) and
+  rusty patches on the shell, and their nooks.
+- **Finding the way up:** while you are in the tube, its stations or nooks, a line above
+  the power tray says where the nearest way up is ("Way up to the street: 120 m ahead").
 - **The Doctor's lab** (about 30 m down, under the dystopia): a phone kiosk on a back street
   hides the lift. Below: a 44 by 26 m hall with Tesla coils, bubbling vats, consoles, a
   screen wall and a ray cannon; a reactor room, cells with bars, a control room, and an
@@ -1088,7 +1110,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default: the profile's city, 40 000 at first; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `menace`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `menace`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `homes`, `tubemarket`, `workshop`, `shrine`, `burrow`, `exit` (a tube exit from inside), `exitstreet` (its pavilion), `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |
@@ -1128,7 +1150,7 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | World | One town per seed, any size, regions, water, underground, streamed ground and sea | The planet: continents, many cities, roads and rail, wild land, travel speed by height, fast travel (rocket rails, tubes, teleport booths), moons as places |
 | Time | Fixed mid-afternoon; `HW_HOUR` for others | A day/night cycle |
 | Zones | One villain quarter (+2/+3 levels), Jackets' band | Level bands across the world, robot armies, liberation that slips back |
-| Underground | Utility tunnels, Molehaven, the Aether Tube with stations, the Doctor's lab, buried ruins, the Deeps | Sewers, more lairs, townsfolk riding the tube |
+| Underground | Utility tunnels, Molehaven, the Aether Tube with stations, exits, mole homes, markets, shrines and burrows along it, the Doctor's lab, buried ruins, the Deeps | Sewers, more lairs, townsfolk riding the tube |
 | Heroes | 20 levels, 21 powers in 7 tiers (Freeze Ray, Teleport, Rescue Bubble, Robot Sidekick and Hypno Ray since 0.117), two themes each, a drag-and-drop power tray, 5 origins and affinities | More themes, power roles and budget balancing |
 | Looks | Creator with six costumes and sliders | Full costume creator, capes, masks (in progress) |
 | Combat | Minions with roles (shield bearer, grenadier, orderly), lieutenant, boss, colossus, drones, revive, hospital; Hero Hall's five heroes give tips and answer ignored fights | Teaming up with the town's heroes, the Doctor in person |

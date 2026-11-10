@@ -221,7 +221,8 @@ pub enum District {
     Country,
 }
 
-/// Is `eye` in the tunnels or Molehaven?
+/// Is `eye` in the tunnels (or the deep layers) or Molehaven (or by the
+/// mole folk's homes along the tube)?
 pub fn under(w: &TownWorld, eye: Vec3) -> Under {
     let p = DVec2::new(eye.x as f64, eye.z as f64);
     if (eye.y as f64) > w.ground(p) - 1.5 {
@@ -239,7 +240,56 @@ pub fn under(w: &TownWorld, eye: Vec3) -> Under {
         }
         found = Under::Tunnel;
     }
+    if found != Under::No {
+        return found;
+    }
+    // The deep layers (the tube, its stations and nooks, the Deeps): by the
+    // mole folk's homes, market, shrine and burrows they sound like
+    // Molehaven; elsewhere like the tunnels. This runs on the traffic
+    // worker, so it may plan a tile.
+    let tiles = w.deep_near(p, 25.0);
+    let mole = tiles.iter().any(|t| {
+        t.nooks
+            .iter()
+            .any(|n| n.kind.mole() && n.centre.distance(p) < 22.0)
+    });
+    if mole {
+        return Under::Molehaven;
+    }
+    if tiles.iter().any(|t| t.at(p).next().is_some()) {
+        return Under::Tunnel;
+    }
     found
+}
+
+/// The nearest way up to the street (a tube exit or a station's lift),
+/// while `eye` is in the deep layers' tube, stations or nooks: where its
+/// lift stands, within 400 m. Runs on the traffic worker (it may plan a
+/// tile).
+pub fn way_up(w: &TownWorld, eye: Vec3) -> Option<DVec2> {
+    let p = DVec2::new(eye.x as f64, eye.z as f64);
+    if (eye.y as f64) > w.ground(p) - 3.0 {
+        return None;
+    }
+    let inside = w.deep_near(p, 0.0).iter().any(|t| {
+        t.at(p).any(|(_, v)| {
+            !matches!(
+                v.kind,
+                hw_gen::urban::underground::VoidKind::Gallery
+                    | hw_gen::urban::underground::VoidKind::Grotto
+                    | hw_gen::urban::underground::VoidKind::Ruin
+                    | hw_gen::urban::underground::VoidKind::Lair
+            ) || t.nooks.iter().any(|n| n.centre.distance(p) < 25.0)
+        })
+    });
+    if !inside {
+        return None;
+    }
+    w.deep_near(p, 400.0)
+        .iter()
+        .flat_map(|t| t.entrances.iter().map(|e| e.pos).collect::<Vec<_>>())
+        .filter(|e| e.distance(p) < 400.0)
+        .min_by(|a, b| a.distance(p).total_cmp(&b.distance(p)))
 }
 
 /// What kind of town `p` stands in: downtown near a business centre (or
@@ -276,6 +326,8 @@ pub struct Survey {
     pub cars: Vec<Vehicle>,
     pub under: Under,
     pub district: District,
+    /// In the tube: the nearest way up to the street.
+    pub way_up: Option<DVec2>,
 }
 
 /// What the soundscape hears each frame.

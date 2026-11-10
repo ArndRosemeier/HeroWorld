@@ -49,6 +49,8 @@ pub enum VoidKind {
     Grotto,
     /// A room of the Doctor's lab.
     Lair,
+    /// A tube workers' room off the Aether Tube.
+    Service,
 }
 
 /// A box of open space under the ground.
@@ -334,6 +336,15 @@ pub(crate) fn spot_free(w: &TownWorld, p: DVec2, r: f64) -> bool {
     let around = DVec2::splat(r + 40.0);
     let all = w.roads_in(p - around, p + around);
     Ground::new(w, &all, p - around, p + around).free(p, r)
+}
+
+/// [`spot_free`] for many circles in the square `lo..hi` at once (the
+/// ground is read once).
+pub(crate) fn spots_free(w: &TownWorld, lo: DVec2, hi: DVec2, spots: &[(DVec2, f64)]) -> Vec<bool> {
+    let around = DVec2::splat(40.0);
+    let all = w.roads_in(lo - around, hi + around);
+    let g = Ground::new(w, &all, lo - around, hi + around);
+    spots.iter().map(|&(p, r)| g.free(p, r)).collect()
 }
 
 /// How far from the start the underground reaches (m).

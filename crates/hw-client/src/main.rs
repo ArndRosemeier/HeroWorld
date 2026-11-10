@@ -114,6 +114,9 @@ use std::collections::{BTreeMap, BTreeSet};
 const INDOOR_SHOWN_M: f64 = 70.0;
 /// ...and at most this many (the nearest).
 const INDOOR_SHOWN_MAX: usize = 120;
+/// The tube's folk are shown this far from the camera, this many at most.
+const TUBE_FOLK_SHOWN_M: f64 = 90.0;
+const TUBE_FOLK_SHOWN_MAX: usize = 48;
 const BUILD_BUDGET_MS: f64 = 6.0;
 /// Milliseconds per frame for putting cells drawn on worker threads into
 /// the world behind the title (and for its props).
@@ -1180,7 +1183,8 @@ fn main() -> EngineResult<()> {
                 ),
             }
         }
-        "station" | "tubeline" | "ruin" | "lab" | "grotto" | "kiosk" | "tube" | "capsule" => {
+        "station" | "tubeline" | "ruin" | "lab" | "grotto" | "kiosk" | "tube" | "capsule"
+        | "homes" | "tubemarket" | "workshop" | "shrine" | "burrow" | "exit" | "exitstreet" => {
             // The deep underground: a tube station's hall, a tube stretch from
             // inside, a buried ruin, the villain's lab, a grotto in the Deeps,
             // the lab's street kiosk, or a station's street pavilion.
@@ -3500,6 +3504,33 @@ fn main() -> EngineResult<()> {
                 d(a).total_cmp(&d(b)).then(a.id.cmp(&b.id))
             });
             indoor.truncate(INDOOR_SHOWN_MAX);
+            // The people who live and work along the Aether Tube, while the
+            // camera is down there (tiles the deep view has planned).
+            let world_plan = &generated.world;
+            if (eye.y as f64) < world_plan.ground(eye2) - 3.0 {
+                let mut folk: Vec<hw_sim::citizens::Citizen> = world_plan
+                    .deep_planned_near(eye2, TUBE_FOLK_SHOWN_M)
+                    .iter()
+                    .flat_map(|t| {
+                        t.folk
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, f)| {
+                                DVec2::new(f.at.x, f.at.z).distance(eye2) < TUBE_FOLK_SHOWN_M
+                            })
+                            .map(|(n, f)| citizens.tube_folk(t.key, n as u32, f, game_time))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                folk.sort_by(|a, b| {
+                    let d = |c: &hw_sim::citizens::Citizen| {
+                        DVec2::new(c.pos.x, c.pos.z).distance_squared(eye2)
+                    };
+                    d(a).total_cmp(&d(b)).then(a.id.cmp(&b.id))
+                });
+                folk.truncate(TUBE_FOLK_SHOWN_MAX);
+                indoor.extend(folk);
+            }
             crowd.set_indoor(indoor);
             // The traffic drives on and its cars are placed on a worker,
             // while the citizens go to Engine here; the join below is the
@@ -3516,6 +3547,7 @@ fn main() -> EngineResult<()> {
                         let survey = hw_client::soundscape::Survey {
                             cars: traffic.near(eye2, 90.0, game_time, 40),
                             under: hw_client::soundscape::under(town_plan, eye),
+                            way_up: hw_client::soundscape::way_up(town_plan, eye),
                             district: hw_client::soundscape::district(town_plan, eye2),
                         };
                         (plan, survey)
@@ -3847,6 +3879,7 @@ fn main() -> EngineResult<()> {
                 hw_client::hitch::mark("soundscape");
                 // `survey`: asked of the town on the traffic worker above;
                 // people from the crowd.
+                way_up_hint(&frame.ui, eye, world.camera().target() - eye, survey.way_up);
                 let scene = hw_client::soundscape::Scene {
                     now: frame.time as f64,
                     dt: frame.dt,
@@ -4208,6 +4241,51 @@ fn tube_status(
                         egui::RichText::new(text)
                             .color(egui::Color32::from_rgb(232, 196, 96))
                             .size(15.0),
+                    );
+                });
+        });
+}
+
+/// Down in the tube: which way the nearest way up to the street is, from
+/// where the camera looks, and how far.
+fn way_up_hint(ui: &engine::ui::UiFrame, eye: Vec3, look: Vec3, to: Option<DVec2>) {
+    use engine::ui::egui;
+    let Some(to) = to else {
+        return;
+    };
+    let here = DVec2::new(eye.x as f64, eye.z as f64);
+    let d = to - here;
+    let dist = d.length();
+    let fwd = DVec2::new(look.x as f64, look.z as f64).normalize_or(DVec2::Y);
+    // Angle from straight ahead, positive to the right: the screen's right
+    // is `forward x up` (right-handed, Y up).
+    let right = DVec2::new(-fwd.y, fwd.x);
+    let (a, r) = (d.dot(fwd), d.dot(right));
+    let ang = r.atan2(a).to_degrees();
+    let way = if dist < 6.0 {
+        "here".to_string()
+    } else {
+        let w = match ang {
+            x if x.abs() <= 30.0 => "ahead",
+            x if x.abs() >= 150.0 => "behind",
+            x if x > 0.0 => "to the right",
+            _ => "to the left",
+        };
+        format!("{:.0} m {w}", (dist / 5.0).round() * 5.0)
+    };
+    egui::Area::new(egui::Id::new("way up"))
+        .interactable(false)
+        .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -150.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_black_alpha(150))
+                .corner_radius(4.0)
+                .inner_margin(egui::Margin::symmetric(10, 4))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("Way up to the street: {way}"))
+                            .color(egui::Color32::from_rgb(130, 255, 160))
+                            .size(14.0),
                     );
                 });
         });

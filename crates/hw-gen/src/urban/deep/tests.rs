@@ -1,5 +1,6 @@
 use super::*;
 use crate::urban::TownParams;
+use std::collections::BTreeMap;
 
 fn town(seed: u64, pop: f64) -> TownWorld {
     TownWorld::generate(Seed(seed), TownParams::sample(Seed(seed), pop))
@@ -260,4 +261,131 @@ fn the_cache_stays_bounded() {
         n += 1;
     }
     assert!(w.deep_state().planned() <= CACHE);
+}
+
+#[test]
+fn the_tube_has_nooks_ways_up_and_people() {
+    for seed in [1u64, 3] {
+        let w = town(seed, 40_000.0);
+        let net = w.tube();
+        let keys = tiles_round(&w, 900.0);
+        let mut kinds: BTreeMap<NookKind, usize> = BTreeMap::new();
+        let mut folk = 0;
+        let mut ups: BTreeMap<usize, Vec<f64>> = BTreeMap::new();
+        for &k in &keys {
+            let t = w.deep_tile(k);
+            for n in &t.nooks {
+                *kinds.entry(n.kind).or_default() += 1;
+                // Its room opens off the walkway: the mouth is in the tube and
+                // the room's middle on a floor.
+                let f = w.deep_floor_for(n.centre, n.floor + 0.5);
+                if n.kind != NookKind::Exit {
+                    assert!(
+                        f.is_some_and(|f| (f - n.floor).abs() < 0.6),
+                        "seed {seed}: {:?} at {} has no floor",
+                        n.kind,
+                        n.centre
+                    );
+                }
+                let mouth = DVec3::new(n.mouth.x, n.floor + 1.0, n.mouth.y);
+                assert!(
+                    w.deep_open_at(mouth),
+                    "seed {seed}: {:?} mouth shut",
+                    n.kind
+                );
+                if n.kind == NookKind::Exit {
+                    ups.entry(n.line)
+                        .or_default()
+                        .push(net.lines[n.line].arcs[0] + (n.slot as f64 + 0.5) * SLOT);
+                    // The way from the walkway to the lift is open.
+                    for s in 0..=20 {
+                        let q = n.mouth.lerp(n.centre, s as f64 / 20.0);
+                        assert!(
+                            w.deep_open_at(DVec3::new(q.x, n.floor + 1.0, q.y)),
+                            "seed {seed}: exit passage blocked at {q}"
+                        );
+                    }
+                }
+            }
+            // The people stand on open floor, clear of the furniture, and
+            // their errands keep clear too.
+            for p in &t.folk {
+                let a = DVec2::new(p.at.x, p.at.z);
+                let way: Vec<DVec2> = match p.to {
+                    Some(b) => (0..=16).map(|s| a.lerp(b, s as f64 / 16.0)).collect(),
+                    None => vec![a],
+                };
+                for q in way {
+                    let f = w.deep_floor_for(q, p.at.y + 0.5);
+                    assert!(
+                        f.is_some_and(|f| (f - p.at.y).abs() < 0.6),
+                        "seed {seed}: someone off the floor at {q}"
+                    );
+                    assert!(
+                        w.deep_open_at(DVec3::new(q.x, p.at.y + 1.7, q.y)),
+                        "seed {seed}: someone's head in the rock at {q}"
+                    );
+                    for s in w.deep_solids_near(q, 0.3) {
+                        let (y0, y1) = s.span();
+                        assert!(
+                            s.distance(q) > 0.3 || y1 < p.at.y + 0.1 || y0 > p.at.y + 1.8,
+                            "seed {seed}: someone in a fixture at {q} ({p:?}; {:?})",
+                            t.fixtures
+                                .iter()
+                                .filter(|f| f.plan().distance(q) < 2.0)
+                                .map(|f| (f.kind, f.plan()))
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                }
+            }
+            folk += t.folk.len();
+        }
+        eprintln!("seed {seed}: nooks {kinds:?}, {folk} people");
+        for kind in [NookKind::Exit, NookKind::Homes, NookKind::Workshop] {
+            assert!(
+                kinds.get(&kind).copied().unwrap_or(0) >= 5,
+                "seed {seed}: few {kind:?}"
+            );
+        }
+        assert!(kinds.len() >= 5, "seed {seed}: little variety: {kinds:?}");
+        let lived: usize = kinds
+            .iter()
+            .filter(|(k, _)| **k != NookKind::Exit)
+            .map(|x| x.1)
+            .sum();
+        assert!(
+            folk >= 2 * lived,
+            "seed {seed}: {folk} people in {lived} nooks"
+        );
+        // Ways up along each line come often: exits and stations together.
+        let mut gaps = Vec::new();
+        for (li, l) in net.lines.iter().enumerate() {
+            let core = w.spawn_line().0;
+            if l.pts.iter().all(|p| p.distance(core) > 700.0) {
+                continue;
+            }
+            let mut at: Vec<f64> = ups.get(&li).cloned().unwrap_or_default();
+            for s in net.stations.iter().filter(|s| s.line == li) {
+                at.push(l.arcs[s.at]);
+            }
+            at.push(0.0);
+            at.push(*l.arcs.last().unwrap());
+            at.sort_by(f64::total_cmp);
+            // Only the stretches inside the tiles looked at.
+            for x in at.windows(2) {
+                let (mid, _, _) = net.along(li, (x[0] + x[1]) * 0.5);
+                if mid.distance(core) < 600.0 {
+                    gaps.push(x[1] - x[0]);
+                }
+            }
+        }
+        gaps.sort_by(f64::total_cmp);
+        let p90 = gaps[gaps.len() * 9 / 10];
+        eprintln!("seed {seed}: ways up every {:.0} m (90th percentile)", p90);
+        assert!(
+            p90 < 520.0,
+            "seed {seed}: ways up too far apart: {p90:.0} m"
+        );
+    }
 }

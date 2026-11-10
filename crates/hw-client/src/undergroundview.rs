@@ -927,7 +927,7 @@ fn molehaven(b: &mut MeshBuilder, u: &Underground, glows: &mut Vec<Glow>) {
 
 /// A market stall facing `d`: a wooden counter with a top board, turned
 /// posts, and a striped awning that curves down to a scalloped edge.
-fn stall(b: &mut MeshBuilder, p: DVec2, d: DVec2, f: f64, stripe: Color) {
+pub(crate) fn stall(b: &mut MeshBuilder, p: DVec2, d: DVec2, f: f64, stripe: Color) {
     let side = d.perp();
     let wood = rgb(140, 100, 64);
     crate::carmesh::slab(

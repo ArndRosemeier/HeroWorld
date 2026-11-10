@@ -29,9 +29,11 @@
 
 mod caves;
 mod lair;
+mod nooks;
 mod ruins;
 mod tube;
 
+pub use nooks::{Folk, Livery, Nook, NookKind, SECTION, SLOT, STYLES};
 pub use tube::{TubeLine, TubeNet, TubeStation, TUBE_HALF, TUBE_HEIGHT};
 
 use super::footprint::Footprint;
@@ -138,6 +140,35 @@ pub enum FixtureKind {
     /// The newspaper kiosk over the lab's lift (drawn with the entrance;
     /// only its walls here).
     Kiosk,
+    // Along the tube: the mole folk's homes, market, shrine and burrows,
+    // the tube workers' shop, the way-up signs.
+    /// A round wooden door set in the rock (size: radius, height).
+    RoundDoor,
+    Barrel,
+    /// A pot of small glowing mushrooms.
+    MushroomPot,
+    /// A crooked iron lamp post (size: radius, height).
+    Lantern,
+    /// Washing on a line overhead (size.x: half length).
+    Washing,
+    /// A woven rug on the floor (size: half length, -, half width).
+    Rug,
+    /// A market stall with a striped awning (half width, height, half depth).
+    Stall,
+    /// Strings of lamps across a cave (half length, -, half width).
+    LampString,
+    Workbench,
+    /// A riveted pump with gauges and pipes (radius, height).
+    Pump,
+    /// A mine cart (half width, height, half length).
+    Cart,
+    /// A carved mole idol (radius, height).
+    Idol,
+    Candles,
+    /// Mole folk's painted glyphs on a wall (half width, half height).
+    Glyphs,
+    /// A lit sign over a way up, read from both ways along the tube.
+    ExitSign,
 }
 
 /// A thing standing in the deep underground: drawn from these numbers,
@@ -178,7 +209,11 @@ impl Fixture {
         };
         let s = self.size;
         match self.kind {
-            GlowPool | Campfire | DestinationBoard | ScreenWall | VaultDoor => Vec::new(),
+            GlowPool | Campfire | DestinationBoard | ScreenWall | VaultDoor | RoundDoor
+            | Washing | Rug | LampString | Candles | Glyphs | ExitSign => Vec::new(),
+            Barrel | Lantern | Pump | Idol => vec![disc(s.x, s.y)],
+            MushroomPot => vec![disc(s.x, s.y)],
+            Stall | Workbench | Cart => vec![block(s.x, s.z, s.y)],
             Kiosk => {
                 // Back and side walls, and the front either side of the door.
                 let h = s.x;
@@ -236,6 +271,8 @@ pub enum EntranceKind {
     Tube,
     /// The newspaper kiosk over the Doctor's lab.
     Kiosk,
+    /// A way up from the tube between stations: a little green pavilion.
+    Exit,
 }
 
 /// A lift from the street down.
@@ -346,6 +383,11 @@ pub struct DeepTile {
     pub ruins: Vec<Ruin>,
     pub lairs: Vec<Lair>,
     pub spots: Vec<DeepSpot>,
+    /// Nooks along the tube, and the people who live and work in them.
+    pub nooks: Vec<Nook>,
+    pub folk: Vec<Folk>,
+    /// Tube stretch voids: (void, line, point).
+    pub tube_parts: Vec<(u32, u32, u32)>,
     grid: BTreeMap<(i64, i64), Vec<u32>>,
     solids: Vec<Footprint>,
     solid_grid: BTreeMap<(i64, i64), Vec<u32>>,
@@ -568,6 +610,31 @@ impl TownWorld {
         t
     }
 
+    /// The deep tile `k` if it is planned already (plans nothing: for the
+    /// main thread, where the deep view's worker plans the tiles round the
+    /// camera).
+    pub fn deep_planned(&self, k: TileKey) -> Option<Arc<DeepTile>> {
+        let c = self.deep_state().cache.lock().expect("deep cache");
+        c.tiles.get(&k).map(|e| e.0.clone())
+    }
+
+    /// The planned deep tiles whose plan reaches within `r` of `p`.
+    pub fn deep_planned_near(&self, p: DVec2, r: f64) -> Vec<Arc<DeepTile>> {
+        let (a, b) = (
+            tile_of(p - DVec2::splat(r + TILE * 0.5)),
+            tile_of(p + DVec2::splat(r + TILE * 0.5)),
+        );
+        let mut out = Vec::new();
+        for x in a.0..=b.0 {
+            for y in a.1..=b.1 {
+                if let Some(t) = self.deep_planned((x, y)).filter(|t| t.reaches(p, r)) {
+                    out.push(t);
+                }
+            }
+        }
+        out
+    }
+
     /// Can the deep underground matter for something at height `y` over
     /// `p`? Only below the ground, or by a street lift's opening (near a
     /// station or the lab). Cheap, and plans nothing: ask it before the
@@ -697,6 +764,7 @@ impl TownWorld {
             bottoms: Vec::new(),
         };
         tube::plan_tile(&mut plan);
+        nooks::plan_tile(&mut plan);
         lair::plan_tile(&mut plan);
         ruins::plan_tile(&mut plan);
         caves::plan_tile(&mut plan);

@@ -20,7 +20,7 @@ use engine::prelude::*;
 use engine::texgen::{FacadeLayer, GroundLayer, MedievalLayer, NaturalLayer};
 use glam::{DVec2, DVec3, Vec3};
 use hw_gen::urban::deep::{
-    tile_of, DeepTile, EntranceKind, Fixture, FixtureKind, TileKey, TILE, TUBE_HALF,
+    tile_of, DeepTile, EntranceKind, Fixture, FixtureKind, NookKind, TileKey, TILE, TUBE_HALF,
 };
 use hw_gen::urban::underground::{Void, VoidKind, SHAFT_HALF};
 use hw_gen::urban::world::TownWorld;
@@ -36,8 +36,8 @@ const POOL: usize = 28;
 /// Lining cells (m).
 const STEP: f64 = 1.5;
 /// Radius of the tube's shell, and its axis above the walkway.
-const SHELL: f64 = 1.9;
-const AXIS: f64 = 1.0;
+pub(crate) const SHELL: f64 = 1.9;
+pub(crate) const AXIS: f64 = 1.0;
 
 /// Engine's density with the whole underground carved out of `ground`:
 /// the shallow layer and the deep tiles near `p`.
@@ -160,10 +160,17 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
         })
         .collect();
     let net = town.tube();
+    let parts: std::collections::BTreeMap<u32, (u32, u32)> =
+        t.tube_parts.iter().map(|&(v, l, i)| (v, (l, i))).collect();
     for (i, v) in t.voids.iter().enumerate() {
         let other = |p: DVec3| elsewhere(town, t.key, i, p);
         match v.kind {
-            VoidKind::Tube => tube_shell(&mut inner, v, &other),
+            VoidKind::Tube => {
+                let (l, pi) = parts.get(&(i as u32)).copied().unwrap_or((0, 0));
+                let liv = net.livery(town.seed, l as usize, pi as usize);
+                tube_shell(&mut inner, v, &other, &liv, l.wrapping_mul(7919) ^ pi);
+            }
+            VoidKind::Service => service_room(&mut inner, v, &other),
             VoidKind::Station => station_hall(&mut inner, v, &other),
             VoidKind::Ruin => ruin_room(&mut inner, v, &other),
             VoidKind::Lair => lab_room(&mut inner, v, &other),
@@ -201,6 +208,41 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
     }
     for f in &t.fixtures {
         fixture(&mut inner, f, &mut glows);
+    }
+    // Mole rooms are swept and paved: setts in homes, the market and the
+    // shrine, trodden earth in a burrow (the bare cave floor reads as moss).
+    for n in &t.nooks {
+        let (tex, colour) = match n.kind {
+            NookKind::Homes | NookKind::Market | NookKind::Shrine => {
+                (GroundLayer::Cobble, rgb(176, 160, 138))
+            }
+            NookKind::Burrow => (GroundLayer::Dirt, rgb(150, 122, 92)),
+            _ => continue,
+        };
+        // Its room and the galleries into it: the cave voids at its floor
+        // close by (the Deeps' caves lie far lower).
+        inner.tex = Some(tex.into());
+        for v in t.voids.iter().filter(|v| {
+            matches!(v.kind, VoidKind::Grotto | VoidKind::Gallery)
+                && (v.floor[0] - n.floor).abs() < 0.6
+                && v.world((v.min + v.max) * 0.5).distance(n.centre) < 30.0
+        }) {
+            let c = v.world((v.min + v.max) * 0.5);
+            // A room's rock is carved a metre or so beyond it: pave under
+            // the lumps (the rest is hidden in the rock). A gallery keeps
+            // inside its own sides.
+            let grow = if v.kind == VoidKind::Grotto {
+                1.3
+            } else {
+                -0.1
+            };
+            let k = v.corners().map(|p| {
+                let p = p + (p - c).normalize_or_zero() * grow;
+                v3(p, v.floor_at(p) + 0.03)
+            });
+            inner.quad(k, DVec3::Y, colour);
+        }
+        inner.tex = None;
     }
     // The lab's high lamps hang from the ceiling in enamel shades.
     for l in &t.lamps {
@@ -252,6 +294,7 @@ fn entrance_glow(k: EntranceKind) -> Color {
     match k {
         EntranceKind::Tube => rgb(255, 214, 130),
         EntranceKind::Kiosk => rgb(255, 120, 90),
+        EntranceKind::Exit => rgb(130, 255, 160),
     }
 }
 
@@ -268,6 +311,11 @@ fn street(town: &TownWorld, t: &DeepTile) -> Built {
                 uv::collar(&mut outer, e.pos, e.door, town);
             }
             EntranceKind::Kiosk => kiosk(&mut outer, e.pos, e.door, e.top),
+            EntranceKind::Exit => {
+                // A little green pavilion: a way up from the tube.
+                uv::pavilion_in(&mut outer, e.pos, e.door, e.top, rgb(44, 140, 84), glow_col);
+                uv::collar(&mut outer, e.pos, e.door, town);
+            }
         }
         uv::lift_ring(&mut outer, e.pos, e.top, glow_col);
     }
@@ -391,7 +439,14 @@ fn box_room(b: &mut MeshBuilder, v: &Void, fin: &Finish, other: &dyn Fn(DVec3) -
 
 /// The walkway and shell of a tube stretch: a cream enamelled tube with
 /// brass ribs and a lit crown, open where gates and junctions meet it.
-fn tube_shell(b: &mut MeshBuilder, v: &Void, other: &dyn Fn(DVec3) -> bool) {
+fn tube_shell(
+    b: &mut MeshBuilder,
+    v: &Void,
+    other: &dyn Fn(DVec3) -> bool,
+    liv: &hw_gen::urban::deep::Livery,
+    look: u32,
+) {
+    let paint = crate::tubenooks::paint(liv);
     let half = v.max.y;
     let len = v.max.x - half;
     if len < 0.5 {
@@ -408,8 +463,8 @@ fn tube_shell(b: &mut MeshBuilder, v: &Void, other: &dyn Fn(DVec3) -> bool) {
         let f = v.floor_at(p);
         v3(p + side * (r * a.cos()), f + AXIS + r * a.sin())
     };
-    let cream = rgb(232, 224, 200);
-    let rim = rgb(168, 60, 48);
+    let (cream, rim) = (paint.shell, paint.rim);
+    let rust = rgb(132, 82, 54);
     for i in 0..n {
         let (x0, x1) = (len * i as f64 / n as f64, len * (i + 1) as f64 / n as f64);
         for j in 0..segs {
@@ -421,7 +476,23 @@ fn tube_shell(b: &mut MeshBuilder, v: &Void, other: &dyn Fn(DVec3) -> bool) {
             if other(mid) {
                 continue;
             }
-            let c = if j < 2 || j >= segs - 2 { rim } else { cream };
+            let c = if j < 2 || j >= segs - 2 {
+                rim
+            } else if crate::tubenooks::patched(look, i, j, liv.mole) {
+                rust
+            } else {
+                match paint.band {
+                    // Tiles low on both sides, checked.
+                    Some((a, bb)) if !(5..segs - 5).contains(&j) => {
+                        if (i + j) % 2 == 0 {
+                            a
+                        } else {
+                            bb
+                        }
+                    }
+                    _ => cream,
+                }
+            };
             let axis_mid = point((x0 + x1) * 0.5, FRAC_PI_2, 0.0);
             let pts = [
                 point(x0, b0, SHELL),
@@ -461,13 +532,7 @@ fn tube_shell(b: &mut MeshBuilder, v: &Void, other: &dyn Fn(DVec3) -> bool) {
         {
             continue;
         }
-        crate::carmesh::tube(
-            b,
-            &ring,
-            (0.07, 0.07),
-            8,
-            Some((Surf::Metal, rgb(198, 160, 82))),
-        );
+        crate::carmesh::tube(b, &ring, (0.07, 0.07), 8, Some((Surf::Metal, paint.rib)));
     }
     // The Aether strip along the crown.
     b.surf = Surf::Glow;
@@ -481,10 +546,46 @@ fn tube_shell(b: &mut MeshBuilder, v: &Void, other: &dyn Fn(DVec3) -> bool) {
         b.quad(
             [top(x0, -w), top(x1, -w), top(x1, w), top(x0, w)],
             -DVec3::Y,
-            rgb(120, 236, 255),
+            paint.strip,
         );
     }
     b.surf = Surf::Plain;
+    // The mole folk's sections: their glyphs on the walls, here and there.
+    if liv.mole > 0.55 && len > 6.0 {
+        let k = (len / 7.0).floor() as usize;
+        for g in 0..k {
+            let gl = look.wrapping_mul(31).wrapping_add(g as u32);
+            if !gl.is_multiple_of(3) {
+                continue;
+            }
+            let x = 3.5 + g as f64 * 7.0;
+            let s = if gl.is_multiple_of(2) { 1.0 } else { -1.0 };
+            let at = v.world(DVec2::new(x, 0.0));
+            let probe = v3(at + side * s * (SHELL + 0.45), v.floor_at(at) + 1.5);
+            if other(probe) {
+                continue;
+            }
+            crate::tubenooks::glyphs_on_shell(b, at, v.floor_at(at), v.along, side * s, gl);
+        }
+    }
+}
+
+/// A tube workers' room: a concrete floor, green glazed tiles below a
+/// yellow band, painted walls above, a plain ceiling.
+fn service_room(b: &mut MeshBuilder, v: &Void, other: &dyn Fn(DVec3) -> bool) {
+    box_room(
+        b,
+        v,
+        &Finish {
+            floor: (Some(FacadeLayer::Concrete.into()), rgb(150, 148, 142)),
+            wall: (Some(FacadeLayer::Concrete.into()), rgb(214, 210, 196)),
+            wall_h: None,
+            ceiling: Some((Some(FacadeLayer::Concrete.into()), rgb(190, 188, 182))),
+            band: Some((1.25, 1.4, rgb(230, 186, 40), Surf::Plain)),
+            dado: Some((1.25, rgb(70, 130, 100))),
+        },
+        other,
+    );
 }
 
 /// A tube station's hall: terrazzo floor, cream glazed tiles with a teal
@@ -884,6 +985,9 @@ fn fixture_parts(
     glows: &mut Vec<Glow>,
 ) {
     use FixtureKind::*;
+    if crate::tubenooks::fixture(b, f, glows) {
+        return;
+    }
     match f.kind {
         Bench => bench(b, p, f.dir, y),
         Planter => planter(b, p, y, f.look),
@@ -940,6 +1044,8 @@ fn fixture_parts(
         Campfire => campfire(b, p, y, glows),
         // Drawn with its entrance, on the street.
         Kiosk => {}
+        // Drawn by `tubenooks`.
+        _ => {}
     }
 }
 
@@ -2484,6 +2590,68 @@ pub fn view_camera(town: &TownWorld, view: &str, near: DVec2) -> Option<FlyCamer
     }
     if view == "lab" || view == "kiosk" {
         tiles = vec![town.deep_tile(tile_of(town.lair_centre()?))];
+    }
+    // Nooks along the tube: from the walkway, into the nook.
+    let nook_kind = match view {
+        "homes" => Some(NookKind::Homes),
+        "tubemarket" => Some(NookKind::Market),
+        "workshop" => Some(NookKind::Workshop),
+        "shrine" => Some(NookKind::Shrine),
+        "burrow" => Some(NookKind::Burrow),
+        "exit" => Some(NookKind::Exit),
+        _ => None,
+    };
+    if let Some(kind) = nook_kind {
+        let n = tiles
+            .iter()
+            .flat_map(|t| {
+                t.nooks
+                    .iter()
+                    .filter(|n| n.kind == kind)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .min_by(|a, b| a.mouth.distance(near).total_cmp(&b.mouth.distance(near)))?;
+        let f = n.floor;
+        return Some(match kind {
+            NookKind::Market => {
+                let p = n.mouth - n.out * 12.5 + n.out.perp() * 1.0;
+                cam(v3d(p, f + 2.1), v3d(n.mouth + n.out * 4.0, f + 1.3))
+            }
+            NookKind::Exit => {
+                // Down the tube (its way, not the passage's, which may slant
+                // to reach a free spot on the street) at the sign and mouth.
+                let s = (n.slot as f64 + 0.5) * hw_gen::urban::deep::SLOT;
+                let (_, _, along) = town.tube().along(n.line, s);
+                let p = n.mouth - along * 9.0 - n.out * 0.8;
+                cam(v3d(p, f + 1.7), v3d(n.mouth + n.out * 0.6, f + 2.0))
+            }
+            NookKind::Burrow => {
+                // In the den's doorway (the gallery bends on the way).
+                let p = n.centre - n.out * 3.6;
+                cam(v3d(p, f + 1.8), v3d(n.centre + n.out * 4.0, f + 1.0))
+            }
+            _ => {
+                // Just inside the way in, clear of the tube's shell.
+                let p = n.mouth + n.out * (TUBE_HALF + 0.8);
+                cam(v3d(p, f + 1.8), v3d(n.centre + n.out * 2.0, f + 1.2))
+            }
+        });
+    }
+    if view == "exitstreet" {
+        let e = tiles
+            .iter()
+            .flat_map(|t| {
+                t.entrances
+                    .iter()
+                    .filter(|e| e.kind == EntranceKind::Exit)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .min_by(|a, b| a.pos.distance(near).total_cmp(&b.pos.distance(near)))?;
+        let p = e.pos + e.door * 9.0 + e.door.perp() * 4.0;
+        let g = town.ground(p);
+        return Some(cam(v3d(p, g + 2.6), v3d(e.pos, e.top + 2.0)));
     }
     for t in &tiles {
         match view {

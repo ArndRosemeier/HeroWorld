@@ -44,6 +44,8 @@ pub struct TubeLine {
     pub floors: Vec<f64>,
     /// The road's half width plus pavement (for station entrances).
     pub verge: f64,
+    /// Metres along the line at each point.
+    pub arcs: Vec<f64>,
 }
 
 /// A station on the network.
@@ -270,6 +272,7 @@ impl TubeNet {
                 .map(|&p| clear_shallow(u, p, base_floor(w, p)))
                 .collect();
             lines.push(TubeLine {
+                arcs: super::nooks::arcs(&pts),
                 pts,
                 floors,
                 verge: r.half + r.pavement,
@@ -529,6 +532,11 @@ impl TubeNet {
         (i == 0 || i == last) && !self.joins.iter().any(|&(a, b)| a == (l, i) || b == (l, i))
     }
 
+    /// Stretches (line, first point) filed in tile `k` (by their middle).
+    pub fn stretches_in(&self, k: TileKey) -> Option<&[(u32, u32)]> {
+        self.stretches.get(&k).map(|v| v.as_slice())
+    }
+
     /// Stations whose platform is in tile `k`.
     pub fn stations_in(&self, k: TileKey) -> &[usize] {
         self.by_tile.get(&k).map_or(&[], |v| v.as_slice())
@@ -659,18 +667,22 @@ pub(super) fn plan_tile(plan: &mut Plan) {
     for &(l, i) in net.stretches.get(&k).into_iter().flatten() {
         let (l, i) = (l as usize, i as usize);
         if let Some(v) = net.stretch_void(l, i) {
-            // A lamp ring every few stretches.
-            if i % 2 == 0 {
+            // A lamp every few stretches, in the section's colour.
+            let liv = net.livery(w.seed, l, i);
+            if (i as u32).is_multiple_of(liv.lamp_every) {
                 let line = &net.lines[l];
                 let m = (line.pts[i] + line.pts[i + 1]) * 0.5;
                 let f = (line.floors[i] + line.floors[i + 1]) * 0.5;
                 plan.t.lamps.push(DeepLamp {
                     pos: DVec3::new(m.x, f + TUBE_HEIGHT - 0.4, m.y),
-                    color: [0.45, 0.9, 1.0],
+                    color: liv.lamp,
                     strength: 4.0,
                     range: 11.0,
                 });
             }
+            plan.t
+                .tube_parts
+                .push((plan.t.voids.len() as u32, l as u32, i as u32));
             plan.t.voids.push(v);
         }
     }

@@ -18,6 +18,7 @@ use hw_core::Seed;
 use hw_gen::building::{BuildingUse, RoomKind};
 use hw_gen::geom::Polyline;
 use hw_gen::urban::area::Area;
+use hw_gen::urban::deep::Folk;
 use hw_gen::urban::underground::{molehaven_layout, Underground};
 use hw_gen::urban::world::{WorldRoad, WALKER_HALF};
 use std::collections::BTreeMap;
@@ -414,8 +415,9 @@ impl Citizens {
 
     /// Citizen `id` at `time`; `None` if there is no such citizen.
     pub fn citizen(&self, id: u64, time: f64) -> Option<Citizen> {
-        // People indoors are asked for by their place (`indoors`).
-        if id & INDOOR != 0 {
+        // People indoors and along the tube are asked for by their place
+        // (`indoors`, `tube_folk`).
+        if id & (INDOOR | TUBE_FOLK) != 0 {
             return None;
         }
         if id >> 20 == MOLE_HOME {
@@ -505,20 +507,8 @@ impl Citizens {
             MoleWay::Errand(a, b) => {
                 let speed = rng.range(0.8, 1.1);
                 let pause = rng.range(6.0, 20.0);
-                let length = a.distance(b).max(0.1);
-                let dir = (b - a) / length;
-                let walk_t = length / speed;
-                let period = 2.0 * (walk_t + pause);
-                let t = (time + rng.range(0.0, period)).rem_euclid(period);
-                if t < walk_t {
-                    (a + dir * t * speed, dir, speed)
-                } else if t < walk_t + pause {
-                    (b, dir, 0.0)
-                } else if t < 2.0 * walk_t + pause {
-                    (b - dir * (t - walk_t - pause) * speed, -dir, speed)
-                } else {
-                    (a, -dir, 0.0)
-                }
+                let period = 2.0 * (a.distance(b).max(0.1) / speed + pause);
+                errand(a, b, speed, pause, time + rng.range(0.0, period))
             }
             MoleWay::Stroll { centre, r, sign } => {
                 // Evenly spread on their ring, all at one pace.
@@ -1322,6 +1312,9 @@ fn stop_at_barricades(
 /// Ids of people indoors have this bit set (then the building, the floor
 /// and the place: see [`Citizens::indoors`]).
 pub const INDOOR: u64 = 1 << 63;
+/// Set on the ids of the people along the Aether Tube (see
+/// [`Citizens::tube_folk`]).
+pub const TUBE_FOLK: u64 = 1 << 62;
 
 /// How long someone indoors stays at one place before the next comes, on
 /// average (seconds of game time).
@@ -1394,6 +1387,65 @@ impl Citizens {
             speed: 0.0,
             look,
         })
+    }
+}
+
+impl Citizens {
+    /// Someone who lives or works along the Aether Tube (`folk` number `n`
+    /// of deep tile `tile`) at `time`: they stand where the plan puts them,
+    /// or walk to their errand and back, pausing at each end. Like the
+    /// people indoors, they are asked for by their place, not by id.
+    pub fn tube_folk(&self, tile: (i64, i64), n: u32, folk: &Folk, time: f64) -> Citizen {
+        let id = TUBE_FOLK
+            | (((tile.0 as u64) & 0xF_FFFF) << 28)
+            | (((tile.1 as u64) & 0xF_FFFF) << 8)
+            | (n as u64 & 0xFF);
+        let s = self.seed.child("tube-folk").child(id);
+        let look = if folk.mole {
+            LOOKS + (s.child("look").0 % MOLE_LOOKS as u64) as u32
+        } else {
+            (s.child("look").0 % LOOKS as u64) as u32
+        };
+        let a = DVec2::new(folk.at.x, folk.at.z);
+        let (p, facing, speed) = match folk.to {
+            None => (a, folk.facing, 0.0),
+            Some(b) => {
+                let mut rng = s.rng();
+                errand(
+                    a,
+                    b,
+                    rng.range(0.8, 1.2),
+                    rng.range(5.0, 18.0),
+                    time + rng.range(0.0, 60.0),
+                )
+            }
+        };
+        Citizen {
+            id,
+            pos: DVec3::new(p.x, folk.at.y + 0.02, p.y),
+            facing: facing.normalize_or(DVec2::Y),
+            speed,
+            look,
+        }
+    }
+}
+
+/// From `a` to `b` at `speed` and back, pausing `pause` s at each end:
+/// where, facing which way, how fast at time `t`.
+fn errand(a: DVec2, b: DVec2, speed: f64, pause: f64, t: f64) -> (DVec2, DVec2, f64) {
+    let length = a.distance(b).max(0.1);
+    let dir = (b - a) / length;
+    let walk_t = length / speed;
+    let period = 2.0 * (walk_t + pause);
+    let t = t.rem_euclid(period);
+    if t < walk_t {
+        (a + dir * t * speed, dir, speed)
+    } else if t < walk_t + pause {
+        (b, dir, 0.0)
+    } else if t < 2.0 * walk_t + pause {
+        (b - dir * (t - walk_t - pause) * speed, -dir, speed)
+    } else {
+        (a, -dir, 0.0)
     }
 }
 

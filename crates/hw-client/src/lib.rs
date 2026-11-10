@@ -66,6 +66,7 @@ pub mod title;
 pub mod townmesh;
 pub mod trafficview;
 pub mod tray;
+pub mod tubenooks;
 pub mod undergroundview;
 pub mod visor;
 pub mod waterfrontview;

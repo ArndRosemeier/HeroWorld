@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.145 (2026-11-10)
+
+- The Aether Tube has ways out: every few hundred metres a glowing green sign marks a lift up to a green pavilion on the street, and while you are down there a line at the bottom of the screen points to the nearest way up.
+- People live along the tube now. Mole folk have round-doored homes, markets, shrines and burrows; tube workers keep workshops. You will see them going about their day and hear them as you pass.
+- The tube changes as you go: each stretch has its own paint, tiles and lamp colour, and mole country is marked with their glyphs.
+
 ## 0.144 (2026-11-10)
 
 - The start screen runs smoothly while the city loads behind it: textures and characters no longer freeze a frame when they first appear (Engine 0.046 makes their smaller sizes on the graphics card), town blocks and props come in a few pieces per frame, and the title animation follows the screen's own rhythm.
