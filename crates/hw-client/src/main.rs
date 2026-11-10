@@ -3714,6 +3714,7 @@ fn main() -> EngineResult<()> {
                 let holding = (frame.input.down(Key::E) || hold_help)
                     .then(|| session.my_position(&heroes).map(|p| p.as_vec3()))
                     .flatten();
+                radio.hero_at = session.my_position(&heroes).map(|p| p.as_vec3());
                 radio.update(frame.dt, holding);
                 radio.animate(world, frame.dt);
                 radio.rescues(world, frame.dt, &|at, heading| {
@@ -3744,6 +3745,11 @@ fn main() -> EngineResult<()> {
                 {
                     use hw_client::chat::{Channel, Voice};
                     for s in fight.said.drain(..) {
+                        chat.hear(&s, hero_at);
+                    }
+                    // Thanks from the people at rescues.
+                    for s in radio.said.drain(..) {
+                        fight.say_at(s.at, &s.text, s.voice);
                         chat.hear(&s, hero_at);
                     }
                     for l in story.heard.drain(..) {

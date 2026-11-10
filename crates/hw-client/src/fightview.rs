@@ -1272,6 +1272,33 @@ impl FightView {
                         self.note = Some(("Molehaven likes you better now.".into(), 4.0));
                     }
                 }
+                FxKind::Thanked => {
+                    // Someone saved (a mugging's victim, captives) thanks
+                    // their hero, a hand on the heart, before going.
+                    const THANKS: [&str; 6] = [
+                        "Thank you, hero! I was so scared!",
+                        "You showed those hoods! Thank you!",
+                        "Gee whiz, thanks! I'll tell everyone about you!",
+                        "My hero! Thank you so much!",
+                        "They took nothing, thanks to you. Bless you!",
+                        "Swell work! This town's lucky to have you.",
+                    ];
+                    let line = THANKS[e.amount as usize % THANKS.len()];
+                    let speaker = all.iter().find(|x| x.id == e.from);
+                    let head = speaker.map_or(at, pos);
+                    self.act(e.from, "thanks", hw_sim::incidents::THANK_SECONDS as f32);
+                    self.speak(head + Vec3::Y * 2.3, line.to_string(), Voice::Folk.colour());
+                    self.said.push(Said {
+                        at: head,
+                        range: chat::SAY_RANGE,
+                        who: speaker_name(speaker, "A townsperson"),
+                        text: line.to_string(),
+                        voice: Voice::Folk,
+                    });
+                    if on_me {
+                        self.note = Some(("They're grateful.".into(), 3.0));
+                    }
+                }
                 FxKind::Tip => {
                     // One of Hero Hall's heroes gives a newcomer a tip.
                     let who = all
@@ -1474,6 +1501,12 @@ impl FightView {
             text.to_string(),
             crate::chat::Voice::Me.colour(),
         );
+    }
+
+    /// Words someone says (`head`: where they stand), over their head in
+    /// their voice's colour.
+    pub fn say_at(&mut self, head: Vec3, text: &str, voice: crate::chat::Voice) {
+        self.speak(head + Vec3::Y * 2.3, text.to_string(), voice.colour());
     }
 
     /// Words someone says, over their head for a few seconds.

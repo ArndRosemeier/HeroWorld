@@ -268,14 +268,40 @@ fn a_mugging_has_a_victim_and_the_crooks_turn_on_a_hero_who_steps_in() {
         sim.set_fighter(id, f);
     }
     // The police drones take them away; then it is over.
-    for _ in 0..20 {
+    let mut thanked = Vec::new();
+    for _ in 0..20 * TICK_HZ {
         if sim.incidents.open.iter().all(|i| i.id != inc.id) {
             break;
         }
-        run(&mut sim, 1.0, &mut news);
+        sim.step();
+        thanked.extend(
+            sim.fx()
+                .iter()
+                .filter(|e| e.kind == hw_net::FxKind::Thanked)
+                .copied(),
+        );
     }
     assert!(sim.incidents.open.iter().all(|i| i.id != inc.id));
-    run(&mut sim, 4.0, &mut news);
+    // The one they saved thanks the hero standing by, standing still a
+    // moment, before walking off.
+    sim.step();
+    thanked.extend(
+        sim.fx()
+            .iter()
+            .filter(|e| e.kind == hw_net::FxKind::Thanked)
+            .copied(),
+    );
+    assert!(
+        thanked.iter().any(|e| e.to == hero && e.from == v.id),
+        "no thanks for the hero"
+    );
+    run(&mut sim, incidents::THANK_SECONDS - 0.5, &mut news);
+    let still = victim(&mut sim).expect("still there");
+    assert!(
+        DVec3::from_array(still.pos).distance(at) < 0.5,
+        "left without a word"
+    );
+    run(&mut sim, 4.5, &mut news);
     assert!(!mugging_alarm(&sim), "it's over");
     let leaving = victim(&mut sim).expect("still walking off");
     assert!(

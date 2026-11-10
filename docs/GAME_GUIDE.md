@@ -524,15 +524,17 @@ them (they stop waiting 12 s after the hero stops closing in).
 
 "Bonus" is karma on top of the villains' own: for fights the group's worth again times that
 factor, for rescues per person freed. The crooks of a crime mind their own business until a
-hero steps within its reach; a mugging's victim walks off once you deal with the muggers.
+hero steps within its reach; a mugging's victim (and townsfolk the villains held) first thanks the nearest hero within 30 m,
+standing 3 s, then walks off once you deal with the muggers.
 
 **Rescues:** stand within 3.5 m of the next trapped person and hold **E**; a bar under the
 prompt fills while you hold it (4 s for a crash, 5 s digging out of rubble, 3 s at a fire, 60%
-of that at a fire put out with a freeze ray). Let go and it drains again. Freed people walk off
-out of the way. The last one out is hurt, and an **ambulance** drives up the street and parks
+of that at a fire put out with a freeze ray). Let go and it drains again. Freed people turn to
+their hero, thank them out loud (over their head and in the Local chat) with a hand on the heart
+and a wave for about 3 s, then walk off out of the way. The last one out is hurt, and an **ambulance** drives up the street and parks
 at a kerb about 50 m away: the hero who freed them carries them there in both arms (a red cross
 on the compass, "Carry them to the ambulance, N m"); within 5 m the medic in white takes them
-(double Guardian karma), they are lifted in at the back and the ambulance drives off down the
+(double Guardian karma), the hurt one and the medic say a word of thanks, they are lifted in at the back and the ambulance drives off down the
 street. A carrier who is knocked down drops them; anyone lifts them again by holding E for a
 second (a bar shows it too). The trapped, the hurt and the medic are townsfolk like the people
 on the street. A building that heroes or the colossus bring down

@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.140 (2026-11-10)
+
+- People you save are grateful: they turn to you, put a hand on their heart, wave and thank you out loud (you see it over their heads and in the Local chat) before they go.
+- The hurt one you carry to the ambulance thanks you too, and the medic tells you it was good work.
+- Someone you saved from muggers, and people the villains held, stop and thank you before walking off.
+
 ## 0.139 (2026-11-10)
 
 - Click a villain to target it, even far down the street (up to 150 m; Tab reaches 60 m). Up close the click also punches.

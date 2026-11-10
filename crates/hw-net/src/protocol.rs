@@ -905,6 +905,9 @@ pub enum FxKind {
     /// the power's code, `amount` the reason (a [`fizzle`] constant) plus
     /// the power's theme times 256.
     Fizzle,
+    /// Someone a hero saved (a bystander `from`) thanks hero `to`
+    /// (`amount`: which words).
+    Thanked,
 }
 
 /// Why a power a hero asked for did not fire ([`FxKind::Fizzle`]).
@@ -979,6 +982,7 @@ impl FxKind {
             FxKind::Bomb => 49,
             FxKind::Patch => 50,
             FxKind::Fizzle => 51,
+            FxKind::Thanked => 52,
         }
     }
 
@@ -1035,6 +1039,7 @@ impl FxKind {
             49 => FxKind::Bomb,
             50 => FxKind::Patch,
             51 => FxKind::Fizzle,
+            52 => FxKind::Thanked,
             _ => return Err(WireError),
         })
     }

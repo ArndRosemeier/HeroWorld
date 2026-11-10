@@ -306,7 +306,8 @@ pub fn add_seated_clips(model: &mut AnimatedModel) -> Result<(), String> {
 /// their back on the ground; the model's origin is the ground under the
 /// hips, the head towards -Z) and "carried" (in a hero's arms: tipped back,
 /// knees over one arm, an arm hanging; the hips at the origin, the legs
-/// towards +Z).
+/// towards +Z), and "thanks" (a hand on the heart and a wave, for their
+/// hero).
 pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
     use std::f32::consts::TAU;
     let wave = make_clip(model, "wave", 1.2, |t| {
@@ -392,9 +393,26 @@ pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
             lay: Some(0.0),
         }
     })?;
-    let names = ["wave", "beckon", "lie", "carried"];
+    let thanks = make_clip(model, "thanks", 1.4, |t| {
+        // A hand on the heart, the other raised in a happy little wave,
+        // a small bow of the head and shoulders.
+        let w = (t * TAU * 2.0).sin();
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", -0.25, -0.75, 0.45),
+                aim("lowerarm_r", "hand_r", 0.75, 0.45, 0.35),
+                aim("upperarm_l", "lowerarm_l", 0.55, 0.35, 0.45),
+                aim("lowerarm_l", "hand_l", 0.15 + 0.35 * w, 1.0, 0.2),
+            ],
+            turns: vec![("spine_03", Vec3::X, 0.12), ("head", Vec3::X, 0.1)],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let names = ["wave", "beckon", "lie", "carried", "thanks"];
     model.clips.retain(|c| !names.contains(&c.name.as_str()));
-    model.clips.extend([wave, beckon, lie, carried]);
+    model.clips.extend([wave, beckon, lie, carried, thanks]);
     Ok(())
 }
 

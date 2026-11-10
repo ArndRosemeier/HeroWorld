@@ -213,7 +213,11 @@ fn the_iron_legion_holds_townsfolk_until_it_is_beaten() {
         run(&mut sim, 1.0);
     }
     assert!(sim.incidents.open.iter().all(|i| i.id != inc.id));
-    run(&mut sim, incidents::LEAVE_SECONDS + 1.0);
+    // They thank the hero first (standing a moment), then go.
+    run(
+        &mut sim,
+        incidents::THANK_SECONDS + incidents::LEAVE_SECONDS + 1.0,
+    );
     assert!(captives(&mut sim).is_empty(), "the captives went home");
 }
 

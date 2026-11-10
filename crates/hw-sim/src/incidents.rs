@@ -453,7 +453,14 @@ pub struct Bystander {
     pub incident: u32,
     /// Walking off: the way, and the tick they are gone.
     pub leaving: Option<(DVec2, u64)>,
+    /// Standing to thank their hero until this tick, before walking off.
+    pub thanking_until: u64,
 }
+
+/// Seconds someone saved stands thanking their hero before they go.
+pub const THANK_SECONDS: f64 = 3.0;
+/// A hero this near when it is over gets thanked (m).
+pub const THANK_REACH: f64 = 30.0;
 
 /// Seconds a bystander walks off before they are gone.
 pub const LEAVE_SECONDS: f64 = 12.0;
@@ -495,25 +502,52 @@ fn spawn_bystander(world: &mut World, tick: u64, incident: u32, at: DVec3, facin
         Bystander {
             incident,
             leaving: None,
+            thanking_until: 0,
         },
         crate::LastChange(tick),
     ));
 }
 
-/// The crime is over: its bystanders walk off, away from where it was.
+/// The crime is over: its bystanders turn to the nearest hero and thank
+/// them, then walk off, away from where it was.
 fn release_bystanders(world: &mut World, tick: u64, incident: u32) {
-    for (mut b, o) in world
-        .query::<(&mut Bystander, &crate::Orientation)>()
+    let mut heroes: Vec<(NetId, DVec3)> = world
+        .query::<(&Hero, &Net, &Motion, &Fighter)>()
+        .iter(world)
+        .filter(|(_, _, _, f)| f.standing())
+        .map(|(_, n, m, _)| (n.0, m.0.pos))
+        .collect();
+    heroes.sort_by_key(|h| h.0);
+    let mut fx = Vec::new();
+    for (n, m, mut b, mut o) in world
+        .query::<(&Net, &Motion, &mut Bystander, &mut crate::Orientation)>()
         .iter_mut(world)
     {
-        if b.incident == incident && b.leaving.is_none() {
-            // Turn aside from the muggers and go.
-            let q = glam::Quat::from_array(o.0);
-            let f = q * glam::Vec3::Z;
-            let away = DVec2::new(f.z as f64, -f.x as f64).normalize_or(DVec2::X);
-            b.leaving = Some((away, tick + ticks(LEAVE_SECONDS)));
+        if b.incident != incident || b.leaving.is_some() {
+            continue;
         }
+        // Turn aside from the muggers and go.
+        let q = glam::Quat::from_array(o.0);
+        let f = q * glam::Vec3::Z;
+        let away = DVec2::new(f.z as f64, -f.x as f64).normalize_or(DVec2::X);
+        let hero = heroes
+            .iter()
+            .filter(|h| h.1.distance(m.0.pos) < THANK_REACH)
+            .min_by(|a, b| a.1.distance(m.0.pos).total_cmp(&b.1.distance(m.0.pos)));
+        let mut wait = 0.0;
+        if let Some(&(h, at)) = hero {
+            // First a word of thanks, facing them.
+            let to = DVec2::new(at.x - m.0.pos.x, at.z - m.0.pos.z);
+            o.0 = yaw_quat(to.normalize_or(DVec2::Y));
+            b.thanking_until = tick + ticks(THANK_SECONDS);
+            wait = THANK_SECONDS;
+            let mut e = combat::event(tick, hw_net::FxKind::Thanked, n.0, h, m.0.pos);
+            e.amount = (n.0 .0 % 64) as u16;
+            fx.push(e);
+        }
+        b.leaving = Some((away, tick + ticks(LEAVE_SECONDS + wait)));
     }
+    world.resource_mut::<Fights>().events.extend(fx);
 }
 
 /// Bystanders walking off, and gone once out of sight.
@@ -529,6 +563,11 @@ fn walk_bystanders(world: &mut World, tick: u64) {
         };
         if tick >= until {
             gone.push(e);
+            continue;
+        }
+        if tick < b.thanking_until {
+            // Still thanking their hero.
+            m.0.vel = DVec3::ZERO;
             continue;
         }
         let step = dir * LEAVE_SPEED * DT;

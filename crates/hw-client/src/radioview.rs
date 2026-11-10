@@ -217,6 +217,46 @@ struct Walker {
     dir: Vec3,
     age: f32,
     unseen: f32,
+    /// Seconds still to stand thanking the hero at `hero` first.
+    thank: f32,
+    hero: Option<Vec3>,
+}
+
+/// How long someone got out stands thanking their hero (s).
+const THANK_SECONDS: f32 = 2.8;
+
+/// What the people got out say to their hero.
+const THANKS: [&str; 8] = [
+    "Thank you, hero! I thought I was done for!",
+    "Gee, thanks! You're the real deal!",
+    "My hero! I won't ever forget this!",
+    "Swell work, pal. Thank you, thank you!",
+    "Bless you! I owe you my life!",
+    "Holy smokes, you did it! Thanks a million!",
+    "Wait till I tell the folks at home about you!",
+    "You came! Oh, thank you!",
+];
+/// The hurt one, lifted into the ambulance.
+const HURT_THANKS: [&str; 3] = [
+    "Thank you... you saved my life.",
+    "I'll be all right now... thanks to you, hero.",
+    "Don't know who you are... but thank you.",
+];
+/// The medic, taking them over.
+const MEDIC_WORDS: [&str; 3] = [
+    "Nice work, hero! We'll take it from here.",
+    "Good job. They'll pull through, thanks to you.",
+    "Easy does it... we've got them. Well done!",
+];
+
+/// Who someone at a rescue is, in the chat log.
+fn rescued_name(kind: IncidentKind) -> &'static str {
+    match kind {
+        IncidentKind::CarCrash => "A driver",
+        IncidentKind::Fire => "A resident",
+        IncidentKind::Collapse => "A survivor",
+        _ => "A townsperson",
+    }
 }
 
 /// How long the hurt one takes to be lifted in and the medic to get round
@@ -311,6 +351,11 @@ pub struct Radio {
     pub cast: Cast,
     leaving: Vec<Leaving>,
     walkers: Vec<Walker>,
+    /// Where our hero is (people thank them), set each frame.
+    pub hero_at: Option<Vec3>,
+    /// What people at rescues said this frame (thanks): shown over their
+    /// heads and logged in the chat.
+    pub said: Vec<crate::chat::Said>,
     /// Our hero is holding the help key at a rescue just now.
     holding: bool,
 }
@@ -912,6 +957,22 @@ impl Radio {
     fn walk(&mut self, world: &mut World, dt: f32) {
         let mut keep = Vec::with_capacity(self.walkers.len());
         for mut w in std::mem::take(&mut self.walkers) {
+            if w.thank > 0.0 {
+                // Facing their hero, thanking them; then off they go.
+                w.thank -= dt;
+                let to = w.hero.map_or(w.dir, |h| h - w.at);
+                let yaw = to.x.atan2(to.z).to_degrees();
+                let _ = world.set_place(
+                    w.who.e,
+                    Place::new(w.at.x, w.at.y, w.at.z).with_yaw_deg(yaw),
+                );
+                if w.thank <= 0.0 && w.who.real {
+                    let _ = world.play_animation(w.who.e, "walk");
+                }
+                w.unseen = 0.0;
+                keep.push(w);
+                continue;
+            }
             let was = w.age;
             w.age += dt;
             if was < WALK_SECONDS {
@@ -1103,6 +1164,7 @@ impl Radio {
             return;
         };
         let f = Vec3::new(c.facing.x as f32, 0.0, c.facing.y as f32).normalize_or(Vec3::Z);
+        let mut out = Vec::new();
         while scene.people.len() > c.left as usize {
             let Some((who, place)) = scene.people.pop() else {
                 break;
@@ -1120,16 +1182,21 @@ impl Radio {
                 f
             };
             let at = Vec3::new(p.x, c.at.y, p.z);
+            let line = THANKS[(id as usize * 3 + scene.people.len()) % THANKS.len()];
+            let name = rescued_name(c.kind);
             self.walkers.push(Walker {
                 who,
                 at,
                 dir,
                 age: 0.0,
                 unseen: 0.0,
+                thank: 0.0,
+                hero: None,
             });
-            if who.real {
-                let _ = world.play_animation(who.e, "walk");
-            }
+            out.push((self.walkers.len() - 1, name, line));
+        }
+        for (w, name, line) in out {
+            self.start_thanks(world, w, name, line);
         }
     }
 
@@ -1137,15 +1204,45 @@ impl Radio {
     /// the way it carried them.
     pub fn walk_off(&mut self, world: &mut World, who: Shown, feet: Vec3, dir: Vec3) {
         let dir = Vec3::new(dir.x, 0.0, dir.z).normalize_or(Vec3::Z);
-        if who.real {
-            let _ = world.play_animation(who.e, "walk");
-        }
+        let k = (feet.x.abs() * 7.0 + feet.z.abs() * 3.0) as usize;
         self.walkers.push(Walker {
             who,
             at: feet,
             dir,
             age: 0.0,
             unseen: 0.0,
+            thank: 0.0,
+            hero: None,
+        });
+        let w = self.walkers.len() - 1;
+        self.start_thanks(world, w, "A townsperson", THANKS[k % THANKS.len()]);
+    }
+
+    /// Walker `w` turns to our hero (when near), thanks them out loud with
+    /// a hand on the heart and a wave, then walks off.
+    fn start_thanks(&mut self, world: &mut World, w: usize, name: &str, line: &str) {
+        let hero = self.hero_at;
+        let Some(wk) = self.walkers.get_mut(w) else {
+            return;
+        };
+        let near = hero.filter(|h| h.distance(wk.at) < 40.0);
+        if near.is_none() {
+            if wk.who.real {
+                let _ = world.play_animation(wk.who.e, "walk");
+            }
+            return;
+        }
+        wk.hero = near;
+        wk.thank = THANK_SECONDS;
+        if wk.who.real {
+            let _ = world.play_animation(wk.who.e, "thanks");
+        }
+        self.said.push(crate::chat::Said {
+            at: wk.at,
+            range: crate::chat::SAY_RANGE,
+            who: name.to_string(),
+            text: line.to_string(),
+            voice: crate::chat::Voice::Folk,
         });
     }
 
@@ -1273,6 +1370,29 @@ impl Radio {
     /// The hurt one is with the medic: they are lifted in at the back, the
     /// medic gets in at the front and the ambulance drives off.
     fn hand_over(&mut self, world: &mut World, id: u32) {
+        // A word of thanks from the stretcher, and one from the medic.
+        let medic = self
+            .calls
+            .get(&id)
+            .and_then(|c| c.casualty)
+            .map(|k| k.medic);
+        if let (Some(m), Some(h)) = (medic, self.hero_at) {
+            if m.distance(h) < 40.0 {
+                let k = id as usize;
+                for (who, text, up) in [
+                    ("The hurt one", HURT_THANKS[k % HURT_THANKS.len()], 0.0),
+                    ("The medic", MEDIC_WORDS[k % MEDIC_WORDS.len()], 0.7),
+                ] {
+                    self.said.push(crate::chat::Said {
+                        at: m + Vec3::Y * up,
+                        range: crate::chat::SAY_RANGE,
+                        who: who.to_string(),
+                        text: text.to_string(),
+                        voice: crate::chat::Voice::Folk,
+                    });
+                }
+            }
+        }
         let Some(scene) = self.scenes.get_mut(&id) else {
             return;
         };
