@@ -682,3 +682,27 @@ fn a_call_ends_when_its_villains_are_gone() {
     assert!(news.iter().any(|n| n.0 == inc.id && n.3 == 2));
     assert_eq!(sim.world.resource::<Fights>().spots[spot].members, 0);
 }
+
+#[test]
+fn a_car_crash_traps_one_person_and_holds_up_the_traffic() {
+    use hw_sim::incidents::IncidentKind;
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    sim.spawn_hero(PlayerId(1), sim.spawn_point(1));
+    sim.incidents.next_kind = Some(IncidentKind::CarCrash);
+    let mut news = Vec::new();
+    run(&mut sim, incidents::FIRST_SECONDS + 2.0, &mut news);
+    let inc = sim.incidents.open[0].clone();
+    assert_eq!(inc.kind, IncidentKind::CarCrash);
+    // One: the hero can carry only one out.
+    assert_eq!((inc.left, inc.victims().len()), (1, 1));
+    // The wrecks block the street: cars stop short of them while it lasts.
+    let at = glam::DVec2::new(inc.at.x, inc.at.z);
+    assert!(
+        sim.alarms
+            .car_stops()
+            .iter()
+            .any(|(c, r)| c.distance(at) < 0.5 && *r > 6.0),
+        "no car stop at the crash"
+    );
+}

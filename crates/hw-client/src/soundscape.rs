@@ -802,7 +802,9 @@ impl Soundscape {
             }
             let (clip, vol, range) = match kind {
                 AlarmKind::Robbery => ("alarm_bell", 0.8, 120.0),
-                AlarmKind::Mugging | AlarmKind::Fight => ("crowd_gasp", 0.8, 40.0),
+                AlarmKind::Mugging | AlarmKind::Fight | AlarmKind::Crash => {
+                    ("crowd_gasp", 0.8, 40.0)
+                }
                 AlarmKind::Collapse | AlarmKind::Explosion => ("scream_crowd_1", 0.9, 90.0),
                 AlarmKind::Warning => continue,
             };

@@ -2,7 +2,8 @@
 //! as a clock direction, how tough against you); the police visor
 //! ([`crate::visor`]) marks where each one is. Rescues show on the
 //! spot: a crash's two smashed cars smoking, a house's front in flames, and
-//! the people still trapped waving for help. The last one out is hurt: an
+//! the people still trapped (pinned by the legs in a wreck or rubble,
+//! waving for help at a fire). The last one out is hurt: an
 //! ambulance pulls up down the street, and the hero carries them there.
 
 use crate::fightview::con_colour;
@@ -105,7 +106,7 @@ impl Cast {
         self.model(look).is_some()
     }
 
-    /// Puts someone at `place` playing `clip` ("wave", "beckon", "lie",
+    /// Puts someone at `place` playing `clip` ("wave", "trapped", "beckon", "lie",
     /// "carried", "idle", "walk"): look `look` of the townsfolk, or the
     /// medic for `None`.
     pub fn spawn(
@@ -128,6 +129,16 @@ impl Cast {
         };
         let e = world.place(mesh, place).ok()?;
         Some(Shown { e, real: false })
+    }
+}
+
+/// What the still trapped at a `kind` of rescue play: "trapped" (sat
+/// pinned by the legs, tugging to get free) at a crash or in rubble,
+/// "wave" (calling for help) at a fire.
+fn trapped_clip(kind: IncidentKind) -> &'static str {
+    match kind {
+        IncidentKind::CarCrash | IncidentKind::Collapse => "trapped",
+        _ => "wave",
     }
 }
 
@@ -994,12 +1005,13 @@ impl Radio {
     /// Stand-ins become the townsfolk once their looks are built.
     fn recast(&mut self, world: &mut World) {
         for (id, scene) in self.scenes.iter_mut() {
+            let clip = self.calls.get(id).map_or("wave", |c| trapped_clip(c.kind));
             for (k, (who, place)) in scene.people.iter_mut().enumerate() {
                 let look = Some(rescued_look(*id, k));
                 if who.real || !self.cast.ready(look) {
                     continue;
                 }
-                if let Some(n) = self.cast.spawn(world, look, "wave", *place) {
+                if let Some(n) = self.cast.spawn(world, look, clip, *place) {
                     world.despawn(who.e);
                     *who = n;
                 }
@@ -1113,12 +1125,16 @@ impl Radio {
         self.people(world, id);
     }
 
-    /// The people still trapped, waving for help.
+    /// The people still trapped: pinned at a crash or in rubble, waving
+    /// for help at a fire.
     fn people(&mut self, world: &mut World, id: u32) {
         let Some(c) = self.calls.get(&id).copied() else {
             return;
         };
-        let yaw = c.facing.x.atan2(c.facing.y).to_degrees() as f32;
+        let clip = trapped_clip(c.kind);
+        // The pinned face the wreck or the rubble, their legs under it.
+        let turn = if clip == "trapped" { 180.0 } else { 0.0 };
+        let yaw = c.facing.x.atan2(c.facing.y).to_degrees() as f32 + turn;
         let mut shown = Vec::new();
         for (k, p) in victims(c.kind, c.at.as_dvec3(), c.facing, c.left)
             .into_iter()
@@ -1127,7 +1143,7 @@ impl Radio {
             let place = Place::new(p.x as f32, p.y as f32, p.z as f32).with_yaw_deg(yaw);
             if let Some(s) = self
                 .cast
-                .spawn(world, Some(rescued_look(id, k)), "wave", place)
+                .spawn(world, Some(rescued_look(id, k)), clip, place)
             {
                 shown.push((s, place));
             }

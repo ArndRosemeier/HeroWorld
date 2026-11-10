@@ -901,6 +901,7 @@ impl Sim {
                     IncidentKind::Mugging => AlarmKind::Mugging,
                     IncidentKind::Robbery => AlarmKind::Robbery,
                     IncidentKind::Rampage | IncidentKind::Breakout => AlarmKind::Fight,
+                    IncidentKind::CarCrash => AlarmKind::Crash,
                     _ => return None,
                 };
                 Some((i.id, kind, i.at))
@@ -1074,6 +1075,7 @@ impl Sim {
         movers.extend(self.story.statue_solids());
         if let Some(t) = self.wrecks.traffic.as_mut() {
             t.set_blockers(&standing, &stops);
+            t.set_blocked(&self.alarms.road_blocks());
             t.advance_to(now);
             movers.extend(t.car_solids(&heroes, 25.0, now));
         }

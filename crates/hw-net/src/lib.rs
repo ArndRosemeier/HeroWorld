@@ -30,7 +30,7 @@ pub use transport::{
 };
 
 /// Protocol version. Server and client must match exactly to play together.
-pub const PROTOCOL_VERSION: u32 = 35;
+pub const PROTOCOL_VERSION: u32 = 36;
 
 /// Most players in one world.
 pub const MAX_PLAYERS: usize = 10;

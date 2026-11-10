@@ -1501,8 +1501,12 @@ fn main() -> EngineResult<()> {
         distance: 7.0,
         boom: Default::default(),
     };
-    // `HW_CAM_DIST` and `HW_CAM_PITCH` set the hero camera (close-up screenshots).
+    // `HW_CAM_DIST` and `HW_CAM_PITCH` set the hero camera (close-up screenshots),
+    // `HW_CAM_TURN` turns it (degrees, to the left).
     let cam_env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f32>().ok());
+    if let Some(t) = cam_env("HW_CAM_TURN") {
+        hero_cam.yaw += t;
+    }
     if let Some(d) = cam_env("HW_CAM_DIST") {
         hero_cam.distance = d.clamp(0.0, HeroCamera::MAX_DISTANCE);
     }
@@ -3597,6 +3601,7 @@ fn main() -> EngineResult<()> {
                 .collect();
             standing.extend(radio.lying().map(|p| p.as_dvec3()));
             traffic.set_blockers(&standing, &alarms.car_stops());
+            traffic.set_blocked(&alarms.road_blocks());
             let game_time = session.time(tick_clock.frac());
             let eye = world.camera().eye();
             let eye2 = DVec2::new(eye.x as f64, eye.z as f64);

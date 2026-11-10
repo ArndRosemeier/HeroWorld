@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.154 (2026-11-10)
+
+- A car crash traps one person now, and they look trapped: half under the wreck with their legs pinned, pushing and tugging to get free, wincing. People buried by a collapse struggle the same way.
+- Traffic no longer drives into a crash and parks on the wrecks: cars wait short of it, and people nearby stop and look.
+
 ## 0.153 (2026-11-10)
 
 - Engine 0.047: on computers without a real graphics card (software drawing), airships and

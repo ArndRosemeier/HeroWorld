@@ -163,7 +163,7 @@ impl IncidentKind {
             IncidentKind::Robbery => "Robbery in progress",
             IncidentKind::Rampage => "Mutant rampage",
             IncidentKind::Breakout => "Lab breakout",
-            IncidentKind::CarCrash => "Car crash, people trapped",
+            IncidentKind::CarCrash => "Car crash, someone trapped",
             IncidentKind::Fire => "Fire, people inside",
             IncidentKind::Colossus => "The colossus is loose!",
             IncidentKind::Collapse => "Building collapse, people trapped",
@@ -176,7 +176,8 @@ impl IncidentKind {
     /// People to get out (none for a fight).
     pub fn trapped(self) -> u8 {
         match self {
-            IncidentKind::CarCrash => 2,
+            // One: the hero carries them out, and only one at a time.
+            IncidentKind::CarCrash => 1,
             IncidentKind::Fire | IncidentKind::Collapse => 3,
             _ => 0,
         }
@@ -232,8 +233,9 @@ impl IncidentKind {
             IncidentKind::Robbery => 1.5,
             IncidentKind::Rampage => 2.0,
             IncidentKind::Breakout => 2.5,
-            // Per person got out.
-            IncidentKind::CarCrash => 3.0,
+            // Per person got out (a crash has one: as much as two used
+            // to pay).
+            IncidentKind::CarCrash => 6.0,
             IncidentKind::Fire => 2.5,
             IncidentKind::Colossus => 1.5,
             IncidentKind::Collapse => 3.0,
@@ -434,8 +436,8 @@ impl Incident {
     }
 }
 
-/// Where the trapped people of an incident are: a crash's beside the
-/// doors of its two cars, a fire's at the door and windows of the house.
+/// Where the trapped people of an incident are: a crash's at the door
+/// of its first car (a second would be at the other's), a fire's at the door and windows of the house.
 /// The server and every client place them alike.
 pub fn victims(kind: IncidentKind, at: DVec3, facing: DVec2, left: u8) -> Vec<DVec3> {
     let f = DVec3::new(facing.x, 0.0, facing.y).normalize_or(DVec3::X);

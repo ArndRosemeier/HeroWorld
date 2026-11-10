@@ -365,6 +365,10 @@ pub struct Traffic {
     /// loop) of heroes standing in the road and of trouble ahead (see
     /// [`Self::set_blockers`]).
     holds: Vec<Vec<f64>>,
+    /// Spots the road is blocked by something standing on it (a crash's
+    /// wrecks): no street car is on the road within them (see
+    /// [`Self::set_blocked`]).
+    blocked: Vec<(DVec2, f64)>,
     /// The street cars now and one step ago, by lane, in order along it.
     cars: Vec<Vec<Car>>,
     prev: Vec<Vec<Car>>,
@@ -465,6 +469,7 @@ impl Traffic {
             cars: Vec::new(),
             prev: Vec::new(),
             holds: Vec::new(),
+            blocked: Vec::new(),
             time: 0.0,
             world,
         }
@@ -987,6 +992,49 @@ impl Traffic {
         }
     }
 
+    /// Spots where something stands on the road from now on (where, and
+    /// how far round it): street cars on the road there pull off it (they
+    /// are not drawn, as parked cars) and come back only outside them. Pair
+    /// it with trouble in [`Self::set_blockers`] so the others stop short.
+    /// Every machine sets this from what it sees, before driving on.
+    pub fn set_blocked(&mut self, spots: &[(DVec2, f64)]) {
+        self.blocked = spots.to_vec();
+        for &(c, r) in spots {
+            for li in self.street_lanes_near(c, r) {
+                let path = &self.ground[li].path;
+                for (k, car) in self.cars[li].iter_mut().enumerate() {
+                    if car.parked || car.wrecked || path.sample(car.s).0.distance(c) >= r {
+                        continue;
+                    }
+                    car.parked = true;
+                    car.waited = 0;
+                    car.v = 0.0;
+                    if let Some(p) = self.prev.get_mut(li).and_then(|p| p.get_mut(k)) {
+                        *p = *car;
+                    }
+                }
+            }
+        }
+    }
+
+    /// The street lanes that come within `r` of `c`.
+    fn street_lanes_near(&self, c: DVec2, r: f64) -> Vec<usize> {
+        let (c0, c1) = (cell_of(c - DVec2::splat(r)), cell_of(c + DVec2::splat(r)));
+        let mut lanes = Vec::new();
+        for x in c0.0..=c1.0 {
+            for (_, list) in self.grid.range((x, c0.1)..=(x, c1.1)) {
+                for &(flies, lane, _, _) in list {
+                    if !flies {
+                        lanes.push(lane as usize);
+                    }
+                }
+            }
+        }
+        lanes.sort_unstable();
+        lanes.dedup();
+        lanes
+    }
+
     /// Every street lane coming within `r` of `c`: a hold where it comes in.
     fn hold_lanes(&mut self, c: DVec2, r: f64) {
         let (c0, c1) = (cell_of(c - DVec2::splat(r)), cell_of(c + DVec2::splat(r)));
@@ -1050,6 +1098,14 @@ impl Traffic {
                 || ahead(sm, z.from, len) < CAR_LEN * 2.0
         });
         if in_junction {
+            return c;
+        }
+        let at = self.ground[li].path.sample(sm).0;
+        if self
+            .blocked
+            .iter()
+            .any(|&(b, r)| at.distance(b) < r + CAR_LEN)
+        {
             return c;
         }
         // Unwrapped next to the car behind, so the order holds.
@@ -1843,6 +1899,44 @@ mod tests {
                     assert!(next > d - 0.5, "a car drives into the trouble");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn no_car_stands_where_the_road_is_blocked() {
+        let mut t = traffic();
+        t.advance_to(40.0);
+        // A crash right where a moving car is.
+        let (li, k) = t
+            .cars
+            .iter()
+            .enumerate()
+            .find_map(|(li, cars)| {
+                cars.iter()
+                    .position(|c| !c.parked && c.v > 5.0)
+                    .map(|k| (li, k))
+            })
+            .expect("a moving car");
+        let c = t.ground[li].path.sample(t.cars[li][k].s).0;
+        let on_road_within = |t: &Traffic, r: f64| {
+            t.cars.iter().enumerate().any(|(li, cars)| {
+                cars.iter().enumerate().any(|(k, _)| {
+                    t.vehicle(id_of(false, li as u32, k as u64), t.time())
+                        .is_some_and(|v| DVec2::new(v.pos.x, v.pos.z).distance(c) < r)
+                })
+            })
+        };
+        assert!(on_road_within(&t, 6.0));
+        // A minute and a half of it (parked cars come back after one).
+        for _ in 0..(90.0 / STEP) as usize {
+            t.set_blockers(&[], &[(c, 9.0)]);
+            t.set_blocked(&[(c, 6.0)]);
+            t.advance_to(t.time() + STEP);
+            assert!(
+                !on_road_within(&t, 5.5),
+                "a car on the wrecks at {:.1} s",
+                t.time()
+            );
         }
     }
 

@@ -467,9 +467,76 @@ pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
             lay: None,
         }
     })?;
-    let names = ["wave", "beckon", "lie", "carried", "thanks"];
+    let trapped = make_clip(model, "trapped", 3.0, |t| {
+        // Half lying, legs pinned (the game puts them under the wreck or the
+        // rubble), up on the right elbow. Twice a loop they heave up and tug
+        // at the stuck knee with the left hand, then sink back, the head
+        // tipped back in pain and the left hand pushing at what holds them.
+        let x = (t * 2.0).rem_euclid(1.0);
+        // Quick in, slow out: a strain, then giving up.
+        let k = if x < 0.25 {
+            (x / 0.25 * std::f32::consts::FRAC_PI_2).sin()
+        } else {
+            (1.0 - (x - 0.25) / 0.75).max(0.0).powi(2)
+        };
+        let shake = (t * TAU * 22.0).sin() * k;
+        // The whole body tips back about the hips, the back curls up on a
+        // heave. Aims come first and the turns carry them along, so each is
+        // aimed in the body as it will be tipped.
+        let hips = -0.85;
+        let back = 0.1 + 0.35 * k;
+        let legs = Quat::from_axis_angle(Vec3::X, -hips);
+        let arms = Quat::from_axis_angle(Vec3::X, -(hips + back));
+        let leg = |bone, child, d: Vec3| Aim {
+            bone,
+            child,
+            dir: legs * d,
+        };
+        let arm = |bone, child, d: Vec3| Aim {
+            bone,
+            child,
+            dir: arms * d,
+        };
+        Pose {
+            aims: vec![
+                // Straight out along the ground, a little apart.
+                leg("thigh_l", "calf_l", Vec3::new(0.12, -0.12, 1.0)),
+                leg("calf_l", "foot_l", Vec3::new(0.08, -0.05, 1.0)),
+                leg("thigh_r", "calf_r", Vec3::new(-0.14, -0.1, 1.0)),
+                leg("calf_r", "foot_r", Vec3::new(-0.1, -0.05, 1.0)),
+                // Up on the right elbow, the forearm flat behind.
+                arm("upperarm_r", "lowerarm_r", Vec3::new(-0.35, -0.9, -0.25)),
+                arm("lowerarm_r", "hand_r", Vec3::new(-0.2, -0.1, -1.0)),
+                // The left hand pushes at what holds the legs, then grabs
+                // the knee on a heave.
+                arm(
+                    "upperarm_l",
+                    "lowerarm_l",
+                    Vec3::new(0.3, 0.1 - 0.5 * k, 1.0),
+                ),
+                arm(
+                    "lowerarm_l",
+                    "hand_l",
+                    Vec3::new(0.05, 0.25 - 0.75 * k + 0.05 * shake, 1.0),
+                ),
+            ],
+            turns: vec![
+                ("pelvis", Vec3::X, hips),
+                ("spine_01", Vec3::X, back),
+                ("spine_02", Vec3::Y, 0.15 * k + 0.03 * shake),
+                ("head", Vec3::X, -0.35 + 0.75 * k),
+                ("head", Vec3::Y, 0.3 * (1.0 - k) * (t * TAU).sin()),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: Some(0.13),
+        }
+    })?;
+    let names = ["wave", "beckon", "lie", "carried", "thanks", "trapped"];
     model.clips.retain(|c| !names.contains(&c.name.as_str()));
-    model.clips.extend([wave, beckon, lie, carried, thanks]);
+    model
+        .clips
+        .extend([wave, beckon, lie, carried, thanks, trapped]);
     Ok(())
 }
 

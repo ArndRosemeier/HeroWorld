@@ -534,7 +534,7 @@ A fight's call stands only while its crooks do: with none of them left, or none 
 | Robbery in progress | 20% | 4 Syndicate gunsels at a shop front (outside the quarter) | +1 | 12 m | ×1.5 |
 | Mutant rampage | 15% | a Mutant Alpha leading 3 brutes | +2 | 16 m | ×2.0 |
 | Lab breakout | 12% | a Robo-Sentry leading 5 technicians at one of the Doctor's labs | +2 | 18 m | ×2.5 |
-| Car crash, people trapped | 14% | two smashed, smoking cars, 2 people (4 s each) | – | – | 3 per person |
+| Car crash, someone trapped | 14% | two smashed, smoking cars, 1 driver pinned by the legs (4 s) | – | – | 6 |
 | Fire, people inside | 14% | a house in flames, 3 people (3 s each) | – | – | 2.5 per person |
 | The colossus is loose! | 8% | the walking tank (level 3+, every 25 min at most) | +3 | everyone | ×1.5 |
 | Building collapse | follows a collapse | 3 people in the rubble (5 s each digging) | – | – | 3 per person |
@@ -554,7 +554,8 @@ on the compass, "Carry them to the ambulance, N m"); within 5 m the medic in whi
 (double Guardian karma), the hurt one and the medic say a word of thanks, they are lifted in at the back and the ambulance drives off down the
 street. A carrier who is knocked down drops them; anyone lifts them again by holding E for a
 second (a bar shows it too). The trapped, the hurt and the medic are townsfolk like the people
-on the street. A building that heroes or the colossus bring down
+on the street. At a crash or in rubble the trapped sit pinned by the legs, tugging to get free and
+wincing; at a fire they wave from the door and windows. A building that heroes or the colossus bring down
 starts a collapse rescue at its front (one per pile; it does not count against the radio's
 limit).
 
