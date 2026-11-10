@@ -913,12 +913,16 @@ fn near_floor(c: &mut Ctx, level: usize, first_of_tier: bool) {
             let mut t = s0;
             let mut spans = Vec::new();
             for &(op, t0, t1, ya, _) in &cut {
-                if ya < plinth + 0.12 {
+                // A window just above the ledge (a stair window at the
+                // landing) has its sill where the ledge would be: the
+                // ledge stops short of the sill rather than double it.
+                let window = op.kind == OpeningKind::Window;
+                if ya < plinth + 0.12 || (window && ya < plinth + 0.27) {
                     // The entrance portal stands proud of the wall beside the door.
-                    let m = if op.kind == OpeningKind::Entrance {
-                        0.45
-                    } else {
-                        0.0
+                    let m = match op.kind {
+                        OpeningKind::Entrance => 0.45,
+                        OpeningKind::Window => 0.1,
+                        _ => 0.0,
                     };
                     if t0 - m > t {
                         spans.push((t, t0 - m));
@@ -1346,7 +1350,7 @@ fn blade_sign(c: &mut Ctx, w: &Wall, t: f64, y: (f64, f64), op: &Opening) {
             .collect()
     };
     let cream = rgb(250, 240, 214);
-    let (sf, sb) = (star(th + 0.006), star(-th - 0.006));
+    let (sf, sb) = (star(th + 0.02), star(-th - 0.02));
     for (pts, nrm) in [(sf, a), (sb, -a)] {
         let centre = w.at(t + if nrm == a { th + 0.006 } else { -th - 0.006 }, cy, cd);
         for k in 0..10 {

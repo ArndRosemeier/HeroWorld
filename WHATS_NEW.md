@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.128 (2026-11-10)
+
+- Fixed flickering on some stairwell window sills and on the stars of the hanging shop signs.
+
 ## 0.127 (2026-11-10)
 
 - The Doctor's quarter looks dangerous now, and you can tell it from across town: brick smokestacks with glowing red bands pour dark smoke, and searchlights sweep the sky at night.
