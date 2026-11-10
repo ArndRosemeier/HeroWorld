@@ -862,6 +862,9 @@ Heroes cannot target townsfolk.
   people standing or lying in the road, and short of a fight or collapse.
 - **Sky lanes:** hover cars and flying taxis cruise over the main roads at 34, 46 and 58 m,
   banking into turns.
+- Cars are placed every drawn frame from the game clock (`Session::time`: every server tick
+  sent plus the part of a tick the frame is into, `hostthread::TickClock`), between the
+  traffic's last two 0.1 s steps, so they glide at any frame rate.
 - Cars are solid: you bump into them and can stand on their roofs. Knocked-over lights go
   dark. All players see the same traffic.
 - **People in cars** (`hw-client/src/riderview.rs`): every car, hover car and flying taxi

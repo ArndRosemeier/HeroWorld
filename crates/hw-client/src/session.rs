@@ -490,11 +490,13 @@ impl Session {
     }
 
     /// The game clock in seconds (the server's ticks), `frac` of a tick
-    /// on: citizens and anything else made from time read it, so every
-    /// player sees them alike.
+    /// on: citizens, cars and anything else made from time read it, so
+    /// every player sees them alike. In single player it counts every tick
+    /// sent, not the view's (a frame behind): read with the same
+    /// [`hw_sim::hostthread::TickClock`], it moves on by each frame's time.
     pub fn time(&self, frac: f64) -> f64 {
         match self {
-            Session::Local { host, .. } => (host.view().tick as f64 + frac) * hw_sim::DT,
+            Session::Local { host, .. } => (host.sent_tick() as f64 + frac) * hw_sim::DT,
             Session::Remote { interp, .. } => interp.render_tick() * hw_sim::DT,
         }
     }

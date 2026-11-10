@@ -1340,7 +1340,7 @@ fn main() -> EngineResult<()> {
     let mut hero_entities: BTreeMap<hw_core::NetId, (EntityId, bool)> = BTreeMap::new();
     // Taxi canopies: the hinged part, and how far open (0 shut, 1 up).
     let mut canopies: BTreeMap<hw_core::NetId, (EntityId, f32)> = BTreeMap::new();
-    let mut tick_clock = 0.0f64;
+    let mut tick_clock = hw_sim::hostthread::TickClock::default();
     // The hero's flight toggle (V); sent with every input.
     let mut hero_flies = std::env::var_os("HW_FLY").is_some() || view == "sky" || view == "far";
 
@@ -2015,7 +2015,7 @@ fn main() -> EngineResult<()> {
             let creating = hero_file.is_none();
             hw_client::hitch::mark("sky and lights");
             // The day runs: sky, grade, lit windows and the people out.
-            let hour = hour_now(session.time(tick_clock / hw_sim::DT));
+            let hour = hour_now(session.time(tick_clock.frac()));
             if swoop.is_none() {
                 hw_client::lighting::set_sky(world, hour);
             }
@@ -2042,11 +2042,11 @@ fn main() -> EngineResult<()> {
             }
             hw_client::hitch::mark("mast");
             if let Some(m) = extras.mast.as_mut() {
-                m.update(world, session.time(tick_clock / hw_sim::DT), frame.dt)?;
+                m.update(world, session.time(tick_clock.frac()), frame.dt)?;
             }
             hw_client::hitch::mark("rocket port");
             if let Some(r) = extras.rocket.as_mut() {
-                r.update(world, session.time(tick_clock / hw_sim::DT), frame.dt)?;
+                r.update(world, session.time(tick_clock.frac()), frame.dt)?;
             }
             hw_client::hitch::mark("atom");
             if let Some(a) = extras.atom.as_mut() {
@@ -2054,7 +2054,7 @@ fn main() -> EngineResult<()> {
             }
             hw_client::hitch::mark("drill rig");
             if let Some(d) = extras.drill.as_mut() {
-                d.update(world, session.time(tick_clock / hw_sim::DT))?;
+                d.update(world, session.time(tick_clock.frac()))?;
             }
             hw_client::hitch::mark("weather tower");
             if let Some(w) = extras.weather.as_mut() {
@@ -2064,7 +2064,7 @@ fn main() -> EngineResult<()> {
                         != hw_client::soundscape::Under::No;
                 w.update(
                     world,
-                    session.time(tick_clock / hw_sim::DT),
+                    session.time(tick_clock.frac()),
                     hour,
                     frame.dt,
                     sheltered,
@@ -2459,11 +2459,8 @@ fn main() -> EngineResult<()> {
 
             hw_client::hitch::mark("server ticks");
             // Fixed ticks for the game, however fast frames come.
-            tick_clock += frame.dt as f64;
-            let mut ticks = 0;
-            while tick_clock >= hw_sim::DT && ticks < 5 {
-                tick_clock -= hw_sim::DT;
-                ticks += 1;
+            let ticks = tick_clock.advance(frame.dt as f64);
+            for _ in 0..ticks {
                 // A power key goes out once, with the next tick.
                 // (a click shorter than a tick still punches).
                 let mut i = hero_input;
@@ -2483,9 +2480,6 @@ fn main() -> EngineResult<()> {
                 }
             }
             hw_client::hitch::count("server ticks", ticks as u64);
-            if ticks == 5 {
-                tick_clock = 0.0;
-            }
             // Single player: the server runs these ticks on its own thread
             // while this frame goes on; we draw the world as it stood after
             // the frame before (waiting here only if it is not there yet).
@@ -3270,7 +3264,7 @@ fn main() -> EngineResult<()> {
                 .collect();
             standing.extend(radio.lying().map(|p| p.as_dvec3()));
             traffic.set_blockers(&standing, &alarms.car_stops());
-            let game_time = session.time(tick_clock / hw_sim::DT);
+            let game_time = session.time(tick_clock.frac());
             let eye = world.camera().eye();
             let eye2 = DVec2::new(eye.x as f64, eye.z as f64);
             let dt = frame.dt as f64;

@@ -20,6 +20,12 @@
 //!
 //! There is never more than one view asked for and not yet received; an
 //! assert checks it.
+//!
+//! The view lags the ticks sent by one frame, so the game clock for drawing
+//! is not the view's tick but [`HostThread::sent_tick`] (every tick sent,
+//! applied or not) plus [`TickClock::frac`]: it moves on by exactly each
+//! frame's time. Things drawn from time alone (traffic, people, the sky)
+//! read it, and glide every frame.
 
 use crate::host::{Host, PlayerInfo};
 use hw_core::NetId;
@@ -69,6 +75,39 @@ struct Published {
     sheet: Option<hw_net::Sheet>,
 }
 
+/// Paces the fixed server ticks to the frames: each frame adds its time,
+/// runs the whole ticks that fit (at most [`TickClock::MAX_TICKS`]; a longer
+/// frame drops the rest rather than falling ever further behind) and keeps
+/// the part of a tick left over.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TickClock {
+    left: f64,
+}
+
+impl TickClock {
+    /// The most ticks one frame runs.
+    pub const MAX_TICKS: u32 = 5;
+
+    /// Adds a frame of `dt` seconds; returns how many ticks to run now.
+    pub fn advance(&mut self, dt: f64) -> u32 {
+        self.left += dt.max(0.0);
+        let mut ticks = 0;
+        while self.left >= crate::DT && ticks < Self::MAX_TICKS {
+            self.left -= crate::DT;
+            ticks += 1;
+        }
+        if ticks == Self::MAX_TICKS {
+            self.left = 0.0;
+        }
+        ticks
+    }
+
+    /// How far into the next tick the frame is (0 to 1).
+    pub fn frac(&self) -> f64 {
+        self.left / crate::DT
+    }
+}
+
 /// The [`Host`] on its own thread, with the local player `me`.
 pub struct HostThread {
     me: PlayerId,
@@ -77,6 +116,10 @@ pub struct HostThread {
     thread: Option<JoinHandle<()>>,
     /// A view was asked for and has not arrived yet.
     asked: bool,
+    /// The server tick once every tick sent so far has run.
+    sent: u64,
+    /// `sent` when the view on its way was asked for.
+    asked_at: u64,
     view: HostView,
     news: Vec<ToClient>,
     fx: Vec<hw_net::Fx>,
@@ -99,6 +142,8 @@ impl HostThread {
             views,
             thread: Some(thread),
             asked: false,
+            sent: 0,
+            asked_at: 0,
             view: HostView::default(),
             news: Vec::new(),
             fx: Vec::new(),
@@ -117,6 +162,13 @@ impl HostThread {
     /// One tick with `input` (runs on the server thread, in order).
     pub fn tick(&mut self, input: InputState) {
         self.send(Cmd::Tick(input));
+        self.sent += 1;
+    }
+
+    /// The server tick once every tick sent so far has run: the game clock
+    /// of this frame, a frame ahead of [`Self::view`].
+    pub fn sent_tick(&self) -> u64 {
+        self.sent
     }
 
     /// Once a frame, after this frame's ticks: takes the view asked for in
@@ -183,6 +235,7 @@ impl HostThread {
         assert!(!self.asked, "one view at a time");
         self.send(Cmd::View);
         self.asked = true;
+        self.asked_at = self.sent;
     }
 
     fn receive(&mut self) {
@@ -192,6 +245,10 @@ impl HostThread {
             Err(_) => self.died(),
         };
         self.asked = false;
+        // The view stands where every tick sent before it was asked for
+        // has run; the ticks sent since come on top. (The host's own tick
+        // can jump, e.g. when a save is loaded: the clock follows it.)
+        self.sent = p.view.tick + (self.sent - self.asked_at);
         let players = if p.players_changed {
             p.view.players
         } else {
@@ -336,6 +393,70 @@ mod tests {
         }
         assert_eq!(t.view().hero, plain.sim.hero_of(me));
         assert_eq!(t.view().players.len(), 1);
+    }
+
+    /// The game clock for drawing moves on by exactly each frame's time,
+    /// whatever the frame rate and however many ticks a frame sends: cars
+    /// and people placed by it glide instead of jumping back and forth.
+    /// (Until 0.132 it read the view's tick, a frame behind the ticks
+    /// sent: every frame that sent a tick stepped a tick back, and the next
+    /// leapt on.)
+    #[test]
+    fn the_drawing_clock_moves_by_each_frame() {
+        let mut host = Host::new(Seed(5));
+        let me = host.join_local("solo");
+        let mut t = HostThread::spawn(host, me);
+        let mut clock = TickClock::default();
+        let start = t.view().tick;
+        let time = |t: &HostThread, c: &TickClock| (t.sent_tick() as f64 + c.frac()) * crate::DT;
+        let mut was = time(&t, &clock);
+        let mut total = 0.0;
+        // 144 Hz, 60 Hz, 50 Hz and uneven frames.
+        for frame in 0..300u32 {
+            let dt = match frame / 75 {
+                0 => 1.0 / 144.0,
+                1 => 1.0 / 60.0,
+                2 => 1.0 / 50.0,
+                _ => [0.004, 0.021, 0.013, 0.031, 0.009][frame as usize % 5],
+            };
+            for _ in 0..clock.advance(dt) {
+                t.tick(InputState::default());
+            }
+            t.sync();
+            total += dt;
+            let now = time(&t, &clock);
+            assert!(
+                (now - was - dt).abs() < 1e-9,
+                "frame {frame}: the clock moved {:.4} s in a {dt:.4} s frame",
+                now - was
+            );
+            assert!(
+                (now - (start as f64 * crate::DT + total)).abs() < 1e-6,
+                "frame {frame}: the clock drifted"
+            );
+            // The view is never ahead of the ticks sent.
+            assert!(t.view().tick <= t.sent_tick());
+            was = now;
+        }
+        // The host's tick jumps (a save loaded): the clock follows it once
+        // the view after the jump is in, and keeps counting what was sent.
+        t.post(|h, _| h.sim.tick += 1000);
+        t.tick(InputState::default());
+        t.sync();
+        t.tick(InputState::default());
+        t.sync();
+        assert_eq!(t.sent_tick(), t.call(|h, _| h.sim.tick));
+    }
+
+    /// A long frame runs at most `MAX_TICKS` and drops the rest.
+    #[test]
+    fn a_long_frame_runs_a_few_ticks_and_drops_the_rest() {
+        let mut c = TickClock::default();
+        assert_eq!(c.advance(crate::DT * 0.5), 0);
+        assert_eq!(c.advance(crate::DT * 0.75), 1);
+        assert!((c.frac() - 0.25).abs() < 1e-9);
+        assert_eq!(c.advance(2.0), TickClock::MAX_TICKS);
+        assert_eq!(c.frac(), 0.0);
     }
 
     /// A call sees every command sent before it, and nothing after.

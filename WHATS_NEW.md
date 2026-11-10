@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.132 (2026-11-10)
+
+- Fixed: cars, hover cars and the people in them moved in little jumps, a step back and a leap forward, whenever the game clock ticked. They now glide smoothly every frame, at any frame rate.
+
 ## 0.131 (2026-11-10)
 
 - Fixed: pressing a power again and again when it couldn't fire said nothing at all. Now every press tells you why ("Atomic Ray: can't see them from here", "out of range", ...).
