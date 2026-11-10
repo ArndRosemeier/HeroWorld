@@ -419,6 +419,7 @@ fn main() -> EngineResult<()> {
     let mut robots = RobotView::new();
     let mut radio = hw_client::radioview::Radio::default();
     let mut signal = hw_client::dispatchview::Signal::default();
+    let mut story = hw_client::storyview::StoryView::default();
     let mut town_map = view == "map";
     // What was drawn last frame (for targeting), and a power key pressed
     // but not yet sent with a tick.
@@ -450,6 +451,16 @@ fn main() -> EngineResult<()> {
                 let _ = hw_sim::progress::buy(&mut s, p, theme);
             }
         }
+        hero_file = Some(s);
+    }
+    // HW_STORY=n starts with n chapters of the Doctor's story done
+    // (HW_BRIEFED=1: briefed on the next); not saved either.
+    let cheat_story =
+        env_num("HW_STORY").map(|n| n.min(hw_sim::story::CHAPTERS.len() as u64) as u8);
+    if let Some(n) = cheat_story {
+        let mut s = hero_file.clone().unwrap_or_else(hw_sim::progress::starter);
+        s.story = n;
+        s.briefed = std::env::var_os("HW_BRIEFED").is_some();
         hero_file = Some(s);
     }
     if hero_file.is_none() && !title_mode && view != "origin" {
@@ -612,6 +623,25 @@ fn main() -> EngineResult<()> {
                 .atan()
                 .to_degrees() as f32;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
+        }
+        "statue" => {
+            // The hero's statue in front of Hero Hall (`HW_STORY=7`), from
+            // a few metres off, a little to one side, looking up at it.
+            use hw_gen::urban::landmarks::LandmarkKind;
+            let l =
+                hw_client::landmarkview::nearest(&generated.world, LandmarkKind::HeroHall, spawn);
+            match l.and_then(|l| l.statue_top()) {
+                Some((top, face)) => {
+                    let c = DVec2::new(top.x, top.z);
+                    let p = c + face * 5.5 + face.perp() * 2.0;
+                    let d = c - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    let eye = top.y - 0.2;
+                    let pitch = ((top.y + 1.1 - eye) / d.length()).atan().to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
+                }
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
         }
         "townheroes" => {
             // Hero Hall's own heroes on its plaza, the hall behind them.
@@ -1235,7 +1265,7 @@ fn main() -> EngineResult<()> {
     if let Ok(tab) = std::env::var("HW_DEBUG") {
         debug.open_on(&tab);
     }
-    let mut cheated = cheat_level.is_some();
+    let mut cheated = cheat_level.is_some() || cheat_story.is_some();
     let mut colossus_breaks = 0u8;
     // The world the crash reporter last noted.
     let mut crash_noted: Option<u64> = None;
@@ -1495,6 +1525,7 @@ fn main() -> EngineResult<()> {
                     traffic_view.clear(world);
                     radio.clear(world);
                     signal.clear(world);
+                    story.clear(world);
                     riders.clear(world, &crowd);
                     crowd.clear(world);
                     // The new town's extras come in like the first ones.
@@ -2491,6 +2522,10 @@ fn main() -> EngineResult<()> {
             fight.solids = Some(solids.clone());
             radio.town = Some(generated.world.clone());
             news.retain(|m| match m {
+                hw_net::ToClient::Story { .. } => {
+                    story.hear(m);
+                    false
+                }
                 hw_net::ToClient::Incident { id, at, yaw, .. } => {
                     hw_client::hitch::event(format!("incident {id} at {:.0}, {:.0}", at[0], at[2]));
                     radio.hear(world, m);
@@ -3232,6 +3267,7 @@ fn main() -> EngineResult<()> {
                         movers.extend(pad.solids(game_time, &[me], 25.0));
                     }
                     movers.extend(airships.solids_near(&[me], game_time));
+                    movers.extend(story.statue_solids(&generated.world));
                     solids.set_movers(movers);
                 }
             }
@@ -3404,8 +3440,17 @@ fn main() -> EngineResult<()> {
                     ))
                 });
                 signal.update(world, &generated.world, &radio);
+                story.update(world, &mut radio, frame.dt);
+                story.statue(
+                    world,
+                    actors.as_ref(),
+                    &models,
+                    my_look.as_ref(),
+                    &generated.world,
+                )?;
                 let cam = world.camera();
                 let hero_at = session.my_position(&heroes).map(|p| p.as_vec3());
+                story.panel(frame.ui.ctx(), hero_at);
                 radio.panel(
                     frame.ui.ctx(),
                     cam.eye(),

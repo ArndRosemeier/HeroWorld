@@ -347,6 +347,7 @@ Numbers at level 1; health and damage scale with the villain's level like a hero
 | Deck Gunner | Sky Pirates | Minion | 34 | 6.5 every 2.4 s | 26 m | 6 | Long coat, ray musket. |
 | Sky Captain | Sky Pirates | Lieutenant | 160 | 11 every 1.9 s | 2.7 m | 22 | Wide hat, red beard, gilded cutlass. Leads raids. |
 | Legionary | Empire | Minion | 48 | 7.5 every 2.6 s | 28 m | 8 | Iron mask and cuirass, shock rifle. |
+| The Doctor | Lab | Archvillain | 1 400 | 15 every 2 s | 30 m | 220 | Only in the last chapter of his story, in his lab. White lab coat, wild white hair, goggles, a Tesla staff. Throws lightning; when a hero comes within 13 m he **charges an Aether storm** (1.8 s, a green ring on the ground) that hits every hero still inside for 1.6× his blow, every 9 s or so. |
 | Praetorian | Empire | Lieutenant | 190 | 12 every 2.2 s | 3 m | 24 | Gilded mask and cuirass, shock lance. Leads landings. |
 | Weak point | – | Part | 240 | – | – | 25 | A breakable part of a robot: the colossus's knees and cannon, the sentry's dish. Tab to it. |
 
@@ -354,8 +355,7 @@ Brutes, technicians, Jackets and gunsels are knocked down by knockback powers; t
 alpha and colossus are "heavy" and are not. Mixed Lab groups are three brutes to two
 technicians; one in four of a group is a level above the rest.
 
-The **mad scientist** himself ("the Doctor") is not in the game as a character yet: his
-quarter, his tower, his minions and his machines are.
+The **mad scientist** himself, the Doctor, shows only at the end of his story (below).
 
 ### The colossus (`hw-sim/src/robots.rs`)
 
@@ -394,7 +394,8 @@ Hero Hall stands on its own plaza near the Aether Spire, facing it: a round glas
 under a white flying-saucer roof, two red arches over it, a gold star on a pylon, and a
 canopy over the doors with the heroes' star shield. A taxi stand is in front.
 
-Five of the town's own heroes stand in a row on its plaza: Commander Starling, Atomic Annie,
+Five of the town's own heroes stand in a row on its plaza: Commander Starling (who hands out
+the Doctor's story and stays home), Atomic Annie,
 the Brass Badger, Lady Lumen and Rocket Rory (looks in `people::npc_hero`). Come within 7 m
 and they greet you with tips, one at a time and a new one each time (each hero again after
 90 s). When a fight has gone unanswered for 75 s, no player hero is within 120 m of it and none is
@@ -403,6 +404,51 @@ the nearest one at home flies out (up to 70 m over the roofs, 28 m/s), hovers 3.
 fight and bolts the villains (30 m, every 1.5 s). They are never beaten: below 30% health
 they break off and fly home to mend, and they go home when a player hero comes near, so
 they never take a player's fight. Villains they beat pay no one karma.
+
+### The Doctor's story (`hw-sim/src/story.rs`, `hw-client/src/storyview.rs`)
+
+The game's spine: a fixed chain of seven chapters that leads from his technicians on the
+street to the Doctor himself. Each chapter opens at a level; **Commander Starling** at Hero
+Hall hands it out (he no longer flies out to incidents: he keeps the hall). The chain is the
+same in every town, but where each chapter plays comes from the town: the street outside
+the quarter nearest the hall (at least 150 m from it, 120 m from his corners), his lab
+nearest the hall, the robot works' gate (the Tesla tower's in a town without), the news
+kiosk over his lab, the tower's plaza, and the great hall of his lab below. A town without
+a villain quarter or Hero Hall has no story.
+
+| # | Chapter | Opens at | Where | Who stands there (one hero) | Then hold E |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Sparks on the Street | 1 | a street outside the quarter | 3 technicians | 3 s: search their crate |
+| 2 | The Stolen Cells | 3 | his lab nearest the hall | a Robo-Sentry and 3 (+1 level) | 4 s: read the ledger |
+| 3 | The Robot Works | 5 | the works' gate | a Robo-Sentry and 3 (+1) | 5 s: jam the line |
+| 4 | The News Kiosk | 8 | the kiosk over his lab | a Mutant Alpha and 3 (+1) | 4 s: read the logbook |
+| 5 | The Colossus Walks | 11 | out of the works' gate | the colossus (+1) | – |
+| 6 | The Tesla Tower | 14 | the tower's plaza | a Robo-Sentry and 4 (+2) | 6 s: shut the coil down |
+| 7 | The Doctor | 16 | his lab's great hall | the Doctor and 3 (+1) | – |
+
+Each friend along adds one to the group. How a chapter goes: once the team is of its
+level the radio says so, and the gold **star** (compass, map, radio) and a gold column of
+light point to Hero Hall; walking within 9 m of Starling's place is the briefing. Then the
+star moves to the chapter's place; within 140 m its group takes its place and fights any
+hero. Beaten, the chapter's find is searched by holding **E** within 4 m (a bar shows how
+far along). Leaving (420 m away) sends the group home; it stands there fresh next time.
+Done, every hero within 200 m earns **30% of what their next level takes** (Justice), and
+Starling says what was found and what comes next.
+
+Everything said is text on the **wrist radio** (top middle under the compass, "WRIST RADIO -
+Commander Starling"); there are no voices. The radio's own box shows the chapter ("THE
+DOCTOR'S STORY - chapter 3 of 7: The Robot Works") and the goal with distance and clock
+direction, or "Next lead at level 8" while the next one is not open.
+
+**The reward:** beating the Doctor makes the hero the **Bane of the Doctor**, and their
+statue, cast in bronze in the heroic stance, stands on the marble plinth in front of Hero
+Hall that waits empty until then (the plinth is solid from the start, the statue once it
+stands).
+
+**Saved** in the hero file (`story`, chapters done, and `briefed`). In co-op the team follows
+the **host's** story, as it fights at the host's level: anyone near can be briefed or finish
+a chapter for the team, and it is written into the host's file and into the files of those
+who were there; a guest further along keeps their own place.
 
 ---
 
@@ -888,6 +934,7 @@ run, or put them in a `.bat`.
 | `HW_POWERS=1` | With `HW_LEVEL`: buy every power open at that level. |
 | `HW_THEME=1` | With `HW_POWERS`: take the second theme of each. |
 | `HW_FLY=1` | Start flying. |
+| `HW_STORY=n` | Start with n chapters of the Doctor's story done (not saved); `HW_BRIEFED=1` also briefed on the next. `HW_VIEW=statue` looks at the statue (`HW_STORY=7`). Where each chapter plays: `cargo run --release -p hw-sim --example story_places -- <seed> <people>`. |
 | `HW_NAME=...` | Hero name for this run. |
 | `HW_PROFILE_DIR=...` | Use another profile folder (a fresh hero). |
 

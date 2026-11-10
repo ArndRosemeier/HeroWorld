@@ -187,6 +187,8 @@ fn sheet_to_json(s: &Sheet) -> Value {
         "affinity": s.affinity,
         "origin": s.origin,
         "regard": s.regard,
+        "story": s.story,
+        "briefed": s.briefed,
         "powers": s.powers.iter().map(|p| json!({
             "power": p.power.code(),
             "theme": p.theme,
@@ -237,6 +239,8 @@ fn sheet_from_json(v: &Value) -> Option<Sheet> {
         origin: num("origin").min(255) as u8,
         powers,
         regard,
+        story: num("story").min(255) as u8,
+        briefed: o.get("briefed").and_then(|b| b.as_bool()).unwrap_or(false),
     }))
 }
 

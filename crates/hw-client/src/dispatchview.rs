@@ -199,6 +199,17 @@ pub fn compass(ctx: &egui::Context, eye: Vec3, look: Vec3, radio: &Radio, mine: 
             );
         }
     }
+    // The story's objective: a gold star.
+    if let Some(at) = radio.story.as_ref().and_then(|s| s.at) {
+        let b = bearing(glam::Vec2::new(at.x - eye.x, at.z - eye.z));
+        let rel = (b - heading + PI).rem_euclid(TAU) - PI;
+        let x = x_of(b).unwrap_or(if rel < 0.0 {
+            rect.left() + 8.0
+        } else {
+            rect.right() - 8.0
+        });
+        star(&painter, egui::pos2(x, rect.top() + 11.0), 9.0);
+    }
     for c in radio.calls.values() {
         let d = glam::Vec2::new(c.at.x - eye.x, c.at.z - eye.z);
         let b = bearing(d);
@@ -344,6 +355,19 @@ pub fn map(
             egui::Color32::from_rgb(50, 50, 60),
         );
     }
+    if let Some(st) = &radio.story {
+        if let Some(at) = st.at {
+            let p = to_screen(DVec2::new(at.x as f64, at.z as f64));
+            star(&painter, p, 10.0);
+            painter.text(
+                p + egui::vec2(11.0, -9.0),
+                egui::Align2::LEFT_BOTTOM,
+                &st.goal,
+                egui::FontId::proportional(12.0),
+                egui::Color32::from_rgb(110, 70, 0),
+            );
+        }
+    }
     for c in radio.calls.values() {
         let p = to_screen(DVec2::new(c.at.x as f64, c.at.z as f64));
         let col = con_colour(c.level, mine);
@@ -378,6 +402,31 @@ pub fn map(
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         *open = false;
     }
+}
+
+/// The story's mark: a five-pointed gold star with a dark rim.
+pub fn star(painter: &egui::Painter, c: egui::Pos2, r: f32) {
+    let pts: Vec<egui::Pos2> = (0..10)
+        .map(|k| {
+            let a = k as f32 * PI / 5.0 - PI * 0.5;
+            let rr = if k % 2 == 0 { r } else { r * 0.45 };
+            c + egui::vec2(a.cos(), a.sin()) * rr
+        })
+        .collect();
+    // Not convex: a fan of triangles from the middle.
+    for k in 0..10 {
+        painter.add(egui::Shape::convex_polygon(
+            vec![c, pts[k], pts[(k + 1) % 10]],
+            crate::radioview::STORY_GOLD,
+            egui::Stroke::NONE,
+        ));
+    }
+    let mut rim = pts.clone();
+    rim.push(pts[0]);
+    painter.add(egui::Shape::line(
+        rim,
+        egui::Stroke::new(1.2_f32, egui::Color32::from_rgb(90, 50, 0)),
+    ));
 }
 
 #[cfg(test)]

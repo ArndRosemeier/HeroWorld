@@ -145,6 +145,12 @@ pub const HALL_ROOF_TOP: f64 = 9.4;
 pub const HALL_ARCH_FEET: [(f64, f64); 4] =
     [(-14.5, 8.0), (14.5, 8.0), (-14.5, -8.0), (14.5, -8.0)];
 pub const HALL_CANOPY: (f64, f64, f64) = (4.5, 4.2, 4.0);
+/// The plinth in front of Hero Hall that waits for the statue of the hero
+/// who brings the Doctor in (local x and z, radius, height), and the
+/// statue's own solid on top of it (radius, height).
+pub const HALL_STATUE: (f64, f64) = (-10.5, 12.0);
+pub const HALL_PLINTH: (f64, f64) = (1.1, 1.7);
+pub const HALL_FIGURE: (f64, f64) = (0.45, 2.1);
 
 /// The Tesla tower's lab: a square blockhouse of this half width, its roof
 /// at this height.
@@ -265,6 +271,13 @@ impl Landmark {
                     y0: h,
                     y1: h + 0.35,
                 });
+                // The plinth waiting for a statue.
+                v.push(Footprint::Disc {
+                    at: DVec2::new(HALL_STATUE.0, HALL_STATUE.1),
+                    r: HALL_PLINTH.0 + 0.15,
+                    y0: 0.0,
+                    y1: HALL_PLINTH.1,
+                });
                 v
             }
             LandmarkKind::MooringMast => super::mast::mast_footprints(),
@@ -292,6 +305,20 @@ impl Landmark {
                 (self.to_plan(DVec2::new(x, z - curve)), self.dir)
             })
             .collect()
+    }
+
+    /// Hero Hall's statue plinth: the middle of its top in the town's frame,
+    /// and the way the statue faces (out, like the hall). None for other
+    /// landmarks.
+    pub fn statue_top(&self) -> Option<(glam::DVec3, DVec2)> {
+        if self.kind != LandmarkKind::HeroHall {
+            return None;
+        }
+        let p = self.to_plan(DVec2::new(HALL_STATUE.0, HALL_STATUE.1));
+        Some((
+            glam::DVec3::new(p.x, self.base + HALL_PLINTH.1, p.y),
+            self.dir,
+        ))
     }
 
     /// The plinth's top where `p` is on it.

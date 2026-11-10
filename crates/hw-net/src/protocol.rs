@@ -279,6 +279,9 @@ pub enum EntityKind {
     /// A hero's robot sidekick; its `owner` is the hero's player (`mount`:
     /// its own ID and the theme).
     Sidekick,
+    /// The Doctor himself: the mad scientist, an archvillain with a Tesla
+    /// staff (the last chapter of his story).
+    Doctor,
 }
 
 impl EntityKind {
@@ -306,6 +309,7 @@ impl EntityKind {
             EntityKind::Capsule => 19,
             EntityKind::NpcHero => 20,
             EntityKind::Sidekick => 21,
+            EntityKind::Doctor => 22,
         }
     }
 
@@ -333,6 +337,7 @@ impl EntityKind {
             19 => Ok(EntityKind::Capsule),
             20 => Ok(EntityKind::NpcHero),
             21 => Ok(EntityKind::Sidekick),
+            22 => Ok(EntityKind::Doctor),
             _ => Err(WireError),
         }
     }
@@ -357,6 +362,7 @@ impl EntityKind {
                 | EntityKind::Captain
                 | EntityKind::Legionary
                 | EntityKind::Praetorian
+                | EntityKind::Doctor
         )
     }
 
@@ -380,6 +386,7 @@ impl EntityKind {
                 | EntityKind::Buccaneer
                 | EntityKind::Captain
                 | EntityKind::Praetorian
+                | EntityKind::Doctor
         )
     }
 
@@ -454,6 +461,10 @@ pub struct Sheet {
     /// How each faction's regard for the hero has moved from what it has
     /// for townsfolk (by [`Faction::index`]): the hero's deeds.
     pub regard: [i8; FACTIONS],
+    /// Chapters of the Doctor's story finished (see `hw_sim::story`).
+    pub story: u8,
+    /// Briefed on the next chapter at Hero Hall.
+    pub briefed: bool,
 }
 
 /// Most powers a sheet carries over the wire.
@@ -461,7 +472,7 @@ pub const MAX_POWERS: usize = 32;
 
 impl Sheet {
     pub fn wire_size(&self) -> usize {
-        4 + 4 + 20 + 1 + FACTIONS + 1 + 6 * self.powers.len().min(MAX_POWERS)
+        4 + 4 + 20 + 1 + FACTIONS + 2 + 1 + 6 * self.powers.len().min(MAX_POWERS)
     }
 
     pub fn write(&self, w: &mut Writer) {
@@ -473,6 +484,7 @@ impl Sheet {
         for g in self.regard {
             w.u8(g as u8);
         }
+        w.u8(self.story).u8(self.briefed as u8);
         let n = self.powers.len().min(MAX_POWERS);
         w.u8(n as u8);
         for p in &self.powers[..n] {
@@ -492,6 +504,8 @@ impl Sheet {
         for g in regard.iter_mut() {
             *g = r.u8()? as i8;
         }
+        let story = r.u8()?;
+        let briefed = r.u8()? != 0;
         let n = r.u8()? as usize;
         if n > MAX_POWERS {
             return Err(WireError);
@@ -512,6 +526,8 @@ impl Sheet {
             origin,
             powers,
             regard,
+            story,
+            briefed,
         })
     }
 
@@ -1108,6 +1124,16 @@ pub enum ToClient {
         x: f64,
         z: f64,
     },
+    /// Where the team stands in the Doctor's story (see `hw_sim::story`):
+    /// chapters finished, the stage of the next one, where to go, the level
+    /// it opens at, and how far along holding the help key is (0-255).
+    Story {
+        done: u8,
+        stage: u8,
+        at: [f32; 3],
+        level: u8,
+        held: u8,
+    },
 }
 
 /// Most broken elements in one [`ToClient::Damage`] (it must fit a packet
@@ -1176,6 +1202,7 @@ impl ToClient {
             ToClient::Look { bytes, .. } => 2 + 2 + 2 + bytes.len(),
             ToClient::Alarm { .. } => 4 + 1 + 12 + 4 + 1,
             ToClient::AreaMoved { .. } => 16,
+            ToClient::Story { .. } => 1 + 1 + 12 + 1 + 1,
         }
     }
 
@@ -1336,6 +1363,19 @@ impl ToClient {
             ToClient::AreaMoved { x, z } => {
                 w.u8(19).f64(*x).f64(*z);
             }
+            ToClient::Story {
+                done,
+                stage,
+                at,
+                level,
+                held,
+            } => {
+                w.u8(20).u8(*done).u8(*stage);
+                for v in at {
+                    w.f32(*v);
+                }
+                w.u8(*level).u8(*held);
+            }
         }
     }
 
@@ -1488,6 +1528,13 @@ impl ToClient {
                 part: r.u8()?,
                 parts: r.u8()?,
                 bytes: r.bytes()?,
+            },
+            20 => ToClient::Story {
+                done: r.u8()?,
+                stage: r.u8()?,
+                at: [r.f32()?, r.f32()?, r.f32()?],
+                level: r.u8()?,
+                held: r.u8()?,
             },
             15 => ToClient::Incident {
                 id: r.u32()?,
@@ -1934,6 +1981,8 @@ mod tests {
                 },
             ],
             regard: [0, 5, -40, -100, 12, 127, -7, 60],
+            story: 3,
+            briefed: true,
         }
     }
 
@@ -2059,6 +2108,16 @@ mod tests {
                     ToClient::AreaMoved {
                         x: 1500.5,
                         z: -3000.0,
+                    },
+                ),
+                (
+                    8,
+                    ToClient::Story {
+                        done: 2,
+                        stage: 3,
+                        at: [10.0, 2.5, -40.0],
+                        level: 5,
+                        held: 128,
                     },
                 ),
                 (

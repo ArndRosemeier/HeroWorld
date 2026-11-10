@@ -104,6 +104,9 @@ pub enum Who {
     /// A hero's robot sidekick, by the power's theme (0 Tin Pal, 1 Brass
     /// Squire): an Actors robot, drawn small ([`hw_sim::sidekick::SIZE`]).
     Sidekick(u8),
+    /// The hero's statue in front of Hero Hall (the Doctor's story done):
+    /// their looks (by key) cast in bronze.
+    Statue(u64),
 }
 
 /// Looks per kind of villain.
@@ -143,6 +146,10 @@ pub enum VillainKind {
     /// darker, bald, with long tusks and blazing eyes (drawn a head and a
     /// half taller). One look, built when an alpha first shows.
     Alpha,
+    /// The Doctor himself: a tall, gaunt old man in a long white lab coat
+    /// over a black suit, wild white hair and beard, dark goggles, heavy
+    /// rubber gauntlets, eyes glowing Aether green. One look.
+    Doctor,
 }
 
 impl VillainKind {
@@ -161,6 +168,7 @@ impl VillainKind {
             K::Captain => VillainKind::Captain,
             K::Legionary => VillainKind::Legionary,
             K::Praetorian => VillainKind::Praetorian,
+            K::Doctor => VillainKind::Doctor,
             _ => return None,
         })
     }
@@ -181,7 +189,10 @@ impl VillainKind {
     /// Looks it comes in (bosses and lieutenants have one).
     pub fn looks(self) -> u32 {
         match self {
-            VillainKind::Alpha | VillainKind::Captain | VillainKind::Praetorian => 1,
+            VillainKind::Alpha
+            | VillainKind::Captain
+            | VillainKind::Praetorian
+            | VillainKind::Doctor => 1,
             _ => VILLAIN_LOOKS,
         }
     }
@@ -378,6 +389,16 @@ impl People {
             who,
             seed,
             config: None,
+            preview: false,
+        });
+    }
+
+    /// Asks for the bronze statue of a hero with these looks.
+    pub fn request_statue(&self, key: u64, config: CharacterConfig) {
+        let _ = self.jobs.send(Job {
+            who: Who::Statue(key),
+            seed: 0,
+            config: Some(config),
             preview: false,
         });
     }
@@ -973,6 +994,29 @@ pub fn villain(
             colour(&mut c, "cargo-pants", "#2f2b24");
             colour(&mut c, "work-boots", "#2a2622");
         }
+        VillainKind::Doctor => {
+            let b = &mut c.body;
+            b.gender = 1.0;
+            b.age_years = 64.0;
+            b.muscle = 0.3;
+            b.weight = 0.3;
+            b.height = 1.0;
+            c.hair_color = Some("#ecebe6".into());
+            c.beard = "full".into();
+            c.eye_color = Some("#7dff9a".into());
+            c.eye_glow = 0.8;
+            c.outfit = keep(&[
+                "worksuit",
+                "open-coat",
+                "gauntlet-gloves",
+                "tinted-glasses",
+                "cuffed-knee-boots",
+            ]);
+            colour(&mut c, "open-coat", "#f2f1ea");
+            colour(&mut c, "worksuit", "#18181c");
+            colour(&mut c, "gauntlet-gloves", "#2a2c24");
+            colour(&mut c, "cuffed-knee-boots", "#101012");
+        }
         VillainKind::Technician => {
             let b = &mut c.body;
             b.age_years = rng.range(24.0, 55.0);
@@ -1310,7 +1354,7 @@ pub fn build_sharing(
 ) -> Result<Built, String> {
     let (hero, rseed) = match who {
         Who::Hero(name) => (true, name_seed(name)),
-        Who::Look(key) => (true, *key as u32),
+        Who::Look(key) | Who::Statue(key) => (true, *key as u32),
         Who::Citizen(look) => (
             false,
             (hw_core::Seed(seed).child("look").child(*look as u64).0 >> 32) as u32,
@@ -1342,7 +1386,7 @@ pub fn build_sharing(
         _ => golden_age(builder.catalog(), rseed, hero),
     };
     let clips: &[&str] = match who {
-        Who::Hero(_) | Who::Look(_) | Who::NpcHero(_) => HERO_CLIPS,
+        Who::Hero(_) | Who::Look(_) | Who::NpcHero(_) | Who::Statue(_) => HERO_CLIPS,
         Who::Villain(..) => VILLAIN_CLIPS,
         Who::Sidekick(_) => SIDEKICK_CLIPS,
         Who::Citizen(_) => CITIZEN_CLIPS,
@@ -1393,6 +1437,11 @@ pub fn build_sharing(
             }
         }
     }
+    if matches!(who, Who::Statue(_)) {
+        for m in &mut c.model.meshes {
+            bronze(m);
+        }
+    }
     let sits = matches!(who, Who::Citizen(_)) && crate::riderview::fits_seats(&c.model);
     Ok(Built {
         who: who.clone(),
@@ -1402,9 +1451,81 @@ pub fn build_sharing(
     })
 }
 
+/// Casts a character's mesh in bronze: its colours become shades of bronze
+/// by their lightness (so the costume's shapes and the face still read),
+/// metal all over, a satin polish, no glow.
+pub fn bronze(m: &mut engine::anim::SkinMesh) {
+    // sRGB bronze, dark to light.
+    const DARK: [f32; 3] = [58.0, 36.0, 18.0];
+    const LIGHT: [f32; 3] = [214.0, 160.0, 92.0];
+    let cast = |r: u8, g: u8, b: u8| -> [u8; 3] {
+        let l = (0.3 * r as f32 + 0.59 * g as f32 + 0.11 * b as f32) / 255.0;
+        let t = l.powf(0.8);
+        let mix = |k: usize| (DARK[k] + (LIGHT[k] - DARK[k]) * t).round() as u8;
+        [mix(0), mix(1), mix(2)]
+    };
+    if let Some(a) = m.albedo.as_mut() {
+        let mut px: Vec<u8> = a.rgba.to_vec();
+        for p in px.as_chunks_mut::<4>().0 {
+            let c = cast(p[0], p[1], p[2]);
+            p[..3].copy_from_slice(&c);
+        }
+        a.rgba = px.into();
+    }
+    for c in &mut m.colors {
+        let k = cast(
+            (c.x.clamp(0.0, 1.0) * 255.0) as u8,
+            (c.y.clamp(0.0, 1.0) * 255.0) as u8,
+            (c.z.clamp(0.0, 1.0) * 255.0) as u8,
+        );
+        c.x = k[0] as f32 / 255.0;
+        c.y = k[1] as f32 / 255.0;
+        c.z = k[2] as f32 / 255.0;
+    }
+    if let Some(orm) = m.maps.orm.as_mut() {
+        let mut px: Vec<u8> = orm.rgba.to_vec();
+        for p in px.as_chunks_mut::<4>().0 {
+            // Occlusion kept; roughness from 0.25 to 0.55; full metal.
+            p[1] = 64 + p[1] / 4;
+            p[2] = 255;
+        }
+        orm.rgba = px.into();
+    }
+    m.maps.emissive = None;
+    m.maps.emissive_factor = [0.0; 3];
+    m.maps.metallic = 1.0;
+    m.maps.roughness = 0.4;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bronze_keeps_light_and_dark_apart() {
+        let mut m = engine::anim::SkinMesh {
+            positions: vec![],
+            normals: vec![],
+            colors: vec![],
+            uvs: vec![],
+            joints: vec![],
+            weights: vec![],
+            indices: vec![],
+            double_sided: false,
+            albedo: Some(AlbedoMap {
+                width: 2,
+                height: 1,
+                rgba: vec![10, 10, 10, 255, 250, 250, 250, 255].into(),
+            }),
+            maps: Default::default(),
+            morphs: vec![],
+        };
+        bronze(&mut m);
+        let a = m.albedo.unwrap();
+        assert!(a.rgba[0] < a.rgba[4], "dark stays darker");
+        assert!(a.rgba[4] > a.rgba[6], "bronze: more red than blue");
+        assert_eq!(m.maps.metallic, 1.0);
+    }
 
     #[test]
     fn citizen_maps_come_down_by_half_but_not_below_the_floor() {

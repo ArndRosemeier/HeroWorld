@@ -762,6 +762,7 @@ pub fn weapon(kind: hw_net::EntityKind) -> Option<Mesh> {
         K::Buccaneer => cutlass(&mut b, false),
         K::Captain => cutlass(&mut b, true),
         K::Praetorian => lance(&mut b),
+        K::Doctor => tesla_staff(&mut b),
         _ => return None,
     }
     Some(b.finish())
@@ -923,6 +924,84 @@ fn lance(b: &mut MeshBuilder) {
         10,
         |_| glow(arc),
     );
+}
+
+/// The Doctor's Tesla staff: a black staff with brass rings, a coil wound
+/// round its head, and a glowing Aether sphere caged at its top.
+fn tesla_staff(b: &mut MeshBuilder) {
+    let ebony = rgb(28, 26, 30);
+    let brass = rgb(186, 148, 72);
+    let copper = rgb(176, 98, 52);
+    let aether = rgb(120, 255, 160);
+    lathe(
+        b,
+        DVec3::Y * -0.75,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.03, 0.0),
+            (0.028, 0.05),
+            (0.024, 1.55),
+            (0.04, 1.6),
+            (0.045, 1.66),
+            (0.03, 1.7),
+            (0.0, 1.71),
+        ],
+        16,
+        |k| {
+            if (3..6).contains(&k) {
+                metal(brass)
+            } else {
+                plain(ebony)
+            }
+        },
+    );
+    // Brass rings down the shaft.
+    for y in [-0.6, 0.0, 0.5] {
+        lathe(
+            b,
+            DVec3::Y * y,
+            DVec3::Y,
+            &[
+                (0.024, -0.02),
+                (0.034, -0.012),
+                (0.034, 0.012),
+                (0.024, 0.02),
+            ],
+            16,
+            |_| metal(brass),
+        );
+    }
+    // The coil: copper wound up the head.
+    let coil: Vec<DVec3> = (0..=48)
+        .map(|i| {
+            let t = i as f64 / 48.0;
+            let a = t * std::f64::consts::TAU * 6.0;
+            DVec3::new(a.cos() * 0.036, 0.62 + t * 0.26, a.sin() * 0.036)
+        })
+        .collect();
+    tube(b, &coil, (0.009, 0.009), 6, metal(copper));
+    // The cage: four brass ribs round the sphere.
+    for k in 0..4 {
+        let a = k as f64 * std::f64::consts::FRAC_PI_2;
+        let (x, z) = (a.cos(), a.sin());
+        let rib: Vec<DVec3> = (0..=8)
+            .map(|i| {
+                let t = i as f64 / 8.0 * std::f64::consts::PI;
+                let r = 0.02 + t.sin() * 0.07;
+                DVec3::new(x * r, 0.96 + 0.08 - t.cos() * 0.08, z * r)
+            })
+            .collect();
+        tube(b, &rib, (0.008, 0.008), 6, metal(brass));
+    }
+    // The Aether sphere.
+    let sphere: Vec<(f64, f64)> = (0..=10)
+        .map(|i| {
+            let t = i as f64 / 10.0 * std::f64::consts::PI;
+            (t.sin() * 0.055, -t.cos() * 0.055)
+        })
+        .collect();
+    lathe(b, DVec3::Y * 1.04, DVec3::Y, &sphere, 16, |_| glow(aether));
 }
 
 /// Where the hand bone holds a weapon (see [`weapon`]).

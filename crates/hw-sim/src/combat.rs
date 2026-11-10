@@ -389,7 +389,20 @@ pub enum EnemyKind {
     Legionary,
     /// An Iron-Masked praetorian: a lieutenant with a shock lance.
     Praetorian,
+    /// The Doctor himself: an archvillain with a Tesla staff, who throws
+    /// lightning and now and then discharges an Aether storm round himself
+    /// (see [`DOCTOR_STORM_EVERY`]). Only the last chapter of his story
+    /// brings him out (see [`crate::story`]).
+    Doctor,
 }
+
+/// The Doctor's Aether storm: how long he charges it (the telegraph: get
+/// out of the ring), how often, and how hard it hits (times his blow). Its
+/// ring is the colossus core's, so it is drawn alike.
+pub const DOCTOR_STORM_WINDUP: f64 = 1.8;
+pub const DOCTOR_STORM_EVERY: f64 = 9.0;
+pub const DOCTOR_STORM_AREA: f64 = robots::PULSE_AREA;
+pub const DOCTOR_STORM_HIT: f32 = 1.6;
 
 /// How a kind of villain fights.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -569,6 +582,18 @@ pub fn enemy_spec(k: EnemyKind) -> EnemySpec {
             aggro: 26.0,
             karma: 8.0,
         },
+        EnemyKind::Doctor => EnemySpec {
+            name: "The Doctor",
+            rank: "Archvillain",
+            health: 1400.0,
+            damage: 15.0,
+            attack_every: 2.0,
+            windup: 0.6,
+            reach: 30.0,
+            speed: 0.6,
+            aggro: 40.0,
+            karma: 220.0,
+        },
         EnemyKind::Praetorian => EnemySpec {
             name: "Iron Praetorian",
             rank: "Lieutenant",
@@ -601,6 +626,7 @@ impl EnemyKind {
             EnemyKind::Captain => EntityKind::Captain,
             EnemyKind::Legionary => EntityKind::Legionary,
             EnemyKind::Praetorian => EntityKind::Praetorian,
+            EnemyKind::Doctor => EntityKind::Doctor,
         }
     }
 
@@ -628,6 +654,7 @@ impl EnemyKind {
                 | EnemyKind::Gunsel
                 | EnemyKind::Gunner
                 | EnemyKind::Legionary
+                | EnemyKind::Doctor
         )
     }
 
@@ -652,6 +679,7 @@ impl EnemyKind {
             EntityKind::Captain => Some(EnemyKind::Captain),
             EntityKind::Legionary => Some(EnemyKind::Legionary),
             EntityKind::Praetorian => Some(EnemyKind::Praetorian),
+            EntityKind::Doctor => Some(EnemyKind::Doctor),
             _ => None,
         }
     }
@@ -866,6 +894,8 @@ pub struct Enemy {
     pub next_trick: u64,
     /// The alpha in the air: (took off, lands, from, to).
     pub leap: Option<(u64, u64, DVec3, DVec3)>,
+    /// The Doctor's Aether storm goes off at this tick.
+    pub storm: Option<u64>,
     /// Its group's turf: it warns heroes off (see [`crate::factions`]).
     pub turf: bool,
     /// A hero this near provokes it (stepping into its crime, or a fight
@@ -1302,6 +1332,7 @@ pub(crate) fn spawn_enemy(
                 .is_some_and(|s| s.perch),
             next_trick: tick + ticks(4.0),
             leap: None,
+            storm: None,
             turf: spot_turf,
             provoke: spot_provoke,
             warned: None,
@@ -3060,6 +3091,9 @@ fn enemies_act(
                     let dist = flat.length();
                     let dir = flat.normalize_or(DVec2::X);
                     let seen = clear_line(solids, actors[i].chest(), actors[j].chest());
+                    if en.kind == EnemyKind::Doctor {
+                        doctor_storm(actors, i, &mut en, tick, dist, fx);
+                    }
                     if let Some((at, who)) = en.windup {
                         // The blow lands now, if the foe is still there.
                         if tick >= at {
@@ -3250,6 +3284,59 @@ fn leap(actors: &mut [Actor], i: usize, en: &mut Enemy, tick: u64, fx: &mut Vec<
         fx.push(e);
     }
     fx.push(event(tick, FxKind::Leap, me, me, to));
+}
+
+/// The Doctor's Aether storm: when a hero comes within its ring he charges
+/// it (a ring on the ground warns them), and it goes off round him a moment
+/// later, hitting every hero still inside, in the air or not.
+fn doctor_storm(
+    actors: &mut [Actor],
+    i: usize,
+    en: &mut Enemy,
+    tick: u64,
+    foe_dist: f64,
+    fx: &mut Vec<Fx>,
+) {
+    let me = actors[i].id;
+    let at = actors[i].body.pos;
+    match en.storm {
+        Some(lands) if tick >= lands => {
+            en.storm = None;
+            let dmg = enemy_spec(EnemyKind::Doctor).damage
+                * DOCTOR_STORM_HIT
+                * level_scale(actors[i].f.level);
+            for k in 0..actors.len() {
+                let a = &actors[k];
+                if a.hero.is_none()
+                    || !a.f.standing()
+                    || a.body.pos.distance(at) > DOCTOR_STORM_AREA
+                {
+                    continue;
+                }
+                let (_, defeat, dealt) = hit(actors, i, k, dmg, false, tick, None);
+                let mut e = event(tick, FxKind::Pulse, me, actors[k].id, actors[k].chest());
+                e.amount = dealt.round() as u16;
+                e.defeat = defeat;
+                fx.push(e);
+            }
+            fx.push(event(tick, FxKind::Pulse, me, me, at + DVec3::Y * 1.2));
+        }
+        None if tick >= en.next_trick && foe_dist < DOCTOR_STORM_AREA => {
+            en.storm = Some(tick + ticks(DOCTOR_STORM_WINDUP));
+            en.next_trick = tick + ticks(DOCTOR_STORM_WINDUP + DOCTOR_STORM_EVERY);
+            // No blow of his own while he charges.
+            en.windup = None;
+            en.next_attack = en.next_attack.max(tick + ticks(DOCTOR_STORM_WINDUP + 0.5));
+            fx.push(event(
+                tick,
+                FxKind::PulseWindup,
+                me,
+                me,
+                at + DVec3::Y * 1.2,
+            ));
+        }
+        _ => {}
+    }
 }
 
 fn statuses(

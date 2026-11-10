@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.124 (2026-11-10)
+
+- New: **the Doctor's story**. Commander Starling at Hero Hall now has a case for you: seven chapters, from a street brawl with the Doctor's technicians to the robot works, the news kiosk, the colossus and the Tesla tower, and at last the Doctor himself in his lab. Each opens at a level (1, 3, 5, 8, 11, 14, 16).
+- Follow the gold star on the compass and the gold light. Starling's words come over the wrist radio, and the radio shows the chapter and what to do next.
+- The Doctor is a real fight: he throws lightning and charges an Aether storm when you get close. Step out of the green ring.
+- Beat him and you're the Bane of the Doctor. Your statue, cast in bronze, takes the empty plinth in front of Hero Hall.
+- Your progress is kept in your hero file. Playing together, the team follows the host's story.
+
 ## 0.123 (2026-11-10)
 
 - Fights read better. The camera no longer slips into walls beside or behind your hero; it comes in close when it must and glides back out.

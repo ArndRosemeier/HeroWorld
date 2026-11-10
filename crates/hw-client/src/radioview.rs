@@ -103,7 +103,21 @@ pub struct Radio {
     pub flash: Option<(String, f32)>,
     /// Our hero's id (to know what we carry).
     pub me: Option<u32>,
+    /// The Doctor's story, shown on the radio and the compass (see
+    /// [`crate::storyview`]).
+    pub story: Option<StoryMark>,
 }
+
+/// The story's line on the radio: its heading, the goal, and where to go.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StoryMark {
+    pub heading: String,
+    pub goal: String,
+    pub at: Option<Vec3>,
+}
+
+/// The story's colour on the radio, the compass and the map.
+pub const STORY_GOLD: egui::Color32 = egui::Color32::from_rgb(255, 200, 60);
 
 /// A beam's colour by kind.
 fn beam_colour(kind: IncidentKind) -> Color {
@@ -128,8 +142,12 @@ fn beam_colour(kind: IncidentKind) -> Color {
 /// on the ground round the spot. Glowing and see-through, in the call's
 /// colour; origin on the ground at the call.
 pub fn beacon(kind: IncidentKind) -> Mesh {
+    beacon_lit(beam_colour(kind))
+}
+
+/// A beacon in `colour` (the story's objective is gold).
+pub fn beacon_lit(colour: Color) -> Mesh {
     const SIDES: usize = 32;
-    let colour = beam_colour(kind);
     let mut m = Mesh::new();
     let point = |m: &mut Mesh, p: Vec3, n: Vec3, alpha: f32| {
         let id = m.add_point(p).expect("finite point");
@@ -759,7 +777,7 @@ impl Radio {
                         });
                 });
         }
-        if self.calls.is_empty() && self.flash.is_none() {
+        if self.calls.is_empty() && self.flash.is_none() && self.story.is_none() {
             return;
         }
         let mut calls: Vec<(&u32, &Call)> = self.calls.iter().collect();
@@ -782,6 +800,31 @@ impl Radio {
                                 .strong()
                                 .size(13.0),
                         );
+                        if let Some(st) = &self.story {
+                            ui.label(
+                                egui::RichText::new(&st.heading)
+                                    .color(STORY_GOLD)
+                                    .size(12.0),
+                            );
+                            let mut goal = st.goal.clone();
+                            if let Some(at) = st.at {
+                                let d = at - eye;
+                                let flat = glam::Vec2::new(d.x, d.z);
+                                let ahead = glam::Vec2::new(look.x, look.z).normalize_or_zero();
+                                goal += &format!(
+                                    "  {:.0} m at {} o'clock",
+                                    flat.length(),
+                                    clock(ahead, flat)
+                                );
+                            }
+                            ui.label(
+                                egui::RichText::new(goal)
+                                    .color(STORY_GOLD)
+                                    .size(15.0)
+                                    .strong(),
+                            );
+                            ui.separator();
+                        }
                         if let Some((text, _)) = &self.flash {
                             ui.label(
                                 egui::RichText::new(text)

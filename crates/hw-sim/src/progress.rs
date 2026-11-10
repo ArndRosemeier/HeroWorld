@@ -554,6 +554,8 @@ pub fn sanitize(mut s: Sheet) -> Sheet {
     }
     s.origin = s.origin.min(ORIGINS.len() as u8 - 1);
     s.powers.truncate(hw_net::protocol::MAX_POWERS);
+    s.story = s.story.min(crate::story::CHAPTERS.len() as u8);
+    s.briefed &= (s.story as usize) < crate::story::CHAPTERS.len();
     s
 }
 

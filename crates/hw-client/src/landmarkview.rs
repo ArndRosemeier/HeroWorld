@@ -1008,6 +1008,51 @@ fn hero_hall(b: &mut MeshBuilder, near: bool) {
             }
         }
     }
+    // The plinth waiting for the statue of the hero who brings the Doctor
+    // in: a white marble drum with a moulded foot and cap, a gold band, and
+    // a bronze plaque on its front (see `storyview` for the statue).
+    {
+        use hw_gen::urban::landmarks::{HALL_PLINTH, HALL_STATUE};
+        let (r, h) = HALL_PLINTH;
+        let at = DVec3::new(HALL_STATUE.0, 0.0, HALL_STATUE.1);
+        let marble = rgb(236, 232, 222);
+        lathe(
+            b,
+            at,
+            DVec3::Y,
+            &[
+                (0.0, 0.0),
+                (r + 0.15, 0.0),
+                (r + 0.15, 0.18),
+                (r + 0.02, 0.3),
+                (r, 0.34),
+                (r * 0.94, 0.5),
+                (r * 0.94, h - 0.32),
+                (r, h - 0.26),
+                (r, h - 0.2),
+                (r + 0.1, h - 0.12),
+                (r + 0.1, h),
+                (0.0, h),
+            ],
+            if near { 40 } else { 14 },
+            |k| {
+                if k == 7 || k == 8 {
+                    metal(gold)
+                } else {
+                    plain(marble)
+                }
+            },
+        );
+        if near {
+            // The plaque: bronze, on the front, raised a little.
+            b.oriented_box(
+                at + DVec3::new(0.0, h * 0.55, r * 0.94 + 0.03),
+                DVec3::X,
+                DVec3::new(0.42, 0.26, 0.03),
+                rgb(150, 104, 52),
+            );
+        }
+    }
     // The canopy over the doors on two slim columns, the heroes' shield on
     // its front edge.
     let (hw, reach, h) = HALL_CANOPY;

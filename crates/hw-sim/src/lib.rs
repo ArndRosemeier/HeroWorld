@@ -32,6 +32,7 @@ pub mod rocket;
 pub mod roosts;
 pub mod save;
 pub mod sidekick;
+pub mod story;
 pub mod streets;
 pub mod taxi;
 pub mod traffic;
@@ -516,6 +517,8 @@ pub struct Sim {
     pub wrecks: wrecks::Wrecks,
     /// Trouble that comes to the heroes (see [`incidents`]).
     pub incidents: incidents::Incidents,
+    /// The Doctor's story: the chain of chapters (see [`story`]).
+    pub story: story::Story,
     /// Trouble bystanders notice: they run, stare, cars stop (see
     /// [`alarms`]).
     pub alarms: alarms::Alarms,
@@ -634,6 +637,7 @@ impl Sim {
         sim.set_spawn(sim.spawn);
         sim.incidents
             .set_hot(hangouts.iter().map(|c| c.at).collect());
+        sim.story = story::Story::plan(&town.world, &villains, &solids);
         if let Some((at, facing)) = roosts::mole_gate(town.world.underground()) {
             sim.add_mole_gate(at, facing);
         }
@@ -850,6 +854,7 @@ impl Sim {
             tubes: tube::Tubes::default(),
             wrecks: wrecks::Wrecks::default(),
             incidents: incidents::Incidents::default(),
+            story: story::Story::default(),
             alarms: alarms::Alarms::default(),
             crime_alarms: BTreeMap::new(),
             deep: deepspots::DeepSpots::default(),
@@ -1014,6 +1019,7 @@ impl Sim {
             .collateral
             .clone_from(&self.damage.collateral);
         self.incidents.step(&mut self.world, self.tick);
+        self.story.step(&mut self.world, self.tick);
         self.raise_crime_alarms();
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
@@ -1053,6 +1059,7 @@ impl Sim {
         let now = self.tick as f64 * DT;
         let mut movers = rocket::solids(&self.rockets, now, &heroes, 25.0);
         movers.extend(self.airships.solids_near(&heroes, now));
+        movers.extend(self.story.statue_solids());
         if let Some(t) = self.wrecks.traffic.as_mut() {
             t.set_blockers(&standing, &stops);
             t.advance_to(now);
@@ -1246,6 +1253,7 @@ impl Sim {
         news.extend(self.street.take_news());
         news.extend(self.wrecks.take_news());
         news.extend(self.incidents.take_news());
+        news.extend(self.story.take_news());
         news.extend(self.damage.take_news());
         news
     }
