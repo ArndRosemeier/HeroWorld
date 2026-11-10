@@ -108,7 +108,13 @@ pub fn settings_ui(ui: &mut egui::Ui, p: &mut Profile, accent: egui::Color32) ->
             format!("Keep it smooth ({SMOOTH_FPS:.0} fps: far detail gives way first)"),
         )
         .changed();
-    changed |= ui.checkbox(&mut p.vsync, "Vertical sync").changed();
+    changed |= ui.checkbox(&mut p.vsync, "VSync (vertical sync)").changed();
+    if !p.vsync {
+        ui.label(
+            egui::RichText::new("Off: as many frames as the card can draw; the picture may tear.")
+                .weak(),
+        );
+    }
     ui.horizontal(|ui| {
         ui.label("Field of view");
         changed |= ui
@@ -317,6 +323,7 @@ impl GameMenu {
             latest.quality = p.quality.clone();
             latest.smooth = p.smooth;
             latest.vsync = p.vsync;
+            latest.render_scale = p.render_scale;
             latest.fov = p.fov;
             latest.look_speed = p.look_speed;
             latest.invert_y = p.invert_y;

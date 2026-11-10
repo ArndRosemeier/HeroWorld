@@ -814,7 +814,7 @@ on the way. Rides are free.
 - **Windows:** powers (B: karma, level, shop, give up, faction standings), map (M), menu
   (Escape: settings, controls, quit).
 - **Settings:** music and sound volume, reduced motion, picture quality Low to Ultra (each
-  says what it shows), "keep it smooth" at 60 fps, vertical sync, field of view, look
+  says what it shows), "keep it smooth" at 60 fps, VSync (vertical sync; off draws as many frames as the card can), field of view, look
   speed, inverted mouse.
 - **Music:** the title theme (a swinging golden-age serial tune) fades out 20 s into the
   game; then 16 Lyria pieces play by scenery and hour (`soundscape.rs`, `Music`; files in

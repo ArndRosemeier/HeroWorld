@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.121 (2026-11-10)
+
+- Settings, Picture: the vertical sync switch is now labelled "VSync". Switch it off to draw as many frames as your graphics card can (the picture may tear).
+- The render resolution you pick in the in-game menu is now kept for the next start.
+
 ## 0.120 (2026-11-10)
 
 - Built on the newest Engine (0.029): the graphics card no longer re-checks thousands of unused texture slots every time it draws the world, so each frame costs the processor a little less.
