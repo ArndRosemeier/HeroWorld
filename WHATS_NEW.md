@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.141 (2026-11-10)
+
+- Tab and the arrow keys now always belong to the game; the on-screen buttons can no longer catch them. Resting the mouse on a panel no longer blocks your keys either.
+
 ## 0.140 (2026-11-10)
 
 - People you save are grateful: they turn to you, put a hand on their heart, wave and thank you out loud (you see it over their heads and in the Local chat) before they go.

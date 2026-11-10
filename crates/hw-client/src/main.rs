@@ -3771,20 +3771,6 @@ fn main() -> EngineResult<()> {
                             fight.speech(h, &text);
                         }
                     }
-                    // egui hands keyboard focus to a button or tray slot
-                    // when Tab (our target key) is pressed, and Engine then
-                    // holds back every key from the game while it is
-                    // focused: 2 did nothing after a Tab. In the game only
-                    // the chat's typing line may keep the keyboard.
-                    if !chat.typing {
-                        let ctx = frame.ui.ctx();
-                        if let Some(id) = ctx.memory(|m| m.focused()) {
-                            ctx.memory_mut(|m| m.surrender_focus(id));
-                            hw_client::devlog::add(format!(
-                                "the UI took keyboard focus ({id:?}); given back to the game"
-                            ));
-                        }
-                    }
                 }
                 radio.panel(
                     frame.ui.ctx(),
