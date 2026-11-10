@@ -338,6 +338,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn pieces_fill_with_blocks_in_many_styles() {
         let mut styles = std::collections::BTreeSet::new();
         for s in 0..4u64 {

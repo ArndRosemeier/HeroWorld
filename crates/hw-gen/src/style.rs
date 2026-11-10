@@ -887,6 +887,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn every_district_gets_several_styles() {
         for d in DistrictKind::ALL {
             let mut seen = std::collections::BTreeSet::new();
@@ -921,6 +922,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn old_towns_and_suburbs_have_pitched_roofs() {
         for region in Region::ALL {
             for quarter in [Quarter::OldTown, Quarter::Suburb] {

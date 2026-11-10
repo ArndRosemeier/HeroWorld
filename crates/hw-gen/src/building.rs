@@ -1280,6 +1280,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn towers_step_back() {
         let p = BuildingPlan::generate(&site(BuildingUse::Offices, 50.0, 34.0, 30, 3));
         let first = p.floors.first().unwrap().outline.area();

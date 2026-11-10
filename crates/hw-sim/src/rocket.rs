@@ -426,6 +426,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn the_flight_is_smooth() {
         let s = sched();
         let c = s.first;

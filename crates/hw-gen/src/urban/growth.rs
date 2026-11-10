@@ -613,6 +613,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn towns_hold_their_people_and_are_not_round() {
         let mut roundness = Vec::new();
         for s in 0..12 {

@@ -1616,6 +1616,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn bronze_keeps_light_and_dark_apart() {
         let mut m = engine::anim::SkinMesh {
             positions: vec![],

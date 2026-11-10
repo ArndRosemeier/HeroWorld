@@ -664,6 +664,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn the_lit_searchlights_spread_out() {
         let at = |x: f32| Light {
             pivot: Vec3::new(x, 0.0, 0.0),

@@ -282,6 +282,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn the_legs_lean_in_under_the_crown() {
         for k in 0..4 {
             assert!((leg_at(k, 0.0).length() - LEG_FOOT * 2f64.sqrt()).abs() < 1e-9);

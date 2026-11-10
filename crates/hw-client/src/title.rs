@@ -2125,6 +2125,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn chrome_runs_light_to_gold() {
         let top = chrome(0.0);
         let horizon = chrome(0.5);

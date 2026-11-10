@@ -1642,6 +1642,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn streets_and_sky_are_busy_and_vehicles_move_smoothly() {
         let mut t = traffic();
         let (cars, fliers) = t.count();

@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.161 (2026-11-10)
+
+- Behind the scenes: checks for looks and balance (z-fighting, textures and the like) now run only when asked, so each new build is checked and ready sooner.
+
 ## 0.160 (2026-11-10)
 
 - Streets are clean where they bend and meet: no more flat green triangles, pavement spikes or slivers of asphalt at junctions.

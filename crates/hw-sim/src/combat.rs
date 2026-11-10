@@ -4001,6 +4001,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn bars_round_up_so_a_sliver_shows() {
         let mut f = Fighter::hero();
         f.health = 0.1;

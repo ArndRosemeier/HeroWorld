@@ -1616,6 +1616,7 @@ mod tests {
     use crate::urban::TownParams;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn streets_have_life() {
         // Shop fronts get cafes, pavements phone booths and post tubes,
         // main roads bus stops, front gardens fences.

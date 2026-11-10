@@ -283,6 +283,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn tipping_keeps_the_middle_in_place() {
         let d = Drive {
             clip: "fly",
@@ -305,6 +306,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn a_flier_banks_into_its_turn() {
         // Flying fast along +Z, turning left (towards +X, the body's left).
         let mut a = HeroAnim::default();

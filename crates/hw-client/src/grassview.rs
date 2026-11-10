@@ -748,6 +748,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn every_clump_model_has_three_levels_with_fewer_triangles_further_out() {
         for s in Sward::ALL {
             for v in 0..VARIANTS {

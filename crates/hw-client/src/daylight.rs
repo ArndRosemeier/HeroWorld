@@ -106,6 +106,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn windows_light_up_in_the_evening_and_go_dark_at_night() {
         let lit = |hour: f32| (0..HABITS).filter(|&g| lights_on(g, hour) > 0.5).count();
         assert_eq!(lit(13.0), 0, "noon: nobody");

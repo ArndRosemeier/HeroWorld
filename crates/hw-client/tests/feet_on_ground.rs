@@ -256,7 +256,7 @@ fn measure(world: &mut World, e: EntityId, worst: &mut Worst, standing: bool) {
 }
 
 #[test]
-#[ignore = "slow: scripts/check.sh --full and CI run it"]
+#[ignore = "on demand (looks): scripts/check.sh --on-demand"]
 fn feet_stand_on_what_is_drawn() {
     let Some(dir) = people::packs_dir() else {
         eprintln!("no Actors packs: skipped (run scripts/fetch-packs.sh)");

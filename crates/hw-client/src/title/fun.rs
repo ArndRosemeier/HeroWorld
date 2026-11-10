@@ -892,6 +892,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn pokes_jump_and_settle() {
         let mut f = Fun::new(false);
         f.poke_letter(1.0, 2, Pos2::ZERO);
@@ -902,6 +903,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn nine_pokes_blow_the_logo_apart() {
         let mut f = Fun::new(false);
         for i in 0..9 {

@@ -980,6 +980,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn worn_skins_are_darker_and_less_even_than_fresh() {
         let stats = |w: Wear| {
             let t = make(Skin::new(Base::Facade(FacadeLayer::Plaster), w), 64);

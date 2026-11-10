@@ -23,6 +23,7 @@ fn ground(x: f64, z: f64) -> DVec3 {
 }
 
 #[test]
+#[ignore = "on demand (balance): scripts/check.sh --on-demand"]
 fn the_balance_run_is_green() {
     let results = balance::run();
     for r in &results {
@@ -62,6 +63,7 @@ fn next_spot(sim: &mut Sim, me: DVec3) -> DVec3 {
 }
 
 #[test]
+#[ignore = "on demand (balance): scripts/check.sh --on-demand"]
 fn a_new_hero_reaches_level_five_in_about_an_hour() {
     let mut sim = arena(11);
     // A fresh hero: Strike, and Energy Bolt bought with the starting karma.

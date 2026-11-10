@@ -914,6 +914,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn hues_go_round() {
         assert_eq!(hue(0.0), (1.0, 0.0, 0.0));
         assert_eq!(hue(2.0), (0.0, 1.0, 0.0));

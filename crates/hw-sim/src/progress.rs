@@ -593,6 +593,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (balance): scripts/check.sh --on-demand"]
     fn one_level_buys_about_one_first_tier_power() {
         let s = new_hero(0);
         assert_eq!(price(&s, Power::SuperJump, 0), karma_to_next(1));

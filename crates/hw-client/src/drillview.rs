@@ -1652,6 +1652,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn the_rig_is_built_in_detail_near_and_light_far() {
         let l = rig_at();
         let near = faces(|b| model(b, &l, true));

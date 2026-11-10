@@ -57,6 +57,7 @@ fn heroes_have_every_clip_and_fly_fist_first() {
 }
 
 #[test]
+#[ignore = "on demand (looks): scripts/check.sh --on-demand"]
 fn citizens_dress_for_the_era() {
     let Some(mut b) = builder() else { return };
     for look in 0..8 {
@@ -88,6 +89,7 @@ fn citizens_dress_for_the_era() {
 }
 
 #[test]
+#[ignore = "on demand (looks): scripts/check.sh --on-demand"]
 fn the_creator_dresses_heroes_for_the_era() {
     use hw_client::creator::Creator;
     use hw_client::looks;
@@ -144,6 +146,7 @@ fn the_creator_dresses_heroes_for_the_era() {
 }
 
 #[test]
+#[ignore = "on demand (looks): scripts/check.sh --on-demand"]
 fn people_in_cars_sit_with_their_heads_under_the_roof() {
     use hw_client::carmesh::{floor_under, roof_over, seats};
     use hw_gen::urban::props::CarModel;
@@ -199,6 +202,7 @@ fn people_in_cars_sit_with_their_heads_under_the_roof() {
 }
 
 #[test]
+#[ignore = "on demand (looks): scripts/check.sh --on-demand"]
 fn people_who_ride_in_cars_keep_their_clothes_in_the_car() {
     // A long skirt hangs off the knees of someone sitting, through the
     // floor and out under the car: such looks walk, they don't ride.

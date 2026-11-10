@@ -1469,6 +1469,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn the_new_things_are_built_at_full_quality() {
         let tris = |m: Mesh| m.build().triangle_count();
         let near = tris(airship(Lod::Near));

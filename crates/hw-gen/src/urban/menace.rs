@@ -279,6 +279,7 @@ mod tests {
     use hw_core::Seed;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn the_quarter_bristles_and_the_town_does_not() {
         let world = TownWorld::generate(Seed(1), TownParams::sample(Seed(1), 40_000.0));
         let d = world.town.dystopia.clone().expect("a villain quarter");

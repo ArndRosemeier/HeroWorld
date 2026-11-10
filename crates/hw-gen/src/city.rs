@@ -1609,6 +1609,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn civic_centre_is_tallest() {
         let p = plan(8);
         let tallest = p

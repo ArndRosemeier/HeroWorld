@@ -11,7 +11,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # Save the build cache even when a test fails, so the next run does not
+      # compile everything again.
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       # The Actors packs people are built from (tests that build characters
       # skip without them). Cached by version.
       - uses: actions/cache@v4

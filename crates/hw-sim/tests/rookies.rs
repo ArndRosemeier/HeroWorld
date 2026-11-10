@@ -98,6 +98,7 @@ fn a_new_hero_starts_near_the_jackets_and_a_seasoned_one_in_the_centre() {
 }
 
 #[test]
+#[ignore = "on demand (balance): scripts/check.sh --on-demand"]
 fn crime_comes_often_and_close_to_a_new_hero() {
     let (_, mut sim) = town();
     let hero = sim.spawn_at_start(PlayerId(1));

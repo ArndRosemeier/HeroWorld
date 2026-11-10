@@ -526,6 +526,7 @@ mod tests {
     use crate::urban::TownParams;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn grass_grows_off_the_roads_and_out_of_the_buildings() {
         let w = TownWorld::generate(Seed(5), TownParams::sample(Seed(5), 20_000.0));
         let g = Greenery::new(&w);

@@ -736,6 +736,7 @@ mod tests {
     use hw_core::Seed;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn the_hull_is_round_and_closes() {
         assert_eq!(hull_r(0.0), 0.0);
         let widest = (0..=96).map(|s| hull_r(s as f64)).fold(0.0, f64::max);

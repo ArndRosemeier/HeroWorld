@@ -19,7 +19,7 @@ fn check(name: &str, b: &MeshBuilder, worst: &mut Vec<(f64, String)>) {
 }
 
 #[test]
-#[ignore = "slow: scripts/check.sh --full and CI run it"]
+#[ignore = "on demand (looks): scripts/check.sh --on-demand"]
 fn buildings_are_textured() {
     let mut bad = Vec::new();
     let city = GeneratedCity::generate(Seed(1));

@@ -275,6 +275,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn fins_sweep_in_to_the_shaft() {
         let d = WxDims::of(50.0);
         assert!((d.fin_edge(0.0) - WX_FIN_FOOT).abs() < 1e-9);

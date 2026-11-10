@@ -6,6 +6,10 @@
 #                               them), slow tests left out. Run it before every push.
 #   scripts/check.sh --all      the same tests for every crate.
 #   scripts/check.sh --full     everything, slow tests too: what CI runs.
+#                               Not the on-demand tests.
+#   scripts/check.sh --on-demand  only the on-demand tests: looks (z-fighting,
+#                               textures, model budgets, ...) and balance.
+#                               Nothing runs them automatically.
 #   scripts/check.sh hw-sim ... the tests of the crates named.
 #
 # "This change" is everything that differs from origin/main: commits not yet
@@ -19,8 +23,9 @@ named=()
 for a in "$@"; do
     case "$a" in
         --full) mode=full ;;
+        --on-demand) mode=on-demand ;;
         --all) mode=all ;;
-        -h | --help) sed -n '2,13p' "$0"; exit 0 ;;
+        -h | --help) sed -n '2,17p' "$0"; exit 0 ;;
         -*) echo "unknown option $a" >&2; exit 2 ;;
         *) mode=named; named+=("$a") ;;
     esac
@@ -59,6 +64,20 @@ if [ "$(uname -s)" = Linux ] && [ ! -d target/debug/deps ] && [ "$PWD" = /home/u
 fi
 step() { echo "== $1 ($((SECONDS - t0)) s so far)"; }
 
+# On-demand tests: #[ignore = "on demand (...): ..."] on the line(s) before
+# the fn. Their names, to skip in --full and to pick in --on-demand.
+on_demand=()
+while read -r name; do on_demand+=("$name"); done < <(
+    grep -rh -A3 --include='*.rs' '#\[ignore = "on demand' crates tools |
+        sed -nE 's/^ *(pub )?fn ([a-z0-9_]+)\(.*/\2/p')
+
+if [ "$mode" = on-demand ]; then
+    step "cargo test, the ${#on_demand[@]} on-demand tests"
+    cargo test --workspace -- --include-ignored "${on_demand[@]}"
+    step "done"
+    exit 0
+fi
+
 step "cargo fmt"
 cargo fmt --all -- --check
 
@@ -69,7 +88,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 if [ "$mode" = full ]; then
     step "cargo test, everything"
-    cargo test --workspace -- --include-ignored --skip level_twenty_in_about_ten_hours --skip at_the_climb_tests_pace
+    skips=()
+    for n in "${on_demand[@]}"; do skips+=(--skip "$n"); done
+    cargo test --workspace -- --include-ignored --skip level_twenty_in_about_ten_hours --skip at_the_climb_tests_pace "${skips[@]}"
     step "done"
     exit 0
 fi

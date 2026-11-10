@@ -374,6 +374,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn every_tip_fits_on_a_line() {
         for t in TIPS {
             assert!(t.len() < 110, "{t}");

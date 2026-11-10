@@ -2524,6 +2524,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn cars_are_detailed_close_and_light_far() {
         for m in [CarModel::Cruiser, CarModel::Bubble, CarModel::Hover] {
             let (near, mid, far) = (tris(m, Lod::Near), tris(m, Lod::Mid), tris(m, Lod::Far));
@@ -2583,6 +2584,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn bodies_shade_smooth_and_face_out() {
         let mut b = MeshBuilder::new();
         cruiser(&mut b, &Kit::new(0), Lod::Near, Part::Whole);

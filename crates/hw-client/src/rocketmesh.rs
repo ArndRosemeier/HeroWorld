@@ -1318,6 +1318,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn the_models_have_faces_and_budgets() {
         let tris = |m: &Mesh| m.face_count();
         let near = tris(&rocket(Lod::Near));
@@ -1344,6 +1345,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn the_hull_is_smooth_and_round() {
         let p = hull_profile();
         for w in p.windows(2) {

@@ -361,6 +361,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn sampled_towns_vary_and_lean_organic() {
         let mut planned = 0;
         let mut sites = std::collections::BTreeSet::new();

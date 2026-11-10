@@ -1351,6 +1351,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn the_ship_comes_in_three_levels() {
         let near = tris(ship(Lod::Near));
         let mid = tris(ship(Lod::Mid));

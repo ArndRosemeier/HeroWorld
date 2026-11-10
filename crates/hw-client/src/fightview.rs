@@ -3328,6 +3328,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn con_colours_follow_the_level_gap() {
         assert_eq!(con_colour(1, 1), egui::Color32::from_rgb(240, 240, 240));
         assert_eq!(con_colour(2, 1), egui::Color32::from_rgb(250, 220, 60));

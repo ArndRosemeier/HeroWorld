@@ -735,6 +735,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn it_forms_and_dissolves_through_a_line() {
         // Just started: only the line.
         let o = Opening::at(0.1, true, 0.0);

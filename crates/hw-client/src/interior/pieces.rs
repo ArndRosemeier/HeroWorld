@@ -2298,6 +2298,7 @@ mod tests {
     /// Each piece on its own: no two differently coloured faces of it
     /// fight (the city check finds them too, but cannot say which piece).
     #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn pieces_have_no_z_fighting() {
         let cov = || Cover {
             main: rgb(180, 60, 50),
