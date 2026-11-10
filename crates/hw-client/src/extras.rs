@@ -415,6 +415,9 @@ pub fn spawn_now(
     if let Some(d) = extras.deep.as_mut() {
         d.prime(world, &town, eye)?;
     }
+    if let Some(d) = extras.dystopia.as_mut() {
+        d.wait();
+    }
     eprintln!("town extras in {:.2} s", t.elapsed().as_secs_f64());
     Ok(extras)
 }

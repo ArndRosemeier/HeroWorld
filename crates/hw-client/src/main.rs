@@ -1049,6 +1049,32 @@ fn main() -> EngineResult<()> {
                 None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
             }
         }
+        "menace" => {
+            // The mad scientist's quarter from 500 m out (HW_MENACE_D), over
+            // the rooftops on the town's side, looking in.
+            let w = &generated.area;
+            match &w.town.dystopia {
+                Some(d) => {
+                    let out = std::env::var("HW_MENACE_D")
+                        .ok()
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .unwrap_or(500.0);
+                    let dir = (spawn - d.centre).normalize_or(DVec2::X);
+                    let edge = (0..400)
+                        .map(|k| d.centre + dir * (k as f64 * 5.0))
+                        .find(|p| !d.contains(*p))
+                        .unwrap_or(d.centre + dir * d.radius);
+                    let p = edge + dir * out;
+                    let c = d.centre;
+                    let dd = c - p;
+                    let yaw = dd.x.atan2(dd.y).to_degrees() as f32;
+                    let eye = ground(p) + 38.0;
+                    let pitch = ((ground(c) + 25.0 - eye) / dd.length()).atan().to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
+                }
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
         "quarter" => {
             // On a street in the mad scientist's quarter, looking at his tower.
             use hw_gen::urban::landmarks::LandmarkKind;
@@ -2008,7 +2034,7 @@ fn main() -> EngineResult<()> {
             }
             hw_client::hitch::mark("dystopia");
             if let Some(d) = extras.dystopia.as_mut() {
-                d.update(world, &generated.world, frame.dt)?;
+                d.update(world, &generated.world, frame.dt, hour)?;
             }
             hw_client::hitch::mark("mast");
             if let Some(m) = extras.mast.as_mut() {

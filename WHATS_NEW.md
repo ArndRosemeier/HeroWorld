@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.127 (2026-11-10)
+
+- The Doctor's quarter looks dangerous now, and you can tell it from across town: brick smokestacks with glowing red bands pour dark smoke, and searchlights sweep the sky at night.
+- Patrol drones with a red eye circle over his streets, swinging a green beam over the pavement.
+- His labs carry proper Tesla coils that crackle with sparks, and pipes of glowing green Aether run up their walls.
+- Loudspeakers hang over the streets, and his posters are pasted everywhere: Obey the Doctor! Heroes not welcome!
+- At night the quarter glows in red and green pools of light, and inside it the picture turns darker and harder instead of hazy.
+- Domes all over town are smooth now, no more facets.
+
 ## 0.126 (2026-11-10)
 
 - The Doctor's bigger groups now have roles you can tell apart at a glance:

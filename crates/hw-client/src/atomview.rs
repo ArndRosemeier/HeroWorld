@@ -83,7 +83,7 @@ fn ball(b: &mut MeshBuilder, c: DVec3, r: f64, seg: usize, surf: Surf, color: Co
 /// A closed ring of tube: centre `c`, in the plane spanned by `e1`, `e2`
 /// (unit, at right angles), radius `big`, tube radius `small`.
 #[allow(clippy::too_many_arguments)]
-fn torus(
+pub(crate) fn torus(
     b: &mut MeshBuilder,
     c: DVec3,
     e1: DVec3,

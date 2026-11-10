@@ -12,25 +12,27 @@ use engine::prelude::*;
 use glam::{DVec2, Vec3};
 use hw_gen::urban::world::TownWorld;
 
-/// The air deep in the quarter.
-const SMOG: (u8, u8, u8) = (104, 116, 96);
-/// How far you see deep in the quarter (m).
-const SMOG_VISIBILITY: f32 = 260.0;
+/// The air deep in the quarter: a sooty green-grey.
+const SMOG: (u8, u8, u8) = (66, 74, 64);
+/// How far you see deep in the quarter (m): a little murk in the distance,
+/// not a haze that flattens the street in front of you.
+const SMOG_VISIBILITY: f32 = 750.0;
 /// Above this height over the ground, the look fades out (m).
 const CEILING: f64 = 260.0;
 
-/// The look deep in the quarter: desaturated, a green cast, darker, heavy
-/// at the edges of the screen.
+/// The look deep in the quarter: darker and harder, the colour drained
+/// but for his sick green in the shadows and a hot red in the lights,
+/// heavy at the edges of the screen.
 pub fn grade() -> ColorGrade {
     ColorGrade {
         exposure: -0.3,
-        contrast: 1.1,
-        saturation: 0.45,
-        temperature: -0.05,
-        tint: -0.3,
-        shadows: Vec3::new(0.85, 0.98, 0.86),
-        highlights: Vec3::new(0.96, 1.04, 0.9),
-        vignette: 0.4,
+        contrast: 1.3,
+        saturation: 0.62,
+        temperature: -0.02,
+        tint: -0.18,
+        shadows: Vec3::new(0.78, 0.96, 0.84),
+        highlights: Vec3::new(1.08, 0.97, 0.9),
+        vignette: 0.5,
     }
 }
 
@@ -42,11 +44,14 @@ pub struct DystopiaView {
     edge: crate::edgeview::EdgeView,
     /// The robot works' line and dock.
     works: crate::worksview::WorksView,
+    /// Smoke, searchlights, drones, sparks, posters and the night's light.
+    menace: crate::menaceview::MenaceView,
 }
 
 impl DystopiaView {
-    pub fn new(town: &TownWorld) -> Self {
+    pub fn new(town: &std::sync::Arc<TownWorld>) -> Self {
         Self {
+            menace: crate::menaceview::MenaceView::new(town),
             volume: None,
             tesla: crate::teslaview::TeslaView::new(town),
             edge: crate::edgeview::EdgeView::new(town),
@@ -69,7 +74,13 @@ impl DystopiaView {
         (depth * high) as f32
     }
 
-    pub fn update(&mut self, world: &mut World, town: &TownWorld, dt: f32) -> EngineResult<()> {
+    pub fn update(
+        &mut self,
+        world: &mut World,
+        town: &TownWorld,
+        dt: f32,
+        hour: f32,
+    ) -> EngineResult<()> {
         let eye = world.camera().eye();
         // The volume stays on the camera wherever it goes (at strength 0 it
         // looks exactly like the town's own air), so crossing the edge
@@ -100,6 +111,7 @@ impl DystopiaView {
         self.edge.update(world, town)?;
         self.tesla.update(world, dt)?;
         self.works.update(world, dt)?;
+        self.menace.update(world, dt, hour)?;
         Ok(())
     }
 
@@ -113,7 +125,14 @@ impl DystopiaView {
         self.works.heard()
     }
 
+    /// Waits for the quarter's fixtures (screenshots: the first frame
+    /// shows them).
+    pub fn wait(&mut self) {
+        self.menace.wait();
+    }
+
     pub fn clear(&mut self, world: &mut World) {
+        self.menace.clear(world);
         self.tesla.clear(world);
         self.works.clear(world);
         self.edge.clear(world);

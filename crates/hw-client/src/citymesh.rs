@@ -539,24 +539,27 @@ impl MeshBuilder {
         }
     }
 
-    /// A dome (half sphere) of radius `r` standing on `c`.
+    /// A dome (half sphere) of radius `r` standing on `c` (a negative `r`
+    /// hangs it upside down), shaded round: its normals are shared between
+    /// neighbouring faces, so it reads as one smooth shell, not facets.
     pub fn dome(&mut self, c: DVec3, r: f64, seg: usize, rings: usize, color: Color) {
-        let at = |i: usize, k: usize| {
-            let a = std::f64::consts::TAU * (i % seg) as f64 / seg as f64;
-            let e = std::f64::consts::FRAC_PI_2 * k as f64 / rings as f64;
-            c + DVec3::new(r * e.cos() * a.cos(), r * e.sin(), r * e.cos() * a.sin())
-        };
-        for k in 0..rings {
-            for i in 0..seg {
-                let (p0, p1, p2, p3) = (at(i, k), at(i + 1, k), at(i + 1, k + 1), at(i, k + 1));
-                let out = (p0 + p1 + p2 + p3) * 0.25 - c;
-                if k + 1 == rings {
-                    self.tri([p0, p1, p2], out, color);
-                } else {
-                    self.quad([p0, p1, p2, p3], out, color);
-                }
-            }
-        }
+        let (seg, rings) = (seg.max(3), rings.max(1));
+        let rows: Vec<Vec<DVec3>> = (0..=rings)
+            .map(|k| {
+                let e = std::f64::consts::FRAC_PI_2 * k as f64 / rings as f64;
+                (0..seg)
+                    .map(|i| {
+                        let a = std::f64::consts::TAU * i as f64 / seg as f64;
+                        c + DVec3::new(r * e.cos() * a.cos(), r * e.sin(), r * e.cos() * a.sin())
+                    })
+                    .collect()
+            })
+            .collect();
+        // Which way (up the rows) × (round) points: away from the centre?
+        let (p, q, s) = (rows[0][0], rows[1][0], rows[0][1]);
+        let out = (q - p).cross(s - p).dot(p - c) >= 0.0;
+        let surf = self.surf;
+        self.grid(&rows, true, out, |_, _| Some((surf, color)));
     }
 
     /// A smooth surface through a grid of points: `rows[i][j]`, rows along

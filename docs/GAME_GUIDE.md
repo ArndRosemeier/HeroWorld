@@ -682,9 +682,37 @@ sparkle as the rainbow comes out. Views: `HW_VIEW=weather`, `weathertop`, `weath
 
 Every town of 3 000 people or more has one district the mad scientist holds: a run of
 blocks out from the core along main roads, tenements and labs, with his **Tesla tower** in
-the middle (iron lattice, copper dome, green coils). The air turns green-grey and
-thick and the colour drains as you go in; two lamps in three are dead, the rest flicker
-green; neon is broken; dirt and soot everywhere.
+the middle (iron lattice, copper dome, green coils). As you go in the picture turns darker
+and harder (exposure -0.3, contrast 1.3, saturation 0.62, green shadows and red-hot
+highlights, a heavy vignette), with a sooty murk only in the distance (750 m); two lamps in
+three are dead, the rest flicker green; neon is broken; dirt and soot everywhere.
+
+**His fixtures** (`hw-gen/src/urban/menace.rs`, drawn with the buildings by
+`hw-client/src/menacemesh.rs`, alive in `menaceview.rs`; only labs and tenements carry
+them, so they mark the quarter from afar):
+- **Smokestacks** (6 labs in 10, 1 tenement in 7; 18-26 m over a lab's roof, 11-16 m over a
+  tenement's), brick, iron bands, a red warning band near the top that glows day and night,
+  a ladder close up. Dark coal smoke rolls off the 12 nearest within 1 100 m.
+- **Searchlights** on a front corner of the roof (a lab in two, a tenement in 16; the 8 most
+  spread out of them shine, the rest stand dark): the head turns 0.22-0.4 rad/s and nods 28-56° up; its 320 m beam is faint by day and blazes at
+  night. Seen within 2 200 m of the quarter's middle.
+- **Tesla coils** on every lab's dome (copper core, five winding rings, a chrome top load
+  and a glowing ball); sparks crackle from the top load onto the dome on the 4 nearest within
+  350 m (up to 8 at once, 0.15-0.75 s each, a new path every 0.05-0.14 s).
+- **Aether pipes** glowing green up both front corners of a lab (now and then one on a
+  tenement), in iron collars.
+- **Loudspeakers**: three horns on a bracket a storey up a front corner (7 labs in 10, 9
+  tenements in 20), a red lamp under them.
+- **Posters** on the ground floor's piers ("Obey the Doctor", "Progress through power",
+  "The Doctor sees all", "Heroes not welcome"; `hw-client/assets/posters/`): the 50 nearest
+  within 130 m.
+- **Patrol drones**: 4-10 chrome saucers with a red eye loop over the quarter 48-72 m up at
+  9-15 m/s, a green beam swinging over the street under each.
+- **At night** red pools under the loudspeakers and green ones round the coils (the 10
+  nearest within 260 m), and the 3 nearest drones light the street green as they pass.
+
+Views: `HW_VIEW=menace` looks at the quarter from 500 m outside it (`HW_MENACE_D=` metres),
+`HW_VIEW=quarter` from a street inside; add `HW_HOUR=22` for night.
 
 The tower is alive (`hw-client/src/teslaview.rs`, made within 1 200 m, animated within
 900 m): up to 3 green arcs at a time crackle from the dome's lip into the yard, each lit
@@ -995,7 +1023,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default: the profile's city, 40 000 at first; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `menace`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |

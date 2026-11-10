@@ -247,7 +247,12 @@ impl Ctx<'_> {
     fn dome(&mut self, c: DVec3, r: f64, color: Color) {
         let c = self.p(c);
         self.paint(color);
-        self.b.dome(c, r, 20, 6, color);
+        let (seg, rings) = match self.detail {
+            Detail::Near => (48, 12),
+            Detail::Far => (24, 6),
+            Detail::Distant => (14, 4),
+        };
+        self.b.dome(c, r, seg, rings, color);
     }
 
     fn surf(&mut self, s: Surf) {
@@ -512,6 +517,12 @@ pub fn exterior(
         && rng_of(plan, "conduit?").chance(0.4)
     {
         aether_conduit(&mut c);
+    }
+    // The Doctor's own: stacks, searchlights, glowing pipes, loudspeakers.
+    if hw_gen::urban::menace::carries(&plan.site) {
+        let f = hw_gen::urban::menace::fixtures(&plan.site);
+        let whole = shown == plan.floors.len() && roofed;
+        crate::menacemesh::building(c.b, &plan.site, c.base, &f, whole, detail);
     }
     c.surf(Surf::Plain);
     c.b.tex = None;
@@ -1759,8 +1770,8 @@ fn roof(c: &mut Ctx, o: Rect, y: f64, detail: Detail) {
         Roof::Dome => {
             let r = o.size().min_element() * 0.42;
             let cc = o.center();
-            let drum = col(look.trim);
-            c.cylinder(DVec3::new(cc.x, y, cc.y), (r, r), 1.6, 24, false, drum);
+            let trim = col(look.trim);
+            drum(c, DVec3::new(cc.x, y, cc.y), r, 1.6, trim);
             c.surf(Surf::Metal);
             c.dome(DVec3::new(cc.x, y + 1.6, cc.y), r, roof_dome_color(look));
             c.surf(Surf::Plain);
@@ -1771,6 +1782,21 @@ fn roof(c: &mut Ctx, o: Rect, y: f64, detail: Detail) {
         Roof::Sawtooth => sawtooth(c, o, y),
     }
     let _ = plan;
+}
+
+/// A round drum under a dome, shaded smooth.
+fn drum(c: &mut Ctx, foot: DVec3, r: f64, h: f64, color: Color) {
+    let seg = match c.detail {
+        Detail::Near => 48,
+        Detail::Far => 24,
+        Detail::Distant => 14,
+    };
+    let foot = c.p(foot);
+    c.paint(color);
+    let surf = c.b.surf;
+    crate::carmesh::lathe(c.b, foot, DVec3::Y, &[(r, 0.0), (r, h)], seg, |_| {
+        Some((surf, color))
+    });
 }
 
 fn roof_dome_color(look: &Look) -> Color {
@@ -2358,6 +2384,8 @@ fn rooftop(c: &mut Ctx, o: Rect, y: f64) {
         // The crown takes the middle (and stands over the core).
         taken.push(o.inset(o.size().min_element() * 0.12));
     }
+    // The Doctor's smokestack and searchlight.
+    taken.extend(hw_gen::urban::menace::fixtures(&plan.site).roof_rects());
     let free = |r: &Rect, taken: &[Rect]| {
         o.inset(1.0).contains_rect(r, 1e-6) && taken.iter().all(|t| !overlaps(t, r))
     };
@@ -2567,7 +2595,7 @@ fn crown(c: &mut Ctx, o: Rect, y: f64) {
         }
         Crown::Dome => {
             let r = w * 0.32;
-            c.cylinder(DVec3::new(cc.x, y, cc.y), (r, r), 3.0, 24, false, wall);
+            drum(c, DVec3::new(cc.x, y, cc.y), r, 3.0, wall);
             c.bx(
                 DVec3::new(cc.x - r - 0.3, y + 3.0, cc.y - r - 0.3),
                 DVec3::new(cc.x + r + 0.3, y + 3.3, cc.y + r + 0.3),
@@ -2578,29 +2606,9 @@ fn crown(c: &mut Ctx, o: Rect, y: f64) {
             c.surf(Surf::Plain);
             let top = y + 3.3 + r;
             if look.style == Style::Lab {
-                // The coil.
-                c.surf(Surf::Metal);
-                c.cylinder(
-                    DVec3::new(cc.x, top - 0.2, cc.y),
-                    (0.3, 0.3),
-                    5.0,
-                    8,
-                    true,
-                    col([180, 120, 70]),
-                );
-                for k in 0..4 {
-                    let rr = 1.2 - k as f64 * 0.2;
-                    c.cylinder(
-                        DVec3::new(cc.x, top + 1.0 + k as f64 * 1.0, cc.y),
-                        (rr, rr),
-                        0.2,
-                        14,
-                        true,
-                        col([190, 130, 80]),
-                    );
-                }
-                c.surf(Surf::Glow);
-                c.dome(DVec3::new(cc.x, top + 4.8, cc.y), 0.9, col(look.accent));
+                // The Doctor's coil (its arcs are the quarter view's).
+                let apex = c.p(DVec3::new(cc.x, top, cc.y));
+                crate::menacemesh::lab_coil(c.b, apex, c.detail);
                 c.surf(Surf::Plain);
             } else {
                 c.cylinder(
