@@ -1823,9 +1823,8 @@ mod tests {
     }
 
     const SPEEDSTER: crate::Moves = crate::Moves {
-        fly: false,
-        super_jump: false,
         speed: true,
+        ..crate::Moves::ON_FOOT
     };
 
     /// A downhill run, a kerb, a flight of stairs down: the hero never

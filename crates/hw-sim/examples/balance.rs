@@ -1,8 +1,9 @@
-//! The balance run: every power against the standard targets.
-//! `cargo run --release -p hw-sim --example balance`
+//! The balance run: the old powers (`--all`: every tree power) against the
+//! standard targets.
+//! `cargo run --release -p hw-sim --example balance [-- --all]`
 
 use hw_sim::balance;
-use hw_sim::combat::power_spec;
+use hw_sim::powers::{def_of, energy, recharge};
 
 fn main() {
     for level in [8, 12, 16, 20] {
@@ -12,13 +13,24 @@ fn main() {
             h * 100.0
         );
     }
-    let results = balance::run();
-    println!("{:<16} tier  seconds  hurt  lost  worth  travel", "power");
+    let all = std::env::args().any(|a| a == "--all");
+    let results = if all {
+        balance::run_all()
+    } else {
+        balance::run()
+    };
+    println!(
+        "{:<20} tier  energy  recharge  seconds  hurt  lost  worth  travel",
+        "power"
+    );
     for r in &results {
+        let d = def_of(r.power);
         println!(
-            "{:<16} {:>4}  {:>7.1}  {:>3.0}%  {:>4}  {:>5.2}  {:>6.1}",
-            power_spec(r.power).name,
+            "{:<20} {:>4}  {:>6.0}  {:>8.1}  {:>7.1}  {:>3.0}%  {:>4}  {:>5.2}  {:>6.1}",
+            d.name,
             r.tier,
+            energy(d),
+            recharge(d),
             r.seconds,
             r.hurt * 100.0,
             r.lost,

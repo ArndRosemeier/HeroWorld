@@ -5,7 +5,7 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
-use hw_net::{EntityKind, FxKind, InputState, PlayerId, Power};
+use hw_net::{EntityKind, FxKind, InputState, PlayerId, PowerId};
 use hw_sim::balance::hero_sheet;
 use hw_sim::collision::{Body, Obstacles, Solid};
 use hw_sim::combat::{charmable, freezable, teleport_to, EnemyKind, FROZEN_SECONDS};
@@ -43,9 +43,9 @@ fn press(sim: &mut Sim, input: InputState, ticks: u64) -> Vec<hw_net::Fx> {
     seen
 }
 
-fn use_power(p: Power, target: Option<NetId>, aim: DVec3) -> InputState {
+fn use_power(p: PowerId, target: Option<NetId>, aim: DVec3) -> InputState {
     InputState {
-        power: p.code(),
+        power: p.0,
         target,
         aim: aim.as_vec3().to_array(),
         ..Default::default()
@@ -54,7 +54,7 @@ fn use_power(p: Power, target: Option<NetId>, aim: DVec3) -> InputState {
 
 /// A hero with `powers` at the origin and a group of minions `at` metres
 /// down the street, all standing where they are put.
-fn street(powers: &[Power], at: f64) -> (Sim, NetId, Vec<NetId>) {
+fn street(powers: &[PowerId], at: f64) -> (Sim, NetId, Vec<NetId>) {
     let mut sim = arena(Obstacles::flat(GROUND_Y));
     let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(20, powers));
     sim.step();
@@ -78,7 +78,7 @@ fn put(sim: &mut Sim, id: NetId, at: DVec3) {
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_freeze_ray_freezes_minions_and_a_blow_shatters_the_ice() {
-    let (mut sim, _hero, foes) = street(&[Power::Freeze, Power::Bolt], 30.0);
+    let (mut sim, _hero, foes) = street(&[PowerId(16), PowerId(10)], 30.0);
     let kind = sim.enemies()[0].1;
     assert!(freezable(kind), "the street group are minions");
     // Two side by side in the cone, the rest far off to the side.
@@ -90,11 +90,7 @@ fn the_freeze_ray_freezes_minions_and_a_blow_shatters_the_ice() {
         };
         put(&mut sim, f, at);
     }
-    let fx = press(
-        &mut sim,
-        use_power(Power::Freeze, Some(foes[0]), DVec3::X),
-        2,
-    );
+    let fx = press(&mut sim, use_power(PowerId(16), Some(foes[0]), DVec3::X), 2);
     assert!(fx.iter().any(|e| e.kind == FxKind::Freeze));
     let tick = sim.tick;
     for &f in &foes[..2] {
@@ -115,7 +111,7 @@ fn the_freeze_ray_freezes_minions_and_a_blow_shatters_the_ice() {
     let health = sim.fighter(foes[0]).unwrap().health;
     let fx = press(
         &mut sim,
-        use_power(Power::Bolt, Some(foes[0]), DVec3::X),
+        use_power(PowerId(10), Some(foes[0]), DVec3::X),
         TICK_HZ as u64 / 2,
     );
     assert!(fx
@@ -156,17 +152,17 @@ fn teleport_lands_short_of_a_wall_never_inside_it() {
     let hero = sim.spawn_hero_with(
         PlayerId(1),
         ground(0.0, 0.0),
-        hero_sheet(20, &[Power::Teleport]),
+        hero_sheet(20, &[PowerId(14)]),
     );
     sim.step();
-    let fx = press(&mut sim, use_power(Power::Teleport, None, DVec3::X), 2);
+    let fx = press(&mut sim, use_power(PowerId(14), None, DVec3::X), 2);
     assert!(fx.iter().any(|e| e.kind == FxKind::TeleportIn));
     let at = sim.position(hero).unwrap();
     assert!(at.x > 10.0 && at.x < 15.0, "hero at {at}");
     let energy = sim.fighter(hero).unwrap().energy;
     press(
         &mut sim,
-        use_power(Power::Teleport, None, DVec3::NEG_Y),
+        use_power(PowerId(14), None, DVec3::NEG_Y),
         TICK_HZ as u64 * 4,
     );
     assert!(
@@ -185,8 +181,8 @@ fn sidekick_of(sim: &mut Sim, owner: NetId) -> Option<(NetId, DVec3)> {
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_sidekick_keeps_at_its_heros_side_and_fights() {
-    let (mut sim, hero, foes) = street(&[Power::Sidekick], 60.0);
-    let fx = press(&mut sim, use_power(Power::Sidekick, None, DVec3::X), 2);
+    let (mut sim, hero, foes) = street(&[PowerId(18)], 60.0);
+    let fx = press(&mut sim, use_power(PowerId(18), None, DVec3::X), 2);
     assert!(fx.iter().any(|e| e.kind == FxKind::SidekickCall));
     let (pal, _) = sidekick_of(&mut sim, hero).expect("a sidekick");
     // The hero runs off: it follows, and beams back when left far behind.
@@ -199,7 +195,7 @@ fn the_sidekick_keeps_at_its_heros_side_and_fights() {
     let health = sim.fighter(foes[0]).unwrap().health;
     let fx = press(
         &mut sim,
-        use_power(Power::Sidekick, Some(foes[0]), DVec3::X),
+        use_power(PowerId(18), Some(foes[0]), DVec3::X),
         TICK_HZ as u64 * 6,
     );
     assert!(
@@ -220,17 +216,13 @@ fn the_sidekick_keeps_at_its_heros_side_and_fights() {
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_hypno_ray_turns_a_minion_against_its_friends() {
-    let (mut sim, _hero, foes) = street(&[Power::Hypno], 12.0);
+    let (mut sim, _hero, foes) = street(&[PowerId(23)], 12.0);
     assert!(charmable(sim.enemies()[0].1));
     assert!(
         !charmable(EnemyKind::Colossus),
         "machines have no mind to bend"
     );
-    let fx = press(
-        &mut sim,
-        use_power(Power::Hypno, Some(foes[0]), DVec3::X),
-        2,
-    );
+    let fx = press(&mut sim, use_power(PowerId(23), Some(foes[0]), DVec3::X), 2);
     assert!(fx
         .iter()
         .any(|e| e.kind == FxKind::Hypno && e.to == foes[0]));

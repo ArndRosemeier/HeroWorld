@@ -4,7 +4,7 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
-use hw_net::{FxKind, InputState, PlayerId, Power};
+use hw_net::{FxKind, InputState, PlayerId, PowerId};
 use hw_sim::balance::hero_sheet;
 use hw_sim::collision::{Body, Obstacles};
 use hw_sim::combat::{with_roles, EnemyKind, BOMB_SECONDS, ORDERLY_EVERY};
@@ -23,7 +23,7 @@ fn street(kind: EnemyKind, size: u32, at: f64) -> (Sim, NetId, Vec<NetId>) {
     let hero = sim.spawn_hero_with(
         PlayerId(1),
         ground(0.0, 0.0),
-        hero_sheet(10, &[Power::Strike, Power::Bolt]),
+        hero_sheet(10, &[PowerId::STRIKE, PowerId(10)]),
     );
     sim.step();
     sim.add_fight_spot_of(ground(at, 0.0), DVec2::new(-1.0, 0.0), kind, size);
@@ -63,9 +63,9 @@ fn run(sim: &mut Sim, input: InputState, ticks: u64) -> Vec<hw_net::Fx> {
     seen
 }
 
-fn power(p: Power, target: NetId) -> InputState {
+fn power(p: PowerId, target: NetId) -> InputState {
     InputState {
-        power: p.code(),
+        power: p.0,
         target: Some(target),
         aim: [1.0, 0.0, 0.0],
         ..Default::default()
@@ -121,7 +121,7 @@ fn the_shield_stops_bolts_from_afar_but_not_a_punch() {
     for _ in 0..3 {
         put(&mut sim, hero, ground(0.0, 0.0));
         put(&mut sim, wall, ground(10.0, 0.0));
-        let fx = run(&mut sim, power(Power::Bolt, wall), TICK_HZ as u64 * 2);
+        let fx = run(&mut sim, power(PowerId(10), wall), TICK_HZ as u64 * 2);
         bolts += fx
             .iter()
             .filter(|e| e.kind == FxKind::Bolt && e.to == wall)
@@ -136,7 +136,7 @@ fn the_shield_stops_bolts_from_afar_but_not_a_punch() {
     // Up close a punch goes round it.
     put(&mut sim, wall, ground(1.5, 0.0));
     put(&mut sim, hero, ground(0.0, 0.0));
-    let fx = run(&mut sim, power(Power::Strike, wall), 4);
+    let fx = run(&mut sim, power(PowerId::STRIKE, wall), 4);
     assert!(fx.iter().any(|e| e.kind == FxKind::Strike && e.to == wall));
     assert!(!fx.iter().any(|e| e.kind == FxKind::Block));
 }

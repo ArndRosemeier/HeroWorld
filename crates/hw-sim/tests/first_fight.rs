@@ -6,9 +6,9 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
-use hw_net::{FxKind, InputState, PlayerId, Power, Status};
+use hw_net::{FxKind, InputState, PlayerId, PowerId, Status};
 use hw_sim::collision::Obstacles;
-use hw_sim::combat::{power_spec, MEDIC_DELAY, REVIVE_SECONDS};
+use hw_sim::combat::{MEDIC_DELAY, REVIVE_SECONDS};
 use hw_sim::{Sim, GROUND_Y, TICK_HZ};
 use std::sync::Arc;
 
@@ -41,15 +41,15 @@ fn bot(sim: &mut Sim, hero: NetId, tick: u64) -> InputState {
     let d = at.distance(me);
     let flat = DVec2::new(at.x - me.x, at.z - me.z).normalize_or_zero();
     // Close in to bolt range; punch when it is right there.
-    if d > 14.0 || (d > power_spec(Power::Strike).range && f.energy < 15.0) {
+    if d > 14.0 || (d > hw_sim::powers::def_of(PowerId::STRIKE).fields.range && f.energy < 15.0) {
         input.move_x = flat.x as f32;
         input.move_z = flat.y as f32;
     }
     // Press a key every few ticks, as people do.
     if tick.is_multiple_of(4) {
-        if d <= power_spec(Power::Strike).range - 0.3 && f.energy < 40.0 {
+        if d <= hw_sim::powers::def_of(PowerId::STRIKE).fields.range - 0.3 && f.energy < 40.0 {
             input.smash = true;
-        } else if f.energy >= power_spec(Power::Bolt).cost {
+        } else if f.energy >= hw_sim::powers::energy(hw_sim::powers::def_of(PowerId(10))) {
             input.blast = true;
         } else {
             input.smash = true;

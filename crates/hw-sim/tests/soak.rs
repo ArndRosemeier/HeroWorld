@@ -18,7 +18,7 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
-use hw_net::{ConnState, Connection, InputState, PlayerId, Power, Status, ToServer};
+use hw_net::{ConnState, Connection, InputState, PlayerId, PowerId, Status, ToServer};
 use hw_sim::host::{Host, INTEREST_RADIUS, MAX_PLAYERS};
 use hw_sim::incidents::{Hurt, Incident};
 use hw_sim::{GeneratedTown, Sim, DEFAULT_POPULATION, TICK_HZ};
@@ -151,11 +151,17 @@ fn answer(sim: &mut Sim, me: NetId, at: DVec3, inc: &Incident, tick: u64) -> Inp
 
 /// A level 8 hero file with flight and the fighting powers.
 fn sheet() -> hw_net::Sheet {
-    let mut s = hw_sim::progress::new_hero(0);
+    let mut s = hw_sim::progress::new_hero(0, hw_sim::powers::Element::Fire);
     s.lifetime = hw_sim::progress::karma_for_level(8);
     s.karma = 100_000;
-    for p in [Power::Bolt, Power::Flight, Power::SuperJump, Power::Shield] {
-        hw_sim::progress::buy(&mut s, p, 0).unwrap_or_else(|e| panic!("{p:?}: {e:?}"));
+    for p in [
+        PowerId(10),
+        PowerId(2),
+        PowerId(5),
+        PowerId(11),
+        PowerId(15),
+    ] {
+        hw_sim::progress::buy(&mut s, p).unwrap_or_else(|e| panic!("{p:?}: {e:?}"));
     }
     s
 }

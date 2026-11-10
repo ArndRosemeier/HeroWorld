@@ -4,7 +4,7 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
-use hw_net::{FxKind, InputState, PlayerId, Power};
+use hw_net::{FxKind, InputState, PlayerId, PowerId};
 use hw_sim::balance::hero_sheet;
 use hw_sim::collision::{Body, Obstacles, Solid};
 use hw_sim::combat::{clear_line, in_sight};
@@ -51,7 +51,7 @@ fn set_up(wall: bool) -> (Sim, NetId, Vec<NetId>) {
     let hero = sim.spawn_hero_with(
         PlayerId(1),
         ground(0.0, 0.0),
-        hero_sheet(10, &[Power::Strike, Power::Bolt]),
+        hero_sheet(10, &[PowerId::STRIKE, PowerId(10)]),
     );
     sim.step();
     sim.add_fight_spot(ground(8.0, 0.0), DVec2::new(-1.0, 0.0));
@@ -70,7 +70,7 @@ fn hold(sim: &mut Sim, hero: NetId, foes: &[NetId]) {
 }
 
 /// Uses `power` on the first villain; returns the events of the next ticks.
-fn attack(wall: bool, power: Power) -> (NetId, Vec<hw_net::Fx>) {
+fn attack(wall: bool, power: PowerId) -> (NetId, Vec<hw_net::Fx>) {
     let (mut sim, hero, foes) = set_up(wall);
     let mut seen = Vec::new();
     for k in 0..TICK_HZ as u64 {
@@ -78,7 +78,7 @@ fn attack(wall: bool, power: Power) -> (NetId, Vec<hw_net::Fx>) {
         sim.set_input(
             PlayerId(1),
             InputState {
-                power: if k == 0 { power.code() } else { 0 },
+                power: if k == 0 { power.0 } else { 0 },
                 target: Some(foes[0]),
                 aim: [1.0, 0.0, 0.0],
                 ..Default::default()
@@ -92,7 +92,10 @@ fn attack(wall: bool, power: Power) -> (NetId, Vec<hw_net::Fx>) {
 
 #[test]
 fn a_hero_cannot_punch_or_bolt_through_a_wall() {
-    for (power, kind) in [(Power::Strike, FxKind::Strike), (Power::Bolt, FxKind::Bolt)] {
+    for (power, kind) in [
+        (PowerId::STRIKE, FxKind::Strike),
+        (PowerId(10), FxKind::Bolt),
+    ] {
         let (_, open) = attack(false, power);
         assert!(
             open.iter().any(|e| e.kind == kind),

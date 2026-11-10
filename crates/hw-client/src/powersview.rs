@@ -1,18 +1,18 @@
 //! A hero's progress on screen: the level and karma strip, the powers
-//! window (B) where karma buys powers in the theme you like, the origin
-//! card a new hero starts with, and the level-up moment.
+//! window (B) with the hero's origin tree and the travel tree, the origin
+//! card a new hero starts with (origin and element), the element card an
+//! older hero picks once, and the level-up moment.
 //!
-//! The rules live in `hw_sim::progress`; the host checks every purchase
-//! again, so this only asks.
+//! The rules live in `hw_sim::progress` and `hw_sim::powers`; the host
+//! checks every purchase again, so this only asks.
 
-use crate::fightview::theme_ui_colour;
+use crate::fightview::{element_ui_colour, power_ui_colour};
 use crate::tray::{self, Tray};
 use engine::ui::egui;
-use hw_net::{Power, Sheet};
-use hw_sim::combat::power_spec;
+use hw_net::{PowerId, Sheet};
+use hw_sim::powers::{self, def_of, Delivery, Element, Lands, PowerDef, Tree};
 use hw_sim::progress::{
-    self, can_buy, discount, karma_for_level, level_of, themes, tier, tier_level, Affinity,
-    BuyError, MAX_LEVEL, ORIGINS, REFUND,
+    self, can_buy, can_give_up, karma_for_level, level_of, BuyError, MAX_LEVEL, ORIGINS, REFUND,
 };
 
 /// How each faction regards the hero, one word each: a new hero is
@@ -47,51 +47,40 @@ fn standing(ui: &mut egui::Ui, sheet: &Sheet) {
 /// What the player asked for in the windows this frame.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PowerAction {
-    Buy(Power, u8),
-    GiveUp(Power),
-    /// A new hero: origin picked, first power bought.
+    Buy(PowerId),
+    GiveUp(PowerId),
+    /// A new hero: origin and element picked, first power bought.
     Create(Sheet),
+    /// A hero from before the power trees picked their element.
+    Element(Element),
 }
-
-/// The powers a hero can buy, in the order the window lists them (by tier).
-pub const SHOP: [Power; 20] = [
-    Power::Bolt,
-    Power::SuperJump,
-    Power::Hold,
-    Power::Shield,
-    Power::Lift,
-    Power::Flight,
-    Power::Shockwave,
-    Power::SuperSpeed,
-    Power::Mend,
-    Power::Beam,
-    Power::Vitality,
-    Power::Meteor,
-    Power::Invulnerable,
-    Power::Nova,
-    Power::Rally,
-    Power::Freeze,
-    Power::Teleport,
-    Power::Bubble,
-    Power::Sidekick,
-    Power::Hypno,
-];
 
 const GOLD: egui::Color32 = egui::Color32::from_rgb(255, 214, 90);
 const INK: egui::Color32 = egui::Color32::from_rgb(28, 30, 48);
+const HELPER: egui::Color32 = egui::Color32::from_rgb(120, 220, 140);
+
+/// A node of the tree on screen (px).
+const NODE_W: f32 = 132.0;
+const NODE_H: f32 = 46.0;
+const COL_STEP: f32 = 150.0;
+const ROW_STEP: f32 = 74.0;
+const COLUMNS: usize = 5;
+const ROWS: usize = 6;
 
 pub struct PowersView {
     /// The powers window is open.
     pub open: bool,
-    /// The theme picked for each power not owned yet (by code).
-    picked: [u8; Power::ALL.len() + 1],
+    /// The tree shown: the hero's origin's (false) or travel (true).
+    travel: bool,
+    /// The power picked in the tree (its details below it).
+    selected: Option<PowerId>,
     /// A give-up click waiting for its second click.
-    confirm: Option<Power>,
+    confirm: Option<PowerId>,
     /// The level-up banner: level, seconds shown.
     banner: Option<(u8, f32)>,
-    /// The origin card: chosen origin and first power.
+    /// The origin card: chosen origin and element.
     origin: usize,
-    first: (Power, u8),
+    element: Element,
     /// Which key fires which power (kept in line by the game, shown and
     /// changed here).
     pub tray: Tray,
@@ -107,11 +96,12 @@ impl PowersView {
     pub fn new() -> Self {
         Self {
             open: false,
-            picked: [0; Power::ALL.len() + 1],
+            travel: false,
+            selected: None,
             confirm: None,
             banner: None,
             origin: 0,
-            first: (Power::Bolt, 0),
+            element: Element::Fire,
             tray: Tray::default(),
         }
     }
@@ -132,7 +122,8 @@ impl PowersView {
 
     /// Draws the strip, the windows and the banner. `fighting` is the
     /// level everyone fights at (the host's hero's). `creating` shows the
-    /// origin card instead of the powers window.
+    /// origin card instead of the powers window; a hero with no element
+    /// yet (from before the power trees) gets the element card.
     pub fn ui(
         &mut self,
         ctx: &egui::Context,
@@ -145,6 +136,10 @@ impl PowersView {
         if creating {
             if let Some(s) = self.origin_card(ctx) {
                 out.push(PowerAction::Create(s));
+            }
+        } else if Element::from_code(sheet.element) == Element::None {
+            if let Some(e) = self.element_card(ctx, sheet) {
+                out.push(PowerAction::Element(e));
             }
         } else if self.open {
             self.window(ctx, sheet, &mut out);
@@ -212,12 +207,14 @@ impl PowersView {
 
     fn window(&mut self, ctx: &egui::Context, sheet: &Sheet, out: &mut Vec<PowerAction>) {
         let level = level_of(sheet.lifetime);
+        let origin = &ORIGINS[(sheet.origin as usize).min(ORIGINS.len() - 1)];
+        let element = Element::from_code(sheet.element);
         let mut open = self.open;
         egui::Window::new("Powers")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
-            .default_width(640.0)
+            .default_width(COL_STEP * COLUMNS as f32 + 20.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -20.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -242,61 +239,49 @@ impl PowersView {
                         ));
                     }
                 });
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Origin: {}. Deeds lean you toward an affinity; its powers cost up to 30% less.",
-                        ORIGINS[sheet.origin.min(4) as usize].name
-                    ))
-                    .size(13.0)
-                    .color(egui::Color32::from_gray(200)),
-                );
                 ui.horizontal_wrapped(|ui| {
-                    for a in Affinity::ALL {
-                        let off = discount(sheet, a);
-                        ui.label(
-                            egui::RichText::new(format!("{} −{:.0}%", a.name(), off * 100.0))
-                                .size(13.0)
-                                .color(if off > 0.05 {
-                                    GOLD
-                                } else {
-                                    egui::Color32::from_gray(170)
-                                }),
-                        );
-                        ui.add_space(8.0);
-                    }
+                    ui.label(
+                        egui::RichText::new(format!("Origin: {}.", origin.name))
+                            .size(13.0)
+                            .color(egui::Color32::from_gray(210)),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("Element: {}", element.name()))
+                            .size(13.0)
+                            .strong()
+                            .color(element_ui_colour(element)),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("({}).", element.blurb()))
+                            .size(13.0)
+                            .color(egui::Color32::from_gray(190)),
+                    );
                 });
                 standing(ui, sheet);
                 ui.separator();
-                egui::ScrollArea::vertical()
-                    .max_height(ctx.screen_rect().height() * 0.62)
-                    .show(ui, |ui| {
-                        for t in 1..=7u8 {
-                            let opens = tier_level(t);
-                            let head = if level >= opens {
-                                format!("Tier {t}")
-                            } else {
-                                format!("Tier {t} · opens at level {opens}")
-                            };
-                            ui.label(
-                                egui::RichText::new(head)
-                                    .size(14.0)
-                                    .strong()
-                                    .color(if level >= opens {
-                                        GOLD
-                                    } else {
-                                        egui::Color32::from_gray(150)
-                                    }),
-                            );
-                            for p in SHOP.into_iter().filter(|p| tier(*p) == t) {
-                                self.row(ui, sheet, p, out);
-                                ui.add_space(4.0);
-                            }
-                        }
-                    });
+                ui.horizontal(|ui| {
+                    let mine = format!("{} tree", origin.tree.name());
+                    if ui.selectable_label(!self.travel, mine).clicked() {
+                        self.travel = false;
+                    }
+                    if ui.selectable_label(self.travel, "Travel tree").clicked() {
+                        self.travel = true;
+                    }
+                });
+                let tree = if self.travel { Tree::Common } else { origin.tree };
+                if self.selected.and_then(powers::get).is_none_or(|d| d.tree != tree) {
+                    self.selected = powers::tree(tree).next().map(|d| d.id);
+                }
+                self.tree(ui, sheet, tree);
+                ui.separator();
+                if let Some(d) = self.selected.and_then(powers::get) {
+                    self.details(ui, sheet, d, out);
+                }
                 ui.separator();
                 ui.label(
                     egui::RichText::new(
-                        "Powers grow with your level. Each power you own makes the next dearer; giving one up returns 90%.",
+                        "A power needs the ones its arrows come from. Where two powers say \"or\", you pick one for good. \
+                         Each power you own makes the next dearer; giving one up returns 90%.",
                     )
                     .size(12.0)
                     .color(egui::Color32::from_gray(170)),
@@ -305,138 +290,284 @@ impl PowersView {
         self.open = open;
     }
 
-    fn row(&mut self, ui: &mut egui::Ui, sheet: &Sheet, p: Power, out: &mut Vec<PowerAction>) {
-        let owned = sheet.has(p);
-        let spec = power_spec(p);
-        let t = tier(p);
-        let opens = tier_level(t);
-        let frame = egui::Frame::new()
-            .fill(if owned {
-                egui::Color32::from_rgb(44, 52, 86)
-            } else {
-                INK
-            })
-            .corner_radius(6.0)
-            .inner_margin(egui::Margin::same(8));
-        frame.show(ui, |ui| {
-            ui.set_width(600.0);
-            ui.horizontal(|ui| {
-                let theme = if owned {
-                    sheet.theme(p)
-                } else {
-                    self.picked[p.code() as usize]
-                };
-                let th = themes(p)[theme as usize];
-                ui.label(
-                    egui::RichText::new(th.name)
-                        .size(18.0)
-                        .strong()
-                        .color(theme_ui_colour(p, theme)),
-                );
-                ui.label(
-                    egui::RichText::new(spec.name)
-                        .size(13.0)
-                        .color(egui::Color32::from_gray(190)),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if owned {
-                        let back = (sheet
-                            .powers
-                            .iter()
-                            .find(|o| o.power == p)
-                            .map_or(0, |o| o.paid) as f64
-                            * REFUND)
-                            .floor() as u32;
-                        let label = if self.confirm == Some(p) {
-                            format!("Really give it up? (+{back})")
-                        } else {
-                            format!("Give up (+{back})")
-                        };
-                        if ui.button(label).clicked() {
-                            if self.confirm == Some(p) {
-                                out.push(PowerAction::GiveUp(p));
-                                self.confirm = None;
-                            } else {
-                                self.confirm = Some(p);
-                            }
-                        }
-                        ui.label(egui::RichText::new("owned").color(GOLD));
-                        if tray::keyed(p) {
-                            self.tray_handle(ui, p);
-                        }
+    /// The tree as boxes and arrows: owned powers gold, ones to buy now
+    /// lit, the rest dim. A click picks a power.
+    fn tree(&mut self, ui: &mut egui::Ui, sheet: &Sheet, tree: Tree) {
+        let size = egui::vec2(
+            COL_STEP * COLUMNS as f32,
+            ROW_STEP * (ROWS as f32 - 1.0) + NODE_H + 8.0,
+        );
+        let (area, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        let rect_of = |d: &PowerDef| {
+            egui::Rect::from_min_size(
+                area.min
+                    + egui::vec2(
+                        d.col as f32 * COL_STEP + (COL_STEP - NODE_W) * 0.5,
+                        d.row as f32 * ROW_STEP + 4.0,
+                    ),
+                egui::vec2(NODE_W, NODE_H),
+            )
+        };
+        let painter = ui.painter_at(area.expand(2.0));
+        // Arrows first, under the boxes.
+        for d in powers::tree(tree) {
+            let to = rect_of(d);
+            for any in d.needs {
+                for &n in any.iter() {
+                    let Some(from) = powers::get(PowerId(n)).filter(|f| f.tree == tree) else {
+                        continue;
+                    };
+                    let a = rect_of(from).center_bottom();
+                    let b = to.center_top();
+                    let lit = sheet.has(from.id);
+                    let colour = if lit {
+                        GOLD.gamma_multiply(0.8)
                     } else {
-                        match can_buy(sheet, p, theme) {
-                            Ok(price) => {
-                                let b = egui::Button::new(
-                                    egui::RichText::new(format!("Buy · {price} karma"))
-                                        .strong()
-                                        .color(INK),
-                                )
-                                .fill(GOLD);
-                                if ui.add(b).clicked() {
-                                    out.push(PowerAction::Buy(p, theme));
+                        egui::Color32::from_gray(90)
+                    };
+                    let width: f32 = if any.len() > 1 { 1.0 } else { 2.0 };
+                    painter.line_segment([a, b], egui::Stroke::new(width, colour));
+                    let dir = (b - a).normalized();
+                    let side = egui::vec2(-dir.y, dir.x);
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![b, b - dir * 8.0 + side * 4.0, b - dir * 8.0 - side * 4.0],
+                        colour,
+                        egui::Stroke::NONE,
+                    ));
+                }
+            }
+        }
+        // "or" between powers of one fork in the same row.
+        let forks: Vec<&PowerDef> = powers::tree(tree).filter(|d| d.fork != 0).collect();
+        for (k, a) in forks.iter().enumerate() {
+            for b in &forks[k + 1..] {
+                if a.fork == b.fork && a.row == b.row && a.col.abs_diff(b.col) == 1 {
+                    let (l, r) = if a.col < b.col { (a, b) } else { (b, a) };
+                    let p = egui::pos2(
+                        (rect_of(l).right() + rect_of(r).left()) * 0.5,
+                        rect_of(l).center().y,
+                    );
+                    painter.text(
+                        p,
+                        egui::Align2::CENTER_CENTER,
+                        "or",
+                        egui::FontId::proportional(13.0),
+                        egui::Color32::from_rgb(255, 150, 120),
+                    );
+                }
+            }
+        }
+        for d in powers::tree(tree) {
+            let r = rect_of(d);
+            let id = ui.id().with(("power node", d.id.0));
+            let resp = ui.interact(r, id, egui::Sense::click());
+            let owned = sheet.has(d.id);
+            let state = can_buy(sheet, d.id);
+            let (fill, text, edge) = if owned {
+                (egui::Color32::from_rgb(70, 62, 30), GOLD, GOLD)
+            } else {
+                match state {
+                    Ok(_) => (
+                        egui::Color32::from_rgb(44, 56, 96),
+                        egui::Color32::WHITE,
+                        egui::Color32::from_rgb(150, 200, 255),
+                    ),
+                    Err(BuyError::TooDear(_)) => (
+                        egui::Color32::from_rgb(38, 42, 66),
+                        egui::Color32::from_gray(225),
+                        egui::Color32::from_gray(120),
+                    ),
+                    Err(BuyError::ForkTaken(_)) => (
+                        egui::Color32::from_rgb(40, 28, 30),
+                        egui::Color32::from_gray(110),
+                        egui::Color32::from_rgb(110, 60, 60),
+                    ),
+                    Err(_) => (
+                        egui::Color32::from_rgb(30, 31, 40),
+                        egui::Color32::from_gray(150),
+                        egui::Color32::from_gray(70),
+                    ),
+                }
+            };
+            let fill = if resp.hovered() {
+                fill.gamma_multiply(1.4)
+            } else {
+                fill
+            };
+            painter.rect_filled(r, 6.0, fill);
+            let edge = if d.helper && !owned { HELPER } else { edge };
+            let width: f32 = if self.selected == Some(d.id) {
+                3.0
+            } else {
+                1.5
+            };
+            painter.rect_stroke(
+                r,
+                6.0,
+                egui::Stroke::new(width, edge),
+                egui::StrokeKind::Inside,
+            );
+            let mark = if d.capstone { "★ " } else { "" };
+            painter.text(
+                r.center_top() + egui::vec2(0.0, 6.0),
+                egui::Align2::CENTER_TOP,
+                format!("{mark}{}", d.name),
+                egui::FontId::proportional(13.0),
+                text,
+            );
+            let sub = if owned {
+                "owned".to_string()
+            } else {
+                match state {
+                    Ok(k) | Err(BuyError::TooDear(k)) => format!("{k} karma"),
+                    Err(BuyError::ForkTaken(_)) => "not your path".into(),
+                    Err(_) => "locked".into(),
+                }
+            };
+            painter.text(
+                r.center_bottom() - egui::vec2(0.0, 6.0),
+                egui::Align2::CENTER_BOTTOM,
+                sub,
+                egui::FontId::proportional(11.0),
+                text.gamma_multiply(0.8),
+            );
+            if resp.clicked() {
+                self.selected = Some(d.id);
+                self.confirm = None;
+            }
+            resp.on_hover_text(d.blurb);
+        }
+    }
+
+    /// The picked power: what it does, what it needs, buy or give up.
+    fn details(
+        &mut self,
+        ui: &mut egui::Ui,
+        sheet: &Sheet,
+        d: &PowerDef,
+        out: &mut Vec<PowerAction>,
+    ) {
+        let owned = sheet.has(d.id);
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(d.name)
+                    .size(20.0)
+                    .strong()
+                    .color(power_ui_colour(d.id, sheet.element)),
+            );
+            ui.label(
+                egui::RichText::new(d.blurb)
+                    .size(14.0)
+                    .color(egui::Color32::from_gray(200)),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if owned {
+                    let back = (sheet
+                        .powers
+                        .iter()
+                        .find(|o| o.power == d.id)
+                        .map_or(0, |o| o.paid) as f64
+                        * REFUND)
+                        .floor() as u32;
+                    match can_give_up(sheet, d.id) {
+                        Ok(()) => {
+                            let label = if self.confirm == Some(d.id) {
+                                format!("Really give it up? (+{back})")
+                            } else {
+                                format!("Give up (+{back})")
+                            };
+                            if ui.button(label).clicked() {
+                                if self.confirm == Some(d.id) {
+                                    out.push(PowerAction::GiveUp(d.id));
+                                    self.confirm = None;
+                                } else {
+                                    self.confirm = Some(d.id);
                                 }
                             }
-                            Err(BuyError::TooDear(price)) => {
-                                ui.label(
-                                    egui::RichText::new(format!("{price} karma"))
-                                        .color(egui::Color32::from_gray(200)),
-                                );
-                            }
-                            Err(BuyError::TooLow(l)) => {
-                                ui.label(
-                                    egui::RichText::new(format!("opens at level {l}"))
-                                        .color(egui::Color32::from_gray(140)),
-                                );
-                            }
-                            Err(_) => {}
+                        }
+                        Err(e) => {
+                            ui.label(
+                                egui::RichText::new(format!("Can't give up: {e}"))
+                                    .size(12.0)
+                                    .color(egui::Color32::from_gray(160)),
+                            );
                         }
                     }
-                });
+                    ui.label(egui::RichText::new("owned").color(GOLD));
+                    if tray::keyed(d.id) {
+                        self.tray_handle(ui, d.id);
+                    }
+                } else {
+                    match can_buy(sheet, d.id) {
+                        Ok(price) => {
+                            let b = egui::Button::new(
+                                egui::RichText::new(format!("Buy · {price} karma"))
+                                    .strong()
+                                    .color(INK),
+                            )
+                            .fill(GOLD);
+                            if ui.add(b).clicked() {
+                                out.push(PowerAction::Buy(d.id));
+                            }
+                        }
+                        Err(e) => {
+                            ui.label(
+                                egui::RichText::new(capitalise(&e.to_string()))
+                                    .color(egui::Color32::from_gray(180)),
+                            );
+                        }
+                    }
+                }
             });
-            let theme = if owned {
-                sheet.theme(p)
-            } else {
-                self.picked[p.code() as usize]
-            };
-            ui.label(
-                egui::RichText::new(themes(p)[theme as usize].blurb)
-                    .size(13.0)
-                    .color(egui::Color32::from_gray(220)),
-            );
-            ui.label(
-                egui::RichText::new(what_it_does(p))
-                    .size(12.0)
-                    .color(egui::Color32::from_gray(160)),
-            );
-            if !owned && level_of(sheet.lifetime) + 2 >= opens {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Theme:").size(12.0));
-                    for k in [0u8, 1] {
-                        let th = themes(p)[k as usize];
-                        let tag = match th.affinity {
-                            Some(a) => format!("{} ({})", th.name, a.name()),
-                            None => th.name.to_string(),
-                        };
-                        let sel = self.picked[p.code() as usize] == k;
-                        if ui.selectable_label(sel, tag).clicked() {
-                            self.picked[p.code() as usize] = k;
-                        }
-                    }
-                });
-            }
         });
+        ui.label(
+            egui::RichText::new(what_it_does(d))
+                .size(13.0)
+                .color(egui::Color32::from_gray(225)),
+        );
+        let mut notes = Vec::new();
+        if !d.needs.is_empty() {
+            let parts: Vec<String> = d
+                .needs
+                .iter()
+                .map(|any| {
+                    let names: Vec<&str> = any.iter().map(|&n| def_of(PowerId(n)).name).collect();
+                    names.join(" or ")
+                })
+                .collect();
+            notes.push(format!("Needs {}.", parts.join(" and ")));
+        }
+        if d.needs_any > 0 {
+            notes.push(format!("Needs {} other powers of this tree.", d.needs_any));
+        }
+        if d.fork != 0 {
+            let others: Vec<&str> = powers::tree(d.tree)
+                .filter(|o| o.fork == d.fork && o.id != d.id)
+                .map(|o| o.name)
+                .collect();
+            notes.push(format!(
+                "Pick one for good: this or {}.",
+                others.join(" or ")
+            ));
+        }
+        if !notes.is_empty() {
+            ui.label(
+                egui::RichText::new(notes.join(" "))
+                    .size(12.0)
+                    .color(egui::Color32::from_rgb(255, 190, 150)),
+            );
+        }
     }
 
     /// Where an owned power sits on the tray, as a handle to drag it there
     /// (onto any slot; the power there swaps over).
-    fn tray_handle(&self, ui: &mut egui::Ui, p: Power) {
+    fn tray_handle(&self, ui: &mut egui::Ui, p: PowerId) {
         let text = match self.tray.slot_of(p) {
             Some(s) => format!("⠿ key {}", tray::label(s)),
             None => "⠿ drag to tray".to_string(),
         };
         ui.dnd_drag_source(
-            egui::Id::new(("tray drag", p.code())),
+            egui::Id::new(("tray drag", p.0)),
             tray::Drag::Power(p),
             |ui| {
                 egui::Frame::new()
@@ -452,14 +583,14 @@ impl PowersView {
         .on_hover_text("Drag onto a slot of the power tray");
     }
 
-    /// The card a new hero starts with: where the powers came from, and
-    /// the first one.
+    /// The card a new hero starts with: where the powers came from, the
+    /// element riding on every blow, and the first power.
     fn origin_card(&mut self, ctx: &egui::Context) -> Option<Sheet> {
         let mut made = None;
         egui::Window::new("Who are you?")
             .collapsible(false)
             .resizable(false)
-            .default_width(560.0)
+            .default_width(600.0)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -10.0))
             .show(ctx, |ui| {
                 ui.label(
@@ -470,58 +601,32 @@ impl PowersView {
                 );
                 ui.add_space(6.0);
                 ui.label(
-                    egui::RichText::new("Your origin")
+                    egui::RichText::new("Your origin: it decides your power tree")
                         .size(17.0)
                         .color(GOLD)
                         .strong(),
                 );
                 for (k, o) in ORIGINS.iter().enumerate() {
                     let sel = self.origin == k;
-                    let text = egui::RichText::new(format!(
-                        "{}  ·  {} affinity\n{}",
-                        o.name,
-                        o.affinity.name(),
-                        o.blurb
-                    ))
-                    .size(14.0);
+                    let text = egui::RichText::new(format!("{}\n{}", o.name, o.blurb)).size(14.0);
                     if ui.selectable_label(sel, text).clicked() {
                         self.origin = k;
                     }
                 }
                 ui.add_space(8.0);
+                self.element_picker(ui);
+                ui.add_space(8.0);
+                let first = def_of(progress::first_power(self.origin as u8));
                 ui.label(
-                    egui::RichText::new("Your first power")
+                    egui::RichText::new(format!("Your first power: {}", first.name))
                         .size(17.0)
                         .color(GOLD)
                         .strong(),
                 );
-                ui.horizontal_wrapped(|ui| {
-                    for p in [Power::Bolt, Power::SuperJump] {
-                        for k in 0..2u8 {
-                            let th = themes(p)[k as usize];
-                            let sel = self.first == (p, k);
-                            let text = egui::RichText::new(th.name)
-                                .size(15.0)
-                                .color(theme_ui_colour(p, k));
-                            if ui
-                                .selectable_label(sel, text)
-                                .on_hover_text(th.blurb)
-                                .clicked()
-                            {
-                                self.first = (p, k);
-                            }
-                        }
-                    }
-                });
-                let (p, k) = self.first;
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} {}",
-                        themes(p)[k as usize].blurb,
-                        what_it_does(p)
-                    ))
-                    .size(13.0)
-                    .color(egui::Color32::from_gray(200)),
+                    egui::RichText::new(what_it_does(first))
+                        .size(13.0)
+                        .color(egui::Color32::from_gray(200)),
                 );
                 ui.add_space(10.0);
                 let go = egui::Button::new(
@@ -532,12 +637,74 @@ impl PowersView {
                 )
                 .fill(GOLD);
                 if ui.add(go).clicked() {
-                    let mut s = progress::new_hero(self.origin as u8);
-                    let _ = progress::buy(&mut s, p, k);
+                    let mut s = progress::new_hero(self.origin as u8, self.element);
+                    let _ = progress::buy(&mut s, first.id);
                     made = Some(s);
                 }
             });
         made
+    }
+
+    /// The six elements to pick from.
+    fn element_picker(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            egui::RichText::new("Your element: it rides on every blow, for good")
+                .size(17.0)
+                .color(GOLD)
+                .strong(),
+        );
+        egui::Grid::new("elements").num_columns(2).show(ui, |ui| {
+            for e in Element::ALL {
+                let text = egui::RichText::new(e.name())
+                    .size(15.0)
+                    .strong()
+                    .color(element_ui_colour(e));
+                if ui.selectable_label(self.element == e, text).clicked() {
+                    self.element = e;
+                }
+                ui.label(
+                    egui::RichText::new(e.blurb())
+                        .size(13.0)
+                        .color(egui::Color32::from_gray(200)),
+                );
+                ui.end_row();
+            }
+        });
+    }
+
+    /// A hero from before the power trees: their karma is back, and they
+    /// pick an element once.
+    fn element_card(&mut self, ctx: &egui::Context, sheet: &Sheet) -> Option<Element> {
+        let mut picked = None;
+        egui::Window::new("The power trees are here")
+            .collapsible(false)
+            .resizable(false)
+            .default_width(560.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -10.0))
+            .show(ctx, |ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Powers now grow in a tree for each origin, and every hero has an element. \
+                         All the karma you spent is back: {} karma to spend. Press B to pick your powers.",
+                        sheet.karma
+                    ))
+                    .size(14.0),
+                );
+                ui.add_space(8.0);
+                self.element_picker(ui);
+                ui.add_space(10.0);
+                let go = egui::Button::new(
+                    egui::RichText::new(format!("Take {}", self.element.name()))
+                        .size(17.0)
+                        .strong()
+                        .color(INK),
+                )
+                .fill(GOLD);
+                if ui.add(go).clicked() {
+                    picked = Some(self.element);
+                }
+            });
+        picked
     }
 
     /// The level-up moment: a big golden banner and what just opened.
@@ -585,24 +752,18 @@ impl PowersView {
             big,
             GOLD.gamma_multiply(a),
         );
-        // What opened: a new tier, and what can be bought now.
+        // What can be bought now.
         let mut lines = vec!["Health, damage and karma to spend grow".to_string()];
-        if let Some(t) = (1..=7).find(|&t| tier_level(t) == level) {
-            let names: Vec<&str> = SHOP
-                .iter()
-                .filter(|p| tier(**p) == t)
-                .map(|p| power_spec(*p).name)
-                .collect();
-            if !names.is_empty() {
-                lines.push(format!("Tier {t} opens: {}. Press B.", names.join(", ")));
-            }
-        }
-        let affordable = SHOP
-            .iter()
-            .filter(|p| can_buy(sheet, **p, 0).is_ok() || can_buy(sheet, **p, 1).is_ok())
+        let tree = Tree::of_origin(sheet.origin);
+        let affordable = powers::tree(tree)
+            .chain(powers::tree(Tree::Common))
+            .filter(|d| can_buy(sheet, d.id).is_ok())
             .count();
         if affordable > 0 {
-            lines.push(format!("{} karma: enough for a new power", sheet.karma));
+            lines.push(format!(
+                "{} karma: enough for a new power. Press B.",
+                sheet.karma
+            ));
         }
         for (k, l) in lines.iter().enumerate() {
             painter.text(
@@ -616,85 +777,274 @@ impl PowersView {
     }
 }
 
-/// One line on what a power does, from its numbers.
-pub fn what_it_does(p: Power) -> String {
-    let s = power_spec(p);
-    match p {
-        Power::Strike => "A punch: free, quick.".into(),
-        Power::Bolt => format!(
-            "Ranged blast, {:.0} m, knocks back. {:.0} energy.",
-            s.range, s.cost
+fn capitalise(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => String::new(),
+    }
+}
+
+/// Seconds, said briefly.
+fn secs(s: f64) -> String {
+    if (s - s.round()).abs() < 0.05 {
+        format!("{s:.0} s")
+    } else {
+        format!("{s:.1} s")
+    }
+}
+
+fn pct(x: f32) -> String {
+    format!("{:.0}%", x * 100.0)
+}
+
+/// What a power does, in a sentence or two, from its numbers.
+pub fn what_it_does(d: &PowerDef) -> String {
+    let f = &d.fields;
+    let mut head = match d.delivery() {
+        Delivery::Melee => "A blow at a villain in reach".to_string(),
+        Delivery::Ranged => format!("A shot at one villain, {:.0} m", f.range),
+        Delivery::Line => format!("Hits every villain in a {:.0} m line", f.range),
+        Delivery::Cone => format!("Hits everything in a {:.0} m cone", f.range),
+        Delivery::Burst => format!("Hits every villain within {:.0} m of you", f.radius),
+        Delivery::Sky => format!(
+            "Strikes all within {:.0} m of your target {} later",
+            f.radius,
+            secs(f.delay)
         ),
-        Power::SuperJump => "Passive: jump seven metres, leap along fast.".into(),
-        Power::Flight => "Passive: V to fly, Shift to go fast.".into(),
-        Power::Hold => format!(
-            "Pins a villain in place for {:.0} s. {:.0} energy.",
-            s.lasts, s.cost
+        Delivery::Allies if f.radius > 0.0 => format!("You and friends within {:.0} m", f.radius),
+        Delivery::Allies => "You".to_string(),
+        Delivery::Grab => format!("Lift something heavy and throw it, {:.0} m", f.range),
+        Delivery::Blink => match f.lands {
+            Lands::Home => "Takes you home to Hero Hall".to_string(),
+            Lands::Path => format!("Dash {:.0} m, hitting everyone on the way", f.range),
+            Lands::Start => format!("Blink {:.0} m, with a blast where you were", f.range),
+            Lands::Arrival => format!("Leap {:.0} m, with a blast where you land", f.range),
+            Lands::Target => format!("Blink up to {:.0} m to where you aim", f.range),
+        },
+        Delivery::Rescue => format!(
+            "Floats {} trapped {} within {:.0} m out to safety",
+            f.rescues.max(1),
+            if f.rescues > 1 { "people" } else { "person" },
+            f.range
         ),
-        Power::Shield => format!(
-            "Halves blows to you and friends within {:.0} m for {:.0} s.",
-            s.area, s.lasts
+        Delivery::Summon => format!(
+            "Calls {} sidekick{} to fight at your side",
+            f.summons.max(1),
+            if f.summons > 1 { "s" } else { "" }
         ),
-        Power::Lift => "Lift a crate (or tear up the street) and throw it: heavy hit.".into(),
-        Power::Shockwave => format!(
-            "Knocks down every villain within {:.0} m. {:.0} energy.",
-            s.area, s.cost
-        ),
-        Power::SuperSpeed => format!(
-            "Passive: run at {:.0} km/h, Shift for {:.0}.",
-            hw_sim::SUPER_SPEED * 3.6,
-            hw_sim::SUPER_SPEED_BOOST * 3.6
-        ),
-        Power::Mend => format!(
-            "Heals you and friends within {:.0} m. {:.0} energy.",
-            s.area, s.cost
-        ),
-        Power::Beam => format!(
-            "Pierces every villain in a {:.0} m line, knocks back. {:.0} energy.",
-            s.range, s.cost
-        ),
-        Power::Vitality => format!(
-            "Passive: {:.0}% of your health back every second, even in a fight.",
-            hw_sim::combat::VITALITY_REGEN * 100.0
-        ),
-        Power::Meteor => format!(
-            "Calls a strike down on your target: hits all within {:.0} m a moment later. {:.0} energy.",
-            s.area, s.cost
-        ),
-        Power::Invulnerable => format!(
-            "Passive: every blow does {:.0}% less.",
-            (1.0 - hw_sim::combat::TOUGH_LETS_THROUGH) * 100.0
-        ),
-        Power::Nova => format!(
-            "Flattens every villain within {:.0} m. {:.0} energy.",
-            s.area, s.cost
-        ),
-        Power::Rally => format!(
-            "Passive: you and friends within {:.0} m hit {:.0}% harder and recharge faster.",
-            s.area,
-            (hw_sim::combat::RALLY_DAMAGE - 1.0) * 100.0
-        ),
-        Power::Freeze => format!(
-            "A {:.0} m cone of cold: minions freeze solid for {:.0} s (the next blow shatters them for double), the rest slow down. Puts out fires. {:.0} energy.",
-            s.range, s.lasts, s.cost
-        ),
-        Power::Teleport => format!(
-            "Blink up to {:.0} m to where you aim, never into a wall. {:.0} energy.",
-            s.range, s.cost
-        ),
-        Power::Bubble => format!(
-            "Floats a trapped person within {:.0} m out to the street, or the hurt one straight to the ambulance. {:.0} energy.",
-            s.range, s.cost
-        ),
-        Power::Sidekick => format!(
-            "Calls a little robot that follows you and fights at your side; press again to send it at your target. {:.0} energy to call.",
-            s.cost
-        ),
-        Power::Hypno => format!(
-            "A minion fights for you for {:.0} s (a lieutenant {:.0} s); bosses shrug it off. {:.0} energy.",
-            s.lasts,
-            s.lasts * hw_sim::combat::CHARM_LIEUTENANT,
-            s.cost
-        ),
+        Delivery::Passive => "Always on".to_string(),
+    };
+    let mut bits: Vec<String> = Vec::new();
+    if f.damage > 0.0 {
+        let times = if f.repeats > 1 {
+            format!(" x{}", f.repeats)
+        } else {
+            String::new()
+        };
+        bits.push(format!("{:.0} damage{times} at level 1", f.damage));
+    }
+    if f.knock {
+        bits.push("knocks down".into());
+    }
+    if f.launch > 0.0 {
+        bits.push("throws them up".into());
+    }
+    if f.push > 0.0 {
+        bits.push(format!("shoves them {:.0} m", f.push));
+    } else if f.push < 0.0 {
+        bits.push("pulls them in".into());
+    }
+    if f.hold > 0.0 {
+        bits.push(format!("holds them {}", secs(f.hold)));
+    }
+    if f.freeze > 0.0 {
+        bits.push(format!("freezes minions {}", secs(f.freeze)));
+    }
+    if f.slow > 0.0 {
+        bits.push(format!("slows {} for {}", pct(f.slow), secs(f.slow_secs)));
+    }
+    if f.dot > 0.0 {
+        bits.push(format!(
+            "burns {} more over {}",
+            pct(f.dot),
+            secs(powers::DOT_SECONDS)
+        ));
+    }
+    if f.confuse > 0.0 {
+        bits.push(format!("confuses {}", secs(f.confuse)));
+    }
+    if f.fear > 0.0 {
+        bits.push(format!("sends them fleeing {}", secs(f.fear)));
+    }
+    if f.charm > 0.0 {
+        bits.push(format!("a minion fights for you {}", secs(f.charm)));
+    }
+    if f.disarm > 0.0 {
+        bits.push(format!("no attacks for {}", secs(f.disarm)));
+    }
+    if f.weaken > 0.0 {
+        bits.push(format!(
+            "they take {} more for {}",
+            pct(f.weaken),
+            secs(f.lasts)
+        ));
+    }
+    if f.spread > 0.0 {
+        bits.push(format!(
+            "{} leaps to {} more",
+            pct(f.spread),
+            f.spread_to.max(1)
+        ));
+    }
+    if f.drain > 0.0 {
+        bits.push(format!("{} back as health", pct(f.drain)));
+    }
+    if f.exploit > 0.0 {
+        bits.push(format!(
+            "{} more on the held, frozen or afraid",
+            pct(f.exploit)
+        ));
+    }
+    if f.heal > 0.0 {
+        bits.push(format!("heals {:.0} at level 1", f.heal));
+    }
+    if f.revive {
+        bits.push("gets downed friends up".into());
+    }
+    let lasting = if f.lasts > 0.0 && d.delivery() != Delivery::Passive {
+        format!(" for {}", secs(f.lasts))
+    } else {
+        String::new()
+    };
+    if f.shield > 0.0 {
+        bits.push(format!("stops {} of every blow{lasting}", pct(f.shield)));
+    }
+    if f.reflect > 0.0 {
+        bits.push(format!("sends {} of a blow back", pct(f.reflect)));
+    }
+    if f.resist > 0.0 {
+        bits.push(format!("{} less damage{lasting}", pct(f.resist)));
+    }
+    if f.regen > 0.0 {
+        bits.push(format!("{} of your health back a second", pct(f.regen)));
+    }
+    if f.might > 0.0 {
+        bits.push(format!("hits {} harder{lasting}", pct(f.might)));
+    }
+    if f.haste > 0.0 {
+        bits.push(format!("powers recharge {} faster{lasting}", pct(f.haste)));
+    }
+    if f.steadfast {
+        bits.push(format!("never knocked down{lasting}"));
+    }
+    if f.hide {
+        bits.push(format!("villains lose sight of you{lasting}"));
+    }
+    if f.execute {
+        bits.push(format!("minions fall at one blow{lasting}"));
+    }
+    if f.angel {
+        bits.push("now and then a blow that would down you leaves you standing".into());
+    }
+    if f.aura > 0.0 {
+        bits.push(format!(
+            "friends within {:.0} m hit {} harder",
+            powers::AURA_RADIUS,
+            pct(f.aura)
+        ));
+    }
+    if f.ward > 0.0 {
+        bits.push(format!(
+            "friends within {:.0} m take {} less",
+            powers::AURA_RADIUS,
+            pct(f.ward)
+        ));
+    }
+    if f.rescue_speed > 0.0 {
+        bits.push(format!(
+            "frees trapped people {} faster",
+            pct(f.rescue_speed)
+        ));
+    }
+    if f.revive_reach > 0.0 {
+        bits.push(format!("revives friends from {:.0} m", f.revive_reach));
+    }
+    if f.bounty > 0.0 {
+        bits.push(format!("{} more karma for villains beaten", pct(f.bounty)));
+    }
+    if f.chain > 0.0 {
+        bits.push(format!(
+            "{} of a punch leaps to a villain near",
+            pct(f.chain)
+        ));
+    }
+    use powers::travel;
+    for (bit, text) in [
+        (travel::JUMP, "jump seven metres, leap along fast"),
+        (travel::SPRINT, "Shift to sprint"),
+        (travel::GLIDE, "hold jump to glide down"),
+        (travel::FLY, "V to fly, Shift to go fast"),
+        (travel::SPEED, "Shift to run like the wind"),
+        (travel::WALL, "run up walls"),
+    ] {
+        if f.travel & bit != 0 {
+            bits.push(text.into());
+        }
+    }
+    if f.trail > 0.0 {
+        bits.push(format!(
+            "{:.0} damage a second to villains you rush past",
+            f.trail
+        ));
+    }
+    if f.wreck > 0.0 && !f.spare {
+        bits.push("wrecks the street round it".into());
+    }
+    if !bits.is_empty() {
+        head.push_str(": ");
+        head.push_str(&bits.join(", "));
+    }
+    head.push('.');
+    let energy = powers::energy(d);
+    if d.id == PowerId::STRIKE {
+        head.push_str(" Free.");
+    } else if !d.passive() {
+        head.push_str(&format!(
+            " {energy:.0} energy, ready again after {}.",
+            secs(powers::recharge(d))
+        ));
+    }
+    head
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_power_says_what_it_does() {
+        for d in powers::POWERS {
+            let t = what_it_does(d);
+            assert!(t.len() > 12 && t.ends_with('.'), "{}: {t}", d.name);
+        }
+        assert!(what_it_does(def_of(PowerId(10))).contains("knocks down"));
+    }
+
+    #[test]
+    fn every_tree_fits_its_grid() {
+        for d in powers::POWERS {
+            assert!(
+                (d.col as usize) < COLUMNS && (d.row as usize) < ROWS,
+                "{}",
+                d.name
+            );
+        }
+        for t in Tree::ORIGIN_TREES.into_iter().chain([Tree::Common]) {
+            let mut seen = std::collections::BTreeSet::new();
+            for d in powers::tree(t) {
+                assert!(seen.insert((d.row, d.col)), "{} overlaps in {t:?}", d.name);
+            }
+        }
     }
 }

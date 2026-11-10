@@ -14,7 +14,7 @@ use bevy_ecs::prelude::*;
 use glam::{DVec2, DVec3};
 use hw_core::NetId;
 use hw_net::protocol::FxKind;
-use hw_net::{InputState, PlayerId, Power, Status};
+use hw_net::{InputState, PlayerId, PowerId, Status};
 
 /// Its punch at level 1, its reach and how often (m, s).
 pub const PUNCH_DAMAGE: f32 = 14.0;
@@ -41,7 +41,11 @@ pub struct Sidekick {
     /// The hero it belongs to, and the hero's player.
     pub owner: NetId,
     pub player: PlayerId,
-    /// The power's theme (its look).
+    /// The power that called it, and how strong it is (its punch and
+    /// health, as a share of an ordinary one's).
+    pub power: PowerId,
+    pub strength: f32,
+    /// Its look (0: a tin robot; 1: a gold one).
     pub theme: u8,
     /// Ticks spent without getting nearer to where it is going, and the
     /// best distance in that time.
@@ -49,21 +53,23 @@ pub struct Sidekick {
     pub best: f64,
 }
 
-/// Calls a fresh sidekick for `owner` at `at`.
-pub fn spawn(
-    world: &mut World,
-    owner: NetId,
-    player: PlayerId,
-    theme: u8,
-    at: DVec3,
-    level: u8,
-    tick: u64,
-) -> NetId {
-    // One each: an old one still lying there goes.
+/// Calls a fresh sidekick for `sm.owner` at `sm.at`.
+pub(crate) fn spawn(world: &mut World, sm: combat::Summon, tick: u64) -> NetId {
+    let combat::Summon {
+        owner,
+        player,
+        power,
+        index,
+        at,
+        level,
+    } = sm;
+    let strength = crate::powers::def_of(power).fields.summon_power.max(0.1);
+    // The first of a call sends old ones (still lying there, or another
+    // power's) home.
     let old: Vec<Entity> = world
         .query::<(Entity, &Sidekick)>()
         .iter(world)
-        .filter(|(_, s)| s.owner == owner)
+        .filter(|(_, s)| s.owner == owner && index == 0)
         .map(|(e, _)| e)
         .collect();
     for e in old {
@@ -71,7 +77,7 @@ pub fn spawn(
     }
     let id = world.resource_mut::<crate::Ids>().0.allocate();
     let mut f = Fighter::hero_at(level, combat::Kit::default());
-    f.max_health *= HEALTH_SHARE;
+    f.max_health *= HEALTH_SHARE * strength;
     f.health = f.max_health;
     world.spawn((
         Net(id),
@@ -85,7 +91,9 @@ pub fn spawn(
         Sidekick {
             owner,
             player,
-            theme,
+            power,
+            strength,
+            theme: (power.0 % 2),
             stuck: 0,
             best: f64::INFINITY,
         },
@@ -99,10 +107,10 @@ pub fn spawn(
 pub fn step(world: &mut World, tick: u64) {
     let solids = world.resource::<Solids>().0.clone();
     // Heroes: where, which way they face, and whether they still own it.
-    let heroes: Vec<(NetId, DVec3, DVec3, bool, u8)> = world
+    let heroes: Vec<(NetId, DVec3, DVec3, combat::Kit, u8)> = world
         .query::<(&Net, &Motion, &Fighter, &crate::Hero)>()
         .iter(world)
-        .map(|(n, m, f, _)| (n.0, m.0.pos, m.0.vel, f.kit.has(Power::Sidekick), f.level))
+        .map(|(n, m, f, _)| (n.0, m.0.pos, m.0.vel, f.kit, f.level))
         .collect();
     let fighters: Vec<(NetId, DVec3)> = world
         .query::<(&Net, &Motion, &Fighter)>()
@@ -115,11 +123,11 @@ pub fn step(world: &mut World, tick: u64) {
     let mut list: Vec<_> = q.iter_mut(world).collect();
     list.sort_by_key(|x| x.1 .0);
     for (e, net, mut motion, mut f, mut sk) in list {
-        let Some(&(_, hero, hero_vel, owns, level)) = heroes.iter().find(|h| h.0 == sk.owner)
-        else {
+        let Some(&(_, hero, hero_vel, kit, level)) = heroes.iter().find(|h| h.0 == sk.owner) else {
             gone.push(e);
             continue;
         };
+        let owns = kit.has(sk.power);
         if !owns {
             gone.push(e);
             continue;
@@ -137,7 +145,7 @@ pub fn step(world: &mut World, tick: u64) {
         }
         if f.level != level {
             f.set_level(level);
-            f.max_health *= HEALTH_SHARE;
+            f.max_health *= HEALTH_SHARE * sk.strength;
             f.health = f.health.min(f.max_health);
         }
         let mut body = motion.0;
@@ -181,7 +189,7 @@ pub fn step(world: &mut World, tick: u64) {
             sk.stuck = 0;
             sk.best = f64::INFINITY;
             let mut x = combat::event(tick, FxKind::SidekickCall, sk.owner, net.0, at);
-            x.theme = sk.theme;
+            x.theme = sk.power.0;
             fx.push(x);
             motion.set_if_neq(Motion(body));
             continue;

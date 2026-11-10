@@ -601,7 +601,7 @@ fn colossus(
                 if a.hero.is_none() || !a.f.standing() || a.chest().distance(at) > SHELL_AREA {
                     continue;
                 }
-                let (_, defeat, dealt) = hit(actors, i, k, spec.damage * scale, false, tick, None);
+                let (_, defeat, dealt) = hit(actors, i, k, spec.damage * scale, false, tick);
                 let mut e = event(tick, FxKind::Shell, me, actors[k].id, actors[k].chest());
                 e.amount = dealt.round() as u16;
                 e.defeat = defeat;
@@ -637,8 +637,7 @@ fn colossus(
         Some(lands) if tick >= lands => {
             c.stomp = None;
             for k in heroes_on_ground(actors, pos, STOMP_AREA, pos.y) {
-                let (_, defeat, dealt) =
-                    hit(actors, i, k, spec.damage * 0.8 * scale, false, tick, None);
+                let (_, defeat, dealt) = hit(actors, i, k, spec.damage * 0.8 * scale, false, tick);
                 let mut e = event(tick, FxKind::Stomp, me, actors[k].id, actors[k].chest());
                 e.amount = dealt.round() as u16;
                 e.defeat = defeat;
@@ -666,8 +665,7 @@ fn colossus(
         Some(lands) if tick >= lands => {
             c.pulse = None;
             for k in heroes_on_ground(actors, pos, PULSE_AREA, ground) {
-                let (_, defeat, dealt) =
-                    hit(actors, i, k, spec.damage * 0.9 * scale, false, tick, None);
+                let (_, defeat, dealt) = hit(actors, i, k, spec.damage * 0.9 * scale, false, tick);
                 let mut e = event(tick, FxKind::Pulse, me, actors[k].id, actors[k].chest());
                 e.amount = dealt.round() as u16;
                 e.defeat = defeat;

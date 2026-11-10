@@ -23,6 +23,7 @@ pub mod incidents;
 pub mod nav;
 pub mod npcheroes;
 pub mod physics;
+pub mod powers;
 pub mod predict;
 pub mod progress;
 pub mod props;
@@ -53,7 +54,7 @@ use hw_gen::urban::area::{Area, AREA_HALF};
 use hw_gen::urban::world::TownWorld;
 use hw_gen::urban::TownParams;
 use hw_net::{
-    EntityKind, EntityState, Fx, FxKind, ImpactKind, InputState, PlayerId, Power, Sheet, Status,
+    EntityKind, EntityState, Fx, FxKind, ImpactKind, InputState, PlayerId, PowerId, Sheet, Status,
     ToClient,
 };
 use physics::{Physics, PropState, CRATE_HALF};
@@ -327,6 +328,11 @@ pub struct Moves {
     pub super_jump: bool,
     /// Super Speed is owned.
     pub speed: bool,
+    /// Sprint (a faster run), Glide (hold jump to fall slowly) and Wall
+    /// Run (run up walls) are owned.
+    pub sprint: bool,
+    pub glide: bool,
+    pub wall_run: bool,
 }
 
 impl Moves {
@@ -335,23 +341,48 @@ impl Moves {
         fly: false,
         super_jump: false,
         speed: false,
+        sprint: false,
+        glide: false,
+        wall_run: false,
     };
     /// Flight allowed (tests and tools that fly).
     pub const FLYER: Moves = Moves {
         fly: true,
-        super_jump: false,
-        speed: false,
+        ..Moves::ON_FOOT
     };
 
     /// From the effect bits a hero's [`hw_net::CombatState`] carries.
-    pub fn from_effects(effects: u16) -> Self {
+    pub fn from_effects(effects: u32) -> Self {
         Self {
             fly: effects & hw_net::EFFECT_CAN_FLY != 0,
             super_jump: effects & hw_net::EFFECT_SUPER_JUMP != 0,
             speed: effects & hw_net::EFFECT_SUPER_SPEED != 0,
+            sprint: effects & hw_net::EFFECT_SPRINT != 0,
+            glide: effects & hw_net::EFFECT_GLIDE != 0,
+            wall_run: effects & hw_net::EFFECT_WALL_RUN != 0,
+        }
+    }
+
+    /// What a hero's powers allow.
+    pub fn of(kit: &powers::Kit) -> Self {
+        use powers::travel;
+        Self {
+            fly: kit.travels(travel::FLY),
+            super_jump: kit.travels(travel::JUMP),
+            speed: kit.travels(travel::SPEED),
+            sprint: kit.travels(travel::SPRINT),
+            glide: kit.travels(travel::GLIDE),
+            wall_run: kit.travels(travel::WALL),
         }
     }
 }
+
+/// Sprint's top speed (m/s).
+pub const SPRINT_SPEED: f64 = RUN_SPEED * 1.5;
+/// A glider falls no faster than this (m/s).
+pub const GLIDE_FALL: f64 = 2.5;
+/// A wall runner climbs this fast (m/s).
+pub const WALL_CLIMB: f64 = 9.0;
 
 /// One tick of a hero's movement with flight allowed (tests and tools).
 pub fn step_hero(body: &mut Body, input: InputState, solids: &Obstacles) {
@@ -384,6 +415,8 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
     } else if moves.speed {
         // Off the ground a speedster keeps most of their run.
         SUPER_SPEED.max(horizontal_speed(body))
+    } else if moves.sprint {
+        SPRINT_SPEED
     } else {
         RUN_SPEED
     };
@@ -424,6 +457,18 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
             };
         }
         body.vel.y -= GRAVITY * DT;
+        // A glider holding jump floats down.
+        if moves.glide && input.jump && !body.grounded {
+            body.vel.y = body.vel.y.max(-GLIDE_FALL);
+        }
+        // A wall runner running into a wall runs up it.
+        let way = DVec3::new(want.x, 0.0, want.z).normalize_or_zero();
+        if moves.wall_run
+            && way != DVec3::ZERO
+            && solids.solid_at(body.pos + way * 0.7 + DVec3::Y * 1.0)
+        {
+            body.vel.y = body.vel.y.max(WALL_CLIMB);
+        }
     }
     solids.move_body(body, DT);
 }
@@ -657,6 +702,11 @@ impl Sim {
                 .map(|(p, f)| (DVec3::new(p.x, hall.base, p.y), f))
                 .collect();
             let tick = sim.tick;
+            if let Some(&(p, _)) = spots.first() {
+                let mut f = sim.world.resource_mut::<combat::Fights>();
+                f.home = Some(p);
+                f.home_is_hall = true;
+            }
             npcheroes::spawn(&mut sim.world, tick, &spots);
         }
         sim
@@ -934,6 +984,12 @@ impl Sim {
         self.spawn = line;
         self.world
             .insert_resource(SpawnLine(line.0, line.1, self.rookie));
+        // Hero's Return goes here until there is a Hero Hall.
+        let home = self.point_on(line, 0);
+        let mut f = self.world.resource_mut::<combat::Fights>();
+        if f.home.is_none() || !f.home_is_hall {
+            f.home = Some(home);
+        }
     }
 
     pub fn solids(&self) -> Arc<Obstacles> {
@@ -1149,8 +1205,8 @@ impl Sim {
             .iter_mut(&mut self.world)
         {
             let input = control.0;
-            // Blasting needs Energy Bolt.
-            let blast = input.blast && fighter.is_none_or(|f| f.kit.has(Power::Bolt));
+            // Blasting needs a bolt power.
+            let blast = input.blast && fighter.is_none_or(|f| f.kit.blast.is_some());
             if tick < strike.ready_at || !(input.smash || blast) {
                 continue;
             }
@@ -1646,23 +1702,28 @@ impl Sim {
         self.place_fresh(owner);
     }
 
-    /// `owner` buys `power` in `theme`. Returns the price paid.
-    pub fn buy(
-        &mut self,
-        owner: PlayerId,
-        power: Power,
-        theme: u8,
-    ) -> Result<u32, progress::BuyError> {
+    /// `owner` buys `power`. Returns the price paid.
+    pub fn buy(&mut self, owner: PlayerId, power: PowerId) -> Result<u32, progress::BuyError> {
         let mut result = Err(progress::BuyError::NotForSale);
-        self.change_sheet(owner, |s| result = progress::buy(s, power, theme));
+        self.change_sheet(owner, |s| result = progress::buy(s, power));
         result
     }
 
     /// `owner` gives `power` up. Returns the karma refunded.
-    pub fn give_up(&mut self, owner: PlayerId, power: Power) -> Option<u32> {
-        let mut back = None;
+    pub fn give_up(
+        &mut self,
+        owner: PlayerId,
+        power: PowerId,
+    ) -> Result<u32, progress::GiveUpError> {
+        let mut back = Err(progress::GiveUpError::NotOwned);
         self.change_sheet(owner, |s| back = progress::give_up(s, power));
         back
+    }
+
+    /// Sets `owner`'s element (the debug menu's switch: an element is
+    /// otherwise for good).
+    pub fn set_element(&mut self, owner: PlayerId, element: powers::Element) {
+        self.change_sheet(owner, |s| s.element = element.code());
     }
 
     fn change_sheet(&mut self, owner: PlayerId, f: impl FnOnce(&mut Sheet)) {
@@ -1683,7 +1744,7 @@ impl Sim {
                 p.changed = true;
                 fighter.kit = Kit::of(&p.sheet);
                 // A power given up lets go of what it held.
-                if !fighter.kit.has(Power::Lift) {
+                if !fighter.kit.has(fighter.lifted_with) {
                     fighter.carrying = None;
                 }
             }
@@ -1758,11 +1819,7 @@ impl Sim {
                 if n.0 != r.hero {
                     continue;
                 }
-                let up = progress::earn(&mut p.sheet, r.karma, r.deed);
-                if let Some(a) = r.deed {
-                    let x = &mut p.sheet.affinity[a.index()];
-                    *x = x.saturating_add(r.lean);
-                }
+                let up = progress::earn(&mut p.sheet, r.karma);
                 p.changed = true;
                 let at = m.0.pos + DVec3::Y * 1.2;
                 if r.karma > 0 {
@@ -2021,11 +2078,7 @@ fn move_heroes(
     mut q: Query<(&Control, &mut Motion, Option<&Fighter>), WalkingHero>,
 ) {
     for (control, mut motion, fighter) in &mut q {
-        let moves = fighter.map_or(Moves::ON_FOOT, |f| Moves {
-            fly: f.kit.has(Power::Flight),
-            super_jump: f.kit.has(Power::SuperJump),
-            speed: f.kit.has(Power::SuperSpeed),
-        });
+        let moves = fighter.map_or(Moves::ON_FOOT, |f| Moves::of(&f.kit));
         let status = fighter.map_or(Status::Standing, |f| f.status);
         let input = match status {
             // A drone holds the carried; the downed only fall.
@@ -2051,6 +2104,7 @@ fn combat_event(tick: u64, kind: FxKind, who: NetId, at: DVec3) -> Fx {
         knock: false,
         defeat: false,
         theme: 0,
+        element: 0,
     }
 }
 

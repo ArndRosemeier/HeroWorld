@@ -62,7 +62,8 @@
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
 //! `HW_LEVEL=n` plays a level-n hero with karma to spend, `HW_POWERS=1`
-//! with every power open bought (`HW_THEME=1` the second themes);
+//! with the whole tree bought (the first of each fork; `HW_ORIGIN=n` picks
+//! the origin, `HW_ELEMENT=n` the element, 1-6);
 //! `HW_VIEW=powers` opens the powers window, `HW_VIEW=origin` shows a new
 //! hero's origin card.
 //! `HW_VIEW=fight` starts in front of the minions, `HW_AUTOFIGHT=1` (or a list of power codes)
@@ -466,14 +467,24 @@ fn main() -> EngineResult<()> {
             .lifetime
             .max(hw_sim::progress::karma_for_level(level.clamp(1, 20)));
         s.karma = s.karma.max(20_000);
-        // HW_POWERS=1 buys every power that is open (HW_THEME=1: the
-        // second themes).
+        // HW_ORIGIN and HW_ELEMENT pick those; HW_POWERS=1 buys the whole
+        // tree (the first of each fork).
+        if let Some(o) = env_num("HW_ORIGIN") {
+            let element = hw_sim::powers::Element::from_code(s.element);
+            let karma = s.karma;
+            s = hw_sim::progress::sanitize(hw_net::Sheet {
+                origin: o.min(4) as u8,
+                ..s
+            });
+            hw_sim::progress::refund_all(&mut s);
+            s.element = element.code();
+            s.karma = s.karma.max(karma);
+        }
+        if let Some(e) = env_num("HW_ELEMENT") {
+            s.element = hw_sim::powers::Element::from_code(e.min(6) as u8).code();
+        }
         if std::env::var_os("HW_POWERS").is_some() {
-            let theme = env_num("HW_THEME").unwrap_or(0).min(1) as u8;
-            s.karma = s.karma.max(1_000_000);
-            for p in hw_client::powersview::SHOP {
-                let _ = hw_sim::progress::buy(&mut s, p, theme);
-            }
+            s = hw_client::debugmenu::buy_all(s);
         }
         hero_file = Some(s);
     }
@@ -2059,8 +2070,8 @@ fn main() -> EngineResult<()> {
                             let Some(p) = debug.places.get(i).cloned() else {
                                 continue;
                             };
-                            if p.fly && !my_sheet.has(hw_net::Power::Flight) {
-                                fight.say("Flight first: Hero tab, Level 20, Buy all open");
+                            if p.fly && !my_sheet.has(hw_net::PowerId(5)) {
+                                fight.say("Flight first: Hero tab, Buy the whole tree");
                                 continue;
                             }
                             go(session, p.at, p.facing);
@@ -2097,9 +2108,16 @@ fn main() -> EngineResult<()> {
                                 s
                             });
                         }
-                        A::BuyAll(theme) => {
+                        A::BuyAll => {
                             cheated = true;
-                            session.debug_sheet(move |s| dm::buy_all(s, theme));
+                            session.debug_sheet(dm::buy_all);
+                        }
+                        A::Element(e) => {
+                            cheated = true;
+                            session.debug_sheet(move |mut s| {
+                                s.element = e.code();
+                                s
+                            });
                         }
                         A::ClearPowers => {
                             cheated = true;
@@ -2484,7 +2502,8 @@ fn main() -> EngineResult<()> {
             }
             // Hero input, relative to where the camera faces.
             let mut hero_input = hw_net::InputState::default();
-            let can_fly = my_sheet.has(hw_net::Power::Flight);
+            let my_kit = hw_sim::combat::Kit::of(&my_sheet);
+            let can_fly = my_kit.travels(hw_sim::powers::travel::FLY);
             if !can_fly {
                 hero_flies = false;
             }
@@ -2498,12 +2517,7 @@ fn main() -> EngineResult<()> {
                     if can_fly {
                         hero_flies = !hero_flies;
                     } else {
-                        fight.say(&format!(
-                            "Flight opens at level {} (B: powers)",
-                            hw_sim::progress::tier_level(hw_sim::progress::tier(
-                                hw_net::Power::Flight
-                            ))
-                        ));
+                        fight.say("Flight is in the travel tree (B: powers)");
                     }
                 }
                 if input.pressed(Key::R) && !creating && !on_ui_keys(frame) {
@@ -2561,7 +2575,7 @@ fn main() -> EngineResult<()> {
                 if click_picked {
                     hero_input.smash = false;
                 }
-                if f.power != 0 && !(on_ui && f.power == hw_net::Power::Strike.code()) {
+                if f.power != 0 && !(on_ui && f.power == hw_net::PowerId::STRIKE.0) {
                     pending_power = f.power;
                 }
                 // HW_AUTOFIGHT=1 fights on its own (for screenshots): bolts
@@ -2582,19 +2596,27 @@ fn main() -> EngineResult<()> {
                             glam::DVec3::from_array(m.pos).distance(glam::DVec3::from_array(t.pos))
                                 < 2.6
                         });
-                    // Every power the hero has, in turn; punches up close.
-                    let every = [3u8, 2, 6, 11, 2, 5, 13, 2, 4, 10, 2, 15, 5];
-                    let turn = if auto_turn.is_empty() {
-                        &every[..]
-                    } else {
+                    // Every keyed power the hero has, in turn (the blast
+                    // between them); punches up close.
+                    let blast = my_kit.blast.map_or(1, |b| b.0);
+                    let every: Vec<u8> = my_kit
+                        .owned()
+                        .filter(|&p| p != hw_net::PowerId::STRIKE && hw_client::tray::keyed(p))
+                        .flat_map(|p| [blast, p.0])
+                        .collect();
+                    let turn = if !auto_turn.is_empty() {
                         &auto_turn[..]
+                    } else if every.is_empty() {
+                        &[1u8][..]
+                    } else {
+                        &every[..]
                     };
                     let k = (frame.time / 0.75) as usize % turn.len();
-                    let want = hw_net::Power::from_code(turn[k]).filter(|p| my_sheet.has(*p));
+                    let want = Some(hw_net::PowerId(turn[k])).filter(|p| my_sheet.has(*p));
                     pending_power = match want {
-                        Some(p) if !(close && p == hw_net::Power::Bolt) => p.code(),
+                        Some(p) if !(close && p.0 == blast) => p.0,
                         _ if close => 1,
-                        _ => 2,
+                        _ => blast,
                     };
                 }
                 let f = fightview::FightInput {
@@ -4156,9 +4178,20 @@ fn main() -> EngineResult<()> {
                 hw_client::hitch::mark("powers window");
                 for a in powers.ui(frame.ui.ctx(), &my_sheet, fighting, creating) {
                     match a {
-                        PowerAction::Buy(p, theme) => session.buy(p, theme),
+                        PowerAction::Buy(p) => session.buy(p),
                         PowerAction::GiveUp(p) => session.give_up(p),
                         PowerAction::Create(s) => {
+                            hero_file = Some(s.clone());
+                            my_sheet = s.clone();
+                            session.send_sheet(s);
+                            save_hero(hero_file.clone());
+                        }
+                        PowerAction::Element(e) => {
+                            // Picked once by a hero from before the power
+                            // trees: the hero file as the server has it,
+                            // with the element.
+                            let mut s = my_sheet.clone();
+                            s.element = e.code();
                             hero_file = Some(s.clone());
                             my_sheet = s.clone();
                             session.send_sheet(s);

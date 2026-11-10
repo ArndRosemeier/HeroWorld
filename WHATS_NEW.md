@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.164 (2026-11-10)
+
+- Powers now grow in a tree: every origin has its own tree of 22 or 23 powers, plus a travel tree everyone shares. A power needs the ones above it, and where two powers say "or" you pick one for good. Press B to see your tree.
+- Every hero now has an element, picked with the origin and kept for good: Fire burns, Frost slows, Energy shoves, Necrotic heals you, Lightning leaps to the next villain, Psychic leaves villains confused for a moment. It shows on every blow.
+- Lots of new powers: Sprint, Glide, Wall Run, Hero's Return, smoke bombs, bolas, curses, fear, sidekick pairs, auras and more.
+- Heroes from earlier versions get all the karma they spent back once: pick your element, then pick your powers again.
+
 ## 0.163 (2026-11-10)
 
 - The website's cover is now a live, animated comic town: cars, flying taxis, an airship, a rocket launch and a hero flying a loop. New screenshots of Mole Haven, the villain quarter, the rocket port and a street fight.

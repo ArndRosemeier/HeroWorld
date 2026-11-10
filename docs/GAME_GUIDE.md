@@ -67,19 +67,22 @@ the last run is pointed out once on the title.
   fist ahead and banks into turns like a plane (up to 55 degrees, steeper the faster and
   tighter the turn); slower than 4 m/s it hovers upright, legs together, arms easy at its
   sides. A level up strikes a 2.6 s power pose, a fist to the sky, standing or hovering.
-- **Origin** (`progress::ORIGINS`), picked once. It gives 600 points to one affinity
-  (section 4):
+- **Origin** (`progress::ORIGINS`), picked once. It decides the hero's power tree (section 4):
 
-| Origin | Blurb | Affinity |
+| Origin | Blurb | Tree |
 | --- | --- | --- |
-| Lab Accident | A beaker of raw Aether went off in your face. Science! | Science |
-| Ancient Relic | You found an amulet older than the moon. It found you back. | Mystic |
-| Born Mighty | You lifted the family car at six. Mostly by accident. | Might |
-| Sworn Guardian | You promised someone you would keep this city safe. | Guardian |
-| Masked Avenger | The mad scientist's gang crossed the wrong family. | Justice |
+| Lab Accident | A beaker of raw Aether went off in your face. Science! | Science: rays, gadgets, robots |
+| Ancient Relic | You found an amulet older than the moon. It found you back. | Mystic: sigils, spirits, the void |
+| Born Mighty | You lifted the family car at six. Mostly by accident. | Might: fists, stone, rage |
+| Sworn Guardian | You promised someone you would keep this city safe. | Guardian: light, shields, healing |
+| Masked Avenger | The mad scientist's gang crossed the wrong family. | Justice: gadgets, smoke, wits |
 
-- **Start:** 960 karma (exactly one tier-1 power), level 1, no powers except Strike. A hero
-  below level 5 (before Flight opens) starts on the **rookies' street**: the side street
+- **Element** (`powers::Element`), picked once with the origin and kept for good (the debug
+  menu can switch it). It rides on every blow the hero lands (section 4).
+- **First power:** the top-left attack of the origin's tree (Atomic Ray, Arcane Bolt,
+  Haymaker, Light Lance or One-Two), bought with the starting karma.
+- **Start:** 960 karma (exactly one first-row power), level 1, no powers except Strike. A hero
+  below level 5 starts on the **rookies' street**: the side street
   nearest the town centre that lies 120-300 m from a Chrome Jackets hangout and at least
   180 m out of the mad scientist's quarter (and clear of the pirates' landing), off the
   gang's turf, so nobody warns a newcomer off on arrival (`quarter::rookie_start`). Small
@@ -92,8 +95,8 @@ the last run is pointed out once on the title.
 ### What the PC remembers (`profile.rs`)
 
 A small JSON file (`%APPDATA%\HeroWorld` on Windows, `~/.config/heroworld` elsewhere):
-name, world seed, the hero file (karma, lifetime karma, affinities, origin, powers and
-themes, faction regard), looks, volumes, picture and mouse settings. The hero is always
+name, world seed, the hero file (karma, lifetime karma, origin, element, powers,
+faction regard), looks, volumes, picture and mouse settings. The hero is always
 kept on the player's own PC; joining a friend brings your hero into their world.
 
 The game client keeps **no world save** between runs in single player: damage, broken
@@ -119,7 +122,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | Tab | Target the nearest villain in view; again: the next nearest not yet picked, round and round |
 | Left click on a villain | Target that villain, up to 150 m away (Tab reaches 60 m); within punching reach (3 m) it also punches |
 | Left mouse | Strike |
-| Q | Energy Bolt |
+| Q | The first bolt power of your tree (Atomic Ray, Arcane Bolt, ...) |
 | 1 to 0, Alt+1 to Alt+0 | The power in that slot of the power tray (see below) |
 | B | Powers and karma window (also faction standings) |
 | E | Open or shut the door you stand at (a rescue or a downed teammate near takes E first) |
@@ -167,9 +170,8 @@ level) and to **unspent karma** (which buys powers). Spending never lowers your 
 - Each level-up refills health and energy, with a burst of light and a fanfare.
 - Pacing target: level 2 in about ten minutes, level 5 (flight) in about an hour, level 20
   in about ten hours. `tests/powers.rs` plays the first hour (level 5 ≈ 62 minutes for a
-  bot); `tests/high_tiers.rs` plays all ten (`cargo test --release -p hw-sim --test
-  high_tiers -- --ignored`): level 20 after about 9.8 hours, the first tier-7 power about an
-  hour later.
+  bot before the power trees; about 75 since, to be balanced); `tests/high_tiers.rs`
+  plays all ten (`cargo test --release -p hw-sim --test high_tiers -- --ignored`).
 
 | Level | Lifetime karma | Level | Lifetime karma |
 | --- | --- | --- | --- |
@@ -196,66 +198,219 @@ level) and to **unspent karma** (which buys powers). Spending never lowers your 
   bonus on top, as Guardian karma ("Careful work!", `incidents::CAREFUL_COST`).
 - **Rescues:** Guardian karma for each person got out, double for handing the hurt one
   to the ambulance.
-- **Reviving a teammate** pays no karma but pushes the Guardian affinity.
+- **Reviving a teammate** pays no karma.
 
-### Affinities
+### Elements (`hw-sim/src/powers.rs`, `combat::element`)
 
-Five leanings, grown by deeds (`progress::Affinity`): **Guardian** (rescues, revives,
-shielding), **Justice** (fighting crime and villains), **Science** (ray guns, force
-fields, gadgets), **Mystic** (sigils, the Aether), **Might** (muscle). Half of each deed's
-karma goes into the affinity the deed belongs to (a defeat counts for the affinity of the
-power that dealt it, otherwise Justice). Powers whose chosen theme belongs to an affinity
-get a discount of `30% × my points / (all points + 1200)`, so up to 30% as you lean
-harder. Movement powers have no affinity and no discount.
+Every hero has one element, picked with the origin and kept for good. It rides on every
+blow the hero lands on a villain (Strike and every power), scaled by the blow, and shows
+on every hit. Shields, heals and rescues take the element's colour; attacks look like what
+they are made of (atomic green, void purple, light gold, ...).
 
-### Buying powers
+| Element | On every blow |
+| --- | --- |
+| Fire | Burns on: 15% of the blow again over 3 s. |
+| Frost | Slows the villain 15% for 3 s (not a control). |
+| Energy | Shoves the villain back 1 m (not the heavy ones). |
+| Necrotic | 5% of the blow comes back to the hero as health. |
+| Lightning | 20% of the blow leaps to one more villain within 5 m. |
+| Psychic | One blow in five (at most once in 4 s): the villain wanders confused for 1 s. |
 
-Press **B**. Each power has two **themes**: the mechanic is the same, the theme changes the
-name, look, sound and the affinity (and so the price).
+Control effects (holds, slows, confusion, fear, charm, disarm) last full length on
+minions, half on lieutenants, 15% on bosses; machines are never confused, afraid or
+charmed (`combat::RANK_RESIST`).
 
-- **Tiers open by level:** tier 1 at level 1, tier 2 at 3, tier 3 at 5, tier 4 at 8,
-  tier 5 at 12, tier 6 at 16, tier 7 at 20. Two powers (or more) in each.
-- **Price:** `960 × tier price × (1 + 0.25 × powers owned) × (1 − affinity discount)`, with
-  tier prices 1, 1.5, 2.25, 2.75, 3.25, 3.75, 4.25 (`progress::TIER_PRICES`). So a first
-  tier-1 power costs 960, tier 2 1 440, tier 3 2 160, tier 7 4 080, each before markup.
+Heroes saved before 0.164 got all the karma they had spent back once, and pick an element
+when they next play (the element card); then B to pick powers from their tree.
+
+### Buying powers: the trees (`progress.rs`, `powers.rs`)
+
+Press **B**. The window shows the hero's origin tree and the travel tree (tabs). Boxes are
+powers, arrows what they need: owned powers gold, ones to buy now lit blue, too dear grey,
+locked dark; helping powers have a green edge, capstones a star. Click a box for what it
+does, what it needs, and Buy or Give up.
+
+- **Every power is one record** (`powers::PowerDef`): where it sits in the tree, what it
+  needs, the mechanic it is built on (how it is delivered and looks) and its numbers in
+  three groups: on others (damage, range, area, hold, freeze, slow, burn, confuse, fear,
+  charm, disarm, weaken, spread, drain, ...), on the hero and friends (heal, shield,
+  reflect, resist, regen, might, haste, hide, auras, rescues, sidekicks, ...) and movement
+  (travel, where a moving power lands, a trail). A special is just a number that is
+  usually zero. **Energy and recharge come from the numbers** (`powers::energy`,
+  `powers::recharge`), not from a table.
+- **Trees, not levels, gate powers:** a power needs the ones its arrows come from (all of
+  them; "A or B" where two arrows join). Powers in an exclusive **fork** ("or" between
+  them) are picked once for good; the two capstones at the bottom of each tree are a fork.
+  A hero buys only from their origin's tree and the travel tree.
+- **Price:** `960 × row price × (1 + 0.25 × powers owned)`, row prices 1, 1.5, 2.25, 2.75,
+  3.25, 4.25 (`progress::ROW_PRICES`). By level 20 a hero owns about thirteen powers:
+  about half their tree and a few travel powers; karma after the cap buys more.
 - **No power ranks:** a power grows with your level automatically (damage ×
   `1 + 0.1 × (level − 1)`, so ×2.9 at level 20).
-- **No respec**, but giving a power up refunds 90% of what you paid.
+- **No respec**, but giving a power up refunds 90% of what you paid. A power that another
+  owned power needs cannot be given up until that one is.
+- **Strike** is everyone's free punch (20 damage, 3 m, 0.7 s) and carries the element.
+  **Q** fires the hero's first bolt power.
 - The server checks every purchase against the hero file.
 
 ### The powers
 
-Numbers at level 1 (`combat::power_spec`). Health and energy are 100 at level 1; health
-grows with the same ×(1 + 0.1 per level).
+Every origin tree has 22 or 23 powers in six rows; the travel tree seven. The window says
+each one's numbers; the names and links:
 
-| Key | Power (themes) | Tier | What it does |
+#### Common
+
+| Row | Power | What it does | Needs |
 | --- | --- | --- | --- |
-| 1 / LMB | **Strike** (everyone has it) | – | 20 damage, 3 m reach, 0.7 s recharge, no energy. Might. |
-| 2 / Q | **Energy Bolt**: *Atomic Ray* (Science) / *Arcane Bolt* (Mystic) | 1 | 36 damage, 40 m, 10 energy, 1.6 s; every hit knocks the target down. |
-| passive | **Super Jump**: *Spring Heels* / *Rocket Boots* | 1 | Jump at 16.5 m/s (clears a house) with strong air control. |
-| 3 | **Binding Hold**: *Gravity Cuffs* (Science) / *Binding Sigils* (Mystic) | 2 | 12 damage, 30 m, 12 energy, 6 s recharge; pins the villain for 7 s. |
-| 4 | **Force Shield**: *Force Field* (Science) / *Guardian Aegis* (Guardian) | 2 | 16 energy, 26 s recharge; for 18 s you and allies within 12 m take half damage. |
-| 5 | **Lift and Throw**: *Mighty Heave* (Might) / *Telekinesis* (Mystic) | 2 | First press picks up a car, bench, prop or torn-up rubble within 6 m; second throws it where you aim, at the target if there is one (60 damage, 30 m, 12 energy, 3 s, knockback). Not thrown within 8 s (`CARRY_SECONDS`), it slips free and drops just ahead, and the power recharges as after a throw; it also falls if the hero is knocked down or gives the power up. |
-| tray | **Freeze Ray**: *Cryo Ray* (Science) / *Frost Sigil* (Mystic) | 2 | A cone of frost, 16 m long (to the first wall), widening as it goes: 12 damage to every villain in it; 14 energy, 16 s. Minions freeze solid in a block of ice for 3.5 s (they cannot move or attack); tougher villains are chilled for 6 s (half speed, attacks wind up 1.6× slower). The next blow on a frozen villain shatters the ice for double damage. A cone at a burning house douses the fire: the trapped get out 40% quicker and the fire waits 2 more minutes. |
-| tray | **Teleport**: *Matter Transmitter* (Science) / *Aether Step* (Mystic) | 3 | Up to 40 m along where you look, stopping short of the first wall, roof or ground, and only where a person fits (never inside anything); 10 energy, 3 s. No room: nothing happens and nothing is spent. |
-| tray | **Rescue Bubble**: *Force Bubble* (Science) / *Guardian Orb* (Guardian) | 3 | At a fire or crash, a glowing bubble takes the trapped person nearest your aim (within 30 m) out to the street in 3 s (karma as if freed by hand); the hurt one, or the last one out, floats straight to the ambulance (double karma, the rescue done); 12 energy, 8 s. With nobody to rescue it does not fire. |
-| passive / V | **Flight**: *Jet Pack* / *Soaring Cape* | 3 | Fly at 22 m/s, 60 m/s with Shift, climb 10 m/s, ceiling 900 m. |
-| 6 | **Shockwave**: *Thunderclap* (Might) / *Sonic Boom* (Science) | 3 | 34 damage to everyone within 8 m, knocks them all down; 26 energy, 12 s. |
-| passive / Shift | **Super Speed**: *Lightning Legs* / *Rocket Skates* | 4 | Run at 18 m/s, 32 m/s with Shift; a crackling trail. |
-| tray | **Robot Sidekick**: *Tin Pal* (Science; chrome and red, visor) / *Brass Squire* (Guardian; brass and blue, optics) | 4 | Calls a small robot (an Actors robot at 0.62 of a person's size) to your side; 30 energy, 30 s. It keeps behind and beside you, fights whatever you fight or whoever goes for either of you within 18 m, punching for 14 (grows with level) every 1.1 s, and has 60% of your health. Pressed again while it is out (free) it goes for your target. Left 30 m behind, or stuck 2 s behind a wall, it beams back to you. Beaten, it powers down and is taken away 3 s later; one at a time; it goes when you give the power up. |
-| 7 | **Mend**: *Vital Ray* (Science) / *Healing Light* (Guardian) | 4 | Heals you and allies within 14 m by 30 (grows with level); 18 energy, 20 s. |
-| 8 | **Beam**: *Disintegrator* (Science) / *Spirit Lance* (Mystic) | 5 | 50 damage to every villain in a 36 m line (to the first wall), knocks them all back; 22 energy, 7 s. |
-| tray | **Hypno Ray**: *Hypno Spiral* (Science) / *Charm* (Mystic) | 5 | A minion (8 s) or lieutenant (3.2 s) within 30 m fights for you: it attacks the nearest villain within 25 m, and the villain it strikes turns on it (the rest of the group keeps at you); a spiral turns over its head. Bosses and machines are too strong-willed. 20 energy, 30 s. Karma for what it beats is yours. |
-| passive | **Vitality**: *Aether Vitality* (Mystic) / *Iron Constitution* (Might) | 5 | 2% of your health back every second, in a fight too. |
-| 9 | **Meteor**: *Orbital Ray* (Science) / *Starfall* (Mystic) | 6 | Marks the target's spot; 1.2 s later a strike from the sky does 32 damage to everyone within 5.5 m (walls give no cover) and cracks the street; 30 energy, 18 s. |
-| passive | **Invulnerable**: *Steel Hide* (Might) / *Unbreakable Will* (Justice) | 6 | Every blow does half. |
-| 0 | **Nova**: *Atomic Nova* (Science) / *Earthshaker* (Might) | 7 | 120 damage to everyone within 16 m, knocks them all down, breaks the street round you; 60 energy, 40 s. |
-| passive | **Rally**: *Rallying Cry* (Justice) / *Heroic Aura* (Guardian) | 7 | You and allies within 20 m hit 35% harder, recharge powers 1.4× as fast and get energy back 1.5× as fast. |
+| 1 | **Super Jump** | leaps over houses | – |
+| 1 | **Sprint** | runs half again as fast | – |
+| 2 | **Glide** | hold jump to float down | Super Jump |
+| 2 | **Flight** | flies anywhere | Super Jump |
+| 2 | **Super Speed** | runs like the wind | Sprint |
+| 3 | **Wall Run** | runs up walls | Super Speed or Super Jump |
+| 3 | **Hero's Return** | home to Hero Hall | – |
 
-Health comes back faster as it grows: regeneration (1 a second in a fight, 14 out of it at
-level 1) scales with your maximum health. A typical path: Spring Heels or Energy Bolt at the
-start, the other at level 2, a tier-2 power at 3, Flight at 5, then one new power every level
-or two; a bot that buys as it goes owns about a dozen at level 20.
+#### Science
+
+| Row | Power | What it does | Needs |
+| --- | --- | --- | --- |
+| 1 | **Atomic Ray** | bolt, knocks down | – |
+| 1 | **Scanner Goggles** (helper) | frees people 1.5x fast | – |
+| 2 | **Ray Burst** | a cone of rays | Atomic Ray |
+| 2 | **Gravity Cuffs** | holds one 7 s | Atomic Ray |
+| 2 | **Transmitter** | teleports 40 m | Scanner Goggles |
+| 2 | **Force Field** | friends take half | Scanner Goggles |
+| 3 | **Cryo Ray** | freezes a cone, douses | Ray Burst |
+| 3 | **Sonic Boom** | blast, knocks down | Ray Burst, Gravity Cuffs |
+| 3 | **Tin Pal** | robot sidekick | Gravity Cuffs, Transmitter |
+| 3 | **Force Bubble** (helper) | floats people out | Transmitter, Force Field |
+| 3 | **Vital Ray** | heals friends near | Force Field |
+| 4 | **Disintegrator** | beam through a line | Cryo Ray, Sonic Boom |
+| 4 | **Gravity Well** | pulls a crowd in | Sonic Boom |
+| 4 | **Hypno Spiral** | a minion fights for you | Tin Pal |
+| 4 | **Reflector Field** (fork 1) | shield sends 25% back | Vital Ray |
+| 4 | **Repulsor Field** (fork 1) | shoves villains out | Vital Ray |
+| 5 | **Orbital Ray** | strike from the sky | Disintegrator |
+| 5 | **Tractor Beam** | hurls cars from afar | Gravity Well |
+| 5 | **Overclocked Pal** (fork 2) | one strong robot | Hypno Spiral |
+| 5 | **Twin Pals** (fork 2) | two small robots | Hypno Spiral |
+| 6 | **Atomic Nova** (fork 3, capstone) | huge blast, 16 m | Orbital Ray, Tractor Beam |
+| 6 | **Singularity** (fork 3, capstone) | a crushing black hole | Tractor Beam, Overclocked Pal or Twin Pals |
+
+#### Mystic
+
+| Row | Power | What it does | Needs |
+| --- | --- | --- | --- |
+| 1 | **Arcane Bolt** | bolt, knocks down | – |
+| 1 | **Spirit Sight** (helper) | frees people 1.5x fast | – |
+| 2 | **Binding Sigils** | roots hold one 7 s | Arcane Bolt |
+| 2 | **Hex** | target takes 25% more | Arcane Bolt |
+| 2 | **Ghost Lantern** (helper) | floats people out | Spirit Sight |
+| 2 | **Aether Step** | teleports 40 m | Spirit Sight |
+| 2 | **Telekinesis** | lift and throw | Spirit Sight |
+| 3 | **Frost Sigil** | freezes a cone, douses | Binding Sigils |
+| 3 | **Charm** | a minion fights for you | Hex, Binding Sigils |
+| 3 | **Spirit Ward** | a strong barrier | Ghost Lantern |
+| 3 | **Void Grasp** | pulls in and burns | Aether Step, Telekinesis |
+| 3 | **Wraith Form** | takes 20% less | Telekinesis |
+| 4 | **Spirit Lance** | beam through a line | Frost Sigil |
+| 4 | **Curse of Weakness** (fork 1) | an area takes 20% more | Charm |
+| 4 | **Circle of Sigils** (fork 1) | holds an area 4 s | Charm, Spirit Ward |
+| 4 | **Soul Siphon** | a cone that heals you | Void Grasp |
+| 4 | **Aether Mend** | heals friends near | Wraith Form |
+| 5 | **Starfall** | strike from the sky | Spirit Lance |
+| 5 | **Familiar** | a spirit hound fights | Curse of Weakness or Circle of Sigils |
+| 5 | **Void Tendrils** | holds a crowd 5 s | Soul Siphon |
+| 5 | **Aether Vitality** | 2% health a second | Aether Mend |
+| 6 | **Eclipse** (fork 2, capstone) | stars rain for 8 s | Starfall, Familiar |
+| 6 | **Void Rift** (fork 2, capstone) | swallows a street | Void Tendrils, Aether Vitality |
+
+#### Might
+
+| Row | Power | What it does | Needs |
+| --- | --- | --- | --- |
+| 1 | **Haymaker** | big punch, knocks down | – |
+| 1 | **Brace** (helper) | props up rubble: frees 1.5x fast | – |
+| 2 | **Uppercut** | launches a villain | Haymaker |
+| 2 | **Thunderclap** | blast, knocks down | Haymaker |
+| 2 | **Mighty Heave** | lift and throw | Haymaker, Brace |
+| 2 | **Tough** | takes 15% less | Brace |
+| 2 | **Dig Out** (helper) | frees people 2x fast | Brace |
+| 3 | **Shoulder Charge** | dashes, bowls over | Uppercut |
+| 3 | **Stomp** | slows everyone round | Thunderclap |
+| 3 | **Lamp-post Swing** | sweeps all round you | Mighty Heave |
+| 3 | **Boulder Toss** | rips up the street | Mighty Heave, Tough |
+| 3 | **Iron Constitution** | 2% health a second | Tough, Dig Out |
+| 4 | **Combo Flurry** | three quick blows | Shoulder Charge |
+| 4 | **Fissure** | cracks a line | Stomp |
+| 4 | **Giant Swing** | flings a villain far | Lamp-post Swing, Boulder Toss |
+| 4 | **Berserk** (fork 1) | 30% harder, 15% softer | Iron Constitution |
+| 4 | **Bulwark Stance** (fork 1) | never knocked down | Iron Constitution |
+| 5 | **Meteor Leap** | jump-slam from afar | Combo Flurry |
+| 5 | **Car Slam** | hurls a car | Fissure, Giant Swing |
+| 5 | **Steel Hide** | takes half | Berserk or Bulwark Stance |
+| 6 | **Earthshaker** (fork 2, capstone) | huge blast, 16 m | Meteor Leap, Car Slam |
+| 6 | **Unstoppable** (fork 2, capstone) | a titan for 20 s | Car Slam, Steel Hide |
+
+#### Guardian
+
+| Row | Power | What it does | Needs |
+| --- | --- | --- | --- |
+| 1 | **Light Lance** | bolt of light | – |
+| 1 | **Guardian Orb** (helper) | floats people out | – |
+| 2 | **Shield Bash** | punch, knocks down | Light Lance |
+| 2 | **Healing Light** | heals friends near | Light Lance |
+| 2 | **Lifeline** (helper) | revives from 25 m | Guardian Orb |
+| 2 | **Guardian Aegis** | friends take half | Guardian Orb |
+| 2 | **Protector's Bond** | a strong barrier | Guardian Orb |
+| 3 | **Shield Throw** | bounces to three | Shield Bash |
+| 3 | **Halo Burst** | blast that heals | Shield Bash, Healing Light |
+| 3 | **Rescue Swarm** (helper) | floats three out | Lifeline |
+| 3 | **Sanctuary** | heals friends, slows foes | Guardian Aegis |
+| 3 | **Intercept** | leaps in, shields there | Protector's Bond |
+| 4 | **Radiant Beam** | beam through a line | Shield Throw |
+| 4 | **Light Pillar** | a burning column | Halo Burst |
+| 4 | **Steady Heart** | 2% health a second | Rescue Swarm, Sanctuary |
+| 4 | **Reflective Aegis** (fork 1) | sends 20% of blows back | Sanctuary |
+| 4 | **Mobile Aegis** (fork 1) | friends near take 15% less | Intercept |
+| 5 | **Heroic Aura** | friends near hit harder | Light Pillar |
+| 5 | **Guardian Angel** (fork 2) | survives a fatal blow | Steady Heart |
+| 5 | **Martyr** (fork 2) | friends near take 25% less | Steady Heart |
+| 5 | **Bulwark of Light** | a big barrier | Reflective Aegis or Mobile Aegis |
+| 6 | **Dawn** (fork 3, capstone) | heals and revives all | Heroic Aura, Guardian Angel or Martyr |
+| 6 | **Last Bastion** (fork 3, capstone) | a dome blows bounce off | Guardian Angel or Martyr, Bulwark of Light |
+
+#### Justice
+
+| Row | Power | What it does | Needs |
+| --- | --- | --- | --- |
+| 1 | **One-Two** | a quick double blow | – |
+| 1 | **Detective's Nose** (helper) | frees people 1.5x fast | – |
+| 2 | **Disarm** | gunmen can't shoot 6 s | One-Two |
+| 2 | **Combat Roll** | dodges almost all, 2 s | One-Two |
+| 2 | **Grapple Line** | swings you 35 m | One-Two, Detective's Nose |
+| 2 | **Smoke Bomb** | confuses, hides you | Detective's Nose |
+| 2 | **Cuff 'Em** (helper) | 25% more karma | Detective's Nose |
+| 3 | **Takedown** | crushes held foes | Disarm |
+| 3 | **Sweep Kick** | knocks all round down | Combat Roll |
+| 3 | **Bolas** | tangles one 4 s | Grapple Line |
+| 3 | **Intimidate** | minions flee | Smoke Bomb |
+| 3 | **Shadow Cloak** | villains lose you 8 s | Smoke Bomb, Cuff 'Em |
+| 4 | **Trusty Partner** | a masked friend fights | Takedown |
+| 4 | **Martial Master** (fork 1) | punches leap on | Sweep Kick |
+| 4 | **Gadget Belt** (fork 1) | powers recharge 30% faster | Bolas |
+| 4 | **Flash Bang** | confuses a crowd | Intimidate |
+| 4 | **Unbreakable Will** | steadfast, 20% less | Shadow Cloak |
+| 5 | **Zip Line Strike** | dashes through a line | Trusty Partner |
+| 5 | **Stun Darts** | leap on to three | Martial Master or Gadget Belt |
+| 5 | **Rallying Cry** | friends near hit harder | Flash Bang |
+| 5 | **Vanish** | villains lose you 10 s | Unbreakable Will |
+| 6 | **Final Verdict** (fork 2, capstone) | minions fall at a blow, 10 s | Zip Line Strike, Stun Darts |
+| 6 | **Reign of Fear** (fork 2, capstone) | every villain near flees | Rallying Cry, Vanish |
+
+Villains do not use these records yet (planned). Health comes back faster as it grows:
+regeneration (1 a second in a fight, 14 out of it at level 1) scales with your maximum
+health.
 
 ---
 
@@ -1087,7 +1242,7 @@ on the way. Rides are free.
   villains (the quarter below the Tesla tower, a rooftop lookout, a villain corner, the Chrome
   Jackets' hangout, the barricade, the graffiti wall, a lab) and underground (a lift, a utility
   tunnel, Molehaven's hall and market).
-- **Hero**: set the level, add karma, buy every open power (either theme) or give them all back,
+- **Hero**: set the level, add karma, buy the whole tree (the first of each fork) or give them all back, switch the element,
   move each faction's standing, full health, back to the saved hero. A hero changed here is not
   saved (until "Back to my saved hero").
 - **Events**: start any incident near you (fights come 150-800 m away, 50-350 m on foot; Go to lists them), bring
@@ -1118,8 +1273,9 @@ run, or put them in a `.bat`.
 | Variable | Effect |
 | --- | --- |
 | `HW_LEVEL=n` | Start at level n with at least 20 000 karma to spend (not saved). |
-| `HW_POWERS=1` | With `HW_LEVEL`: buy every power open at that level. |
-| `HW_THEME=1` | With `HW_POWERS`: take the second theme of each. |
+| `HW_POWERS=1` | With `HW_LEVEL`: buy the whole tree (the first of each fork). |
+| `HW_ORIGIN=n` | With `HW_LEVEL`: play origin n (0-4), karma given back. |
+| `HW_ELEMENT=n` | With `HW_LEVEL`: element n (1 Fire, 2 Frost, 3 Energy, 4 Necrotic, 5 Lightning, 6 Psychic). |
 | `HW_FLY=1` | Start flying. |
 | `HW_STORY=n` | Start with n chapters of the Doctor's story done (not saved); `HW_BRIEFED=1` also briefed on the next. `HW_VIEW=statue` looks at the statue (`HW_STORY=7`). Where each chapter plays: `cargo run --release -p hw-sim --example story_places -- <seed> <people>`. |
 | `HW_NAME=...` | Hero name for this run. |
@@ -1186,7 +1342,7 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | Time | Fixed mid-afternoon; `HW_HOUR` for others | A day/night cycle |
 | Zones | One villain quarter (+2/+3 levels), Jackets' band | Level bands across the world, robot armies, liberation that slips back |
 | Underground | Utility tunnels, Molehaven, the Aether Tube with stations, exits, mole homes, markets, shrines and burrows along it, the Doctor's lab, buried ruins, the Deeps | Sewers, more lairs, townsfolk riding the tube |
-| Heroes | 20 levels, 21 powers in 7 tiers (Freeze Ray, Teleport, Rescue Bubble, Robot Sidekick and Hypno Ray since 0.117), two themes each, a drag-and-drop power tray, 5 origins and affinities | More themes, power roles and budget balancing |
+| Heroes | 20 levels, a power tree per origin (22-23 powers each) plus a travel tree, powers as one parametrized record, six elements, a drag-and-drop power tray (0.164) | Villains on the same records, augments, balancing the trees |
 | Looks | Creator with six costumes and sliders | Full costume creator, capes, masks (in progress) |
 | Combat | Minions with roles (shield bearer, grenadier, orderly), lieutenant, boss, colossus, drones, revive, hospital; Hero Hall's five heroes give tips and answer ignored fights | Teaming up with the town's heroes, the Doctor in person |
 | Factions | Eight factions, regard, turf warnings; mole folk, sky pirates and the Iron Legion with their own incidents and homes | Patrol units, turf changing hands |

@@ -19,10 +19,12 @@ pub mod wire;
 pub use connection::{ConnState, Connection};
 pub use protocol::{
     fizzle, ClientMsg, CombatState, EntityKind, EntityState, Faction, Fx, FxKind, ImpactKind,
-    InputState, OwnedPower, PlayerId, Power, ServerMsg, Sheet, Status, ToClient, ToServer,
-    EFFECT_ARMOURED, EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_CHARMED, EFFECT_CHILLED,
-    EFFECT_ENRAGED, EFFECT_FROZEN, EFFECT_HELD, EFFECT_KNEELING, EFFECT_RALLIED, EFFECT_SHIELD,
-    EFFECT_SUPER_JUMP, EFFECT_SUPER_SPEED, EFFECT_TOUGH, FACTIONS,
+    InputState, OwnedPower, PlayerId, Power, PowerId, ServerMsg, Sheet, Status, ToClient, ToServer,
+    EFFECT_ARMOURED, EFFECT_BURNING, EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_CHARMED,
+    EFFECT_CHILLED, EFFECT_CONFUSED, EFFECT_DISARMED, EFFECT_EMPOWERED, EFFECT_ENRAGED,
+    EFFECT_FEARED, EFFECT_FROZEN, EFFECT_GLIDE, EFFECT_HELD, EFFECT_HIDDEN, EFFECT_KNEELING,
+    EFFECT_RALLIED, EFFECT_SHIELD, EFFECT_SPRINT, EFFECT_SUPER_JUMP, EFFECT_SUPER_SPEED,
+    EFFECT_TOUGH, EFFECT_WALL_RUN, EFFECT_WEAKENED, FACTIONS, POWER_IDS,
 };
 pub use replication::{Candidate, ClientView};
 pub use transport::{
@@ -30,7 +32,7 @@ pub use transport::{
 };
 
 /// Protocol version. Server and client must match exactly to play together.
-pub const PROTOCOL_VERSION: u32 = 36;
+pub const PROTOCOL_VERSION: u32 = 37;
 
 /// Most players in one world.
 pub const MAX_PLAYERS: usize = 10;

@@ -19,7 +19,7 @@
 //! save sees the same sequence.
 
 use crate::combat::{self, EnemyKind, Fighter, Fights, Spot};
-use crate::progress::{self, Affinity};
+use crate::progress;
 use crate::{Control, Hero, Motion, Net, Solids, DT, GROUND_Y, TICK_HZ};
 use bevy_ecs::prelude::*;
 use glam::{DVec2, DVec3};
@@ -29,7 +29,7 @@ use hw_gen::urban::area::Area;
 use hw_gen::urban::landmarks::LandmarkKind;
 use hw_net::FxKind;
 use hw_net::PlayerId;
-use hw_net::{Power, ToClient};
+use hw_net::ToClient;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -750,7 +750,8 @@ impl Incidents {
             .query::<(&Hero, &Net, &Motion, &Fighter)>()
             .iter(world)
             .map(|(h, n, m, f)| {
-                let afoot = !f.kit.has(Power::Flight) && !f.kit.has(Power::SuperSpeed);
+                let afoot = !f.kit.travels(crate::powers::travel::FLY)
+                    && !f.kit.travels(crate::powers::travel::SPEED);
                 (n.0, m.0.pos, f.level, afoot, h.owner)
             })
             .collect();
@@ -927,8 +928,6 @@ impl Incidents {
                     rewards.push(combat::Reward {
                         hero: h.0,
                         karma: (one * inc.kind.bonus() * x).round() as u32,
-                        deed: Some(Affinity::Guardian),
-                        lean: 0,
                     });
                 }
             };
@@ -1009,8 +1008,6 @@ impl Incidents {
                 rewards.push(combat::Reward {
                     hero: h.0,
                     karma: (one * inc.kind.bonus() * x).round() as u32,
-                    deed: Some(Affinity::Guardian),
-                    lean: 0,
                 });
             }
         };
@@ -1156,8 +1153,6 @@ impl Incidents {
                 rewards.push(combat::Reward {
                     hero: h.0,
                     karma: (one * group.len() as f32).round() as u32,
-                    deed: Some(Affinity::Guardian),
-                    lean: 0,
                 });
                 friends.push((h.0, hw_net::Faction::Moles, crate::factions::CALMED));
             }
@@ -1320,12 +1315,7 @@ impl Incidents {
         for h in heroes.iter().filter(|h| h.1.distance(inc.at) < REWARD) {
             let one = progress::defeat_karma(base, inc.level, h.2) as f32;
             let karma = (one * size as f32 * inc.kind.bonus()).round() as u32;
-            f.rewards.push(combat::Reward {
-                hero: h.0,
-                karma,
-                deed: Some(Affinity::Justice),
-                lean: 0,
-            });
+            f.rewards.push(combat::Reward { hero: h.0, karma });
             // Won without wrecking the street: a little more, as a Guardian.
             let tally = |m: &BTreeMap<PlayerId, f64>| m.get(&h.4).copied().unwrap_or(0.0);
             let spent = tally(&self.collateral) - tally(&inc.collateral_from);
@@ -1334,8 +1324,6 @@ impl Incidents {
                 f.rewards.push(combat::Reward {
                     hero: h.0,
                     karma: bonus,
-                    deed: Some(Affinity::Guardian),
-                    lean: 0,
                 });
                 let mut e = combat::event(tick, FxKind::Careful, h.0, h.0, h.1);
                 e.amount = bonus.min(u16::MAX as u32) as u16;

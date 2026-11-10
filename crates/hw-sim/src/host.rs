@@ -403,12 +403,12 @@ impl Host {
                     open,
                 } => self.sim.use_door(player, building, key, open),
                 ToServer::Sheet(sheet) => self.sim.set_sheet(player, sheet),
-                ToServer::Buy { power, theme } => {
+                ToServer::Buy { power } => {
                     // A refused buy changes nothing; the client checks first.
-                    let _ = self.sim.buy(player, power, theme);
+                    let _ = self.sim.buy(player, power);
                 }
                 ToServer::GiveUp { power } => {
-                    self.sim.give_up(player, power);
+                    let _ = self.sim.give_up(player, power);
                 }
                 ToServer::Look { part, parts, bytes } => {
                     let whole = self

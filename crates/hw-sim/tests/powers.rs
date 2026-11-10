@@ -3,10 +3,10 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
-use hw_net::{FxKind, InputState, PlayerId, Power, Status, ToServer};
+use hw_net::{FxKind, InputState, PlayerId, PowerId, Status, ToServer};
 use hw_sim::balance::{self, bot_input, hero_sheet};
 use hw_sim::collision::Obstacles;
-use hw_sim::combat::{power_spec, Fighter};
+use hw_sim::combat::Fighter;
 use hw_sim::host::Host;
 use hw_sim::progress::{self, level_of};
 use hw_sim::{Sim, GROUND_Y, TICK_HZ};
@@ -29,7 +29,7 @@ fn the_balance_run_is_green() {
     for r in &results {
         println!(
             "{:<16} tier {}  {:>5.1} s  hurt {:>3.0}%  worth {:.2}",
-            power_spec(r.power).name,
+            hw_sim::powers::def_of(r.power).name,
             r.tier,
             r.seconds,
             r.hurt * 100.0,
@@ -39,7 +39,7 @@ fn the_balance_run_is_green() {
     let flags = balance::outliers(&results);
     assert!(flags.is_empty(), "outliers: {flags:#?}");
     // Every power was measured.
-    assert_eq!(results.len(), Power::ALL.len() - 1);
+    assert_eq!(results.len(), balance::CLASSIC.len());
 }
 
 /// Where a lone hero goes next: the nearest corner with villains, or, with
@@ -66,7 +66,7 @@ fn next_spot(sim: &mut Sim, me: DVec3) -> DVec3 {
 #[ignore = "on demand (balance): scripts/check.sh --on-demand"]
 fn a_new_hero_reaches_level_five_in_about_an_hour() {
     let mut sim = arena(11);
-    // A fresh hero: Strike, and Energy Bolt bought with the starting karma.
+    // A fresh hero: Strike, and Atomic Ray bought with the starting karma.
     let me = PlayerId(1);
     let hero = sim.spawn_hero_with(me, ground(75.0, 75.0), progress::starter());
     // Street corners a block apart, as the city will have them.
@@ -96,13 +96,14 @@ fn a_new_hero_reaches_level_five_in_about_an_hour() {
         if reached.last().map_or(1, |r| r.0) < level {
             reached.push((level, minutes));
         }
-        // Spend like a player saving for flight: a hold at level 3, then
-        // flight as soon as it opens and can be paid for.
+        // Spend like a player saving for flight: a hold first, then Super
+        // Jump, then Flight as soon as it can be paid for.
         if t.is_multiple_of(TICK_HZ as u64 * 10) {
-            if !sheet.has(Power::Hold) && sheet.has(Power::Bolt) {
-                let _ = sim.buy(me, Power::Hold, 1);
-            }
-            if level >= 5 && sim.buy(me, Power::Flight, 1).is_ok() {
+            if !sheet.has(PowerId(13)) {
+                let _ = sim.buy(me, PowerId(13));
+            } else if !sheet.has(PowerId(2)) {
+                let _ = sim.buy(me, PowerId(2));
+            } else if sim.buy(me, PowerId(5)).is_ok() {
                 flight_at = Some(minutes);
             }
         }
@@ -123,7 +124,7 @@ fn a_new_hero_reaches_level_five_in_about_an_hour() {
     assert!((45.0..75.0).contains(&five), "level 5 after {five:.0} min");
     let flight = flight_at.expect("flight bought");
     assert!(
-        flight - five < 12.0,
+        flight - five < 15.0,
         "flight {flight:.0} min, level 5 {five:.0}"
     );
     assert_eq!(level_ups, 4, "a level-up moment for each level");
@@ -136,11 +137,11 @@ fn friends_of_different_levels_fight_together_at_one_level() {
     let mut sim = arena(12);
     let host = PlayerId(1);
     let friend = PlayerId(2);
-    let a = sim.spawn_hero_with(host, ground(30.0, 0.0), hero_sheet(3, &[Power::Bolt]));
+    let a = sim.spawn_hero_with(host, ground(30.0, 0.0), hero_sheet(3, &[PowerId(10)]));
     let b = sim.spawn_hero_with(
         friend,
         ground(30.0, 2.0),
-        hero_sheet(9, &[Power::Bolt, Power::Shockwave]),
+        hero_sheet(9, &[PowerId(10), PowerId(17)]),
     );
     sim.step();
     // Both fight at the host's level 3: the level-9 friend is brought down
@@ -149,7 +150,7 @@ fn friends_of_different_levels_fight_together_at_one_level() {
     let (fa, fb) = (sim.fighter(a).unwrap(), sim.fighter(b).unwrap());
     assert_eq!((fa.level, fb.level), (3, 3));
     assert_eq!(fa.max_health, fb.max_health);
-    assert!(fb.kit.has(Power::Shockwave));
+    assert!(fb.kit.has(PowerId(17)));
     // The group they meet is at that level too.
     sim.add_fight_spot(ground(60.0, 0.0), DVec2::new(-1.0, 0.0));
     let levels: Vec<u8> = sim.enemies().iter().map(|e| e.3.level).collect();
@@ -183,7 +184,7 @@ fn friends_of_different_levels_fight_together_at_one_level() {
 
 /// A hero with `powers` at level 5 next to one brute (held still by
 /// nothing) on open ground; returns the sim, the hero and the brute.
-fn duel(powers: &[Power]) -> (Sim, NetId, NetId) {
+fn duel(powers: &[PowerId]) -> (Sim, NetId, NetId) {
     let mut sim = arena(3);
     let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(5, powers));
     sim.step();
@@ -222,11 +223,11 @@ fn press(sim: &mut Sim, input: InputState, ticks: u64) -> Vec<hw_net::Fx> {
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_binding_hold_stops_a_villain() {
-    let (mut sim, hero, brute) = duel(&[Power::Hold]);
+    let (mut sim, hero, brute) = duel(&[PowerId(13)]);
     let fx = press(
         &mut sim,
         InputState {
-            power: Power::Hold.code(),
+            power: PowerId(13).0,
             target: Some(brute),
             ..Default::default()
         },
@@ -247,18 +248,14 @@ fn a_binding_hold_stops_a_villain() {
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_force_shield_halves_blows_for_the_hero_and_friends() {
     let mut sim = arena(4);
-    let a = sim.spawn_hero_with(
-        PlayerId(1),
-        ground(0.0, 0.0),
-        hero_sheet(5, &[Power::Shield]),
-    );
+    let a = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(5, &[PowerId(15)]));
     let b = sim.spawn_hero_with(PlayerId(2), ground(4.0, 0.0), hero_sheet(5, &[]));
     let far = sim.spawn_hero_with(PlayerId(3), ground(60.0, 0.0), hero_sheet(5, &[]));
     sim.step();
     let fx = press(
         &mut sim,
         InputState {
-            power: Power::Shield.code(),
+            power: PowerId(15).0,
             ..Default::default()
         },
         2,
@@ -279,10 +276,10 @@ fn a_force_shield_halves_blows_for_the_hero_and_friends() {
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn lift_and_throw_hits_a_villain_with_a_crate() {
-    let (mut sim, hero, brute) = duel(&[Power::Lift]);
+    let (mut sim, hero, brute) = duel(&[PowerId(27)]);
     sim.spawn_crate(ground(1.5, 0.0) + DVec3::Y * 0.5, [0.0, 0.0, 0.0, 1.0]);
     let lift = InputState {
-        power: Power::Lift.code(),
+        power: PowerId(27).0,
         target: Some(brute),
         ..Default::default()
     };
@@ -306,17 +303,13 @@ fn lift_and_throw_hits_a_villain_with_a_crate() {
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_shockwave_knocks_down_everyone_close() {
     let mut sim = arena(5);
-    let hero = sim.spawn_hero_with(
-        PlayerId(1),
-        ground(0.0, 0.0),
-        hero_sheet(5, &[Power::Shockwave]),
-    );
+    let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(5, &[PowerId(17)]));
     sim.step();
     sim.add_fight_spot(ground(3.0, 0.0), DVec2::new(-1.0, 0.0));
     let fx = press(
         &mut sim,
         InputState {
-            power: Power::Shockwave.code(),
+            power: PowerId(17).0,
             ..Default::default()
         },
         2,
@@ -337,7 +330,7 @@ fn a_shockwave_knocks_down_everyone_close() {
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn flight_is_an_unlock_and_super_jump_jumps_higher() {
-    let peak = |powers: &[Power], fly: bool| {
+    let peak = |powers: &[PowerId], fly: bool| {
         let mut sim = arena(6);
         let h = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(5, powers));
         for _ in 0..10 {
@@ -359,11 +352,11 @@ fn flight_is_an_unlock_and_super_jump_jumps_higher() {
         top - GROUND_Y
     };
     let plain = peak(&[], false);
-    let super_jump = peak(&[Power::SuperJump], false);
+    let super_jump = peak(&[PowerId(2)], false);
     assert!(plain < 2.0 && super_jump > 5.0, "{plain} {super_jump}");
     // Flying without Flight is just a jump.
     assert!(peak(&[], true) < 2.0);
-    assert!(peak(&[Power::Flight], true) > 15.0);
+    assert!(peak(&[PowerId(5)], true) > 15.0);
 }
 
 #[test]
@@ -385,29 +378,23 @@ fn powers_are_bought_and_given_up_over_the_network() {
         ref s => panic!("{s:?}"),
     };
     // The friend's hero file arrives; the server plays by it and confirms.
-    let mut file = progress::new_hero(1);
+    let mut file = progress::new_hero(0, hw_sim::powers::Element::Frost);
     file.lifetime = progress::karma_for_level(3);
     file.karma = 5000;
     c.send(ToServer::Sheet(file.clone()));
     run(&mut host, &mut c, 20);
     assert_eq!(host.sim.sheet(me).unwrap().karma, 5000);
-    c.send(ToServer::Buy {
-        power: Power::Hold,
-        theme: 1,
-    });
+    c.send(ToServer::Buy { power: PowerId(10) });
     run(&mut host, &mut c, 20);
     let s = host.sim.sheet(me).unwrap();
-    assert!(s.has(Power::Hold));
+    assert!(s.has(PowerId(10)));
     let paid = 5000 - s.karma;
-    c.send(ToServer::GiveUp { power: Power::Hold });
-    // Flight is not for sale at level 3.
-    c.send(ToServer::Buy {
-        power: Power::Flight,
-        theme: 0,
-    });
+    c.send(ToServer::GiveUp { power: PowerId(10) });
+    // Flight needs Super Jump first.
+    c.send(ToServer::Buy { power: PowerId(5) });
     run(&mut host, &mut c, 20);
     let s = host.sim.sheet(me).unwrap();
-    assert!(!s.has(Power::Hold) && !s.has(Power::Flight));
+    assert!(!s.has(PowerId(10)) && !s.has(PowerId(5)));
     assert_eq!(s.karma, 5000 - paid + (paid as f64 * 0.9) as u32);
     // The client heard every change, the last one last.
     let sheets: Vec<_> = c
@@ -434,7 +421,7 @@ fn held(sim: &mut Sim) -> Vec<NetId> {
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn nothing_lifted_outlives_its_power() {
     let lift = InputState {
-        power: Power::Lift.code(),
+        power: PowerId(27).0,
         ..Default::default()
     };
     let secs = |s: f64| (s * TICK_HZ as f64).ceil() as u64;
@@ -443,7 +430,7 @@ fn nothing_lifted_outlives_its_power() {
     // Lifted with no villain anywhere: a chunk of street rides overhead,
     // then slips free on its own, lands and is cleared away.
     let mut sim = arena(4);
-    let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(5, &[Power::Lift]));
+    let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(5, &[PowerId(27)]));
     sim.step();
     let fx = press(&mut sim, lift, 2);
     assert!(fx.iter().any(|e| e.kind == FxKind::Lift && e.from == hero));
@@ -492,7 +479,7 @@ fn nothing_lifted_outlives_its_power() {
     let fx = press(&mut sim, InputState::default(), secs(5.0));
     let _ = fx;
     lifted(&mut sim);
-    sim.give_up(PlayerId(1), Power::Lift);
+    sim.give_up(PlayerId(1), PowerId(27)).unwrap();
     sim.step();
     assert!(sim.fighter(hero).unwrap().carrying.is_none());
     assert!(
@@ -502,7 +489,7 @@ fn nothing_lifted_outlives_its_power() {
 
     // Knocked down while holding it: it falls.
     let mut sim = arena(4);
-    let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(5, &[Power::Lift]));
+    let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(5, &[PowerId(27)]));
     sim.step();
     lifted(&mut sim);
     let mut f = sim.fighter(hero).unwrap();

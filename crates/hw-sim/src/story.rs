@@ -21,7 +21,7 @@
 //! for a town can come later as more lists of the same [`Chapter`].
 
 use crate::combat::{self, EnemyKind, Fighter, Fights, Spot};
-use crate::progress::{self, Affinity};
+use crate::progress;
 use crate::{Control, Hero, Motion, Net, Progress, DT, GROUND_Y, TICK_HZ};
 use bevy_ecs::prelude::*;
 use glam::{DVec2, DVec3};
@@ -610,12 +610,7 @@ impl Story {
         let mut rewards = Vec::new();
         for h in heroes.iter().filter(|h| near.contains(&h.id)) {
             let karma = (progress::karma_to_next(h.level) as f64 * REWARD_SHARE).round() as u32;
-            rewards.push(combat::Reward {
-                hero: h.id,
-                karma,
-                deed: Some(Affinity::Justice),
-                lean: 0,
-            });
+            rewards.push(combat::Reward { hero: h.id, karma });
         }
         world.resource_mut::<Fights>().rewards.extend(rewards);
         // The host's file moves on (the team follows it), and so do the

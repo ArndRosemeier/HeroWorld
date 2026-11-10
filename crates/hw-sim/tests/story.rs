@@ -6,7 +6,7 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
-use hw_net::{InputState, PlayerId, Power, ToClient};
+use hw_net::{InputState, PlayerId, PowerId, ToClient};
 use hw_sim::balance::{bot_input, hero_sheet};
 use hw_sim::collision::Body;
 use hw_sim::combat::EnemyKind;
@@ -18,12 +18,13 @@ fn town() -> Sim {
     Sim::for_town(Seed(3), &town)
 }
 
-/// Every power there is: the bot is here to play the chain, not to test
-/// the balance (`tests/powers.rs` does that).
-fn all_powers() -> Vec<Power> {
-    (1..=40)
-        .filter_map(Power::from_code)
-        .filter(|p| *p != Power::Strike)
+/// Every power of the Lab Accident and travel trees: the bot is here to
+/// play the chain, not to test the balance (`tests/powers.rs` does that).
+fn all_powers() -> Vec<PowerId> {
+    use hw_sim::powers::{tree, Tree};
+    tree(Tree::Science)
+        .chain(tree(Tree::Common))
+        .map(|d| d.id)
         .collect()
 }
 

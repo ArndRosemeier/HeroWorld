@@ -43,7 +43,10 @@ pub enum DebugAction {
     /// Add karma to spend.
     Karma(u32),
     /// Buy every power the level allows, in theme 0 or 1.
-    BuyAll(u8),
+    /// Every power of the hero's trees (the first of each fork).
+    BuyAll,
+    /// Switch the hero's element (otherwise for good).
+    Element(hw_sim::powers::Element),
     /// Give every power back (90% of each price back).
     ClearPowers,
     /// Move a faction's regard for the hero by this much.
@@ -319,17 +322,23 @@ fn hero_tab(ui: &mut egui::Ui, info: &DebugInfo, out: &mut Vec<DebugAction>) {
     ui.add_space(4.0);
     ui.label(egui::RichText::new("Powers").strong());
     ui.horizontal_wrapped(|ui| {
-        if ui.button("Buy all open (first themes)").clicked() {
-            out.push(DebugAction::BuyAll(0));
-        }
-        if ui.button("Buy all open (second themes)").clicked() {
-            out.push(DebugAction::BuyAll(1));
+        if ui.button("Buy the whole tree").clicked() {
+            out.push(DebugAction::BuyAll);
         }
         if ui.button("Give all back").clicked() {
             out.push(DebugAction::ClearPowers);
         }
     });
     ui.label("B opens the powers window to buy one at a time.");
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Element:");
+        for e in hw_sim::powers::Element::ALL {
+            let on = s.element == e.code();
+            if ui.selectable_label(on, e.name()).clicked() && !on {
+                out.push(DebugAction::Element(e));
+            }
+        }
+    });
     ui.add_space(4.0);
     ui.label(egui::RichText::new("Factions (how they see you)").strong());
     egui::Grid::new("debug regard")
@@ -490,23 +499,40 @@ pub fn at_level(mut s: Sheet, level: u8) -> Sheet {
     s
 }
 
-/// Every power the sheet's level opens bought, in `theme` (karma topped up
-/// so none is refused for want of it).
-pub fn buy_all(mut s: Sheet, theme: u8) -> Sheet {
+/// Every power of the hero's trees bought, the first of each fork (karma
+/// topped up so none is refused for want of it).
+pub fn buy_all(mut s: Sheet) -> Sheet {
+    use hw_sim::powers::{tree, Tree};
     s.karma = s.karma.max(1_000_000);
-    for p in crate::powersview::SHOP {
-        let _ = hw_sim::progress::buy(&mut s, p, theme);
+    let mine = Tree::of_origin(s.origin);
+    // Rows top down, so what a power needs is bought before it.
+    let mut all: Vec<_> = tree(mine).chain(tree(Tree::Common)).collect();
+    all.sort_by_key(|d| (d.row, d.col, d.tree == Tree::Common));
+    for _ in 0..2 {
+        for d in &all {
+            let _ = hw_sim::progress::buy(&mut s, d.id);
+        }
     }
     s
 }
 
-/// The sheet with every power given back (90% of each price refunded).
+/// The sheet with every power given back (90% of each price refunded),
+/// the ones others need after those.
 pub fn clear_powers(mut s: Sheet) -> Sheet {
-    while let Some(p) = s.powers.last().map(|o| o.power) {
-        let before = s.powers.len();
-        let _ = hw_sim::progress::give_up(&mut s, p);
-        if s.powers.len() == before {
-            s.powers.pop();
+    while !s.powers.is_empty() {
+        let free = s
+            .powers
+            .iter()
+            .rev()
+            .map(|o| o.power)
+            .find(|&p| hw_sim::progress::can_give_up(&s, p).is_ok());
+        match free {
+            Some(p) => {
+                let _ = hw_sim::progress::give_up(&mut s, p);
+            }
+            None => {
+                s.powers.pop();
+            }
         }
     }
     s
@@ -891,10 +917,15 @@ mod tests {
         let s = at_level(hw_sim::progress::starter(), 10);
         assert_eq!(hw_sim::progress::level_of(s.lifetime), 10);
         assert!(s.karma >= hw_sim::progress::karma_for_level(10) - 1);
-        let s = buy_all(s, 0);
-        assert!(!s.powers.is_empty());
+        let s = buy_all(s);
+        // Half the tree's forks are closed: the rest of the tree and
+        // every travel power.
+        assert!(s.powers.len() >= 20, "{}", s.powers.len());
+        assert!(s.has(hw_net::PowerId(5)) && s.has(hw_net::PowerId(8)));
+        let karma = s.karma;
         let s = clear_powers(s);
         assert!(s.powers.is_empty());
+        assert!(s.karma > karma);
         let s = regard(s, Faction::Jackets, 100);
         let s = regard(s, Faction::Jackets, 100);
         assert_eq!(s.regard[Faction::Jackets.index()], i8::MAX);

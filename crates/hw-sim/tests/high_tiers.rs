@@ -1,14 +1,15 @@
-//! Levels 6 to 20, headless: the powers of tiers 4 to 7 do what they say,
+//! Levels 6 to 20, headless: the later powers do what they say,
 //! and a new hero playing as a careful player would reaches the level cap
 //! in about ten hours.
 
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
-use hw_net::{FxKind, InputState, PlayerId, Power, Status};
+use hw_net::{FxKind, InputState, PlayerId, PowerId, Status};
 use hw_sim::balance::{bot_input, hero_sheet};
 use hw_sim::collision::{Body, Obstacles};
-use hw_sim::combat::{power_spec, Fighter, METEOR_DELAY, RALLY_RADIUS};
-use hw_sim::progress::{self, is_passive, level_of, tier, tier_level, MAX_LEVEL};
+use hw_sim::combat::{Fighter, METEOR_DELAY, RALLY_RADIUS};
+use hw_sim::powers::{def_of, Tree};
+use hw_sim::progress::{self, level_of, MAX_LEVEL};
 use hw_sim::{Sim, GROUND_Y, TICK_HZ};
 use std::sync::Arc;
 
@@ -42,9 +43,9 @@ fn press(sim: &mut Sim, input: InputState, ticks: u64) -> Vec<hw_net::Fx> {
     seen
 }
 
-fn use_power(p: Power, target: Option<NetId>) -> InputState {
+fn use_power(p: PowerId, target: Option<NetId>) -> InputState {
     InputState {
-        power: p.code(),
+        power: p.0,
         target,
         ..Default::default()
     }
@@ -52,26 +53,17 @@ fn use_power(p: Power, target: Option<NetId>) -> InputState {
 
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
-fn every_tier_has_two_powers_and_passives_have_no_key() {
-    for t in 1..=7 {
-        let n = Power::ALL
-            .iter()
-            .filter(|&&p| p != Power::Strike && tier(p) == t)
-            .count();
-        assert!(n >= 2, "tier {t} has {n} powers");
-    }
-    assert_eq!(tier_level(4), 8);
-    assert_eq!(tier_level(7), MAX_LEVEL);
+fn passives_have_no_key() {
     // Pressing a passive power's code does nothing.
     let mut sim = arena(1);
     let h = sim.spawn_hero_with(
         PlayerId(1),
         ground(0.0, 0.0),
-        hero_sheet(20, &[Power::Vitality, Power::Rally]),
+        hero_sheet(20, &[PowerId(52), PowerId(94)]),
     );
     sim.step();
-    for p in [Power::Vitality, Power::Rally, Power::Invulnerable] {
-        assert!(is_passive(p));
+    for p in [PowerId(52), PowerId(94), PowerId(74)] {
+        assert!(def_of(p).passive());
         press(&mut sim, use_power(p, None), 3);
         assert_eq!(sim.fighter(h).unwrap().energy, 100.0);
     }
@@ -79,7 +71,7 @@ fn every_tier_has_two_powers_and_passives_have_no_key() {
 
 /// A hero of `level` with `powers` and a group of villains `at` metres
 /// down the street.
-fn street(level: u8, powers: &[Power], at: f64) -> (Sim, NetId) {
+fn street(level: u8, powers: &[PowerId], at: f64) -> (Sim, NetId) {
     let mut sim = arena(9);
     let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(level, powers));
     sim.step();
@@ -91,7 +83,7 @@ fn street(level: u8, powers: &[Power], at: f64) -> (Sim, NetId) {
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn mend_heals_the_hero_and_friends_near() {
     let mut sim = arena(2);
-    let a = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(8, &[Power::Mend]));
+    let a = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(8, &[PowerId(20)]));
     let b = sim.spawn_hero_with(PlayerId(2), ground(5.0, 0.0), hero_sheet(8, &[]));
     let far = sim.spawn_hero_with(PlayerId(3), ground(60.0, 0.0), hero_sheet(8, &[]));
     sim.step();
@@ -101,7 +93,7 @@ fn mend_heals_the_hero_and_friends_near() {
         f.last_combat = sim.tick;
         sim.set_fighter(id, f);
     }
-    let fx = press(&mut sim, use_power(Power::Mend, None), 2);
+    let fx = press(&mut sim, use_power(PowerId(20), None), 2);
     let healed: Vec<NetId> = fx
         .iter()
         .filter(|e| e.kind == FxKind::Mend)
@@ -123,7 +115,7 @@ fn mend_heals_the_hero_and_friends_near() {
 fn a_beam_goes_through_every_villain_in_its_line() {
     // Three of the group stand one behind the other down the street: a beam
     // at the nearest goes through the two behind it, and misses the rest.
-    let (mut sim, hero) = street(12, &[Power::Beam], 20.0);
+    let (mut sim, hero) = street(12, &[PowerId(21)], 20.0);
     let foes = sim.enemies();
     for (k, f) in foes.iter().enumerate() {
         let at = if k < 3 {
@@ -141,7 +133,7 @@ fn a_beam_goes_through_every_villain_in_its_line() {
         );
     }
     let first = foes[0].0;
-    let fx = press(&mut sim, use_power(Power::Beam, Some(first)), 2);
+    let fx = press(&mut sim, use_power(PowerId(21), Some(first)), 2);
     let hit: Vec<NetId> = fx
         .iter()
         .filter(|e| e.kind == FxKind::Beam && e.to != hero)
@@ -156,12 +148,15 @@ fn a_beam_goes_through_every_villain_in_its_line() {
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_meteor_lands_a_moment_later_on_the_whole_group() {
-    let (mut sim, hero) = street(16, &[Power::Meteor], 30.0);
+    let (mut sim, hero) = street(16, &[PowerId(26)], 30.0);
     let target = sim.enemies()[0].0;
-    let fx = press(&mut sim, use_power(Power::Meteor, Some(target)), 2);
+    let fx = press(&mut sim, use_power(PowerId(26), Some(target)), 2);
     assert!(fx.iter().any(|e| e.kind == FxKind::MeteorCall));
     let spent = 100.0 - sim.fighter(hero).unwrap().energy;
-    assert!(spent >= power_spec(Power::Meteor).cost - 1.0, "{spent}");
+    assert!(
+        spent >= hw_sim::powers::energy(hw_sim::powers::def_of(PowerId(26))) - 1.0,
+        "{spent}"
+    );
     assert!(!fx.iter().any(|e| e.kind == FxKind::Meteor), "not yet");
     let fx = press(
         &mut sim,
@@ -178,8 +173,8 @@ fn a_meteor_lands_a_moment_later_on_the_whole_group() {
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_nova_flattens_everyone_round_the_hero() {
-    let (mut sim, hero) = street(20, &[Power::Nova], 6.0);
-    let fx = press(&mut sim, use_power(Power::Nova, None), 2);
+    let (mut sim, hero) = street(20, &[PowerId(30)], 6.0);
+    let fx = press(&mut sim, use_power(PowerId(30), None), 2);
     let hit = fx
         .iter()
         .filter(|e| e.kind == FxKind::Nova && e.to != hero)
@@ -195,7 +190,7 @@ fn a_nova_flattens_everyone_round_the_hero() {
 }
 
 /// Health a level-16 hero loses to one brute's punches in `seconds`.
-fn punished(powers: &[Power], seconds: f64) -> f32 {
+fn punished(powers: &[PowerId], seconds: f64) -> f32 {
     let (mut sim, hero) = street(16, powers, 3.0);
     let before = sim.fighter(hero).unwrap();
     press(
@@ -211,8 +206,8 @@ fn punished(powers: &[Power], seconds: f64) -> f32 {
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn invulnerable_and_vitality_keep_a_hero_on_their_feet() {
     let plain = punished(&[], 4.0);
-    let tough = punished(&[Power::Invulnerable], 4.0);
-    let vital = punished(&[Power::Vitality], 4.0);
+    let tough = punished(&[PowerId(74)], 4.0);
+    let vital = punished(&[PowerId(52)], 4.0);
     assert!((0.2..0.9).contains(&plain), "the group hurts: {plain}");
     assert!(tough < plain * 0.6, "{tough} vs {plain}");
     // Two percent a second, four seconds.
@@ -226,7 +221,7 @@ fn rally_makes_friends_near_hit_harder() {
     let a = sim.spawn_hero_with(
         PlayerId(1),
         ground(0.0, 0.0),
-        hero_sheet(20, &[Power::Rally]),
+        hero_sheet(20, &[PowerId(94)]),
     );
     let b = sim.spawn_hero_with(PlayerId(2), ground(8.0, 0.0), hero_sheet(20, &[]));
     let far = sim.spawn_hero_with(
@@ -246,7 +241,7 @@ fn rally_makes_friends_near_hit_harder() {
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn super_speed_outruns_everyone_on_foot() {
-    let run = |powers: &[Power], boost: bool| {
+    let run = |powers: &[PowerId], boost: bool| {
         let mut sim = arena(5);
         let h = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(8, powers));
         for _ in 0..TICK_HZ * 3 {
@@ -263,8 +258,8 @@ fn super_speed_outruns_everyone_on_foot() {
         sim.position(h).unwrap().x / 3.0
     };
     let walk = run(&[], false);
-    let fast = run(&[Power::SuperSpeed], false);
-    let faster = run(&[Power::SuperSpeed], true);
+    let fast = run(&[PowerId(6)], false);
+    let faster = run(&[PowerId(6)], true);
     assert!(fast > walk * 2.0, "{fast} vs {walk}");
     assert!(faster > fast * 1.4, "{faster} vs {fast}");
 }
@@ -289,26 +284,6 @@ fn next_spot(sim: &mut Sim, me: DVec3) -> DVec3 {
     }
 }
 
-/// The order a careful player buys powers in: each as soon as its tier is
-/// open and it can be paid for (waiting for it rather than buying another).
-const PLAN: [Power; 15] = [
-    Power::Bolt,
-    Power::Hold,
-    Power::Flight,
-    Power::Shockwave,
-    Power::Shield,
-    Power::Mend,
-    Power::SuperSpeed,
-    Power::Beam,
-    Power::Vitality,
-    Power::Meteor,
-    Power::Invulnerable,
-    Power::Nova,
-    Power::Rally,
-    Power::Lift,
-    Power::SuperJump,
-];
-
 /// Ten hours of play in one go: levels 1 to 20 (about a minute in release,
 /// several in a debug build, so it runs with `--ignored` and in the balance
 /// example; `scripts/check.sh --daily` skips it by name).
@@ -324,7 +299,7 @@ fn a_new_hero_reaches_level_twenty_in_about_ten_hours() {
         sim.add_fight_spot(c, facing);
     }
     let mut reached: Vec<(u8, f64)> = Vec::new();
-    let mut bought: Vec<(Power, f64)> = Vec::new();
+    let mut bought: Vec<(PowerId, f64)> = Vec::new();
     let limit = TICK_HZ as u64 * 3600 * 16;
     for t in 0..limit {
         let at = sim.position(hero).unwrap();
@@ -341,17 +316,23 @@ fn a_new_hero_reaches_level_twenty_in_about_ten_hours() {
         if reached.last().map_or(1, |r| r.0) < level {
             reached.push((level, hours));
         }
-        if let Some(&next) = PLAN
-            .iter()
-            .find(|&&p| !sheet.has(p) && tier_level(tier(p)) <= level)
-        {
-            if sim.buy(me, next, 0).is_ok() {
+        // A careful player: the cheapest power the tree has open, saving
+        // up for it rather than buying something else.
+        let next = hw_sim::powers::tree(Tree::Science)
+            .chain(hw_sim::powers::tree(Tree::Common))
+            .filter(|d| !sheet.has(d.id) && progress::open(&sheet, d.id).is_ok())
+            .min_by_key(|d| (progress::price(&sheet, d.id), d.id.0))
+            .map(|d| d.id);
+        if let Some(next) = next {
+            if sim.buy(me, next).is_ok() {
                 bought.push((next, hours));
             }
         }
-        // Past the cap karma still comes: play on until a tier-7 power is
-        // bought.
-        if bought.iter().any(|b| tier(b.0) == 7) {
+        // Past the cap karma still comes: play on two more hours.
+        if reached
+            .last()
+            .is_some_and(|r| r.0 == MAX_LEVEL && hours > r.1 + 2.0)
+        {
             break;
         }
     }
@@ -360,14 +341,8 @@ fn a_new_hero_reaches_level_twenty_in_about_ten_hours() {
     let when = |l: u8| reached.iter().find(|r| r.0 == l).map(|r| r.1);
     let cap = when(MAX_LEVEL).expect("the cap within sixteen hours");
     assert!((8.0..13.0).contains(&cap), "level 20 after {cap:.1} h");
-    // Every tier gets used: by the cap the hero owns a power of each tier
-    // up to 6, and the first of tier 7 follows within a couple of hours.
-    for t in 1..=6 {
-        assert!(
-            bought.iter().any(|b| tier(b.0) == t && b.1 <= cap),
-            "nothing of tier {t} by the cap: {bought:?}"
-        );
-    }
-    let seventh = bought.iter().find(|b| tier(b.0) == 7).expect("tier 7").1;
-    assert!(seventh - cap < 2.0, "tier 7 {seventh:.1} h, cap {cap:.1} h");
+    // About thirteen powers by the cap, and karma keeps buying more.
+    let by_cap = bought.iter().filter(|b| b.1 <= cap).count();
+    assert!((10..=17).contains(&by_cap), "{by_cap} powers by the cap");
+    assert!(bought.len() > by_cap, "nothing bought after the cap");
 }

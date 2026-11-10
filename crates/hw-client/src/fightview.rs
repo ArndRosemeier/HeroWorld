@@ -15,26 +15,29 @@ use engine::ui::egui;
 use glam::{Mat4, Vec3};
 use hw_core::NetId;
 use hw_net::{
-    fizzle, EntityKind, EntityState, Fx, FxKind, Power, Sheet, Status, EFFECT_CHARMED,
+    fizzle, EntityKind, EntityState, Fx, FxKind, Power, PowerId, Sheet, Status, EFFECT_CHARMED,
     EFFECT_CHILLED, EFFECT_FROZEN, EFFECT_HELD, EFFECT_RALLIED, EFFECT_SHIELD, EFFECT_SUPER_SPEED,
 };
-use hw_sim::combat::{power_spec, EnemyKind, Kit, POWERS};
-use hw_sim::progress::{is_movement, themes};
+use hw_sim::combat::{EnemyKind, Kit};
+use hw_sim::powers::{self, def_of, Element, PowerDef};
 use std::collections::BTreeMap;
 
-/// Why `power` (in `theme`) did not fire, in a few words for the middle
-/// of the screen (`why`: a [`fizzle`] reason).
-pub fn fizzle_text(power: Power, theme: u8, why: u16) -> String {
-    let name = themes(power)[theme.min(1) as usize].name;
+/// Why `power` did not fire, in a few words for the middle of the screen
+/// (`why`: a [`fizzle`] reason).
+pub fn fizzle_text(power: PowerId, why: u16) -> String {
+    let d = def_of(power);
+    let name = d.name;
     match why {
-        fizzle::OUT_OF_RANGE if power == Power::Strike => "Too far to punch".into(),
+        fizzle::OUT_OF_RANGE if power == PowerId::STRIKE => "Too far to punch".into(),
         fizzle::OUT_OF_RANGE => format!("{name}: out of range"),
         fizzle::NOT_SEEN => format!("{name}: can't see them from here"),
-        fizzle::NO_TARGET if power == Power::Strike => "Nobody close enough to punch".into(),
+        fizzle::NO_TARGET if power == PowerId::STRIKE => "Nobody close enough to punch".into(),
         fizzle::NO_TARGET => format!("{name}: no target (Tab picks one)"),
         fizzle::RECHARGING => format!("{name} is still recharging"),
         fizzle::ENERGY => format!("Not enough energy for {name}"),
-        fizzle::NO_SPOT if power == Power::Teleport => "Nowhere to land there".into(),
+        fizzle::NO_SPOT if d.delivery() == powers::Delivery::Blink => {
+            "Nowhere to land there".into()
+        }
         fizzle::NO_SPOT => "Nobody to rescue nearby".into(),
         fizzle::BUSY => format!("{name}: too soon after the last power"),
         _ => format!("{name} did not fire"),
@@ -195,80 +198,116 @@ struct Sounds {
 const ROW_STEP: f32 = 46.0;
 
 /// Powers aimed at the target (the others work round the hero).
-pub fn aimed(p: Power) -> bool {
-    matches!(
-        p,
-        Power::Strike
-            | Power::Bolt
-            | Power::Hold
-            | Power::Beam
-            | Power::Meteor
-            | Power::Freeze
-            | Power::Hypno
-    )
+pub fn aimed(p: PowerId) -> bool {
+    powers::get(p).is_some_and(|d| d.aimed())
 }
 
-/// The name a hero sees for a power: its theme's name.
-pub fn power_name(p: Power, theme: u8) -> &'static str {
-    if p == Power::Strike {
-        return "Strike";
-    }
-    themes(p)[(theme & 1) as usize].name
+/// The name a hero sees for a power.
+pub fn power_name(p: PowerId) -> &'static str {
+    powers::get(p).map_or("?", |d| d.name)
 }
 
-/// A power's colours in a theme as sRGB bytes: (core, edge).
-fn theme_bytes(p: Power, theme: u8) -> ([u8; 3], [u8; 3]) {
-    match (p, theme & 1) {
-        (Power::Bolt, 0) => ([120, 220, 255], [40, 120, 255]),
-        (Power::Bolt, _) => ([220, 140, 255], [130, 40, 220]),
-        (Power::Hold, 0) => ([140, 200, 255], [60, 90, 220]),
-        (Power::Hold, _) => ([255, 210, 110], [220, 120, 30]),
-        (Power::Shield, 0) => ([130, 230, 255], [40, 160, 220]),
-        (Power::Shield, _) => ([255, 225, 130], [230, 170, 40]),
-        (Power::Lift, 0) => ([255, 210, 160], [200, 120, 60]),
-        (Power::Lift, _) => ([210, 150, 255], [120, 60, 230]),
-        (Power::Shockwave, 0) => ([255, 240, 200], [255, 170, 60]),
-        (Power::Shockwave, _) => ([170, 240, 255], [60, 170, 255]),
-        (Power::Mend, 0) => ([150, 255, 170], [40, 200, 110]),
-        (Power::Mend, _) => ([255, 236, 150], [255, 190, 70]),
-        (Power::Beam, 0) => ([255, 120, 200], [230, 40, 120]),
-        (Power::Beam, _) => ([210, 240, 255], [120, 170, 255]),
-        (Power::Meteor, 0) => ([255, 255, 235], [140, 220, 255]),
-        (Power::Meteor, _) => ([255, 190, 110], [255, 90, 40]),
-        (Power::Nova, 0) => ([255, 250, 200], [255, 140, 40]),
-        (Power::Nova, _) => ([230, 200, 150], [170, 110, 60]),
-        (Power::Rally, 0) => ([255, 120, 100], [230, 50, 50]),
-        (Power::Rally, _) => ([255, 225, 140], [240, 180, 60]),
-        (Power::Vitality, 0) => ([200, 160, 255], [120, 80, 230]),
-        (Power::Vitality, _) => ([255, 170, 130], [220, 100, 70]),
-        (Power::Invulnerable, 0) => ([220, 230, 240], [150, 165, 185]),
-        (Power::Invulnerable, _) => ([140, 190, 255], [60, 110, 230]),
-        (Power::SuperSpeed, 0) => ([255, 240, 120], [255, 200, 40]),
-        (Power::SuperSpeed, _) => ([255, 150, 90], [230, 80, 40]),
-        (Power::Freeze, 0) => ([200, 240, 255], [90, 180, 255]),
-        (Power::Freeze, _) => ([220, 250, 255], [150, 130, 255]),
-        (Power::Teleport, 0) => ([180, 255, 230], [40, 210, 190]),
-        (Power::Teleport, _) => ([235, 190, 255], [150, 70, 240]),
-        (Power::Bubble, 0) => ([170, 225, 255], [255, 170, 230]),
-        (Power::Bubble, _) => ([255, 225, 140], [255, 190, 70]),
-        (Power::Sidekick, 0) => ([200, 230, 255], [230, 60, 50]),
-        (Power::Sidekick, _) => ([255, 215, 120], [60, 110, 220]),
-        (Power::Hypno, 0) => ([255, 120, 220], [170, 110, 255]),
-        (Power::Hypno, _) => ([255, 190, 235], [210, 120, 255]),
+/// What a power is made of, as sRGB colours: (core, edge).
+fn noun_bytes(noun: &str) -> ([u8; 3], [u8; 3]) {
+    match noun {
+        "atomic" => ([150, 255, 140], [40, 200, 80]),
+        "gravity" | "void" => ([200, 150, 255], [100, 40, 220]),
+        "force" | "shield" => ([130, 230, 255], [40, 160, 220]),
+        "frost" => ([210, 245, 255], [90, 180, 255]),
+        "sound" | "wind" => ([230, 245, 255], [150, 200, 240]),
+        "gadget" | "robot" | "steel" => ([200, 230, 255], [230, 60, 50]),
+        "aether" | "arcane" | "stars" => ([235, 190, 255], [150, 70, 240]),
+        "spirit" => ([180, 255, 230], [40, 210, 190]),
+        "curse" | "mind" => ([255, 120, 220], [170, 110, 255]),
+        "roots" => ([170, 230, 120], [90, 150, 50]),
+        "fist" | "rage" | "skin" => ([255, 240, 200], [255, 170, 60]),
+        "stone" => ([230, 200, 150], [170, 110, 60]),
+        "light" => ([255, 245, 190], [255, 200, 80]),
+        "smoke" | "wits" => ([220, 220, 230], [120, 125, 150]),
+        "legs" => ([255, 240, 120], [255, 200, 40]),
         _ => ([255, 236, 170], [255, 200, 120]),
     }
 }
 
-/// A power's colours in a theme: (core, edge).
-pub fn theme_colours(p: Power, theme: u8) -> (Color, Color) {
-    let (a, b) = theme_bytes(p, theme);
-    (rgb(a[0], a[1], a[2]), rgb(b[0], b[1], b[2]))
+/// An element's colours as sRGB: (core, edge).
+pub fn element_bytes(e: Element) -> ([u8; 3], [u8; 3]) {
+    match e {
+        Element::Fire => ([255, 200, 90], [255, 80, 30]),
+        Element::Frost => ([210, 245, 255], [90, 180, 255]),
+        Element::Energy => ([120, 220, 255], [40, 120, 255]),
+        Element::Necrotic => ([170, 255, 170], [60, 120, 70]),
+        Element::Lightning => ([250, 250, 255], [150, 170, 255]),
+        Element::Psychic => ([255, 140, 230], [170, 90, 255]),
+        Element::None => ([255, 236, 170], [255, 200, 120]),
+    }
 }
 
-/// A power's main colour in a theme, for the screen.
-pub fn theme_ui_colour(p: Power, theme: u8) -> egui::Color32 {
-    let (a, _) = theme_bytes(p, theme);
+/// A power's colours for a hero of `element`: Strike, shields, heals and
+/// rescues take the element's colour, the rest what the power is made of.
+fn power_bytes(p: PowerId, element: u8) -> ([u8; 3], [u8; 3]) {
+    let e = Element::from_code(element);
+    let Some(d) = powers::get(p) else {
+        return element_bytes(e);
+    };
+    let helps = matches!(
+        d.delivery(),
+        powers::Delivery::Allies | powers::Delivery::Rescue
+    );
+    if (helps || p == PowerId::STRIKE) && e != Element::None {
+        element_bytes(e)
+    } else {
+        noun_bytes(d.noun)
+    }
+}
+
+fn colour(a: [u8; 3]) -> Color {
+    rgb(a[0], a[1], a[2])
+}
+
+fn ui_colour(a: [u8; 3]) -> egui::Color32 {
     egui::Color32::from_rgb(a[0], a[1], a[2])
+}
+
+/// A power's colours for a hero of `element`: (core, edge).
+pub fn power_colours(p: PowerId, element: u8) -> (Color, Color) {
+    let (a, b) = power_bytes(p, element);
+    (colour(a), colour(b))
+}
+
+/// A power's main colour for the screen.
+pub fn power_ui_colour(p: PowerId, element: u8) -> egui::Color32 {
+    ui_colour(power_bytes(p, element).0)
+}
+
+/// An element's colours: (core, edge).
+pub fn element_colours(e: Element) -> (Color, Color) {
+    let (a, b) = element_bytes(e);
+    (colour(a), colour(b))
+}
+
+/// An element's main colour for the screen.
+pub fn element_ui_colour(e: Element) -> egui::Color32 {
+    ui_colour(element_bytes(e).0)
+}
+
+/// The colours of a fight event (its power and the hero's element).
+fn fx_colours(e: &Fx) -> (Color, Color) {
+    power_colours(PowerId(e.theme), e.element)
+}
+
+fn fx_ui_colour(e: &Fx) -> egui::Color32 {
+    power_ui_colour(PowerId(e.theme), e.element)
+}
+
+/// The power behind a fight event.
+fn fx_def(e: &Fx) -> &'static PowerDef {
+    powers::get(PowerId(e.theme)).unwrap_or(def_of(PowerId::STRIKE))
+}
+
+/// Half the powers sound and look a little different (pitch, size), so
+/// powers on one mechanic do not all feel the same.
+fn alt_look(e: &Fx) -> bool {
+    e.theme % 2 == 1
 }
 
 /// What the player pressed this tick, for the server.
@@ -310,8 +349,8 @@ pub struct FightView {
     /// The ring under the target: decal and where it is.
     marker: Option<(DecalId, Vec3, NetId)>,
     /// Seconds until each power is ready (our estimate; the server decides),
-    /// by [`Power::code`] - 1.
-    cooldown: [f32; POWERS],
+    /// by power number.
+    cooldown: [f32; hw_net::POWER_IDS],
     /// Glowing rings under held villains.
     holds: BTreeMap<NetId, DecalId>,
     /// Our hero stands in a Rally aura (powers recharge sooner).
@@ -330,7 +369,7 @@ pub struct FightView {
     /// Where robots' guns are this frame (rays start there).
     pub muzzles: BTreeMap<NetId, Vec3>,
     /// A tray slot clicked with the mouse: fired like its key.
-    clicked: Option<Power>,
+    clicked: Option<PowerId>,
     /// The ice round each frozen villain.
     ices: BTreeMap<NetId, EntityId>,
     /// The force field round each shielded character.
@@ -385,7 +424,7 @@ impl FightView {
             statuses: BTreeMap::new(),
             cuffs: BTreeMap::new(),
             marker: None,
-            cooldown: [0.0; POWERS],
+            cooldown: [0.0; hw_net::POWER_IDS],
             holds: BTreeMap::new(),
             rallied: false,
             sparkle: 0.0,
@@ -469,7 +508,7 @@ impl FightView {
             .is_some_and(|c| c.effects & EFFECT_RALLIED != 0);
         // A tray slot's key (Alt for the second row), and Strike and Energy
         // Bolt on the left mouse button and Q wherever they sit.
-        let mut fired: Vec<(Power, bool)> = tray
+        let mut fired: Vec<(PowerId, bool)> = tray
             .filled()
             .filter(|&(n, _)| tray::alt(n) == alt && input.pressed(tray::key(n)))
             .map(|(_, p)| (p, true))
@@ -490,20 +529,22 @@ impl FightView {
                     let near = me
                         .zip(all.iter().find(|e| e.id == id))
                         .is_some_and(|(m, t)| {
-                            pos(m).distance(pos(t)) <= power_spec(Power::Strike).range as f32
+                            pos(m).distance(pos(t)) <= def_of(PowerId::STRIKE).fields.range as f32
                         });
                     if near {
-                        fired.push((Power::Strike, false));
+                        fired.push((PowerId::STRIKE, false));
                     } else {
                         picked = true;
                     }
                 }
-                None => fired.push((Power::Strike, false)),
+                None => fired.push((PowerId::STRIKE, false)),
             }
         }
         out.picked = picked;
         if input.pressed(Key::Q) {
-            fired.push((Power::Bolt, false));
+            if let Some(b) = kit.blast {
+                fired.push((b, false));
+            }
         }
         for (power, keyed) in fired {
             if down {
@@ -519,22 +560,22 @@ impl FightView {
                 if keyed {
                     self.say(&format!(
                         "You don't have {} yet (B: powers)",
-                        power_spec(power).name
+                        power_name(power)
                     ));
                 }
                 continue;
             }
-            let spec = power_spec(power);
-            let theme = kit.theme(power).min(1);
+            let spec = def_of(power);
+            let cost = powers::energy(spec);
             let carrying = me
                 .and_then(|m| m.combat)
                 .is_some_and(|c| c.effects & hw_net::EFFECT_CARRYING != 0);
-            let aimed = aimed(power) || (power == Power::Lift && carrying);
+            let aimed = aimed(power) || (spec.base == Power::Lift && carrying);
             // No target yet: take the one nearest the crosshair.
             if aimed && self.target.is_none() {
                 self.target = pick_target(all, eye, look, |e| self.sees(me, eye, e));
             }
-            if power == Power::Hypno {
+            if spec.fields.charm > 0.0 {
                 let immune = self
                     .target
                     .and_then(|t| all.iter().find(|e| e.id == t))
@@ -551,23 +592,19 @@ impl FightView {
                     .and_then(|t| all.iter().find(|e| e.id == t))
                 {
                     let d = pos(m).distance(pos(t));
-                    if d > spec.range as f32 {
-                        self.say(&fizzle_text(power, theme, fizzle::OUT_OF_RANGE));
+                    if d > spec.fields.range as f32 {
+                        self.say(&fizzle_text(power, fizzle::OUT_OF_RANGE));
                     } else if !self.sees(me, eye, t) {
-                        self.say(&fizzle_text(power, theme, fizzle::NOT_SEEN));
+                        self.say(&fizzle_text(power, fizzle::NOT_SEEN));
                     }
                 }
                 let energy = m.combat.map_or(0.0, |c| c.energy as f32 / 255.0 * 100.0);
                 // Longer than the server waits for it: it will not fire.
-                let left = self.cooldown[(power.code() - 1) as usize];
+                let left = self.cooldown[power.0 as usize];
                 if !carrying && left as f64 > hw_sim::combat::RECHARGE_WAIT {
-                    self.say(&format!(
-                        "{} recharges in {:.0} s",
-                        themes(power)[theme as usize].name,
-                        left.ceil()
-                    ));
-                } else if !carrying && energy + 0.5 < spec.cost {
-                    self.say(&fizzle_text(power, theme, fizzle::ENERGY));
+                    self.say(&format!("{} recharges in {:.0} s", spec.name, left.ceil()));
+                } else if !carrying && energy + 0.5 < cost {
+                    self.say(&fizzle_text(power, fizzle::ENERGY));
                 }
             }
             let about = match self.target.and_then(|t| all.iter().find(|e| e.id == t)) {
@@ -584,9 +621,9 @@ impl FightView {
             crate::devlog::add(format!(
                 "client: {power:?} pressed ({}), sent as power {} ({about})",
                 if keyed { "key" } else { "button or Q" },
-                power.code()
+                power.0
             ));
-            out.power = power.code();
+            out.power = power.0;
         }
         out.target = self.target;
         out.revive = input.down(Key::E) && !down;
@@ -742,91 +779,159 @@ impl FightView {
                         at,
                         (at - origin).normalize_or_zero(),
                         26,
-                        rgb(255, 236, 170),
+                        fx_colours(e).0,
                     );
                     self.play(world, |s| &s.punch, at, 1.0, 1.0);
                     self.blow(e, at, mine, on_me, egui::Color32::from_rgb(255, 240, 140));
                     if mine {
-                        self.recharging(Power::Strike);
+                        self.recharging(PowerId(e.theme));
+                    }
+                }
+                FxKind::Element => {
+                    // The hero's element riding on a blow: small, but seen
+                    // on every hit.
+                    let el = Element::from_code(e.element);
+                    let (core, edge) = element_colours(el);
+                    let ui = element_ui_colour(el);
+                    let n = (6 + e.amount as u32).min(30);
+                    match el {
+                        Element::Fire => {
+                            sparks(world, at, Vec3::Y, n, core);
+                            glow_at(world, at, edge, 0.8);
+                        }
+                        Element::Frost => {
+                            sparks(world, at, Vec3::Y, 10, core);
+                            rings(world, at, core, 0.5);
+                        }
+                        Element::Energy => impact(world, at, core, 0.7),
+                        Element::Necrotic => {
+                            let back = (origin - at).normalize_or_zero();
+                            sparks(world, at, back, n, core);
+                            if mine && e.amount > 0 {
+                                self.float(
+                                    origin + Vec3::Y * 0.6,
+                                    format!("+{}", e.amount),
+                                    ui,
+                                    false,
+                                );
+                            }
+                        }
+                        Element::Lightning => {
+                            beam(world, origin, at, core, edge);
+                            impact(world, at, core, 0.6);
+                            if e.amount > 0 {
+                                self.float(
+                                    at + Vec3::Y * 0.4,
+                                    format!("{}", e.amount),
+                                    ui,
+                                    e.defeat,
+                                );
+                            }
+                        }
+                        Element::Psychic => {
+                            rings(world, at + Vec3::Y * 1.0, core, 0.6);
+                            self.float(at + Vec3::Y * 1.1, "Confused!".into(), ui, false);
+                        }
+                        Element::None => {}
+                    }
+                }
+                FxKind::Burn => {
+                    let el = Element::from_code(e.element);
+                    let el = if el == Element::None {
+                        Element::Fire
+                    } else {
+                        el
+                    };
+                    let (core, _) = element_colours(el);
+                    sparks(world, at, Vec3::Y, 6, core);
+                    if e.amount > 0 && (mine || on_me) {
+                        self.float(
+                            at + Vec3::Y * 0.3,
+                            format!("{}", e.amount),
+                            egui::Color32::from_rgb(255, 150, 60),
+                            e.defeat,
+                        );
+                    }
+                }
+                FxKind::Buff => {
+                    let (core, _) = fx_colours(e);
+                    shell(world, at, core, 40);
+                    if e.from == e.to {
+                        self.act(e.from, "spell cast", 0.55);
+                        self.play(world, |s| &s.shield, at, 0.9, 1.2);
+                    }
+                    if mine && e.from == e.to {
+                        self.recharging(PowerId(e.theme));
+                    }
+                    if on_me {
+                        self.say(&format!("{}: on", fx_def(e).name));
                     }
                 }
                 FxKind::Bolt => {
-                    let (core, edge) = theme_colours(Power::Bolt, e.theme);
+                    let (core, edge) = fx_colours(e);
                     self.act(e.from, "spell cast", 0.55);
                     beam(world, origin, at, core, edge);
                     impact(world, at, core, 1.2);
                     scorch(world, at, all, e.to);
-                    let pitch = if e.theme == 1 { 0.8 } else { 1.0 };
+                    let pitch = if alt_look(e) { 0.8 } else { 1.0 };
                     self.play(world, |s| &s.bolt, origin, 1.0, pitch);
-                    self.blow(e, at, mine, on_me, theme_ui_colour(Power::Bolt, e.theme));
+                    self.blow(e, at, mine, on_me, fx_ui_colour(e));
                     if mine {
-                        self.recharging(Power::Bolt);
+                        self.recharging(PowerId(e.theme));
                     }
                 }
                 FxKind::Hold => {
-                    let (core, edge) = theme_colours(Power::Hold, e.theme);
+                    let (core, edge) = fx_colours(e);
                     self.act(e.from, "spell cast", 0.55);
                     beam(world, origin, at, core, edge);
                     rings(world, at, core, 1.0);
                     self.play(world, |s| &s.bind, at, 0.9, 1.0);
-                    let ui = theme_ui_colour(Power::Hold, e.theme);
+                    let ui = fx_ui_colour(e);
                     self.blow(e, at, mine, on_me, ui);
                     self.float(at + Vec3::Y * 0.9, "Held!".into(), ui, false);
                     if mine {
-                        self.recharging(Power::Hold);
+                        self.recharging(PowerId(e.theme));
                     }
                 }
                 FxKind::Shield => {
-                    let (core, _) = theme_colours(Power::Shield, e.theme);
+                    let (core, _) = fx_colours(e);
                     shell(world, at, core, 60);
                     if e.from == e.to {
                         self.act(e.from, "spell cast", 0.55);
                         self.play(world, |s| &s.shield, at, 0.9, 1.0);
                     }
                     if mine && e.from == e.to {
-                        self.recharging(Power::Shield);
+                        self.recharging(PowerId(e.theme));
                     }
                     if on_me {
                         self.say("Shielded: blows do half damage");
                     }
                 }
                 FxKind::Shockwave => {
-                    let (core, edge) = theme_colours(Power::Shockwave, e.theme);
+                    let (core, edge) = fx_colours(e);
                     if e.from == e.to {
                         // The ring itself.
                         let feet = all.iter().find(|x| x.id == e.from).map_or(at, pos);
-                        shockwave(
-                            world,
-                            feet,
-                            core,
-                            edge,
-                            power_spec(Power::Shockwave).area as f32,
-                        );
+                        shockwave(world, feet, core, edge, fx_def(e).fields.radius as f32);
                         self.act(e.from, "spell cast", 0.6);
                         self.play(
                             world,
                             |s| &s.boom,
                             feet,
                             1.0,
-                            if e.theme == 1 { 1.3 } else { 1.0 },
+                            if alt_look(e) { 1.3 } else { 1.0 },
                         );
                         if mine {
                             self.shake = self.shake.max(0.8);
-                            self.recharging(Power::Shockwave);
+                            self.recharging(PowerId(e.theme));
                         }
                     } else {
                         impact(world, at, core, 0.8);
-                        self.blow(
-                            e,
-                            at,
-                            mine,
-                            on_me,
-                            theme_ui_colour(Power::Shockwave, e.theme),
-                        );
+                        self.blow(e, at, mine, on_me, fx_ui_colour(e));
                     }
                 }
                 FxKind::Lift => {
-                    let (core, _) = theme_colours(Power::Lift, e.theme);
+                    let (core, _) = fx_colours(e);
                     self.act(e.from, "spell cast", 0.6);
                     rise(world, at - Vec3::Y * 1.5, core);
                     self.play(world, |s| &s.whoosh, at, 0.7, 0.8);
@@ -838,18 +943,18 @@ impl FightView {
                     self.act(e.from, "punch cross", 0.6);
                     self.play(world, |s| &s.whoosh, at, 1.0, 1.2);
                     if mine {
-                        self.recharging(Power::Lift);
+                        self.recharging(PowerId(e.theme));
                     }
                 }
                 FxKind::ThrowHit => {
-                    let (core, _) = theme_colours(Power::Lift, e.theme);
+                    let (core, _) = fx_colours(e);
                     impact(world, at, core, 1.4);
                     sparks(world, at, Vec3::Y, 30, rgb(255, 220, 160));
                     self.play(world, |s| &s.punch, at, 1.0, 0.7);
-                    self.blow(e, at, mine, on_me, theme_ui_colour(Power::Lift, e.theme));
+                    self.blow(e, at, mine, on_me, fx_ui_colour(e));
                 }
                 FxKind::Mend => {
-                    let (core, edge) = theme_colours(Power::Mend, e.theme);
+                    let (core, edge) = fx_colours(e);
                     let feet = all.iter().find(|x| x.id == e.to).map_or(at, pos);
                     rise(world, feet + Vec3::Y * 0.9, core);
                     glow_at(world, at, edge, 0.6);
@@ -857,7 +962,7 @@ impl FightView {
                         self.act(e.from, "spell cast", 0.6);
                         self.play(world, |s| &s.chime, at, 1.0, 0.85);
                         if mine {
-                            self.recharging(Power::Mend);
+                            self.recharging(PowerId(e.theme));
                         }
                     } else {
                         beam(world, origin, at, core, edge);
@@ -866,13 +971,13 @@ impl FightView {
                         self.float(
                             at + Vec3::Y * 0.7,
                             format!("+{}", e.amount),
-                            theme_ui_colour(Power::Mend, e.theme),
+                            fx_ui_colour(e),
                             false,
                         );
                     }
                 }
                 FxKind::Beam => {
-                    let (core, edge) = theme_colours(Power::Beam, e.theme);
+                    let (core, edge) = fx_colours(e);
                     if e.from == e.to {
                         // The beam itself, out to where it stopped: a thick
                         // core inside a wider sheath, and a flash at the end.
@@ -882,39 +987,39 @@ impl FightView {
                         beam(world, origin + side, at + side, edge, core);
                         beam(world, origin - side, at - side, edge, core);
                         impact(world, at, core, 1.0);
-                        let pitch = if e.theme == 1 { 0.6 } else { 0.75 };
+                        let pitch = if alt_look(e) { 0.6 } else { 0.75 };
                         self.play(world, |s| &s.bolt, origin, 1.0, pitch);
                         if mine {
                             self.shake = self.shake.max(0.3);
-                            self.recharging(Power::Beam);
+                            self.recharging(PowerId(e.theme));
                         }
                     } else {
                         impact(world, at, core, 1.1);
                         scorch(world, at, all, e.to);
-                        self.blow(e, at, mine, on_me, theme_ui_colour(Power::Beam, e.theme));
+                        self.blow(e, at, mine, on_me, fx_ui_colour(e));
                     }
                 }
                 FxKind::MeteorCall => {
                     // A target ring on the ground and a glint high above.
-                    let (core, edge) = theme_colours(Power::Meteor, e.theme);
+                    let (core, edge) = fx_colours(e);
                     self.act(e.from, "spell cast", 0.6);
-                    let r = power_spec(Power::Meteor).area as f32;
+                    let r = fx_def(e).fields.radius as f32;
                     let ring = Decal::new(DecalKind::Power, at + Vec3::Y * 0.2, Vec3::Y, r * 2.0)
                         .tint(edge)
                         .emission(3.0)
                         .depth(1.5)
-                        .lifetime(power_spec(Power::Meteor).lasts as f32 + 0.2)
+                        .lifetime(fx_def(e).fields.delay as f32 + 0.2)
                         .fade(0.1, 0.2);
                     let _ = world.spawn_decal(ring);
                     rings(world, at + Vec3::Y * 0.4, core, r / 2.0);
                     glow_at(world, at + Vec3::Y * 40.0, core, 1.5);
                     self.play(world, |s| &s.charge, at, 1.0, 0.6);
                     if mine {
-                        self.recharging(Power::Meteor);
+                        self.recharging(PowerId(e.theme));
                     }
                 }
                 FxKind::Meteor => {
-                    let (core, edge) = theme_colours(Power::Meteor, e.theme);
+                    let (core, edge) = fx_colours(e);
                     if e.from == e.to {
                         // The strike: a column from the sky, a ring over the
                         // ground and a crater.
@@ -925,20 +1030,20 @@ impl FightView {
                             let off = Vec3::new(a.cos(), 0.0, a.sin()) * 0.35;
                             beam(world, top + off, at + off, edge, core);
                         }
-                        shockwave(world, at, core, edge, power_spec(Power::Meteor).area as f32);
+                        shockwave(world, at, core, edge, fx_def(e).fields.radius as f32);
                         impact(world, at + Vec3::Y * 0.5, core, 2.4);
                         self.play(world, |s| &s.boom, at, 1.0, 0.7);
                         self.shake = self.shake.max(if mine { 1.0 } else { 0.5 });
                     } else {
                         impact(world, at, core, 0.9);
-                        self.blow(e, at, mine, on_me, theme_ui_colour(Power::Meteor, e.theme));
+                        self.blow(e, at, mine, on_me, fx_ui_colour(e));
                     }
                 }
                 FxKind::Nova => {
-                    let (core, edge) = theme_colours(Power::Nova, e.theme);
+                    let (core, edge) = fx_colours(e);
                     if e.from == e.to {
                         let feet = all.iter().find(|x| x.id == e.from).map_or(at, pos);
-                        let r = power_spec(Power::Nova).area as f32;
+                        let r = fx_def(e).fields.radius as f32;
                         // A small sun, then two rings racing out.
                         impact(world, feet + Vec3::Y * 1.2, core, 4.0);
                         level_burst(world, feet);
@@ -949,17 +1054,17 @@ impl FightView {
                         self.play(world, |s| &s.boom, feet, 0.7, 0.8);
                         if mine {
                             self.shake = self.shake.max(1.2);
-                            self.recharging(Power::Nova);
+                            self.recharging(PowerId(e.theme));
                         } else {
                             self.shake = self.shake.max(0.5);
                         }
                     } else {
                         impact(world, at, core, 1.0);
-                        self.blow(e, at, mine, on_me, theme_ui_colour(Power::Nova, e.theme));
+                        self.blow(e, at, mine, on_me, fx_ui_colour(e));
                     }
                 }
                 FxKind::Freeze => {
-                    let (core, edge) = theme_colours(Power::Freeze, e.theme);
+                    let (core, edge) = fx_colours(e);
                     if e.from == e.to {
                         // The cone, out to where it stopped.
                         self.act(e.from, "spell cast", 0.6);
@@ -969,21 +1074,21 @@ impl FightView {
                             at,
                             core,
                             edge,
-                            power_spec(Power::Freeze).area as f32,
+                            fx_def(e).fields.radius as f32,
                         );
                         self.play(
                             world,
                             |s| &s.freeze,
                             origin,
                             1.0,
-                            if e.theme == 1 { 0.85 } else { 1.0 },
+                            if alt_look(e) { 0.85 } else { 1.0 },
                         );
                         if mine {
-                            self.recharging(Power::Freeze);
+                            self.recharging(PowerId(e.theme));
                         }
                     } else {
                         crate::powerfx::chill(world, at);
-                        let ui = theme_ui_colour(Power::Freeze, e.theme);
+                        let ui = fx_ui_colour(e);
                         self.blow(e, at, mine, on_me, ui);
                         if e.knock {
                             self.float(at + Vec3::Y * 0.9, "Frozen!".into(), ui, false);
@@ -1001,7 +1106,7 @@ impl FightView {
                     );
                 }
                 FxKind::TeleportOut | FxKind::TeleportIn => {
-                    let (core, edge) = theme_colours(Power::Teleport, e.theme);
+                    let (core, edge) = fx_colours(e);
                     let arriving = e.kind == FxKind::TeleportIn;
                     crate::powerfx::teleport(world, at, core, edge, arriving);
                     if arriving {
@@ -1010,16 +1115,16 @@ impl FightView {
                             |s| &s.teleport,
                             at,
                             1.0,
-                            if e.theme == 1 { 0.8 } else { 1.0 },
+                            if alt_look(e) { 0.8 } else { 1.0 },
                         );
                         if mine {
-                            self.recharging(Power::Teleport);
+                            self.recharging(PowerId(e.theme));
                         }
                     }
                 }
                 FxKind::Bubble => {
-                    let gold = e.theme == 1;
-                    let (core, edge) = theme_colours(Power::Bubble, e.theme);
+                    let gold = alt_look(e);
+                    let (core, edge) = fx_colours(e);
                     self.act(e.from, "spell cast", 0.6);
                     beam(world, origin, at + Vec3::Y * 1.0, core, edge);
                     // Who goes in is the rescue's (see `Radio::into_bubble`).
@@ -1028,7 +1133,7 @@ impl FightView {
                     }
                     self.play(world, |s| &s.bubble, at, 1.0, if gold { 0.85 } else { 1.0 });
                     if mine {
-                        self.recharging(Power::Bubble);
+                        self.recharging(PowerId(e.theme));
                         self.say(if e.defeat {
                             "Off to the ambulance!"
                         } else {
@@ -1040,14 +1145,14 @@ impl FightView {
                     self.bubbles.land(e.from.0, at);
                 }
                 FxKind::SidekickCall => {
-                    let (core, edge) = theme_colours(Power::Sidekick, e.theme);
+                    let (core, edge) = fx_colours(e);
                     if e.from == e.to {
                         // Called: it beams in at the hero's side.
                         self.act(e.from, "spell cast", 0.5);
                         crate::powerfx::teleport(world, at, core, edge, true);
                         self.play(world, |s| &s.robot, at, 1.0, 1.0);
                         if mine {
-                            self.recharging(Power::Sidekick);
+                            self.recharging(PowerId(e.theme));
                         }
                     } else if all
                         .iter()
@@ -1063,7 +1168,7 @@ impl FightView {
                     }
                 }
                 FxKind::Hypno => {
-                    let (core, edge) = theme_colours(Power::Hypno, e.theme);
+                    let (core, edge) = fx_colours(e);
                     self.act(e.from, "spell cast", 0.6);
                     beam(world, origin, at, core, edge);
                     crate::powerfx::spiral(world, at + Vec3::Y * 0.9, core, edge, 1.0);
@@ -1072,12 +1177,12 @@ impl FightView {
                         |s| &s.hypno,
                         at,
                         1.0,
-                        if e.theme == 1 { 1.2 } else { 1.0 },
+                        if alt_look(e) { 1.2 } else { 1.0 },
                     );
-                    let ui = theme_ui_colour(Power::Hypno, e.theme);
+                    let ui = fx_ui_colour(e);
                     self.float(at + Vec3::Y * 1.0, "Hypnotised!".into(), ui, false);
                     if mine {
-                        self.recharging(Power::Hypno);
+                        self.recharging(PowerId(e.theme));
                         if self.target == Some(e.to) {
                             self.target = None;
                         }
@@ -1189,13 +1294,10 @@ impl FightView {
                 }
                 FxKind::Fizzle => {
                     // A power we asked for did not fire: say why.
-                    if on_me {
-                        if let Some(p) = Power::from_code(e.theme) {
-                            let theme = ((e.amount >> 8) as u8).min(1);
-                            let text = fizzle_text(p, theme, e.amount & 0xff);
-                            self.log_fizzle(&text, e, me, all);
-                            self.say(&text);
-                        }
+                    if on_me && powers::get(PowerId(e.theme)).is_some() {
+                        let text = fizzle_text(PowerId(e.theme), e.amount & 0xff);
+                        self.log_fizzle(&text, e, me, all);
+                        self.say(&text);
                     }
                 }
                 FxKind::Careful => {
@@ -1473,13 +1575,15 @@ impl FightView {
         }
     }
 
-    fn recharging(&mut self, p: Power) {
+    fn recharging(&mut self, p: PowerId) {
         let haste = if self.rallied {
             hw_sim::combat::RALLY_HASTE
         } else {
             1.0
         };
-        self.cooldown[(p.code() - 1) as usize] = (power_spec(p).recharge / haste) as f32;
+        if let Some(d) = powers::get(p) {
+            self.cooldown[p.0 as usize] = (powers::recharge(d) / haste) as f32;
+        }
     }
 
     fn act(&mut self, id: NetId, clip: &'static str, seconds: f32) {
@@ -2193,7 +2297,7 @@ impl FightView {
                             fg.text(
                                 r.center(),
                                 egui::Align2::CENTER_CENTER,
-                                power_name(p, sheet.theme(p)),
+                                power_name(p),
                                 font(12.5),
                                 egui::Color32::WHITE,
                             );
@@ -2230,10 +2334,11 @@ impl FightView {
                     );
                     continue;
                 };
-                let spec = power_spec(power);
-                let cd = self.cooldown[(power.code() - 1) as usize];
-                let ready =
-                    cd <= 0.0 && (energy + 0.5 >= spec.cost || carrying && power == Power::Lift);
+                let spec = def_of(power);
+                let cost = powers::energy(spec);
+                let lift = spec.base == Power::Lift;
+                let cd = self.cooldown[power.0 as usize];
+                let ready = cd <= 0.0 && (energy + 0.5 >= cost || carrying && lift);
                 let fill = if hovered {
                     egui::Color32::from_rgb(80, 86, 130)
                 } else if ready {
@@ -2243,7 +2348,7 @@ impl FightView {
                 };
                 painter.rect_filled(slot, 5.0, fill);
                 if cd > 0.0 {
-                    let f = cd / spec.recharge as f32;
+                    let f = cd / powers::recharge(spec).max(0.1) as f32;
                     let cover = egui::Rect::from_min_max(
                         egui::pos2(slot.min.x, slot.max.y - slot.height() * f),
                         slot.max,
@@ -2272,10 +2377,10 @@ impl FightView {
                     egui::Color32::from_rgb(255, 214, 90),
                 );
                 let name_x = if tray::alt(k) { 40.0 } else { 20.0 };
-                let name = if power == Power::Lift && carrying {
+                let name = if lift && carrying {
                     "Throw!"
                 } else {
-                    power_name(power, sheet.theme(power))
+                    power_name(power)
                 };
                 painter.text(
                     slot.min + egui::vec2(name_x, 6.0),
@@ -2284,8 +2389,8 @@ impl FightView {
                     font(12.5),
                     egui::Color32::WHITE,
                 );
-                let cost = if spec.cost > 0.0 {
-                    format!("{:.0} energy", spec.cost)
+                let cost = if cost > 0.0 {
+                    format!("{cost:.0} energy")
                 } else {
                     "free".into()
                 };
@@ -2313,15 +2418,17 @@ impl FightView {
                 egui::Align2::CENTER_BOTTOM,
                 &{
                     let mut hint = String::from("Tab: target   Left mouse / 1   Q / 2   B: powers");
-                    let moves: Vec<&str> = [Power::SuperJump, Power::Flight, Power::SuperSpeed]
-                        .into_iter()
-                        .filter(|p| kit.has(*p) && is_movement(*p))
-                        .map(|p| match p {
-                            Power::Flight => "V: fly",
-                            Power::SuperSpeed => "Shift: super speed",
-                            _ => "Space: super jump",
-                        })
-                        .collect();
+                    use hw_sim::powers::travel;
+                    let moves: Vec<&str> = [
+                        (travel::JUMP, "Space: super jump"),
+                        (travel::FLY, "V: fly"),
+                        (travel::SPEED, "Shift: super speed"),
+                        (travel::SPRINT, "Shift: sprint"),
+                    ]
+                    .into_iter()
+                    .filter(|(bit, _)| kit.travels(*bit))
+                    .map(|(_, m)| m)
+                    .collect();
                     for m in moves {
                         hint += "   ";
                         hint += m;
@@ -3262,6 +3369,7 @@ mod tests {
             knock: false,
             defeat: false,
             theme: 0,
+            element: 0,
         };
         assert_eq!(attacker(&punch, Some(me), &all), Some(NetId(1)));
         // A blow on someone else, or a shell landing on nobody, picks no one.

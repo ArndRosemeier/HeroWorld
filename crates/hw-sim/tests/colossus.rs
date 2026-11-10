@@ -19,10 +19,17 @@ fn arena(seed: u64) -> Sim {
     sim
 }
 
-/// A level 8 hero who can fly and has every power.
+/// A level 8 hero who can fly and has every power a level 8 hero had
+/// before the power trees.
 fn hero(sim: &mut Sim, player: u16, at: DVec3) -> NetId {
     let id = sim.spawn_hero(PlayerId(player), at);
-    sim.set_fighter(id, hw_sim::combat::Fighter::hero_at(8, Kit::everything()));
+    // The old powers of tiers 1 to 4: what opened by level 8.
+    let old: Vec<_> = hw_sim::balance::CLASSIC
+        .iter()
+        .filter(|c| c.1 <= 4)
+        .map(|c| c.0)
+        .collect();
+    sim.set_fighter(id, hw_sim::combat::Fighter::hero_at(8, Kit::with(&old)));
     id
 }
 

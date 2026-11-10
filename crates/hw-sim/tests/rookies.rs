@@ -291,7 +291,13 @@ fn a_new_hero_near_the_jackets_climbs_at_the_climb_tests_pace() {
             }
         }
         sim.step();
-        if sim.fx().iter().any(|e| e.from == hero) {
+        // A blow landed (a power that fizzled is no blow: out of sight,
+        // the bot steps round as a player would).
+        if sim
+            .fx()
+            .iter()
+            .any(|e| e.from == hero && e.kind != hw_net::FxKind::Fizzle)
+        {
             last_blow = t;
         }
         if t.is_multiple_of(TICK_HZ as u64 * 10) {

@@ -1,14 +1,14 @@
 //! The power tray: which key fires which power. Twenty slots, 1 to 0 and
-//! Alt+1 to Alt+0, filled with the hero's active powers. A power just bought
-//! takes its usual key if that is free, otherwise the first free slot. The
+//! Alt+1 to Alt+0, filled with the hero's active powers. Strike keeps 1; a
+//! power just bought takes the first free slot. The
 //! player rearranges it by drag and drop: a power from the powers window (B)
 //! onto a slot, a slot onto another (the two swap), or a slot off the tray
 //! (it leaves; drag it back from B). Remembered in the profile on this PC.
 
 use engine::input::Key;
-use hw_net::{Power, Sheet};
+use hw_net::{PowerId, Sheet};
 use hw_sim::combat::Kit;
-use hw_sim::progress::is_passive;
+use hw_sim::powers;
 use serde_json::Value;
 
 /// Slots in the tray: two rows of ten.
@@ -48,34 +48,17 @@ pub fn label(slot: usize) -> String {
     }
 }
 
-/// The slot a power takes when it is free: the keys the powers always had.
-fn home(p: Power) -> Option<usize> {
-    Some(match p {
-        Power::Strike => 0,
-        Power::Bolt => 1,
-        Power::Hold => 2,
-        Power::Shield => 3,
-        Power::Lift => 4,
-        Power::Shockwave => 5,
-        Power::Mend => 6,
-        Power::Beam => 7,
-        Power::Meteor => 8,
-        Power::Nova => 9,
-        _ => return None,
-    })
-}
-
 /// Does this power go on the tray (it is fired with a key)?
-pub fn keyed(p: Power) -> bool {
-    !is_passive(p)
+pub fn keyed(p: PowerId) -> bool {
+    powers::get(p).is_some_and(|d| !d.passive())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tray {
-    pub slots: [Option<Power>; SLOTS],
+    pub slots: [Option<PowerId>; SLOTS],
     /// Powers the tray has seen bought: only new ones are put on by
     /// themselves, so one dragged off stays off.
-    pub known: Vec<Power>,
+    pub known: Vec<PowerId>,
 }
 
 impl Default for Tray {
@@ -91,7 +74,7 @@ impl Default for Tray {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Drag {
     /// A power from the powers window.
-    Power(Power),
+    Power(PowerId),
     /// The power in a tray slot.
     Slot(usize),
 }
@@ -107,7 +90,7 @@ pub enum Change {
 
 impl Tray {
     /// The slot a power sits in.
-    pub fn slot_of(&self, p: Power) -> Option<usize> {
+    pub fn slot_of(&self, p: PowerId) -> Option<usize> {
         self.slots.iter().position(|s| *s == Some(p))
     }
 
@@ -132,7 +115,7 @@ impl Tray {
             }
         }
         // Strike first, then the rest in the order they were bought.
-        let owned = std::iter::once(Power::Strike).chain(sheet.powers.iter().map(|o| o.power));
+        let owned = std::iter::once(PowerId::STRIKE).chain(sheet.powers.iter().map(|o| o.power));
         for p in owned {
             if !keyed(p) || self.known.contains(&p) {
                 continue;
@@ -141,8 +124,8 @@ impl Tray {
             if self.slot_of(p).is_some() {
                 continue;
             }
-            let free = home(p)
-                .filter(|&h| self.slots[h].is_none())
+            let free = (p == PowerId::STRIKE && self.slots[0].is_none())
+                .then_some(0)
                 .or_else(|| self.slots.iter().position(|s| s.is_none()));
             if let Some(f) = free {
                 self.slots[f] = Some(p);
@@ -169,7 +152,7 @@ impl Tray {
     }
 
     /// Moves a power to a slot; what was there takes the power's old slot.
-    pub fn put(&mut self, p: Power, slot: usize) {
+    pub fn put(&mut self, p: PowerId, slot: usize) {
         if slot >= SLOTS {
             return;
         }
@@ -182,7 +165,7 @@ impl Tray {
     }
 
     /// The powers on the tray with their slots, in slot order.
-    pub fn filled(&self) -> impl Iterator<Item = (usize, Power)> + '_ {
+    pub fn filled(&self) -> impl Iterator<Item = (usize, PowerId)> + '_ {
         self.slots
             .iter()
             .enumerate()
@@ -195,7 +178,7 @@ impl Tray {
     }
 
     pub fn to_json(&self) -> Value {
-        let code = |p: Option<Power>| Value::from(p.map_or(0, |p| p.code()));
+        let code = |p: Option<PowerId>| Value::from(p.map_or(0, |p| p.0));
         serde_json::json!({
             "slots": self.slots.iter().map(|s| code(*s)).collect::<Vec<_>>(),
             "known": self.known.iter().map(|p| code(Some(*p))).collect::<Vec<_>>(),
@@ -207,7 +190,8 @@ impl Tray {
         let power = |c: &Value| {
             c.as_u64()
                 .and_then(|c| u8::try_from(c).ok())
-                .and_then(Power::from_code)
+                .map(PowerId)
+                .filter(|&p| powers::get(p).is_some())
         };
         let mut t = Tray::default();
         if let Some(a) = v["slots"].as_array() {
@@ -227,66 +211,58 @@ mod tests {
     use super::*;
     use hw_net::OwnedPower;
 
-    fn sheet(powers: &[Power]) -> Sheet {
+    fn sheet(powers: &[PowerId]) -> Sheet {
         let mut s = hw_sim::progress::starter();
         s.powers = powers
             .iter()
-            .map(|&power| OwnedPower {
-                power,
-                theme: 0,
-                paid: 0,
-            })
+            .map(|&power| OwnedPower { power, paid: 0 })
             .collect();
         s
     }
 
     #[test]
     #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
-    fn powers_keep_their_usual_keys() {
+    fn strike_first_then_the_powers_in_order() {
         let mut t = Tray::default();
-        t.sync(&sheet(&[Power::SuperJump, Power::Bolt, Power::Nova]));
-        assert_eq!(t.slots[0], Some(Power::Strike));
-        assert_eq!(t.slots[1], Some(Power::Bolt));
-        assert_eq!(t.slots[9], Some(Power::Nova));
-        assert_eq!(
-            t.slot_of(Power::SuperJump),
-            None,
-            "passive powers need no key"
-        );
+        t.sync(&sheet(&[PowerId(2), PowerId(10), PowerId(30)]));
+        assert_eq!(t.slots[0], Some(PowerId::STRIKE));
+        assert_eq!(t.slots[1], Some(PowerId(10)));
+        assert_eq!(t.slots[2], Some(PowerId(30)));
+        assert_eq!(t.slot_of(PowerId(2)), None, "passive powers need no key");
     }
 
     #[test]
     #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn moving_swaps_and_giving_up_frees_the_slot() {
         let mut t = Tray::default();
-        t.sync(&sheet(&[Power::Bolt, Power::Hold]));
-        t.put(Power::Hold, 1);
-        assert_eq!(t.slots[1], Some(Power::Hold));
-        assert_eq!(t.slots[2], Some(Power::Bolt));
-        t.put(Power::Bolt, 15);
+        t.sync(&sheet(&[PowerId(10), PowerId(13)]));
+        t.put(PowerId(13), 1);
+        assert_eq!(t.slots[1], Some(PowerId(13)));
+        assert_eq!(t.slots[2], Some(PowerId(10)));
+        t.put(PowerId(10), 15);
         assert_eq!(t.slots[2], None);
         assert!(t.second_row());
         // Dragged off, it stays off.
         t.apply(Change::Clear(15));
-        assert!(!t.sync(&sheet(&[Power::Bolt, Power::Hold])));
-        assert_eq!(t.slot_of(Power::Bolt), None);
-        t.apply(Change::Drop(Drag::Power(Power::Bolt), 15));
+        assert!(!t.sync(&sheet(&[PowerId(10), PowerId(13)])));
+        assert_eq!(t.slot_of(PowerId(10)), None);
+        t.apply(Change::Drop(Drag::Power(PowerId(10)), 15));
         t.apply(Change::Drop(Drag::Slot(15), 1));
-        assert_eq!(t.slots[1], Some(Power::Bolt));
-        assert_eq!(t.slots[15], Some(Power::Hold));
-        assert!(t.sync(&sheet(&[Power::Hold])));
-        assert_eq!(t.slot_of(Power::Bolt), None);
-        // Bought again: back on, on its usual key.
-        t.sync(&sheet(&[Power::Hold, Power::Bolt]));
-        assert_eq!(t.slot_of(Power::Bolt), Some(1));
+        assert_eq!(t.slots[1], Some(PowerId(10)));
+        assert_eq!(t.slots[15], Some(PowerId(13)));
+        assert!(t.sync(&sheet(&[PowerId(13)])));
+        assert_eq!(t.slot_of(PowerId(10)), None);
+        // Bought again: back on, in the first free slot.
+        t.sync(&sheet(&[PowerId(13), PowerId(10)]));
+        assert_eq!(t.slot_of(PowerId(10)), Some(1));
     }
 
     #[test]
     #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn survives_the_profile() {
         let mut t = Tray::default();
-        t.sync(&sheet(&[Power::Bolt, Power::Beam]));
-        t.put(Power::Beam, 12);
+        t.sync(&sheet(&[PowerId(10), PowerId(21)]));
+        t.put(PowerId(21), 12);
         let back = Tray::from_json(&t.to_json());
         assert_eq!(back, t);
         assert_eq!(label(12), "Alt 3");

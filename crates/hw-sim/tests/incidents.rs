@@ -395,12 +395,12 @@ fn the_debug_menu_starts_any_incident_at_once() {
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn rescue_bubbles_float_people_out_and_the_freeze_ray_douses_the_fire() {
-    use hw_net::{InputState, Power};
+    use hw_net::{InputState, PowerId};
     use hw_sim::incidents::IncidentKind;
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let mut sim = Sim::for_town(Seed(3), &town);
     let me = PlayerId(1);
-    let sheet = hw_sim::balance::hero_sheet(10, &[Power::Bubble, Power::Freeze]);
+    let sheet = hw_sim::balance::hero_sheet(10, &[PowerId(19), PowerId(16)]);
     let hero = sim.spawn_hero_with(me, sim.spawn_point(1), sheet);
     sim.incidents.next_kind = Some(IncidentKind::Fire);
     let mut news = Vec::new();
@@ -433,7 +433,7 @@ fn rescue_bubbles_float_people_out_and_the_freeze_ray_douses_the_fire() {
     sim.set_input(
         me,
         InputState {
-            power: Power::Freeze.code(),
+            power: PowerId(16).0,
             aim: aim_at(inc.at + DVec3::Y * 2.0),
             ..Default::default()
         },
@@ -454,7 +454,7 @@ fn rescue_bubbles_float_people_out_and_the_freeze_ray_douses_the_fire() {
         sim.set_input(
             me,
             InputState {
-                power: Power::Bubble.code(),
+                power: PowerId(19).0,
                 aim: aim_at(next),
                 ..Default::default()
             },
@@ -466,7 +466,7 @@ fn rescue_bubbles_float_people_out_and_the_freeze_ray_douses_the_fire() {
             k,
             "bubble {k} missed"
         );
-        let fx_wait = hw_sim::combat::power_spec(Power::Bubble).recharge + 0.5;
+        let fx_wait = hw_sim::powers::recharge(hw_sim::powers::def_of(PowerId(19))) + 0.5;
         run(&mut sim, fx_wait, &mut news);
     }
     assert!(

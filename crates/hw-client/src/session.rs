@@ -7,7 +7,7 @@ use hw_core::{NetId, Seed};
 use hw_net::gamehub::{Hub, HubClientLink, HubServerLink};
 use hw_net::upnp::PortMapping;
 use hw_net::{
-    ConnState, Connection, EntityState, InputState, PlayerId, Power, Sheet, ToClient, ToServer,
+    ConnState, Connection, EntityState, InputState, PlayerId, PowerId, Sheet, ToClient, ToServer,
 };
 use hw_sim::host::Host;
 use hw_sim::hostthread::HostThread;
@@ -470,20 +470,20 @@ impl Session {
     }
 
     /// Buys `power` in `theme` (the host checks the price).
-    pub fn buy(&mut self, power: Power, theme: u8) {
+    pub fn buy(&mut self, power: PowerId) {
         match self {
             Session::Local { host, .. } => host.post(move |h, me| {
-                let _ = h.sim.buy(me, power, theme);
+                let _ = h.sim.buy(me, power);
             }),
-            Session::Remote { conn, .. } => conn.send(ToServer::Buy { power, theme }),
+            Session::Remote { conn, .. } => conn.send(ToServer::Buy { power }),
         }
     }
 
     /// Gives `power` up for 90% of its price.
-    pub fn give_up(&mut self, power: Power) {
+    pub fn give_up(&mut self, power: PowerId) {
         match self {
             Session::Local { host, .. } => host.post(move |h, me| {
-                h.sim.give_up(me, power);
+                let _ = h.sim.give_up(me, power);
             }),
             Session::Remote { conn, .. } => conn.send(ToServer::GiveUp { power }),
         }

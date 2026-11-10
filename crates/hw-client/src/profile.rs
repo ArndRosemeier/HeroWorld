@@ -6,7 +6,7 @@
 
 use crate::tray::Tray;
 use actors_generator::CharacterConfig;
-use hw_net::{OwnedPower, Power, Sheet};
+use hw_net::{OwnedPower, PowerId, Sheet};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
@@ -176,22 +176,23 @@ impl Profile {
     }
 }
 
-/// Hero file format, so later fields don't break old heroes.
-const HERO_VERSION: u64 = 1;
+/// Hero file format, so later fields don't break old heroes. Version 2
+/// brought the power trees: older heroes get all their karma back once and
+/// pick again, element too.
+const HERO_VERSION: u64 = 2;
 
 fn sheet_to_json(s: &Sheet) -> Value {
     json!({
         "version": HERO_VERSION,
         "lifetime_karma": s.lifetime,
         "karma": s.karma,
-        "affinity": s.affinity,
+        "element": s.element,
         "origin": s.origin,
         "regard": s.regard,
         "story": s.story,
         "briefed": s.briefed,
         "powers": s.powers.iter().map(|p| json!({
-            "power": p.power.code(),
-            "theme": p.theme,
+            "power": p.power.0,
             "paid": p.paid,
         })).collect::<Vec<_>>(),
     })
@@ -205,12 +206,6 @@ fn sheet_from_json(v: &Value) -> Option<Sheet> {
             .unwrap_or(0)
             .min(u32::MAX as u64) as u32
     };
-    let mut affinity = [0u32; 5];
-    if let Some(a) = o.get("affinity").and_then(|a| a.as_array()) {
-        for (slot, x) in affinity.iter_mut().zip(a) {
-            *slot = x.as_u64().unwrap_or(0).min(u32::MAX as u64) as u32;
-        }
-    }
     let mut regard = [0i8; hw_net::FACTIONS];
     if let Some(a) = o.get("regard").and_then(|a| a.as_array()) {
         for (slot, x) in regard.iter_mut().zip(a) {
@@ -224,24 +219,29 @@ fn sheet_from_json(v: &Value) -> Option<Sheet> {
             list.iter()
                 .filter_map(|p| {
                     Some(OwnedPower {
-                        power: Power::from_code(p["power"].as_u64()?.min(255) as u8)?,
-                        theme: p["theme"].as_u64().unwrap_or(0).min(1) as u8,
+                        power: PowerId(p["power"].as_u64()?.min(255) as u8),
                         paid: p["paid"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32,
                     })
                 })
                 .collect()
         })
         .unwrap_or_default();
-    Some(hw_sim::progress::sanitize(Sheet {
+    let mut sheet = Sheet {
         lifetime: num("lifetime_karma"),
         karma: num("karma"),
-        affinity,
+        element: num("element").min(255) as u8,
         origin: num("origin").min(255) as u8,
         powers,
         regard,
         story: num("story").min(255) as u8,
         briefed: o.get("briefed").and_then(|b| b.as_bool()).unwrap_or(false),
-    }))
+    };
+    if num("version") < 2 {
+        // Before the power trees: every power back, nothing picked.
+        hw_sim::progress::refund_all(&mut sheet);
+        sheet.element = 0;
+    }
+    Some(hw_sim::progress::sanitize(sheet))
 }
 
 /// A hero name as typed: trimmed, at most 24 characters, no control characters.
@@ -283,7 +283,7 @@ mod tests {
             tray: {
                 let mut t = Tray::default();
                 t.sync(&hw_sim::progress::starter());
-                t.put(Power::Strike, 14);
+                t.put(PowerId::STRIKE, 14);
                 t
             },
         };
@@ -300,12 +300,19 @@ mod tests {
         assert_eq!(q.hero, None);
         assert_eq!(q.look, None);
         // A hero file with a power from a later version keeps the rest.
-        let later = json!({"hero": {"lifetime_karma": 99, "karma": 5, "origin": 2,
-            "powers": [{"power": 2, "theme": 1, "paid": 7}, {"power": 200}]}});
+        let later = json!({"hero": {"version": 2, "lifetime_karma": 99, "karma": 5,
+            "origin": 2, "element": 3,
+            "powers": [{"power": 2, "paid": 7}, {"power": 200}]}});
         let h = Profile::from_json(&later).hero.unwrap();
-        assert_eq!((h.lifetime, h.karma, h.origin), (99, 5, 2));
+        assert_eq!((h.lifetime, h.karma, h.origin, h.element), (99, 5, 2, 3));
         assert_eq!(h.powers.len(), 1);
-        assert_eq!(h.theme(Power::Bolt), 1);
+        assert!(h.has(PowerId(2)));
+        // A hero from before the power trees: all karma back, pick again.
+        let old = json!({"hero": {"version": 1, "lifetime_karma": 9000, "karma": 50,
+            "origin": 1, "affinity": [0, 1, 0, 0, 0],
+            "powers": [{"power": 2, "theme": 1, "paid": 700}, {"power": 5, "paid": 2000}]}});
+        let h = Profile::from_json(&old).hero.unwrap();
+        assert_eq!((h.karma, h.element, h.powers.len()), (2750, 0, 0));
     }
 
     #[test]

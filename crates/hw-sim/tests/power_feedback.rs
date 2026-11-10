@@ -4,7 +4,7 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
-use hw_net::{fizzle, Fx, FxKind, InputState, PlayerId, Power};
+use hw_net::{fizzle, Fx, FxKind, InputState, PlayerId, PowerId};
 use hw_sim::balance::hero_sheet;
 use hw_sim::collision::{Body, Obstacles, Solid};
 use hw_sim::{Sim, GROUND_Y, TICK_HZ};
@@ -45,7 +45,7 @@ fn street(at: f64, wall: bool) -> (Sim, NetId, Vec<NetId>) {
     let hero = sim.spawn_hero_with(
         PlayerId(1),
         ground(0.0, 0.0),
-        hero_sheet(1, &[Power::Strike, Power::Bolt]),
+        hero_sheet(1, &[PowerId::STRIKE, PowerId(10)]),
     );
     sim.step();
     sim.add_fight_spot(ground(at, 0.0), DVec2::new(-1.0, 0.0));
@@ -107,7 +107,7 @@ fn told(at: f64, wall: bool) -> Vec<u16> {
     assert!(!fx.iter().any(|e| e.kind == FxKind::Bolt), "it fired");
     fx.iter()
         .filter(|e| e.kind == FxKind::Fizzle && e.to == hero)
-        .inspect(|e| assert_eq!(e.theme, Power::Bolt.code()))
+        .inspect(|e| assert_eq!(e.theme, PowerId(10).0))
         .map(|e| e.amount & 0xff)
         .collect()
 }
@@ -189,6 +189,9 @@ fn the_server_says_in_words_what_it_did_with_a_press() {
         sim.step();
         log.extend(sim.fights().power_log.iter().cloned());
     }
-    assert!(log.iter().any(|l| l.contains("-> Bolt")), "{log:?}");
-    assert!(log.iter().any(|l| l.contains("Bolt fired")), "{log:?}");
+    assert!(log.iter().any(|l| l.contains("-> Atomic Ray")), "{log:?}");
+    assert!(
+        log.iter().any(|l| l.contains("Atomic Ray fired")),
+        "{log:?}"
+    );
 }
