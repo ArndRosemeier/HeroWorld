@@ -742,6 +742,14 @@ impl Title {
                 let fun = &self.fun;
                 let extra = |i: usize| fun.letter_extra(i, t, em);
                 draw_logo(&painter, &logo, em, t, pose_t, self.still, &extra);
+                // ALPHA, stamped over the logo's corner once it has landed:
+                // the game is early, and says so.
+                let slam = if self.still {
+                    1.0
+                } else {
+                    (t - fun::LANDED - 0.35) / 0.25
+                };
+                alpha_stamp(&painter, logo.rect.right_top(), em, slam);
                 // Each letter can be poked.
                 let mut poked = None;
                 for (i, l) in logo.letters.iter().enumerate() {
@@ -1895,6 +1903,51 @@ fn draw_logo(
             star(painter, p, em * 0.22, Color32::WHITE);
         }
     }
+}
+
+/// The red rubber stamp "ALPHA" at `corner` (the logo's top right). `slam`
+/// runs 0..1 as it lands: it drops in big and settles with a small bounce.
+fn alpha_stamp(painter: &egui::Painter, corner: Pos2, em: f32, slam: f32) {
+    if slam <= 0.0 {
+        return;
+    }
+    let s = slam.min(1.0);
+    let a = smoothstep(s * 1.6);
+    let scale = 1.0 + 1.4 * (1.0 - s).powi(2) - 0.08 * (s * std::f32::consts::PI).sin();
+    let size = em * 0.34 * scale;
+    let angle = -0.21_f32;
+    let galley = painter.layout_no_wrap(
+        "ALPHA".to_string(),
+        FontId::new(size, ui_family()),
+        with_alpha(HERO_RED, a),
+    );
+    let half = galley.size() * 0.5 + vec2(size * 0.32, size * 0.12);
+    let centre = corner + vec2(-half.x * 0.55, em * 0.12);
+    let (sn, cs) = angle.sin_cos();
+    let rot = |v: Vec2| vec2(v.x * cs - v.y * sn, v.x * sn + v.y * cs);
+    let frame = |inset: f32| -> Vec<Pos2> {
+        let h = half - vec2(inset, inset);
+        [
+            vec2(-h.x, -h.y),
+            vec2(h.x, -h.y),
+            vec2(h.x, h.y),
+            vec2(-h.x, h.y),
+        ]
+        .into_iter()
+        .map(|v| centre + rot(v))
+        .collect()
+    };
+    painter.add(egui::Shape::convex_polygon(
+        frame(0.0),
+        with_alpha(CREAM, 0.88 * a),
+        Stroke::new(size * 0.09, with_alpha(HERO_RED, a)),
+    ));
+    painter.add(egui::Shape::closed_line(
+        frame(size * 0.16),
+        Stroke::new(size * 0.035, with_alpha(HERO_RED, a)),
+    ));
+    let text_at = centre + rot(-galley.size() * 0.5);
+    painter.add(egui::epaint::TextShape::new(text_at, galley, HERO_RED).with_angle(angle));
 }
 
 /// A big friendly button. `pop` (0..1, may overshoot) is how far it has popped in.

@@ -1579,12 +1579,24 @@ fn main() -> EngineResult<()> {
     let mut startup = profile.clone();
     startup.smooth &= !shooting;
     let startup = hw_client::settings::startup(&startup);
+    // `HW_HUD=0`: no HUD, menus or labels on screen (clean shots for the
+    // website and the press; the game runs as usual underneath).
+    let hide_hud = std::env::var("HW_HUD").is_ok_and(|v| v == "0");
     let run = Engine::run_with_settings(
         format!("HeroWorld {}", hw_core::version()),
         startup,
         move |world, frame| {
             // Notices late frames and writes what went on (see `hitch.rs`).
             let _hitch = hw_client::hitch::begin(world, frame.time);
+            if hide_hud {
+                // Every layer egui knows of is moved far off screen.
+                use engine::ui::egui::{emath::TSTransform, vec2};
+                let ctx = frame.ui.ctx();
+                let layers: Vec<_> = ctx.memory(|m| m.layer_ids().collect());
+                for l in layers {
+                    ctx.set_transform_layer(l, TSTransform::from_translation(vec2(1.0e6, 1.0e6)));
+                }
+            }
             quality_log.note(world, t0.elapsed().as_secs_f32());
             if frame.first {
                 hw_client::hitch::mark("first frame");

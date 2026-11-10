@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HeroWorld</title>
+<meta name="description" content="HeroWorld: a free co-op superhero sandbox in a golden-age retro-future city. Fly, fight robots and rescue townsfolk, alone or with up to 10 friends. Alpha, for Windows.">
+<meta property="og:title" content="HeroWorld">
+<meta property="og:description" content="A whole planet needs a hero. A free co-op superhero sandbox in a 1950s retro-future city. Alpha, for Windows.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="media/title.webp">
+<meta name="theme-color" content="#161a40">
+<link rel="icon" type="image/png" href="media/icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="cover" id="top">
+  <canvas class="rays" aria-hidden="true"></canvas>
+  <div class="halftone" aria-hidden="true"></div>
+  <div class="saucer" aria-hidden="true">
+    <svg viewBox="0 0 120 50" width="120" height="50"><ellipse cx="60" cy="32" rx="58" ry="12" fill="#c9d3e6" stroke="#161a40" stroke-width="3"/><path d="M34 30 Q60 -6 86 30 Z" fill="#78ecff" stroke="#161a40" stroke-width="3"/><circle cx="30" cy="34" r="3" fill="#ffc640"/><circle cx="60" cy="38" r="3" fill="#ffc640"/><circle cx="90" cy="34" r="3" fill="#ffc640"/></svg>
+  </div>
+
+  <div class="cover-inner">
+    <div class="masthead">
+      <div class="issue">
+        <span class="issue-no" id="issue-no">No. 0.150</span>
+        <span class="price">FREE</span>
+      </div>
+      <h1 class="logo" aria-label="HeroWorld">
+        <span class="l">H</span><span class="l">E</span><span class="l">R</span><span class="l">O</span><span class="l">W</span><span class="l">O</span><span class="l">R</span><span class="l">L</span><span class="l">D</span>
+        <span class="stamp" aria-label="Alpha">ALPHA</span>
+      </h1>
+      <p class="tagline">A whole planet needs a hero.</p>
+    </div>
+
+    <div class="cover-art">
+      <figure class="panel tilt-l hero-shot">
+        <img src="media/town.webp" alt="A town of red roofs at golden hour with the Aether Spire in the middle" width="1600" height="805">
+      </figure>
+      <div class="burst burst-cover" aria-hidden="true"><span>Fly!<br>Fight!<br>Rescue!</span></div>
+    </div>
+
+    <div class="cta-row">
+      <a class="btn-big" id="download" href="https://github.com/ArndRosemeier/HeroWorld/releases/download/windows-latest/HeroWorldLauncher.exe">
+        <span class="btn-label">Download for Windows</span>
+        <span class="btn-sub" id="download-sub">The launcher installs the game and keeps it up to date</span>
+        <span class="pow" aria-hidden="true">POW!</span>
+      </a>
+      <div class="cta-side">
+        <p>Free. Windows 10 or 11. Single player, or co-op with up to 10 friends.</p>
+        <p><a href="#get-it">How to install</a> · <a href="https://github.com/ArndRosemeier/HeroWorld/releases/tag/windows-latest">Plain zip</a></p>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <section class="strip" aria-labelledby="what-h">
+    <div class="wrap">
+      <h2 id="what-h" class="caption-box">What is HeroWorld?</h2>
+      <div class="panels three">
+        <figure class="panel pop">
+          <img src="media/sky.webp" alt="A caped hero flying over a misty town of red roofs" loading="lazy">
+          <figcaption><b>You start as a nobody.</b> One power from the Aether, a wrist radio and a whole town to look after.</figcaption>
+        </figure>
+        <figure class="panel pop">
+          <img src="media/rescue.webp" alt="A hero carrying a rescued citizen across a lawn" loading="lazy">
+          <figcaption><b>Trouble finds you.</b> Muggings, robberies, fires, crashes, mutant rampages, and people to carry out of the rubble.</figcaption>
+        </figure>
+        <figure class="panel pop">
+          <img src="media/powers.webp" alt="A level 20 hero fighting a gang in a plaza" loading="lazy">
+          <figcaption><b>You become a legend.</b> Karma is your level and your money. Climb from level 1 to 20 and buy powers from seven tiers.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="city" aria-labelledby="city-h">
+    <div class="wrap split">
+      <div class="copy">
+        <p class="kicker">The city</p>
+        <h2 id="city-h">A town that lives without you</h2>
+        <p>Every world number grows its own city, from a hamlet of 300 people to a megalopolis of two million. Old towns at the core, Googie diners and streamline towers further out, rivers and coasts, parks with real grass and trees.</p>
+        <p>People walk to work, cars drive their lanes, flying taxis cross the sky, and when the sun goes down the windows light up one by one. Almost everything breaks, and the town quietly repairs itself where nobody is looking.</p>
+        <p class="hint">Drag the handle to watch the street go from noon to night.</p>
+      </div>
+      <div class="compare panel tilt-r" id="compare">
+        <img src="media/street.webp" alt="A street corner at noon: houses, a clock tower, parked fifties cars" loading="lazy">
+        <div class="night" id="night"><img src="media/night.webp" alt="The same street corner at night with lit windows and street lamps" loading="lazy"></div>
+        <input type="range" id="daynight" min="0" max="100" value="50" aria-label="Noon to night">
+        <span class="tag tag-l">Noon</span><span class="tag tag-r">Night</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="menace" aria-labelledby="menace-h">
+    <div class="wrap">
+      <p class="kicker light">Villains and menaces</p>
+      <h2 id="menace-h" class="light">Not everyone in town is nice</h2>
+      <div class="panels bento">
+        <figure class="panel pop big">
+          <img src="media/colossus.webp" alt="The colossus, a walking tank, striding between buildings seen from above" loading="lazy">
+          <figcaption><b>The colossus.</b> A mad scientist's walking tank that drops robo-sentries as it stomps through the streets.</figcaption>
+        </figure>
+        <figure class="panel pop">
+          <img src="media/airship.webp" alt="A cream airship with red fins moored above an art deco building" loading="lazy">
+          <figcaption><b>Sky pirates</b> raid from their airships.</figcaption>
+        </figure>
+        <figure class="panel pop">
+          <img src="media/tesla.webp" alt="A Tesla tower crackling with living plasma arcs at night" loading="lazy">
+          <figcaption><b>The Tesla tower</b> crackles over the villain quarter.</figcaption>
+        </figure>
+        <figure class="panel pop wide">
+          <img src="media/fight.webp" alt="A caped hero fighting a thug on a lawn beside a fifties car" loading="lazy">
+          <figcaption><span><b>Gangs and factions</b> of every stripe: the Iron-Masked Empire, sky pirates, mole folk, relic hunters. Not all of them are evil, and they remember how you treat them.</span></figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="sights" aria-labelledby="sights-h">
+    <div class="wrap">
+      <p class="kicker">Places to visit</p>
+      <h2 id="sights-h">Rockets, reactors and a hall of heroes</h2>
+      <div class="filmstrip" tabindex="0" aria-label="Landmarks, scroll sideways">
+        <figure class="panel"><img src="media/rocket.webp" alt="A red and white rocket lifting off from its gantry in a cloud of smoke"><figcaption>The rocket port. Board, count down, lift off.</figcaption></figure>
+        <figure class="panel"><img src="media/atomic.webp" alt="An atomic power plant with cooling towers and a dome"><figcaption>The atomic plant, humming and venting steam.</figcaption></figure>
+        <figure class="panel"><img src="media/hall.webp" alt="Hero Hall, a round building on red arches topped by a gold star"><figcaption>Hero Hall, home of the town's own heroes.</figcaption></figure>
+      </div>
+      <p class="below">Up at the airfield the liner Skylark comes in to its mast. Below the streets runs the Aether Tube, with mole folk markets, buried ruins and the Doctor's lab. Take a lift down and see how deep it goes.</p>
+    </div>
+  </section>
+
+  <section class="friends" aria-labelledby="friends-h">
+    <div class="wrap split rev">
+      <div class="copy">
+        <p class="kicker">Co-op</p>
+        <h2 id="friends-h">Better with friends</h2>
+        <p>Host your world in one click and read your room code to friends. Up to 10 heroes share one town: split up across the city or team up on the colossus. Nobody dies here. Villains get cuffed and carried off by police drones, and friends revive each other.</p>
+        <p>Single player is just as complete: your hero and your city are saved on your own PC.</p>
+      </div>
+      <div class="balloon-art">
+        <div class="balloon b1">I'll take the robots!</div>
+        <div class="balloon b2">Room code is FOX-42. Hurry!</div>
+        <div class="balloon b3">Who parked a car on the Tesla tower?</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="news" id="whats-new" aria-labelledby="news-h">
+    <div class="wrap">
+      <p class="kicker">Hot off the press</p>
+      <h2 id="news-h">What's new</h2>
+      <p class="sub">A new build comes out almost every night. These are the latest changes, straight from the game's change list.</p>
+      <div class="news-list" id="news-list">
+        <article class="news-item">
+          <h3>0.150</h3>
+          <ul>
+            <li>HeroWorld is in alpha, and the title screen now says so with a big red ALPHA stamp on the logo.</li>
+            <li>A launcher: download it once and it installs the game, keeps it up to date (only the parts that changed), shows what's new and starts the game alone, as a host or joining a friend.</li>
+          </ul>
+        </article>
+      </div>
+      <p><a href="https://github.com/ArndRosemeier/HeroWorld/blob/main/WHATS_NEW.md">Every change since 0.001</a></p>
+    </div>
+  </section>
+
+  <section class="getit" id="get-it" aria-labelledby="get-h">
+    <div class="wrap">
+      <p class="kicker light">Get it</p>
+      <h2 id="get-h" class="light">Three steps to your first rescue</h2>
+      <ol class="steps">
+        <li class="panel"><b>Download the launcher.</b> One small file, <span class="mono">HeroWorldLauncher.exe</span>.</li>
+        <li class="panel"><b>Run it.</b> Windows may say "Windows protected your PC" because the launcher is new and not yet signed. Click <i>More info</i>, then <i>Run anyway</i>.</li>
+        <li class="panel"><b>Press Install, then Play.</b> The first download is about <span id="size">500 MB</span>. After that, updates bring only what changed.</li>
+      </ol>
+      <div class="faq">
+        <details>
+          <summary>What do I need?</summary>
+          <p>Windows 10 or 11 and a graphics card with Vulkan or DirectX 12 (most cards from the last eight years). A gaming PC with a dedicated card plays best. A Mac version is planned.</p>
+        </details>
+        <details>
+          <summary>What does "alpha" mean here?</summary>
+          <p>The game is early and changes almost every night. Expect rough edges, missing pieces and the odd bug. Your hero is saved on your PC and carries over to new builds.</p>
+        </details>
+        <details>
+          <summary>Where are my saves?</summary>
+          <p>In <span class="mono">%APPDATA%\HeroWorld</span>. The launcher never touches them, and the game is installed separately in <span class="mono">%LOCALAPPDATA%\Programs\HeroWorld</span>.</p>
+        </details>
+        <details>
+          <summary>Can I skip the launcher?</summary>
+          <p>Yes. Download the plain zip from the <a href="https://github.com/ArndRosemeier/HeroWorld/releases/tag/windows-latest">release page</a>, unzip it and double-click <span class="mono">heroworld.exe</span>. If you later point the launcher at that folder, it keeps every file that is still current.</p>
+        </details>
+        <details>
+          <summary>Does it cost anything?</summary>
+          <p>No. HeroWorld is free.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <p class="logo-small">HEROWORLD</p>
+    <p>Made with Rust, on its own engine. Music made with Lyria.</p>
+    <p><a href="https://github.com/ArndRosemeier/HeroWorld">Source on GitHub</a> · <a href="#top">Back to the top</a></p>
+    <!-- LEGAL-LINKS: the host puts its Impressum and Datenschutz links here (see docs/WEBSITE.md). -->
+  </div>
+</footer>
+
+<button class="sound" id="sound" type="button" aria-pressed="false" aria-label="Play the title theme">
+  <span class="sound-icon" aria-hidden="true">♪</span><span class="sound-text">Theme</span>
+</button>
+<audio id="theme" src="media/theme.ogg" preload="none" loop></audio>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,7 +1,8 @@
 name: Windows build
 # A ready-to-play Windows download: the game and the dedicated server, built
 # for release, with the Actors packs and robot models beside them. Published
-# as the release "windows-latest" (HeroWorld-windows.zip), replaced each time.
+# as the release "windows-latest" (HeroWorld-windows.zip), replaced each time,
+# with the launcher (HeroWorldLauncher.exe) and its update bundles beside it.
 # Runs every night when the version changed, or by hand (Actions, "Run workflow").
 on:
   workflow_dispatch:
@@ -51,6 +52,7 @@ jobs:
           cargo rustc --release -p hw-client --bin heroworld -- \
             -C link-args=/SUBSYSTEM:WINDOWS -C link-args=/ENTRY:mainCRTStartup
           cargo build --release -p hw-sim --bin hw-headless
+          cargo build --release -p hw-launcher
       - name: Package
         if: steps.want.outputs.build == 'yes'
         shell: bash
@@ -63,6 +65,10 @@ jobs:
           cp packaging/windows/*.txt packaging/windows/*.bat "$d/"
           7z a -tzip -mx=5 HeroWorld-windows.zip "$d" > /dev/null
           ls -l HeroWorld-windows.zip
+          # The launcher's update files: bundles (game, packs, robots, music)
+          # and manifest.json, so a nightly update downloads only what changed.
+          cp target/release/HeroWorldLauncher.exe .
+          python scripts/release-bundles.py "$d" HeroWorldLauncher.exe bundles
       - name: Publish
         if: steps.want.outputs.build == 'yes'
         shell: bash
@@ -70,8 +76,9 @@ jobs:
           v="${{ steps.want.outputs.version }}"
           notes="HeroWorld $v
 
-          Unzip, then double-click heroworld.exe (Windows 10 or 11, a graphics card with Vulkan or DirectX 12).
+          Easiest: download HeroWorldLauncher.exe and run it; it installs the game and keeps it up to date.
+          Or unzip HeroWorld-windows.zip and double-click heroworld.exe (Windows 10 or 11, a graphics card with Vulkan or DirectX 12).
           Built from ${{ github.sha }}."
           gh release delete windows-latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create windows-latest HeroWorld-windows.zip \
+          gh release create windows-latest HeroWorld-windows.zip HeroWorldLauncher.exe bundles/*.zip bundles/manifest.json \
             --title "HeroWorld $v for Windows" --notes "$notes" --prerelease --target "${{ github.sha }}"

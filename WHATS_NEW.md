@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.150 (2026-11-10)
+
+- HeroWorld is in alpha, and the title screen now says so with a big red ALPHA stamp on the logo. Expect rough edges, and tell us what you find.
+- A launcher: download HeroWorldLauncher.exe once and it installs the game, keeps it up to date (only the parts that changed are downloaded, usually a few tens of MB), shows what's new, repairs broken files and starts the game alone, as a host or joining a friend's room code.
+
 ## 0.149 (2026-11-10)
 
 - Doors are real now. Every door is shut until someone opens it, and a shut door is solid: no more walking through. Stand at one and press E to open or shut it.

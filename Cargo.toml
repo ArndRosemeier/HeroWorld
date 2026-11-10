@@ -6,6 +6,7 @@ members = [
     "crates/hw-sim",
     "crates/hw-net",
     "crates/hw-client",
+    "crates/hw-launcher",
     "tools/dupcheck",
 ]
 # The client pulls in Engine (wgpu, winit): leave it out of plain `cargo test`
@@ -15,6 +16,7 @@ default-members = [
     "crates/hw-gen",
     "crates/hw-sim",
     "crates/hw-net",
+    "crates/hw-launcher",
     "tools/dupcheck",
 ]
 

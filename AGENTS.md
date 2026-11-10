@@ -19,6 +19,7 @@ file; when they change, re-export the snapshot here.
 | `hw-sim` | the server and the truth: entities, bubbles, physics, combat, destruction, saves (bevy_ecs); `host::Host` wraps it with players, interest and a socket; binary `hw-headless` | hw-core, hw-gen, hw-net, engine (`engine::physics::PhysicsWorld` only) |
 | `hw-net` | protocol, UDP sockets and the GameHub relay, client connection, reliable messages, replication (per-client acks, change-only updates); later host migration | hw-core |
 | `hw-client` | Engine client: rendering, input, camera, UI, prediction; binary `heroworld` | all of the above, engine |
+| `hw-launcher` | the launcher (`HeroWorldLauncher.exe`, eframe): installs and updates the game from the `windows-latest` release via `manifest.json` and bundles (`scripts/release-bundles.py`), what's new, Play/Host/Join; own version in its Cargo.toml, bump it when it changes | std, eframe, ureq (no Engine, no hw-*) |
 | `dupcheck` (`tools/`) | a dev tool: finds duplicated code (`scripts/dupcheck.sh`) | std only |
 
 ## Rules
