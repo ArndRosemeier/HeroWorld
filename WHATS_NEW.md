@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.147 (2026-11-10)
+
+- Airships no longer sail through houses. The sky pirates' raiders turn along the street and hang clear of every wall, roof and spire, and when they leave they rise above the rooftops before sailing off. A raider's airship is solid now too: you bump into it and can land on it.
+- The liner *Skylark* keeps well over every roof, crown and spire on its round, rising over anything in its way as it climbs out from the airfield and sinks back to it.
+
 ## 0.146 (2026-11-10)
 
 - A shield is now a force field you can see: a honeycomb of light round the shielded one, bright at the edge, with ripples running down it.

@@ -653,16 +653,28 @@ The liner *Skylark* (96 m, silver, red cheat line, passenger deck with panoramic
 four engine pods, rocket fins) keeps a timetable from the game clock, so every player sees
 it in the same place: moored 170 s with its nose in the mast's cup (swinging a few
 degrees, the head turning with it), cast off 45 s (backs 35 m off, rises 12 m, turns
-away), then its round: up to cruising height (above the town's tallest towers, 100 m at
-least, 90 m over any hill), over the core, out beyond the town and round wide, at 22 m/s,
+away), then its round: up to cruising height (its nose 26 m over the tallest roof, crown
+or spire the town could have, over every landmark, 90 m over any hill), over the core, out
+beyond the town and round wide, at 22 m/s,
 turning at most 0.075 rad/s; then a glide in along the mast's axis from 700 m out and
-70 m up, slowing evenly to a stop. A cycle is 12-17 minutes; a session opens with it moored,
+70 m up, slowing evenly to a stop. Where it is lower than that (climbing away and sinking
+back), it looks at what is really under its hull and rises over it, no steeper than 9 %.
+A cycle is 12-17 minutes; a session opens with it moored,
 25 s before it casts off. The liner is solid where the timetable has it: its envelope, the
 passenger deck under it, the fins and the engine pods become boxes (at most 4.6 m on a side,
 `hw_sim::airships`) that move with it each tick, for heroes within 30 m of the hull. Heroes
 bump into it, can land on its back and cannot fly through it; it does not carry a hero
 standing on it. The pirates' *Cloudcutter* moored over the harbour is solid the same way
-(envelope, gondola, engines, fins). Raid airships over a street are not solid yet.
+(envelope, gondola, engines, fins), and so is a raiders' airship moored over a street.
+
+What an airship clears (`hw_gen::urban::airspace`): every building whose outline (with
+2.5 m for eaves, cornices and signs) meets the sky over it, up to its drawn top
+(`BuildingSite::top`: walls, pitched roof and chimneys, dome, tower crown with its spire
+or radio mast), and every landmark. The pirates' moored ship keeps its gondola 14 m over
+that (else a quay spot where it does); a raider turns along the street to where it is
+lowest and hangs 4 m clear of it, and when it leaves it rises straight up (3 m/s) over
+everything on its way out before it sails off. `tests/airships_clear_roofs.rs` checks the
+liner's whole round, the moored ship and raiders in towns of every size.
 
 While moored: the gangway slides out to the nose door (6-12 s), the lift runs up and down
 twice, two crates come down on the winch from the cargo hatch onto the baggage cart

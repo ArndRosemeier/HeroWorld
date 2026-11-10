@@ -13,6 +13,7 @@
 //! away from the town), x to its right, y up from the plinth's top; see
 //! [`super::landmarks::Landmark::to_plan`].
 
+use super::airspace::{highest_under, SkyBox};
 use super::footprint::{block, Footprint};
 use super::landmarks::{Landmark, LandmarkKind};
 use super::roadgrid::RoadGrid;
@@ -196,13 +197,37 @@ pub fn leg_half(y: f64) -> f64 {
     LEG_FOOT + (LEG_TOP - LEG_FOOT) * (1.0 - (1.0 - t).powi(2))
 }
 
-/// The highest a town's roofs reach (with the Aether Spire), from its size:
-/// what the liner has to clear on its round.
-fn skyline(population: f64) -> f64 {
+/// The highest a town's buildings can reach over their ground, from its
+/// size (the tallest towers `plots` builds, a floor to spare, and the
+/// tallest crown [`crate::building::BuildingSite::top`] puts on them): what
+/// the liner has to clear on its round, without planning the town under it.
+pub fn skyline(population: f64) -> f64 {
     let big = (det::log10(population.max(1000.0)) - 3.5).clamp(0.0, 3.5);
     let floors = 14.0 * (0.4 + big);
-    let towers = crate::building::GROUND_FLOOR_HEIGHT + crate::building::FLOOR_HEIGHT * floors;
-    (towers + 25.0).max(100.0)
+    let towers = crate::building::HALL_HEIGHT + crate::building::FLOOR_HEIGHT * floors;
+    towers + 46.0
+}
+
+/// From the liner's nose down to under its passenger deck, engine pods and
+/// lower fin, with the tail as low as its steepest pitch puts it, and room
+/// to spare (m): how far over a roof the nose stays.
+pub const LINER_KEEL: f64 = DECK_DROP + SHIP_LEN * 0.08 + 6.0;
+/// Half the liner's width across its engine pods and side fins, with room
+/// to spare (m).
+pub const LINER_HALF_WIDE: f64 = 12.0 + 6.0;
+/// The steepest the round climbs or sinks to clear a roof (m per m).
+const CLEAR_SLOPE: f64 = 0.09;
+
+/// The sky the liner's hull fills with its nose at `nose` heading `h`
+/// (from +z towards +x), with room to spare.
+pub fn liner_sky(nose: DVec2, h: f64) -> SkyBox {
+    let fwd = det::dir2(PI * 0.5 - h);
+    SkyBox::new(
+        nose - fwd * (SHIP_LEN * 0.5),
+        fwd,
+        SHIP_LEN * 0.5 + 6.0,
+        LINER_HALF_WIDE,
+    )
 }
 
 /// Picks the mast's place: on open ground just past the town's edge, as
@@ -420,20 +445,68 @@ impl MastRoute {
         } else {
             -dir.perp()
         };
-        let mut cruise =
-            (w.ground(core) + skyline(w.town.params.population)).max(cup.y + APPROACH_UP + 20.0);
+        // Over every roof the town could have, every landmark and every
+        // hill on the way.
+        let over_roofs = (skyline(w.town.params.population) + LINER_KEEL).max(90.0);
+        let over_landmarks = w
+            .landmarks
+            .iter()
+            .filter(|l| l.kind != LandmarkKind::MooringMast)
+            .map(|l| l.base + l.height + LINER_KEEL)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let ground_under = |sky: &SkyBox| {
+            sky.corners()
+                .into_iter()
+                .chain([sky.mid])
+                .map(|p| w.ground(p))
+                .fold(f64::NEG_INFINITY, f64::max)
+        };
+        let mut cruise = (w.ground(core) + over_roofs)
+            .max(over_landmarks)
+            .max(cup.y + APPROACH_UP + 20.0);
         let mut track = Vec::new();
         for _ in 0..3 {
             track = Self::fly(w, mast, cup, dir, side, cruise);
-            // Hills on the way: keep well over them.
             let top = track
                 .iter()
-                .map(|(p, _, _)| w.ground(DVec2::new(p.x, p.z)) + 90.0)
+                .map(|&(p, h, _)| ground_under(&liner_sky(DVec2::new(p.x, p.z), h)) + over_roofs)
                 .fold(f64::NEG_INFINITY, f64::max);
             if top <= cruise {
                 break;
             }
             cruise = top;
+        }
+        // Climbing away from the mast and sinking back to it, the liner is
+        // lower than any roof could be: there, look at what is really
+        // under it and rise over it, no steeper than [`CLEAR_SLOPE`].
+        let mut need = Vec::new();
+        for (i, &(p, h, _)) in track.iter().enumerate() {
+            let sky = liner_sky(DVec2::new(p.x, p.z), h);
+            if p.y >= (ground_under(&sky) + over_roofs).max(over_landmarks) {
+                continue;
+            }
+            let top = highest_under(w, &sky, &[LandmarkKind::MooringMast]) + LINER_KEEL;
+            if top > p.y {
+                need.push((i, top));
+            }
+        }
+        if !need.is_empty() {
+            let mut along = Vec::with_capacity(track.len());
+            let mut s = 0.0;
+            for i in 0..track.len() {
+                if i > 0 {
+                    let (a, b) = (track[i - 1].0, track[i].0);
+                    s += DVec2::new(b.x - a.x, b.z - a.z).length();
+                }
+                along.push(s);
+            }
+            for i in 0..track.len() {
+                let lift = need
+                    .iter()
+                    .map(|&(j, y)| y - CLEAR_SLOPE * (along[i] - along[j]).abs())
+                    .fold(f64::NEG_INFINITY, f64::max);
+                track[i].0.y = track[i].0.y.max(lift);
+            }
         }
         let fly_s = (track.len() - 1) as f64 * TRACK_DT;
         // From where the round ends, slowing evenly to a stop at the cup.
@@ -480,6 +553,10 @@ impl MastRoute {
             cup2 + dir * (APPROACH + 1100.0),
             end,
         ];
+        let mut rest = vec![0.0; marks.len()];
+        for k in (0..marks.len() - 1).rev() {
+            rest[k] = rest[k + 1] + marks[k].distance(marks[k + 1]);
+        }
         let low = cup.y + BACK_UP;
         let land = cup.y + APPROACH_UP;
         let mut p = start;
@@ -496,11 +573,9 @@ impl MastRoute {
             let last = k == marks.len() - 1;
             // Height: up to cruise over the first stretch, down to the glide's
             // start over the last.
-            let left = if last {
-                to.length()
-            } else {
-                to.length() + 1400.0
-            };
+            // (The way left: to this mark, then from mark to mark, so the
+            // height does not jump as it turns for the next.)
+            let left = to.length() + rest[k];
             let up = (flown / 700.0).min(1.0);
             let up = up * up * (3.0 - 2.0 * up);
             let down = (left / 1400.0).min(1.0);

@@ -105,6 +105,7 @@ pub fn pirate_roost(w: &TownWorld) -> Option<PirateRoost> {
             .then(a.pts[0].x.total_cmp(&b.pts[0].x))
             .then(a.pts[0].y.total_cmp(&b.pts[0].y))
     });
+    let mut best: Option<PirateRoost> = None;
     for q in walls {
         let n = q.pts.len();
         let mut order: Vec<usize> = (0..n).collect();
@@ -118,41 +119,112 @@ pub fn pirate_roost(w: &TownWorld) -> Option<PirateRoost> {
             if !over_water || wet(q.pts[k] - out * 5.0) {
                 continue;
             }
-            // High enough to clear whatever stands under it.
+            // High enough to clear whatever stands under it. A spot where
+            // it hangs at its usual height wins; else the lowest.
             let roofs = roofs_under(w, c, along, SHIP_HALF.0 + 6.0, SHIP_HALF.1 + 6.0);
-            return Some(PirateRoost {
+            let roost = PirateRoost {
                 quay: q.pts[k],
                 out,
                 top: q.top[k],
                 ship_y: (q.top[k] + SHIP_UP).max(roofs + SHIP_KEEL),
-            });
+            };
+            if roost.ship_y <= roost.top + SHIP_UP {
+                return Some(roost);
+            }
+            let lift = roost.ship_y - roost.top;
+            if best.is_none_or(|b: PirateRoost| lift < b.ship_y - b.top) {
+                best = Some(roost);
+            }
         }
     }
-    None
+    best
 }
 
-/// The highest roof with any part in the box centred on `c`, `half_len`
-/// along `along` and `half_wide` across it (or -infinity over open ground):
-/// what an airship hanging there has to clear. Straight from the town plan,
-/// so server and clients agree whatever is loaded.
+/// The highest thing drawn with any part in the box centred on `c`,
+/// `half_len` along `along` and `half_wide` across it (or -infinity over
+/// open ground): roofs with their crowns and spires, landmarks. What an
+/// airship hanging there has to clear. Straight from the town plan, so
+/// server and clients agree whatever is loaded.
 pub fn roofs_under(w: &TownWorld, c: DVec2, along: DVec2, half_len: f64, half_wide: f64) -> f64 {
-    let across = along.perp();
-    let inside = |p: DVec2| {
-        let d = p - c;
-        d.dot(along).abs() < half_len && d.dot(across).abs() < half_wide
+    use hw_gen::urban::airspace::{highest_under, SkyBox};
+    highest_under(w, &SkyBox::new(c, along, half_len, half_wide), &[])
+}
+
+/// A raiding airship's keel: from its axis to under its gondola (m).
+const RAID_KEEL: f64 = GONDOLA_DECK + 2.6;
+/// Seconds a departing raider sails on, once clear of the roofs ahead.
+pub const RAID_SAIL_S: f64 = 40.0;
+/// How fast it rises straight up first (m/s).
+const RAID_RISE: f64 = 3.0;
+
+/// Where the sky pirates' airship hangs over `street` while they raid it,
+/// and its heading (radians, 0 = +z, towards +x): turned the way along
+/// which what stands under it is lowest, its gondola clear of every roof
+/// and wall there, and never lower than a ladder's climb over the street.
+pub fn raid_mooring(w: &TownWorld, street: DVec3) -> (DVec3, f64) {
+    let half = AIRSHIP_LENGTH * 0.5 + 2.0;
+    let r = AIRSHIP_RADIUS + 2.0;
+    let c = DVec2::new(street.x, street.z);
+    let (mut best, mut best_yaw) = (f64::INFINITY, 0.0);
+    for k in 0..8 {
+        let yaw = (k as f64 * 22.5).to_radians();
+        let along = hw_core::det::dir2(std::f64::consts::FRAC_PI_2 - yaw);
+        let top = roofs_under(w, c, along, half, r).max(street.y);
+        if top < best - 0.5 {
+            best = top;
+            best_yaw = yaw;
+        }
+    }
+    let y = (best + AIRSHIP_RADIUS + 4.0)
+        .max(best + RAID_KEEL + 4.0)
+        .max(street.y + RAID_KEEL + 14.0);
+    (DVec3::new(street.x, y, street.z), best_yaw)
+}
+
+/// A raider leaving `from` heading `yaw`: the height it rises to before it
+/// sails off, clear of everything on its way out. Where the town ahead is
+/// not planned yet (far from every hero) it does not wait for it: it
+/// rises over the tallest tower the town could have instead.
+pub fn raid_sail_height(w: &TownWorld, from: DVec3, yaw: f64) -> f64 {
+    use hw_gen::urban::airspace::{highest_under, planned, SkyBox};
+    let along = hw_core::det::dir2(std::f64::consts::FRAC_PI_2 - yaw);
+    let reach = 0.35 * RAID_SAIL_S * RAID_SAIL_S;
+    let mid = DVec2::new(from.x, from.z) + along * (reach * 0.5);
+    let sky = SkyBox::new(
+        mid,
+        along,
+        reach * 0.5 + AIRSHIP_LENGTH,
+        AIRSHIP_RADIUS + 3.0,
+    );
+    let top = if planned(w, &sky) {
+        highest_under(w, &sky, &[])
+    } else {
+        w.ground(DVec2::new(from.x, from.z))
+            + hw_gen::urban::mast::skyline(w.town.params.population)
     };
-    let reach = DVec2::splat(half_len.max(half_wide) + 40.0);
-    w.quarters_in(c - reach, c + reach)
-        .iter()
-        .flat_map(|q| q.buildings.iter())
-        .filter(|b| {
-            let k = b.site.corners();
-            // A corner inside, the middle inside, or the box's middle
-            // inside the building.
-            k.iter().any(|&p| inside(p)) || inside(b.site.origin) || hw_gen::urban::contains(&k, c)
-        })
-        .map(|b| w.ground(b.site.origin) + b.site.height())
-        .fold(f64::NEG_INFINITY, f64::max)
+    from.y.max(top + RAID_KEEL + 4.0)
+}
+
+/// Where a departing raider is `age` seconds after the pirates climb
+/// aboard: straight up to `clear` (from [`raid_sail_height`]), then off
+/// along its heading, slowly at first, then under full steam, still
+/// climbing. `None` once it is gone.
+pub fn raid_departure(from: DVec3, yaw: f64, clear: f64, age: f64) -> Option<DVec3> {
+    let rise = (clear - from.y).max(0.0) / RAID_RISE;
+    if age > rise + RAID_SAIL_S {
+        return None;
+    }
+    let along = hw_core::det::dir2(std::f64::consts::FRAC_PI_2 - yaw);
+    if age < rise {
+        return Some(from + DVec3::Y * (age * RAID_RISE));
+    }
+    let t = age - rise;
+    let s = (t * t * 0.35).min(t * 14.0);
+    Some(DVec3::new(
+        from.x + along.x * s,
+        clear + t * 1.2,
+        from.z + along.y * s,
+    ))
 }
 
 /// Where Molehaven's guards stand: on open cavern floor as near the lift

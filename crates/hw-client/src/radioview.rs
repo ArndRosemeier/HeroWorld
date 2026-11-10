@@ -322,11 +322,12 @@ struct Departing {
     lod: LodId,
     from: Vec3,
     yaw: f32,
+    /// How high it rises before it sails off, clear of the roofs ahead.
+    clear: f64,
     age: f32,
 }
 
 /// How long a departing airship stays in sight (s).
-const SAIL_SECONDS: f32 = 40.0;
 
 #[derive(Default)]
 pub struct Radio {
@@ -671,32 +672,15 @@ impl Radio {
     }
 
     /// Where a raiding airship hangs over `street`, and its yaw (degrees):
-    /// the way along which the roofs under it are lowest, clear of them.
+    /// see [`hw_sim::roosts::raid_mooring`] (the server's raider is solid
+    /// there too).
     fn mooring(&self, street: Vec3) -> (Vec3, f32) {
-        use crate::factionview as fv;
-        let half = fv::AIRSHIP_LENGTH * 0.5 + 2.0;
-        let r = fv::AIRSHIP_RADIUS + 2.0;
-        let c = DVec2::new(street.x as f64, street.z as f64);
-        let (mut best, mut best_yaw) = (f64::INFINITY, 0.0f32);
-        for k in 0..8 {
-            let yaw = k as f32 * 22.5;
-            let a = (yaw as f64).to_radians();
-            let along = DVec2::new(a.sin(), a.cos());
-            let top = self.town.as_ref().map_or(street.y as f64, |w| {
-                hw_sim::roosts::roofs_under(w, c, along, half, r).max(street.y as f64)
-            });
-            if top < best - 0.5 {
-                best = top;
-                best_yaw = yaw;
-            }
-        }
-        // The envelope's belly a few metres over the highest roof under it,
-        // and the gondola never lower than a ladder's climb above the street.
-        let keel = fv::GONDOLA_DECK as f32 + 2.6;
-        let y = (best as f32 + fv::AIRSHIP_RADIUS as f32 + 4.0)
-            .max(best as f32 + keel + 4.0)
-            .max(street.y + keel + 14.0);
-        (Vec3::new(street.x, y, street.z), best_yaw)
+        let Some(w) = self.town.as_ref() else {
+            let keel = (crate::factionview::GONDOLA_DECK + 2.6) as f32;
+            return (street + Vec3::Y * (keel + 14.0), 0.0);
+        };
+        let (at, yaw) = hw_sim::roosts::raid_mooring(w, street.as_dvec3());
+        (at.as_vec3(), yaw.to_degrees() as f32)
     }
 
     /// The first raiding airship there is: where it hangs and its yaw
@@ -722,11 +706,16 @@ impl Radio {
         }
         for d in self.departing.iter_mut() {
             d.age += dt;
-            let a = d.yaw.to_radians();
-            let along = Vec3::new(a.sin(), 0.0, a.cos());
-            // Slowly at first, then under full steam, climbing.
-            let s = d.age * d.age * 0.35;
-            let p = d.from + along * s.min(d.age * 14.0) + Vec3::Y * d.age * 1.2;
+            // Up clear of the roofs ahead, then off.
+            let Some(p) = hw_sim::roosts::raid_departure(
+                d.from.as_dvec3(),
+                (d.yaw as f64).to_radians(),
+                d.clear,
+                d.age as f64,
+            ) else {
+                continue;
+            };
+            let p = p.as_vec3();
             let place = Place::new(p.x, p.y, p.z)
                 .with_yaw_deg(d.yaw)
                 .with_pitch_deg(-3.0);
@@ -734,7 +723,13 @@ impl Radio {
         }
         let mut gone = Vec::new();
         self.departing.retain(|d| {
-            if d.age > SAIL_SECONDS {
+            let away = hw_sim::roosts::raid_departure(
+                d.from.as_dvec3(),
+                (d.yaw as f64).to_radians(),
+                d.clear,
+                d.age as f64,
+            );
+            if away.is_none() {
                 gone.push(d.lod);
                 false
             } else {
@@ -1434,10 +1429,14 @@ impl Radio {
         if let Some(mut scene) = self.scenes.remove(&id) {
             // The pirates climb aboard and the airship sails off.
             if let Some((lod, from, yaw)) = scene.ship {
+                let clear = self.town.as_ref().map_or(from.y as f64, |w| {
+                    hw_sim::roosts::raid_sail_height(w, from.as_dvec3(), (yaw as f64).to_radians())
+                });
                 self.departing.push(Departing {
                     lod,
                     from,
                     yaw,
+                    clear,
                     age: 0.0,
                 });
             }

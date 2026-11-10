@@ -1,8 +1,9 @@
 //! The airships are solid: the liner *Skylark* on its round from the
 //! mooring mast ([`hw_gen::urban::mast::MastRoute`]), where it is at this
-//! very tick of the game clock, and the sky pirates' *Cloudcutter* moored
-//! over its quay ([`crate::roosts`]). Heroes bump into them, stand on them
-//! and cannot fly through them.
+//! very tick of the game clock, the sky pirates' *Cloudcutter* moored
+//! over its quay ([`crate::roosts`]) and their raiders moored over the
+//! streets they raid ([`crate::roosts::raid_mooring`]). Heroes bump into
+//! them, stand on them and cannot fly through them.
 //!
 //! Each ship becomes a set of upright boxes from the same numbers it is
 //! drawn by: its envelope sliced along its length into short drums, each
@@ -14,7 +15,7 @@
 //! the game clock.
 
 use crate::collision::Solid;
-use crate::roosts::{envelope_r, pirate_roost, AIRSHIP_LENGTH, GONDOLA_DECK};
+use crate::roosts::{envelope_r, pirate_roost, raid_mooring, AIRSHIP_LENGTH, GONDOLA_DECK};
 use glam::{DVec2, DVec3};
 use hw_core::det;
 use hw_gen::urban::landmarks::LandmarkKind;
@@ -23,6 +24,8 @@ use hw_gen::urban::mast::{
     FIN_SPAN_LOW, NACELLES, PROP_BACK, SHIP_LEN,
 };
 use hw_gen::urban::world::TownWorld;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// The largest side of a box (m): small enough to count as a mover.
 const TILE: f64 = 4.6;
@@ -232,6 +235,16 @@ pub fn pirate_solids(ship: DVec3, yaw: f64) -> Vec<Solid> {
     out
 }
 
+/// The town plan, kept for working out where raiders hang.
+#[derive(Clone)]
+struct Town(Arc<TownWorld>);
+
+impl std::fmt::Debug for Town {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Town")
+    }
+}
+
 /// The town's airships, for collision.
 #[derive(Clone, Debug, Default)]
 pub struct Airships {
@@ -239,9 +252,37 @@ pub struct Airships {
     /// The moored pirate ship's solids (it does not move), and its middle.
     pirate: Vec<Solid>,
     pirate_at: Option<DVec3>,
+    /// The pirates' raiders moored over the streets they raid, by
+    /// incident: where each hangs and its solids.
+    raids: BTreeMap<u32, (DVec3, Vec<Solid>)>,
+    town: Option<Town>,
 }
 
 impl Airships {
+    /// The town's airships, raiders too ([`Self::set_raids`]).
+    pub fn with_raids(w: &Arc<TownWorld>) -> Self {
+        Airships {
+            town: Some(Town(w.clone())),
+            ..Self::new(w)
+        }
+    }
+
+    /// Keeps the raiders in step with the raids open now: `(incident,
+    /// street)` each. A raider hangs where every machine draws it
+    /// ([`raid_mooring`]), worked out once per raid.
+    pub fn set_raids(&mut self, raids: &[(u32, DVec3)]) {
+        let Some(Town(w)) = &self.town else {
+            return;
+        };
+        self.raids.retain(|id, _| raids.iter().any(|r| r.0 == *id));
+        for &(id, street) in raids {
+            self.raids.entry(id).or_insert_with(|| {
+                let (at, yaw) = raid_mooring(w, street);
+                (at, pirate_solids(at, yaw))
+            });
+        }
+    }
+
     pub fn new(w: &TownWorld) -> Self {
         let liner = w
             .landmarks
@@ -255,6 +296,8 @@ impl Airships {
                 .map(|r| pirate_solids(r.ship(), r.ship_yaw()))
                 .unwrap_or_default(),
             pirate_at: roost.map(|r| r.ship()),
+            raids: BTreeMap::new(),
+            town: None,
         }
     }
 
@@ -278,6 +321,11 @@ impl Airships {
         if let Some(c) = self.pirate_at {
             if near(c, AIRSHIP_LENGTH * 0.5 + 12.0) {
                 out.extend(self.pirate.iter().cloned());
+            }
+        }
+        for (c, solids) in self.raids.values() {
+            if near(*c, AIRSHIP_LENGTH * 0.5 + 12.0) {
+                out.extend(solids.iter().cloned());
             }
         }
         out

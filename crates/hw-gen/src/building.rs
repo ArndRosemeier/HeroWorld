@@ -13,7 +13,7 @@
 
 use crate::city::DistrictKind;
 use crate::geom::Rect;
-use crate::style::{Look, Vernacular};
+use crate::style::{Crown, Look, Roof, Vernacular};
 use glam::{DVec2, DVec3};
 use hw_core::{Seed, StableId};
 
@@ -269,6 +269,45 @@ impl BuildingSite {
     /// Total height to the roof.
     pub fn height(&self) -> f64 {
         self.usage.ground_height() + FLOOR_HEIGHT * self.floors.saturating_sub(1) as f64
+    }
+
+    /// The highest point of the building as drawn, above its ground floor:
+    /// the walls' [`Self::height`] and whatever stands on the roof (a
+    /// pitched roof and its chimneys, a dome, a tower's crown and spire, a
+    /// water tank, the works chimney). An upper bound from the look alone,
+    /// no plan needed; it follows the client's roofs and crowns
+    /// (`buildingmesh::roof`, `crown`): keep the two in step. What an
+    /// airship has to clear ([`crate::urban::airspace`]).
+    pub fn top(&self) -> f64 {
+        let look = self.look();
+        let w = self.size.min_element();
+        let roof = match look.roof {
+            Roof::Flat => {
+                // Three shrinking tiers (4.2 + 3.5 + 2.8 m and trims), then
+                // what tops them.
+                let tiers = 11.4;
+                let crown = match look.crown {
+                    Crown::None => 0.0,
+                    Crown::Stepped => tiers,
+                    Crown::Fins => tiers + 12.0,
+                    Crown::Spire => tiers + 32.0 + 0.5,
+                    Crown::Mast => 3.0 + 26.0 + 0.6,
+                    // The dome, its lantern and finial, or the Doctor's coil.
+                    Crown::Dome => 3.3 + w * 0.32 + crate::urban::menace::COIL_LOAD + 4.0,
+                };
+                // Rooftop gear, a water tank or a taxi pad's beacons.
+                crown.max(look.parapet).max(7.0)
+            }
+            // The pitch is capped at 14 m; chimneys stand over the ridge.
+            Roof::Gable | Roof::Hip => 14.0 + 1.9,
+            Roof::Mansard => 2.6 + 2.0,
+            Roof::Dome => 1.6 + w * 0.42 + 0.5,
+            Roof::Swoop => 3.2,
+            // The works chimney.
+            Roof::Sawtooth => 17.0,
+        };
+        // A corner tower's drum stands 2.6 m over the roof deck.
+        self.height() + roof.max(3.0)
     }
 }
 

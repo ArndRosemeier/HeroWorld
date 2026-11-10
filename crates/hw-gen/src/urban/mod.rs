@@ -18,6 +18,7 @@
 //! The older [`crate::city`] generator stays in use until this one can
 //! replace it.
 
+pub mod airspace;
 pub mod area;
 pub mod atomic;
 pub mod deep;

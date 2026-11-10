@@ -561,7 +561,7 @@ impl Sim {
         sim.set_spawn(town.world.spawn_line());
         sim.town_population = town.population();
         sim.deep = deepspots::DeepSpots::new(town.world.clone());
-        sim.airships = airships::Airships::new(&town.world);
+        sim.airships = airships::Airships::with_raids(&town.world);
         sim.street = props::PropDamage::new(town.world.clone()).with_solids(town.obstacles.clone());
         sim.area = Some(town.area.clone());
         sim.taxis = taxi::Taxis::new(town.area.clone());
@@ -1057,6 +1057,14 @@ impl Sim {
             .map(|(m, _)| m.0.pos)
             .collect();
         let now = self.tick as f64 * DT;
+        let raids: Vec<(u32, DVec3)> = self
+            .incidents
+            .open
+            .iter()
+            .filter(|i| i.kind == incidents::IncidentKind::PirateRaid)
+            .map(|i| (i.id, i.at))
+            .collect();
+        self.airships.set_raids(&raids);
         let mut movers = rocket::solids(&self.rockets, now, &heroes, 25.0);
         movers.extend(self.airships.solids_near(&heroes, now));
         movers.extend(self.story.statue_solids());
