@@ -38,6 +38,18 @@ pub struct NightLights {
     at: Option<(i32, i32, u64)>,
 }
 
+/// A street lamp: a wide cone down from its head, casting shadows. A cone
+/// needs one shadow view where a point lamp needs six (a cube), and the
+/// heads are shaded, so the light falls on the street and the lower
+/// facades; the windows' own glow lights the walls above.
+fn street(at: Vec3, color: Color, intensity: f32, range: f32) -> Lamp {
+    Lamp::spot(at, Vec3::NEG_Y, STREET_CONE_DEG, color, intensity, range).shadows(true)
+}
+
+/// How wide a street lamp's cone is (degrees): from 4 to 6.6 m up it
+/// reaches 15 to 25 m across the street.
+const STREET_CONE_DEG: f32 = 150.0;
+
 /// The light of a street prop, if it has one.
 fn prop_light(town: &TownWorld, id: DetailId, p: &Prop) -> Option<Lamp> {
     // Lamps go dark or flicker by their number, the same on every machine.
@@ -68,15 +80,9 @@ fn prop_light(town: &TownWorld, id: DetailId, p: &Prop) -> Option<Lamp> {
         Vec3::new(q.x as f32, (p.y + up * p.scale) as f32, q.y as f32)
     };
     let lamp = match p.kind {
-        PropKind::Lamp(LampStyle::Lantern) => {
-            Lamp::point(at(0.0, 4.1), rgb(255, 196, 132), 10.0, 16.0).shadows(true)
-        }
-        PropKind::Lamp(LampStyle::Deco) => {
-            Lamp::point(at(0.0, 5.7), rgb(255, 214, 170), 14.0, 20.0).shadows(true)
-        }
-        PropKind::Lamp(LampStyle::Atomic) => {
-            Lamp::point(at(1.75, 6.6), rgb(205, 236, 255), 16.0, 22.0).shadows(true)
-        }
+        PropKind::Lamp(LampStyle::Lantern) => street(at(0.0, 4.1), rgb(255, 196, 132), 10.0, 16.0),
+        PropKind::Lamp(LampStyle::Deco) => street(at(0.0, 5.7), rgb(255, 214, 170), 14.0, 20.0),
+        PropKind::Lamp(LampStyle::Atomic) => street(at(1.75, 6.6), rgb(205, 236, 255), 16.0, 22.0),
         PropKind::Kiosk => Lamp::point(at(0.0, 2.4), rgb(255, 210, 120), 4.0, 7.0),
         PropKind::Fountain => Lamp::point(at(0.0, 2.6), rgb(140, 230, 255), 5.0, 9.0),
         PropKind::PhoneBooth => Lamp::point(at(0.0, 2.25), rgb(255, 214, 140), 3.0, 6.0),

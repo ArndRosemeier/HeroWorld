@@ -30,6 +30,19 @@ pub const DISTANT_DETAIL: f64 = 620.0;
 pub const CUT_RADIUS: f64 = 110.0;
 /// Faces per mesh, well inside a GPU buffer.
 const MESH_FACES: usize = 250_000;
+/// A full-detail cell draws its buildings in blocks of this edge (m), a
+/// few per cell side, each block twice: in full detail and in far detail.
+/// Engine culls (view, hidden behind facades, shadow maps) mesh by mesh, so
+/// a block is also what a facade can hide.
+const BLOCK: f64 = CELL / BLOCKS_PER_SIDE as f64;
+const BLOCKS_PER_SIDE: usize = 3;
+/// A block shows its full detail (window frames, sills, piers) while the
+/// camera is within this distance of its ground (m), and its far detail
+/// (a tenth of the triangles) beyond [`BLOCK_FAR`]. Window frames past
+/// that are a pixel or two; the full detail cost two million triangles a
+/// frame across the cells around the camera.
+const BLOCK_NEAR: f64 = 150.0;
+const BLOCK_FAR: f64 = BLOCK_NEAR + 25.0;
 
 /// The town's ground and water for Engine's world streaming, and the woods
 /// of the open country, streamed in tiles around the camera.
@@ -159,12 +172,72 @@ pub struct TownView {
     /// A finished cell going into the world a few meshes per frame (see
     /// [`Placing`]).
     placing: Option<Placing>,
+    /// The blocks of the cells drawn in full detail, each showing its full
+    /// or far drawing by the camera's distance (see [`BLOCK_NEAR`]).
+    blocks: BTreeMap<CellKey, Vec<Block>>,
+    /// Where the camera was at the last update (none yet: blocks show full
+    /// detail, for checks and tools that build a piece of the town).
+    eyes: Vec<DVec2>,
+}
+
+/// One block of a full-detail cell in the world: both drawings, one of
+/// them parked out of sight.
+struct Block {
+    lo: DVec2,
+    hi: DVec2,
+    near: Vec<EntityId>,
+    far: Vec<EntityId>,
+    near_shown: bool,
+}
+
+impl Block {
+    /// Shows the drawing `near` asks for.
+    fn show(&mut self, world: &mut World, near: bool) {
+        self.near_shown = near;
+        let (on, off) = if near {
+            (&self.near, &self.far)
+        } else {
+            (&self.far, &self.near)
+        };
+        for &id in on {
+            let _ = world.set_place(id, Place::new(0.0, 0.0, 0.0));
+        }
+        for &id in off {
+            let _ = world.set_place(id, Place::new(0.0, PARKED_Y, 0.0));
+        }
+    }
+
+    /// Whether the full drawing should show with the camera at `eyes`
+    /// (keeping what shows now between [`BLOCK_NEAR`] and [`BLOCK_FAR`]).
+    fn wants_near(&self, eyes: &[DVec2]) -> bool {
+        if eyes.is_empty() {
+            return true;
+        }
+        let d = eyes
+            .iter()
+            .map(|e| e.clamp(self.lo, self.hi).distance(*e))
+            .fold(f64::INFINITY, f64::min);
+        d < BLOCK_NEAR || (self.near_shown && d < BLOCK_FAR)
+    }
+}
+
+/// What a spawned mesh of a cell is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Part {
+    /// Roads, plinths, water, and the buildings of a cell not in full detail.
+    Solid,
+    /// Lawns: flat, no shadow.
+    Flat,
+    /// Block `i`'s full drawing.
+    Near(usize),
+    /// Block `i`'s far drawing.
+    Far(usize),
 }
 
 /// Meshes of one cell put into the world per frame. Engine uploads each new
 /// mesh in the frame after its spawn (about a millisecond each); a whole
 /// cell (25 to 40 meshes) at once stopped a frame for 30 to 250 ms.
-const MESHES_PER_FRAME: usize = 6;
+const MESHES_PER_FRAME: usize = 10;
 
 /// Where a cell's meshes wait, out of sight, until all of them are uploaded:
 /// then they move into place together and the old drawing goes in the same
@@ -175,10 +248,12 @@ const PARKED_Y: f32 = -100_000.0;
 struct Placing {
     key: CellKey,
     detail: Detail,
-    /// Still to spawn: the mesh and whether it is flat ground (no shadow).
-    meshes: Vec<(PreparedMesh, bool)>,
+    /// Still to spawn, and what each mesh is.
+    meshes: Vec<(PreparedMesh, Part)>,
     /// Spawned so far, parked at [`PARKED_Y`].
-    ids: Vec<EntityId>,
+    ids: Vec<(EntityId, Part)>,
+    /// The blocks' boxes (full-detail cells).
+    blocks: Vec<(DVec2, DVec2)>,
     plans: Vec<(u64, Arc<BuildingPlan>)>,
     spots: Vec<IndoorSpots>,
     doors: CellDoors,
@@ -220,6 +295,8 @@ struct CellMeshes {
     /// world was 20-60 ms on the main thread when the meshes were built
     /// and their facade maps hashed there.
     solid: Vec<PreparedMesh>,
+    /// Full-detail cells: each block's box, full and far drawing.
+    blocks: Vec<BlockMeshes>,
     lawns: Vec<PreparedMesh>,
     water: Option<PreparedMesh>,
     /// Plans the worker had to make, for the cache.
@@ -227,6 +304,14 @@ struct CellMeshes {
     /// Places to stand on the floors drawn open: building, floor, places.
     spots: Vec<IndoorSpots>,
     doors: CellDoors,
+}
+
+/// One block's drawings, made on a worker.
+struct BlockMeshes {
+    lo: DVec2,
+    hi: DVec2,
+    near: Vec<PreparedMesh>,
+    far: Vec<PreparedMesh>,
 }
 
 /// The places to stand on one building's floor drawn open.
@@ -354,6 +439,21 @@ fn make_cell(job: CellJob) -> CellMeshes {
             draw_join(&mut b, &world, &roads, &j);
         }
     }
+    // Full detail: the buildings go into blocks, each drawn in full and in
+    // far detail (see BLOCK_NEAR).
+    let blocked = detail == Detail::Near;
+    let mut blocks: Vec<[MeshBuilder; 2]> = if blocked {
+        (0..BLOCKS_PER_SIDE * BLOCKS_PER_SIDE)
+            .map(|_| [MeshBuilder::new(), MeshBuilder::new()])
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let block_of = |p: DVec2| {
+        let q = ((p - lo) / BLOCK).floor();
+        let side = BLOCKS_PER_SIDE as f64 - 1.0;
+        q.y.clamp(0.0, side) as usize * BLOCKS_PER_SIDE + q.x.clamp(0.0, side) as usize
+    };
     // Buildings: each drawn at the town's block height, then lifted to
     // its own ground, on a plinth where the ground falls away.
     for cb in buildings {
@@ -383,7 +483,15 @@ fn make_cell(job: CellJob) -> CellMeshes {
                     });
                 }
             }
-            b.append(one, lift);
+            if blocked {
+                let [near, far] = &mut blocks[block_of(centre(wb))];
+                near.append(one, lift);
+                let mut two = MeshBuilder::new();
+                add_building(&mut two, &plan, wb.site.district, cb.look, Detail::Far);
+                far.append(two, lift);
+            } else {
+                b.append(one, lift);
+            }
             // Up close, the doors are their own moving leaves.
             if detail == Detail::Near {
                 let (d, p) = crate::doorview::door_spots(&plan, cb.id, wb.base, cb.look);
@@ -393,14 +501,23 @@ fn make_cell(job: CellJob) -> CellMeshes {
         }
         if wb.base - wb.low > 0.05 {
             // The plinth is the building's own base stone.
-            b.tex = Some(crate::facades::facade(&plan).base);
-            b.prism(
-                &wb.site.corners(),
-                wb.low - 1.0,
-                wb.base,
-                rgb(150, 142, 128),
-            );
-            b.tex = None;
+            let plinth = |m: &mut MeshBuilder| {
+                m.tex = Some(crate::facades::facade(&plan).base);
+                m.prism(
+                    &wb.site.corners(),
+                    wb.low - 1.0,
+                    wb.base,
+                    rgb(150, 142, 128),
+                );
+                m.tex = None;
+            };
+            if blocked {
+                for m in &mut blocks[block_of(centre(wb))] {
+                    plinth(m);
+                }
+            } else {
+                plinth(&mut b);
+            }
         }
         if b.face_count() > MESH_FACES {
             solid.extend(std::mem::take(&mut b).finish_parts());
@@ -409,6 +526,27 @@ fn make_cell(job: CellJob) -> CellMeshes {
     if !b.is_empty() {
         solid.extend(b.finish_parts());
     }
+    let parts = |m: MeshBuilder| -> Vec<PreparedMesh> {
+        if m.is_empty() {
+            return Vec::new();
+        }
+        m.finish_parts().into_iter().map(Mesh::prepare).collect()
+    };
+    let blocks: Vec<BlockMeshes> = blocks
+        .into_iter()
+        .enumerate()
+        .filter(|(_, [near, _])| !near.is_empty())
+        .map(|(i, [near, far])| {
+            let at =
+                lo + DVec2::new((i % BLOCKS_PER_SIDE) as f64, (i / BLOCKS_PER_SIDE) as f64) * BLOCK;
+            BlockMeshes {
+                lo: at,
+                hi: at + DVec2::splat(BLOCK),
+                near: parts(near),
+                far: parts(far),
+            }
+        })
+        .collect();
     // Lawns and meadows, finer close by.
     // (Across town, past DISTANT_DETAIL, Engine's own green ground is
     // enough under the haze.)
@@ -433,6 +571,7 @@ fn make_cell(job: CellJob) -> CellMeshes {
         stamp,
         detail,
         solid: solid.into_iter().map(Mesh::prepare).collect(),
+        blocks,
         lawns: lawns.into_iter().map(Mesh::prepare).collect(),
         water: water.map(Mesh::prepare),
         plans,
@@ -464,6 +603,8 @@ impl TownView {
             stamps: BTreeMap::new(),
             placing: None,
             next_stamp: 0,
+            blocks: BTreeMap::new(),
+            eyes: Vec::new(),
         };
         v.cut_focus = v
             .tallest_near(v.world.spawn_line().0, 300.0)
@@ -765,6 +906,7 @@ impl TownView {
     /// unlimited: then it is planned on the spot).
     pub fn update(&mut self, world: &mut World, eye: DVec2, budget_ms: f64) {
         self.drop_far(world, &[eye]);
+        self.update_blocks(world, &[eye]);
         // A cell the background path left half placed goes in now.
         while self.placing.is_some() {
             self.step_placing(world, usize::MAX, &[eye]);
@@ -799,6 +941,7 @@ impl TownView {
     /// any, and its detail follows the nearest.
     pub fn update_background_around(&mut self, world: &mut World, eyes: &[DVec2], budget_ms: f64) {
         self.drop_far(world, eyes);
+        self.update_blocks(world, eyes);
         let mut workers = self.workers.take().unwrap_or_else(Workers::start);
         let start = std::time::Instant::now();
         // A few meshes per frame: one cell at a time, the next only when the
@@ -946,6 +1089,7 @@ impl TownView {
             self.plans.remove(&i);
         }
         self.built.remove(&k);
+        self.blocks.remove(&k);
         self.stamps.remove(&k);
         self.spots.remove(&k);
         if self.doors.remove(&k).is_some() {
@@ -1039,10 +1183,8 @@ impl TownView {
     /// Takes a finished cell to put in over the next frames.
     fn start_placing(&mut self, m: CellMeshes) {
         debug_assert!(self.placing.is_none(), "one cell is placed at a time");
-        let mut meshes: Vec<(PreparedMesh, bool)> = Vec::new();
-        meshes.extend(m.solid.into_iter().map(|mesh| (mesh, false)));
-        meshes.extend(m.lawns.into_iter().map(|mesh| (mesh, true)));
-        meshes.extend(m.water.into_iter().map(|mesh| (mesh, false)));
+        let (meshes, blocks) = cell_parts(m.solid, m.blocks, m.lawns, m.water);
+        let mut meshes = meshes;
         // Spawned from the end: keep the order the cell listed them in.
         meshes.reverse();
         self.placing = Some(Placing {
@@ -1050,6 +1192,7 @@ impl TownView {
             detail: m.detail,
             ids: Vec::with_capacity(meshes.len()),
             meshes,
+            blocks,
             plans: m.plans,
             spots: m.spots,
             doors: m.doors,
@@ -1075,19 +1218,19 @@ impl TownView {
             self.finish_placing(world, p);
             return 0;
         }
+        // Engine's upload of a new mesh costs about a millisecond plus its
+        // size: count a mesh by its triangles too, so a frame takes many
+        // small block meshes or a few big ones.
         let mut n = 0;
-        while n < max {
-            let Some((mesh, flat)) = p.meshes.pop() else {
+        let mut triangles = 0;
+        while n < max && triangles < TRIANGLES_PER_FRAME {
+            let Some((mesh, part)) = p.meshes.pop() else {
                 break;
             };
-            let id = world.spawn_prepared(mesh);
+            triangles += mesh.triangle_count();
+            let id = spawn_part(world, mesh, part, p.key);
             let _ = world.set_place(id, Place::new(0.0, PARKED_Y, 0.0));
-            if flat {
-                // Flat ground casts no shadow worth its cost.
-                let _ = world.set_casts_shadow(id, false);
-            }
-            world.set_name(id, format!("town cell {} {}", p.key.0, p.key.1));
-            p.ids.push(id);
+            p.ids.push((id, part));
             n += 1;
         }
         n
@@ -1099,9 +1242,7 @@ impl TownView {
         for e in self.entities.remove(&k).unwrap_or_default() {
             world.despawn(e);
         }
-        for &id in &p.ids {
-            let _ = world.set_place(id, Place::new(0.0, 0.0, 0.0));
-        }
+        let ids = self.show_parts(world, k, p.ids, p.blocks);
         if self.buildings.contains_key(&k) {
             self.plans.extend(p.plans);
         }
@@ -1112,8 +1253,8 @@ impl TownView {
         }
         self.set_doors(k, p.doors);
         crate::hitch::count("town cells placed", 1);
-        crate::hitch::count("town meshes spawned", p.ids.len() as u64);
-        self.entities.insert(k, p.ids);
+        crate::hitch::count("town meshes spawned", ids.len() as u64);
+        self.entities.insert(k, ids);
         self.built.insert(k, p.detail);
     }
 
@@ -1122,7 +1263,7 @@ impl TownView {
     fn abandon_placing(&mut self, world: &mut World, k: CellKey) {
         if self.placing.as_ref().is_some_and(|p| p.key == k) {
             let p = self.placing.take().expect("checked above");
-            for id in p.ids {
+            for (id, _) in p.ids {
                 world.despawn(id);
             }
         }
@@ -1144,27 +1285,76 @@ impl TownView {
             self.spots.insert(k, m.spots);
         }
         self.set_doors(k, m.doors);
-        let mut ids: Vec<EntityId> = m
-            .solid
+        let (meshes, blocks) = cell_parts(m.solid, m.blocks, m.lawns, m.water);
+        let spawned = meshes
             .into_iter()
-            .map(|mesh| world.spawn_prepared(mesh))
+            .map(|(mesh, part)| (spawn_part(world, mesh, part, k), part))
             .collect();
-        for mesh in m.lawns {
-            let id = world.spawn_prepared(mesh);
-            // Flat ground casts no shadow worth its cost.
-            let _ = world.set_casts_shadow(id, false);
-            ids.push(id);
-        }
-        if let Some(mesh) = m.water {
-            ids.push(world.spawn_prepared(mesh));
-        }
-        for &id in &ids {
-            world.set_name(id, format!("town cell {} {}", k.0, k.1));
-        }
+        let ids = self.show_parts(world, k, spawned, blocks);
         crate::hitch::count("town cells placed", 1);
         crate::hitch::count("town meshes spawned", ids.len() as u64);
         self.entities.insert(k, ids);
         self.built.insert(k, m.detail);
+    }
+
+    /// Puts a cell's spawned meshes in place: everything but the blocks'
+    /// drawings at once, and each block's full or far drawing by the
+    /// camera's distance. Returns every entity of the cell.
+    fn show_parts(
+        &mut self,
+        world: &mut World,
+        k: CellKey,
+        ids: Vec<(EntityId, Part)>,
+        boxes: Vec<(DVec2, DVec2)>,
+    ) -> Vec<EntityId> {
+        let mut blocks: Vec<Block> = boxes
+            .into_iter()
+            .map(|(lo, hi)| Block {
+                lo,
+                hi,
+                near: Vec::new(),
+                far: Vec::new(),
+                near_shown: false,
+            })
+            .collect();
+        let mut all = Vec::with_capacity(ids.len());
+        for (id, part) in ids {
+            match part {
+                Part::Solid | Part::Flat => {
+                    let _ = world.set_place(id, Place::new(0.0, 0.0, 0.0));
+                }
+                Part::Near(i) => blocks[i].near.push(id),
+                Part::Far(i) => blocks[i].far.push(id),
+            }
+            all.push(id);
+        }
+        for b in &mut blocks {
+            let near = b.wants_near(&self.eyes);
+            b.show(world, near);
+        }
+        if blocks.is_empty() {
+            self.blocks.remove(&k);
+        } else {
+            self.blocks.insert(k, blocks);
+        }
+        all
+    }
+
+    /// Switches blocks between their full and far drawing as the camera
+    /// moves (a few a second while walking).
+    fn update_blocks(&mut self, world: &mut World, eyes: &[DVec2]) {
+        self.eyes = eyes.to_vec();
+        let mut switched = 0;
+        for b in self.blocks.values_mut().flatten() {
+            let near = b.wants_near(eyes);
+            if near != b.near_shown {
+                b.show(world, near);
+                switched += 1;
+            }
+        }
+        if switched > 0 {
+            crate::hitch::count("town blocks switched detail", switched);
+        }
     }
 
     /// Where a ray from `origin` along `dir` first meets the ground.
@@ -1181,6 +1371,43 @@ impl TownView {
         }
         None
     }
+}
+
+/// Most triangles a frame spawns of a cell being placed (and at most
+/// [`MESHES_PER_FRAME`] meshes; at least one mesh).
+const TRIANGLES_PER_FRAME: usize = 60_000;
+
+/// A cell's meshes in the order they are spawned, each with what it is,
+/// and its blocks' boxes.
+#[allow(clippy::type_complexity)]
+fn cell_parts(
+    solid: Vec<PreparedMesh>,
+    blocks: Vec<BlockMeshes>,
+    lawns: Vec<PreparedMesh>,
+    water: Option<PreparedMesh>,
+) -> (Vec<(PreparedMesh, Part)>, Vec<(DVec2, DVec2)>) {
+    let mut meshes: Vec<(PreparedMesh, Part)> = Vec::new();
+    let mut boxes = Vec::with_capacity(blocks.len());
+    meshes.extend(solid.into_iter().map(|m| (m, Part::Solid)));
+    for (i, b) in blocks.into_iter().enumerate() {
+        boxes.push((b.lo, b.hi));
+        meshes.extend(b.near.into_iter().map(|m| (m, Part::Near(i))));
+        meshes.extend(b.far.into_iter().map(|m| (m, Part::Far(i))));
+    }
+    meshes.extend(lawns.into_iter().map(|m| (m, Part::Flat)));
+    meshes.extend(water.into_iter().map(|m| (m, Part::Solid)));
+    (meshes, boxes)
+}
+
+/// Spawns one mesh of cell `k` (at the origin; the caller places it).
+fn spawn_part(world: &mut World, mesh: PreparedMesh, part: Part, k: CellKey) -> EntityId {
+    let id = world.spawn_prepared(mesh);
+    if part == Part::Flat {
+        // Flat ground casts no shadow worth its cost.
+        let _ = world.set_casts_shadow(id, false);
+    }
+    world.set_name(id, format!("town cell {} {}", k.0, k.1));
+    id
 }
 
 /// Flat water over the rivers and lakes of one cell: a square per land-grid
@@ -1448,4 +1675,58 @@ fn nearest(eyes: &[DVec2], p: DVec2) -> f64 {
     eyes.iter()
         .map(|e| e.distance(p))
         .fold(f64::INFINITY, f64::min)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A full-detail cell draws its buildings in blocks, each with a far
+    /// drawing much lighter than its full one; a far cell has no blocks.
+    #[test]
+    #[ignore = "daily (gameplay): about 13 s in a debug build"]
+    fn full_detail_cells_draw_blocks_with_a_light_far_copy() {
+        let seed = hw_core::Seed(1);
+        let w = Arc::new(TownWorld::generate(
+            seed,
+            hw_gen::urban::TownParams::sample(seed, 40_000.0),
+        ));
+        let (core, _) = w.spawn_line();
+        let mut v = TownView::new(w);
+        let k = cell_of(core);
+        let tris = |m: &[PreparedMesh]| m.iter().map(PreparedMesh::triangle_count).sum::<usize>();
+        let near = make_cell(v.cell_job(k, Detail::Near));
+        assert!(near.blocks.len() > 1, "{} blocks", near.blocks.len());
+        let (full, far): (usize, usize) = near
+            .blocks
+            .iter()
+            .map(|b| (tris(&b.near), tris(&b.far)))
+            .fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+        assert!(far > 0 && far * 3 < full, "full {full}, far {far}");
+        for b in &near.blocks {
+            assert!(b.hi.x - b.lo.x == BLOCK && b.hi.y - b.lo.y == BLOCK);
+        }
+        let away = make_cell(v.cell_job(k, Detail::Far));
+        assert!(away.blocks.is_empty());
+        assert!(tris(&away.solid) < full);
+    }
+
+    #[test]
+    fn a_block_switches_detail_with_some_slack() {
+        let mut b = Block {
+            lo: DVec2::ZERO,
+            hi: DVec2::splat(BLOCK),
+            near: Vec::new(),
+            far: Vec::new(),
+            near_shown: false,
+        };
+        let at = |d: f64| [DVec2::new(BLOCK + d, BLOCK * 0.5)];
+        assert!(b.wants_near(&at(BLOCK_NEAR - 1.0)));
+        assert!(!b.wants_near(&at(BLOCK_NEAR + 1.0)));
+        b.near_shown = true;
+        assert!(b.wants_near(&at(BLOCK_NEAR + 1.0)));
+        assert!(!b.wants_near(&at(BLOCK_FAR + 1.0)));
+        // With no camera known (checks, tools) everything is in full detail.
+        assert!(b.wants_near(&[]));
+    }
 }

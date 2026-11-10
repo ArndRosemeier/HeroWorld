@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.166 (2026-11-11)
+
+- Smoother frame rate in the thick of the city. Buildings show their full detail (window frames, sills, piers) only within about 150 m, block by block, and their lighter drawing beyond; parts of town hidden behind facades are skipped in smaller pieces.
+- Sun shadows are no longer drawn again every frame while you walk: they are kept until you have moved a good way or the sun has turned.
+- Street lamps at night light the street in a cone from their heads, which costs a sixth of the shadow work.
+
 ## 0.165 (2026-11-10)
 
 - House fires no longer come up for now. They will come back later as a city event with a fire brigade.
