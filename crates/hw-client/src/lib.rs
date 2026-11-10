@@ -7,6 +7,7 @@ pub mod bench;
 pub mod buildingmesh;
 pub mod camclip;
 pub mod carmesh;
+pub mod chat;
 pub mod citybuild;
 pub mod citymesh;
 pub mod crash;

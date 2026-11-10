@@ -127,6 +127,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | M | Town map with the radio's calls |
 | N | Minimap on or off |
 | O | Free camera |
+| Enter or / | Chat: type a line, Enter says it (over your head and in the chat window), Escape cancels |
 | K | Knock nearby townspeople over (a ragdoll test, still in the game) |
 | Escape | Menu: back, settings, controls, quit; frees a locked mouse first |
 
@@ -964,6 +965,15 @@ on the way. Rides are free.
   fly higher; marks you, friends, landmarks and radio calls; `minimap.rs`, `mapraster.rs`).
 - **Windows:** powers (B: karma, level, shop, give up, faction standings), map (M), menu
   (Escape: settings, controls, quit).
+- **Chat window** (bottom left, beside the power tray or above it on narrow screens;
+  drag its corner to resize; `hw-client/src/chat.rs`): one log with a tab per channel, as in
+  EverQuest and City of Heroes. Today there is one channel, **Local**: what is said near the
+  hero. Gang warnings carry 70 m (`chat::SHOUT_RANGE`), other speech 35 m (`SAY_RANGE`):
+  mole folk thanking you, Hero Hall's heroes giving tips, Commander Starling on the wrist
+  radio (always heard), and what players type (Enter or `/` opens the line, Enter says it,
+  Escape cancels; your words also float over your hero). The same speaker repeating the same
+  words within 6 s is logged once; the log keeps the last 400 lines. Planned channels: team,
+  police radio, combat log (each is one more `chat::Channel`).
 - **Settings:** music and sound volume, reduced motion, picture quality Low to Ultra (each
   says what it shows), "keep it smooth" at 60 fps, VSync (vertical sync; off draws as many frames as the card can), field of view, look
   speed, inverted mouse.

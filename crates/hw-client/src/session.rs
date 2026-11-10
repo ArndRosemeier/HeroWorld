@@ -336,7 +336,7 @@ impl Session {
                         if let Some(l) = whole {
                             looks.whole.insert(player, l);
                         }
-                    } else if is_world_news(&m) {
+                    } else if is_world_news(&m) || matches!(m, ToClient::Chat { .. }) {
                         news.push(m);
                     } else {
                         if let ToClient::Joined { player, name } = &m {
@@ -511,6 +511,16 @@ impl Session {
         match self {
             Session::Local { host, .. } => (host.sent_tick() as f64 + frac) * hw_sim::DT,
             Session::Remote { interp, .. } => interp.render_tick() * hw_sim::DT,
+        }
+    }
+
+    /// Our hero says `text` out loud (the chat window's Local channel):
+    /// friends in the world hear it. Single player, nobody else does.
+    pub fn say(&mut self, text: &str) {
+        let text = text.to_string();
+        match self {
+            Session::Local { host, .. } => host.post(move |h, me| h.chat(me, &text)),
+            Session::Remote { conn, .. } => conn.chat(&text),
         }
     }
 

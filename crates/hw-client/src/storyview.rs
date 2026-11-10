@@ -38,6 +38,8 @@ pub struct StoryView {
     pub state: Option<State>,
     /// Lines still to show, and how long the first has been up (s).
     pub lines: VecDeque<Line>,
+    /// Lines said since the game last took them, for the chat log.
+    pub heard: Vec<Line>,
     shown: f32,
     /// The gold light over where to go, and where it stands.
     beam: Option<(EntityId, Vec3)>,
@@ -72,6 +74,7 @@ impl StoryView {
             held: *held as f32 / 255.0,
         };
         let said = lines(self.state, next);
+        self.heard.extend(said.iter().cloned());
         self.lines.extend(said);
         self.state = Some(next);
         true

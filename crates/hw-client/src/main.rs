@@ -426,6 +426,10 @@ fn main() -> EngineResult<()> {
     let mut radio = hw_client::radioview::Radio::default();
     let mut signal = hw_client::dispatchview::Signal::default();
     let mut story = hw_client::storyview::StoryView::default();
+    // The chat window (bottom left): what is said near the hero.
+    let mut chat = hw_client::chat::ChatLog::new();
+    // The pointer was locked when the chat line opened: lock it again after.
+    let mut chat_relock = false;
     let mut town_map = view == "map";
     // What was drawn last frame (for targeting), and a power key pressed
     // but not yet sent with a tick.
@@ -1863,6 +1867,23 @@ fn main() -> EngineResult<()> {
                 hw_client::crash::note("people", world_people);
                 hw_client::crash::note("room", session.room_code().unwrap_or("none"));
             }
+            // Enter opens the chat line, Escape closes it. Before the menu,
+            // so the Escape that closes the line opens no menu; and the
+            // Engine is told it was handled, so it does not quit either.
+            let menus_open = menu.open || debug.open || powers.open || hero_file.is_none();
+            if chat.keys(frame.ui.ctx(), menus_open) {
+                world.set_bind_listen(true);
+            }
+            // While typing the keys are the chat's: a locked pointer would let
+            // them through to the hero (Engine only holds them back from a
+            // free pointer), so it is freed until the line closes.
+            if chat.typing && world.pointer_lock() {
+                world.set_pointer_lock(false);
+                chat_relock = true;
+            } else if !chat.typing && chat_relock {
+                world.set_pointer_lock(true);
+                chat_relock = false;
+            }
             // Escape: the menu (settings, controls, quit).
             if menu.show(&frame.ui, world) {
                 world.request_exit();
@@ -2680,7 +2701,22 @@ fn main() -> EngineResult<()> {
             radio.solids = Some(solids.clone());
             fight.solids = Some(solids.clone());
             radio.town = Some(generated.world.clone());
+            // What players say: the chat window's Local channel.
+            for m in &news {
+                if let hw_net::ToClient::Chat { from, text } = m {
+                    let who = session
+                        .player_name(*from)
+                        .unwrap_or_else(|| "A hero".into());
+                    let voice = if who == name {
+                        hw_client::chat::Voice::Me
+                    } else {
+                        hw_client::chat::Voice::Player
+                    };
+                    chat.add(hw_client::chat::Channel::Local, &who, text, voice);
+                }
+            }
             news.retain(|m| match m {
+                hw_net::ToClient::Chat { .. } => false,
                 hw_net::ToClient::Story { .. } => {
                     story.hear(m);
                     false
@@ -3649,6 +3685,33 @@ fn main() -> EngineResult<()> {
                 let cam = world.camera();
                 let hero_at = session.my_position(&heroes).map(|p| p.as_vec3());
                 story.panel(frame.ui.ctx(), hero_at);
+                // The chat window: what was said near the hero this frame,
+                // Starling on the wrist radio, and what the player types.
+                {
+                    use hw_client::chat::{Channel, Voice};
+                    for s in fight.said.drain(..) {
+                        chat.hear(&s, hero_at);
+                    }
+                    for l in story.heard.drain(..) {
+                        chat.add(Channel::Local, l.who, &l.text, Voice::Ally);
+                    }
+                    chat.update(frame.dt);
+                    let (beside, above) = fightview::beside_tray(
+                        frame.ui.ctx().screen_rect().width(),
+                        powers.tray.second_row(),
+                    );
+                    if let Some(text) = chat.ui(frame.ui.ctx(), beside, above) {
+                        session.say(&text);
+                        // A friend's world sends our words back to us; our
+                        // own world does not.
+                        if !session.joined() {
+                            chat.add(Channel::Local, &name, &text, Voice::Me);
+                        }
+                        if let Some(h) = hero_at {
+                            fight.speech(h, &text);
+                        }
+                    }
+                }
                 radio.panel(
                     frame.ui.ctx(),
                     cam.eye(),

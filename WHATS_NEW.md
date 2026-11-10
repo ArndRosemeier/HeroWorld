@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.136 (2026-11-10)
+
+- New: a chat window, bottom left, like in City of Heroes and EverQuest. Its Local tab logs what is said near you: gangs warning you off their turf, mole folk thanking you, Hero Hall's heroes giving tips, and Commander Starling on your wrist radio, so you can read a line again after its bubble is gone.
+- Press Enter (or /) to say something yourself: it floats over your hero and goes into the log. Escape cancels.
+- More tabs (team, police radio, combat log) can come later.
+
 ## 0.135 (2026-11-10)
 
 - New in the debug menu (Ctrl+Shift+F12): a Log tab. It shows every key press and what became of it, all the way to the game's server and back, with a Copy button. Also in logs/debug.log.

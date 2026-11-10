@@ -8,6 +8,7 @@
 //! The server decides everything; this only shows the entity states and
 //! fight events it sends, and turns keys into input.
 
+use crate::chat::{self, Said, Voice};
 use crate::tray::{self, Tray};
 use engine::prelude::*;
 use engine::ui::egui;
@@ -98,6 +99,37 @@ pub fn enemy_name(kind: EntityKind) -> (&'static str, &'static str) {
             (s.name, s.rank)
         }
         None => ("", ""),
+    }
+}
+
+/// The power tray's width at the bottom of a screen `screen_w` points
+/// wide, and one slot's width.
+fn tray_width(screen_w: f32) -> (f32, f32) {
+    let room = (screen_w - 40.0 - 18.0) / 10.0 - 6.0;
+    let slot_w = room.clamp(64.0, 104.0);
+    (12.0 + 10.0 * (slot_w + 6.0) + 6.0, slot_w)
+}
+
+/// Room for a window bottom left beside the power tray (points across),
+/// and how far up from the bottom the tray and its key hints reach, for a
+/// window that has to sit above it instead. `two_rows`: the Alt row shows.
+pub fn beside_tray(screen_w: f32, two_rows: bool) -> (f32, f32) {
+    let (w, _) = tray_width(screen_w);
+    let rows = if two_rows { 2.0 } else { 1.0 };
+    (
+        (screen_w - w) * 0.5 - 20.0,
+        112.0 + (rows - 1.0) * ROW_STEP + 26.0,
+    )
+}
+
+/// A speaker's name for the chat log: their kind ("Mutant Brute"), or
+/// `otherwise` when not known.
+fn speaker_name(speaker: Option<&EntityState>, otherwise: &str) -> String {
+    let name = speaker.map_or("", |s| enemy_name(s.kind).0);
+    if name.is_empty() {
+        otherwise.to_string()
+    } else {
+        name.to_string()
     }
 }
 
@@ -252,6 +284,9 @@ pub struct FightView {
     last_tab: f32,
     sounds: Option<Sounds>,
     floaters: Vec<Floater>,
+    /// Words said out loud since the game last took them, for the chat
+    /// window's Local channel (see `chat.rs`).
+    pub said: Vec<crate::chat::Said>,
     /// Camera shake strength (decays).
     shake: f32,
     /// A red edge when our hero is hit.
@@ -324,6 +359,7 @@ impl FightView {
             cycled: Vec::new(),
             last_tab: f32::NEG_INFINITY,
             sounds: None,
+            said: Vec::new(),
             floaters: Vec::new(),
             shake: 0.0,
             hurt: 0.0,
@@ -1152,12 +1188,20 @@ impl FightView {
                         hw_sim::factions::warnings(hw_sim::factions::of_enemy(k))
                     });
                     let line = lines[(e.from.0 as usize + e.tick as usize / 7) % lines.len()];
-                    let head = all.iter().find(|x| x.id == e.from).map_or(at, pos);
+                    let speaker = all.iter().find(|x| x.id == e.from);
+                    let head = speaker.map_or(at, pos);
                     self.speak(
                         head + Vec3::Y * 2.3,
                         line.to_string(),
                         egui::Color32::from_rgb(255, 120, 90),
                     );
+                    self.said.push(Said {
+                        at: head,
+                        range: chat::SHOUT_RANGE,
+                        who: speaker_name(speaker, "A gang member"),
+                        text: line.to_string(),
+                        voice: Voice::Villain,
+                    });
                     if on_me {
                         self.note = Some(("You're on their turf: back off, or fight.".into(), 3.0));
                     }
@@ -1170,12 +1214,20 @@ impl FightView {
                         "Molehaven will hear of you, friend.",
                     ];
                     let line = THANKS[(e.from.0 as usize + e.tick as usize / 7) % THANKS.len()];
-                    let head = all.iter().find(|x| x.id == e.from).map_or(at, pos);
+                    let speaker = all.iter().find(|x| x.id == e.from);
+                    let head = speaker.map_or(at, pos);
                     self.speak(
                         head + Vec3::Y * 2.3,
                         line.to_string(),
                         egui::Color32::from_rgb(200, 170, 255),
                     );
+                    self.said.push(Said {
+                        at: head,
+                        range: chat::SAY_RANGE,
+                        who: speaker_name(speaker, "A mole person"),
+                        text: line.to_string(),
+                        voice: Voice::Folk,
+                    });
                     if on_me {
                         self.note = Some(("Molehaven likes you better now.".into(), 4.0));
                     }
@@ -1196,6 +1248,13 @@ impl FightView {
                         format!("{name}: {tip}"),
                         egui::Color32::from_rgb(255, 214, 110),
                     );
+                    self.said.push(Said {
+                        at: head,
+                        range: chat::SAY_RANGE,
+                        who: name.to_string(),
+                        text: tip.to_string(),
+                        voice: Voice::Ally,
+                    });
                     if on_me {
                         self.note = Some((format!("{name}: {tip}"), 7.0));
                     }
@@ -1365,6 +1424,16 @@ impl FightView {
             life: 1.3,
             rise: 0.9,
         });
+    }
+
+    /// Words someone says, over their head for a few seconds (`head` is
+    /// where they stand; the words float a little above it).
+    pub fn speech(&mut self, head: Vec3, text: &str) {
+        self.speak(
+            head + Vec3::Y * 2.3,
+            text.to_string(),
+            crate::chat::Voice::Me.colour(),
+        );
     }
 
     /// Words someone says, over their head for a few seconds.
@@ -1937,9 +2006,7 @@ impl FightView {
         if let Some(c) = me.and_then(|m| m.combat) {
             let dragging = egui::DragAndDrop::has_payload_of_type::<tray::Drag>(ctx);
             let rows = if tray.second_row() || dragging { 2 } else { 1 };
-            let room = (screen.width() - 40.0 - 18.0) / 10.0 - 6.0;
-            let slot_w = room.clamp(64.0, 104.0);
-            let w = 12.0 + 10.0 * (slot_w + 6.0) + 6.0;
+            let (w, slot_w) = tray_width(screen.width());
             let extra = (rows - 1) as f32 * ROW_STEP;
             let base = egui::pos2(screen.center().x - w * 0.5, screen.bottom() - 112.0 - extra);
             let panel = egui::Rect::from_min_size(base, egui::vec2(w, 98.0 + extra));

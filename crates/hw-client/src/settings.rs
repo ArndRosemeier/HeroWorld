@@ -199,6 +199,10 @@ pub const CONTROLS: &[(&str, &str)] = &[
     ("M", "Town map (the wrist radio's incidents)"),
     ("N", "Minimap on or off"),
     ("O", "Free camera"),
+    (
+        "Enter or /",
+        "Chat: type a line, Enter says it, Escape cancels",
+    ),
     ("Escape", "This menu; frees the mouse when it is locked"),
     (
         "Ctrl+Shift+F12",

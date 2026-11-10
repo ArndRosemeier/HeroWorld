@@ -27,7 +27,7 @@
 //! frame's time. Things drawn from time alone (traffic, people, the sky)
 //! read it, and glide every frame.
 
-use crate::host::{Host, PlayerInfo};
+use crate::host::{Host, HostEvent, PlayerInfo};
 use hw_core::NetId;
 use hw_net::{EntityState, InputState, PlayerId, ToClient};
 use std::collections::{BTreeMap, VecDeque};
@@ -350,12 +350,20 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
     let mut busy = Duration::ZERO;
     let mut ticks = 0u32;
     let mut players: Option<BTreeMap<PlayerId, PlayerInfo>> = None;
+    let mut heard = Vec::new();
     while let Ok(c) = rx.recv() {
         match c {
             Cmd::Tick(input) => {
                 let t = Instant::now();
                 host.sim.set_input(me, input);
                 for e in host.tick() {
+                    // What friends say reaches our chat window too.
+                    if let HostEvent::Chat { player, text, .. } = &e {
+                        heard.push(ToClient::Chat {
+                            from: *player,
+                            text: text.clone(),
+                        });
+                    }
                     println!("{e:?}");
                 }
                 if let Some(n) = colossus_break {
@@ -383,7 +391,11 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
                 let p = Published {
                     view,
                     players_changed: changed,
-                    news: host.take_local_news(),
+                    news: {
+                        let mut news = host.take_local_news();
+                        news.append(&mut heard);
+                        news
+                    },
                     fx: host.take_fx(),
                     sheet: host.take_local_sheet(),
                     log: host.take_power_log(),
