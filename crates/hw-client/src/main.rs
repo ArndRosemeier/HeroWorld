@@ -82,7 +82,7 @@
 //! checks a whole city without the game).
 //! Stutters are written to `logs/hitches.log` (see `hitch.rs`; `HW_HITCH_LOG`,
 //! `HW_HITCH_MS`); `HW_AT=x,y,z` with `HW_YAW` starts the hero at a spot a
-//! report names; `HW_CAM_DIST` and `HW_CAM_PITCH` set the hero camera.
+//! report names; `HW_CAM_DIST`, `HW_CAM_PITCH` and `HW_CAM_YAW` set the hero camera.
 
 mod session;
 
@@ -453,6 +453,8 @@ fn main() -> EngineResult<()> {
     let mut powers = PowersView::new();
     // Until when our hero strikes the level-up power pose.
     let mut power_pose_until = f32::NEG_INFINITY;
+    // The hand goes to the temple to switch the police visor until then.
+    let mut visor_tap_until = f32::NEG_INFINITY;
     powers.tray = profile.tray.clone();
     let mut hero_file: Option<hw_net::Sheet> = profile.hero.clone();
     // HW_LEVEL=n starts a hero at level n with karma to spend (for trying
@@ -1506,6 +1508,10 @@ fn main() -> EngineResult<()> {
     }
     if let Some(p) = cam_env("HW_CAM_PITCH") {
         hero_cam.pitch = p.clamp(-80.0, 80.0);
+    }
+    // `HW_CAM_YAW`: turned round the hero by that many degrees (its face).
+    if let Some(y) = cam_env("HW_CAM_YAW") {
+        hero_cam.yaw += y;
     }
     // Each hero's entity, and whether it is the Actors character yet.
     let mut hero_entities: BTreeMap<hw_core::NetId, (EntityId, bool)> = BTreeMap::new();
@@ -3393,6 +3399,18 @@ fn main() -> EngineResult<()> {
                     {
                         ("power pose", true)
                     }
+                    // Switching the police visor: a hand to the temple.
+                    None if mine == Some(h.id)
+                        && frame.time < visor_tap_until
+                        && carry.is_none()
+                        && matches!(d.clip, "idle" | "walk") =>
+                    {
+                        if d.clip == "walk" {
+                            ("visor tap walk", true)
+                        } else {
+                            ("visor tap", true)
+                        }
+                    }
                     None => match carry {
                         Some(c) => (c, false),
                         None => (d.clip, d.once),
@@ -3424,7 +3442,8 @@ fn main() -> EngineResult<()> {
                                 | "carry jog"
                                 | "carry sprint"
                         )
-                        || (clip == "power pose" && h.grounded);
+                        || (matches!(clip, "power pose" | "visor tap" | "visor tap walk")
+                            && h.grounded);
                     let _ = world.set_foot_ik(e, on_ground.then(FootIk::default));
                     anim.shown = clip;
                 }
@@ -3829,9 +3848,14 @@ fn main() -> EngineResult<()> {
                 let me_state = mine.and_then(|id| heroes.iter().find(|e| e.id == id));
                 // The police visor first, so the HUD's panels sit over it.
                 {
-                    let hero = session.my_position(&heroes).map(|p| p.as_vec3());
                     let toggle = frame.input.pressed(Key::T) && !chat.typing && !on_ui_keys(frame);
-                    let why = visor.update(frame.dt, toggle, &radio, hero);
+                    let why = visor.update(frame.dt, toggle, &radio);
+                    if visor.take_tap() {
+                        visor_tap_until = frame.time + hw_client::visor::TAP_SECONDS;
+                    }
+                    // Over the hero's eyes, seen from behind.
+                    let body = mine.and_then(|m| hero_entities.get(&m)).map(|&(e, _)| e);
+                    visor.holo(world, body, world.camera().eye());
                     let level = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
                     let eye = world.camera().eye();
                     visor.draw(frame.ui.ctx(), view_proj, eye, &radio, level, why);

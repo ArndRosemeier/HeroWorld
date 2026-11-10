@@ -1,40 +1,49 @@
 //! The police visor: a hologram the City Patrol issues to licensed heroes.
-//! It shows where trouble is without lighting up the town: when a call
-//! comes in, when the hero gets near one, or when the player presses T, it
+//! It shows where trouble is without lighting up the town. A new call
+//! switches it on and it stays on until the player switches it off (T; T
+//! again switches it back on). It
 //! materialises in front of the hero's eyes (a bright line at eye height
 //! that opens out, flickering, into a faint amber screen with a rim, scan
 //! lines and the Patrol's star), marks each call with corner brackets, its
 //! name and distance (an arrow at the edge when it is out of sight), and
-//! dissolves again the same way.
+//! dissolves the same way when switched off.
 //!
-//! Drawn with egui over the 3D view; no entities, so nothing in the world
+//! The screen is drawn with egui over the 3D view; nothing in the world
 //! glows over a call (the Hero Signal still does, for the worst trouble).
+//! Seen from behind (third person) the visor is also a see-through amber
+//! band of light over the hero's eyes ([`Visor::holo`]), opening and
+//! closing with the screen; the hero touches a hand to the temple to switch
+//! it ([`TAP_SECONDS`], the "visor tap" clips in [`crate::poses`]), and it
+//! switches a moment later, when the fingers get there.
 
 use crate::fightview::con_colour;
 use crate::radioview::{call_colour, Radio};
+use engine::prelude::*;
 use engine::ui::egui;
-use glam::{Mat4, Vec2, Vec3};
+use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 use std::f32::consts::{PI, TAU};
 
-/// How long a new call keeps the visor down (s).
+/// How long a new call pulses and is named "new" on the visor (s).
 pub const NEW_CALL_SECONDS: f32 = 8.0;
-/// Within this of a call (flat, m) the visor stays down.
-pub const NEAR_CALL: f32 = 150.0;
-/// How long T keeps it down (s).
-pub const ASKED_SECONDS: f32 = 10.0;
 /// Seconds to materialise.
 const IN_SECONDS: f32 = 0.55;
 /// Seconds to dissolve.
 const OUT_SECONDS: f32 = 0.4;
+/// How long the hero's hand-to-temple gesture takes (s).
+pub const TAP_SECONDS: f32 = 1.1;
+/// From the start of the gesture to the fingers at the temple, when the
+/// visor switches (s).
+const TAP_LEAD: f32 = 0.35;
 /// Its amber.
 const AMBER: (u8, u8, u8) = (255, 196, 92);
 
 /// Why the visor is down, for the first line on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Why {
+    /// On, with a call that has just come in.
     NewCall,
-    Near,
-    Asked,
+    /// On.
+    On,
 }
 
 /// The visor's state: how far it has materialised and why it is wanted.
@@ -42,11 +51,9 @@ pub enum Why {
 pub struct Visor {
     /// 0 gone, 1 fully there.
     pub shown: f32,
-    /// Seconds T still keeps it down.
-    asked: f32,
-    /// The player put it away: it stays away until a new call comes in.
-    quiet: bool,
-    /// The newest call id seen (a newer one ends `quiet`).
+    /// Switched on: it stays on until the player switches it off (T).
+    on: bool,
+    /// The newest call id seen (a newer one switches it on).
     newest: Option<u32>,
     /// Running seconds (flicker, scan band).
     time: f32,
@@ -54,6 +61,16 @@ pub struct Visor {
     rising: bool,
     /// `HW_VISOR=<0..1>`: kept down and frozen that far along (screenshots).
     pin: Option<f32>,
+    /// Wanted down (switches `rising` once the hand is at the temple).
+    want: bool,
+    /// Seconds until the switch, after `want` changed.
+    switch_in: f32,
+    /// `want` changed this frame: the hero should touch the temple.
+    tapped: bool,
+    /// The band of light over the hero's eyes, while it shows.
+    holo_e: Option<EntityId>,
+    /// Its hologram material, once added.
+    holo_m: Option<CustomMaterialId>,
 }
 
 impl Visor {
@@ -71,65 +88,94 @@ impl Visor {
     }
 
     /// Why it should be down now, if at all.
-    pub fn wanted(&self, radio: &Radio, hero: Option<Vec3>) -> Option<Why> {
-        if self.asked > 0.0 {
-            return Some(Why::Asked);
-        }
-        if self.quiet {
+    pub fn wanted(&self, radio: &Radio) -> Option<Why> {
+        if !self.on {
             return None;
         }
         if radio.calls.values().any(|c| c.age < NEW_CALL_SECONDS) {
-            return Some(Why::NewCall);
+            Some(Why::NewCall)
+        } else {
+            Some(Why::On)
         }
-        let near = hero.is_some_and(|h| {
-            radio
-                .calls
-                .values()
-                .any(|c| Vec2::new(c.at.x - h.x, c.at.z - h.z).length() < NEAR_CALL)
-        });
-        near.then_some(Why::Near)
     }
 
-    /// One frame: `toggle` is T pressed. Returns why it is wanted.
-    pub fn update(
-        &mut self,
-        dt: f32,
-        toggle: bool,
-        radio: &Radio,
-        hero: Option<Vec3>,
-    ) -> Option<Why> {
+    /// One frame: `toggle` is T pressed. A new call switches it on; only
+    /// the player switches it off. Returns why it is wanted.
+    pub fn update(&mut self, dt: f32, toggle: bool, radio: &Radio) -> Option<Why> {
         self.time += dt;
-        self.asked = (self.asked - dt).max(0.0);
         let newest = radio.calls.keys().max().copied();
         if newest.is_some() && newest > self.newest {
-            self.quiet = false;
+            self.on = true;
         }
         self.newest = self.newest.max(newest);
-        if radio.calls.is_empty() {
-            self.quiet = false;
-        }
         if toggle {
-            if self.wanted(radio, hero).is_some() {
-                self.asked = 0.0;
-                self.quiet = true;
-            } else {
-                self.asked = ASKED_SECONDS;
-            }
+            self.on = !self.on;
         }
         if let Some(pin) = self.pin {
-            self.asked = ASKED_SECONDS;
+            self.on = true;
             self.shown = pin;
             self.rising = true;
-            return self.wanted(radio, hero);
+            return self.wanted(radio);
         }
-        let why = self.wanted(radio, hero);
-        self.rising = why.is_some();
+        let why = self.wanted(radio);
+        if why.is_some() != self.want {
+            self.want = why.is_some();
+            self.switch_in = TAP_LEAD;
+            self.tapped = true;
+        }
+        self.switch_in = (self.switch_in - dt).max(0.0);
+        if self.switch_in <= 0.0 {
+            self.rising = self.want;
+        }
         self.shown = if self.rising {
             (self.shown + dt / IN_SECONDS).min(1.0)
         } else {
             (self.shown - dt / OUT_SECONDS).max(0.0)
         };
         why
+    }
+
+    /// The visor was switched since the last call: the hero's hand goes to
+    /// the temple now.
+    pub fn take_tap(&mut self) -> bool {
+        std::mem::take(&mut self.tapped)
+    }
+
+    /// The band of light over the hero's eyes: placed on `hero`'s head,
+    /// opening and closing with the screen, hidden while the camera is in
+    /// the head (first person) or there is no hero.
+    pub fn holo(&mut self, world: &mut World, hero: Option<EntityId>, eye: Vec3) {
+        let at = hero.and_then(|e| holo_place(world, e));
+        let close = at.is_some_and(|(p, _)| p.distance(eye) < 0.5);
+        let show = self.shown > 0.0 && !close;
+        let Some((_, place)) = at.filter(|_| show) else {
+            if let Some(e) = self.holo_e.take() {
+                world.despawn(e);
+            }
+            return;
+        };
+        if self.holo_m.is_none() {
+            self.holo_m = world.add_material(holo_material()).ok();
+        }
+        let e = match self.holo_e {
+            Some(e) => e,
+            None => match world.place(holo_mesh(), place) {
+                Ok(e) => {
+                    if let Some(m) = self.holo_m {
+                        let _ = world.set_custom_material(e, m);
+                    }
+                    self.holo_e = Some(e);
+                    e
+                }
+                Err(_) => return,
+            },
+        };
+        let _ = world.set_place(e, place);
+        if let Some(m) = self.holo_m {
+            let open = Opening::at(self.shown, self.rising, self.time);
+            let flick = open.alpha.max(0.15);
+            let _ = world.set_material_param(m, 0, [open.height.max(0.04), flick, 1.0, 0.0]);
+        }
     }
 
     /// Draws it over the 3D view (under the HUD's own panels).
@@ -235,7 +281,6 @@ impl Visor {
         let head = match why {
             _ if calls == 0 => "PATROL VISOR - NO CALLS".to_string(),
             Some(Why::NewCall) => format!("PATROL VISOR - NEW CALL ({calls} OPEN)"),
-            Some(Why::Near) => "PATROL VISOR - CALL NEARBY".to_string(),
             _ => format!(
                 "PATROL VISOR - {calls} CALL{} OPEN",
                 if calls == 1 { "" } else { "S" }
@@ -254,7 +299,7 @@ impl Visor {
             &p,
             egui::pos2(rim.right() - 70.0, rim.top() + 74.0),
             egui::Align2::RIGHT_TOP,
-            "T: put away",
+            "T: switch off",
             12.0,
             amber(fade(200.0)),
             fade(140.0),
@@ -335,6 +380,125 @@ impl Visor {
         }
     }
 }
+
+/// The hologram over the eyes: amber light that opens from the eye line
+/// (`params[0].x` 0..1) with a bright edge, scan lines running up it, a
+/// brighter rim top and bottom and where you look along it.
+/// `params[0].y`: flicker (1 steady), `.z`: glow.
+pub const HOLO_VISOR: &str = r#"
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    let q = m.object_pos;
+    let open = m.params[0].x;
+    let y = abs(q.y) / 0.026;
+    let shown = 1.0 - smoothstep(open - 0.03, open, y);
+    let edge = smoothstep(0.14, 0.0, abs(y - open)) * (1.0 - 0.6 * open);
+    let rim = smoothstep(0.78, 0.96, y) * shown;
+    let scan = 0.5 + 0.5 * sin(q.y * 700.0 - m.time * 18.0);
+    let n = normalize(m.normal);
+    let facing = clamp(abs(dot(n, m.view_dir)), 0.0, 1.0);
+    let fres = pow(1.0 - facing, 2.0);
+    let flick = m.params[0].y;
+    let amber = vec3<f32>(1.0, 0.6, 0.16);
+    let a = shown * (0.2 + 0.35 * rim + 0.08 * scan + 0.25 * fres) * flick + edge * 0.8;
+    o.color = vec4<f32>(amber, clamp(a, 0.0, 0.9));
+    o.roughness = 0.1;
+    o.metallic = 0.0;
+    o.emission = amber * (shown * (0.3 + 0.8 * rim + 0.15 * scan) * flick + edge * 2.0) * m.params[0].z;
+    return o;
+}
+"#;
+
+/// The hologram material, ready to add.
+pub fn holo_material() -> CustomMaterial {
+    CustomMaterial::new("police visor", HOLO_VISOR)
+        .see_through()
+        .param(0, [1.0, 1.0, 1.0, 0.0])
+}
+
+/// The band over the eyes: a slice of an upright, slightly barrel-shaped
+/// ring wrapped round the front of the face from temple to temple. Origin at
+/// the eye line between the eyes' centres of turn, +Z ahead (model units:
+/// metres for a hero of scale 1).
+pub fn holo_mesh() -> Mesh {
+    const ACROSS: usize = 28;
+    const UP: usize = 6;
+    let (rx, rz) = (0.105_f32, 0.115_f32);
+    let half = 0.026_f32;
+    let wrap = 1.75_f32; // radians either side of straight ahead
+    let mut m = Mesh::new();
+    let mut rows: Vec<Vec<PointId>> = Vec::new();
+    for j in 0..=UP {
+        let v = j as f32 / UP as f32 * 2.0 - 1.0;
+        let y = v * half;
+        // Barrel: a little fuller at the eye line.
+        let bulge = 1.0 + 0.06 * (1.0 - v * v);
+        let row = (0..=ACROSS)
+            .map(|i| {
+                let a = (i as f32 / ACROSS as f32 * 2.0 - 1.0) * wrap;
+                let p = Vec3::new(a.sin() * rx * bulge, y, a.cos() * rz * bulge - 0.04);
+                let n = Vec3::new(a.sin() / rx, -v * 0.3, a.cos() / rz).normalize();
+                let id = m.add_point(p).expect("finite point");
+                m.set_point_color(id, Color::rgba(255, 170, 60, 120))
+                    .expect("point exists");
+                m.set_point_normal(id, n).expect("point exists");
+                id
+            })
+            .collect();
+        rows.push(row);
+    }
+    for w in rows.windows(2) {
+        for i in 0..ACROSS {
+            // Both faces, so it shows from behind the hero too.
+            let (a, b, c, d) = (w[0][i], w[0][i + 1], w[1][i], w[1][i + 1]);
+            m.add_triangle(a, b, d).expect("tri");
+            m.add_triangle(a, d, c).expect("tri");
+            m.add_triangle(a, d, b).expect("tri");
+            m.add_triangle(a, c, d).expect("tri");
+        }
+    }
+    m.set_surface_material(SurfaceMaterial {
+        roughness: 0.1,
+        emission: 0.4,
+        ..SurfaceMaterial::DEFAULT
+    });
+    m
+}
+
+/// Where the eye band goes on an animated hero: from the head bone, turned
+/// as the body is (and as far as the head nods), at the body's scale.
+fn holo_place(world: &World, hero: EntityId) -> Option<(Vec3, Place)> {
+    let head = world.bone_transform(hero, "head").ok()?;
+    let body = world.world_transform(hero).ok()?;
+    let (scale, body_rot, _) = body.to_scale_rotation_translation();
+    let s = scale.y.max(0.01);
+    let (_, head_rot, head_pos) = head.to_scale_rotation_translation();
+    // The head bone's own frame differs per rig; take only how far it has
+    // nodded or turned from the body's (its up against the body's up).
+    let up_body = body_rot * Vec3::Y;
+    let up_head = (head_rot * HEAD_UP).normalize_or_zero();
+    let nod = if up_head == Vec3::ZERO {
+        Quat::IDENTITY
+    } else {
+        Quat::from_rotation_arc(up_body, up_head)
+    };
+    let rot = nod * body_rot;
+    let at = head_pos + rot * (EYES * s);
+    let (yaw, pitch, roll) = rot.to_euler(EulerRot::YXZ);
+    Some((
+        at,
+        Place::new(at.x, at.y, at.z)
+            .with_yaw_deg(yaw.to_degrees())
+            .with_pitch_deg(pitch.to_degrees())
+            .with_roll_deg(roll.to_degrees())
+            .with_scale(s),
+    ))
+}
+
+/// The eye line from the head bone, in the body's frame (m at scale 1).
+const EYES: Vec3 = Vec3::new(0.0, 0.05, 0.07);
+/// The head bone's axis that points up the head.
+const HEAD_UP: Vec3 = Vec3::Y;
 
 /// How far the hologram is along: the line, then the screen opening out.
 struct Opening {
@@ -554,18 +718,25 @@ mod tests {
     }
 
     #[test]
-    fn t_brings_it_down_and_puts_it_away() {
+    fn t_switches_it_on_and_off_and_nothing_else_does() {
         let radio = Radio::default();
         let mut v = Visor::default();
-        assert_eq!(v.update(0.1, false, &radio, None), None);
-        assert_eq!(v.update(0.1, true, &radio, None), Some(Why::Asked));
-        for _ in 0..10 {
-            v.update(0.1, false, &radio, None);
+        assert_eq!(v.update(0.1, false, &radio), None);
+        assert_eq!(v.update(0.1, true, &radio), Some(Why::On));
+        assert!(v.take_tap());
+        for _ in 0..20 {
+            v.update(0.1, false, &radio);
         }
         assert_eq!(v.shown, 1.0);
-        assert_eq!(v.update(0.1, true, &radio, None), None);
-        for _ in 0..10 {
-            v.update(0.1, false, &radio, None);
+        // It stays on however long nobody touches it.
+        for _ in 0..1000 {
+            v.update(0.1, false, &radio);
+        }
+        assert_eq!(v.shown, 1.0);
+        assert_eq!(v.update(0.1, true, &radio), None);
+        assert!(v.take_tap());
+        for _ in 0..20 {
+            v.update(0.1, false, &radio);
         }
         assert_eq!(v.shown, 0.0);
     }

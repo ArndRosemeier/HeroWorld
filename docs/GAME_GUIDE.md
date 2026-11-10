@@ -127,7 +127,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | H | Call the medical drone when you are down |
 | G | Hail a flying taxi (G again hops out mid-air) |
 | M | Town map with the radio's calls |
-| T | Police visor: bring it down (10 s) or put it away |
+| T | Police visor on or off (a new call switches it on) |
 | N | Minimap on or off |
 | O | Free camera |
 | Enter or / | Chat: type a line, Enter says it (over your head and in the chat window), Escape cancels |
@@ -505,15 +505,19 @@ ordinary call in the world itself. Rampages, breakouts and the colossus also lig
 Signal**: a searchlight from the Aether Spire throws a star onto the sky above the trouble,
 visible from anywhere in town.
 
-**The police visor** is a hologram the City Patrol issues to heroes. It comes down for 8 s
-when a call comes in, stays down while the hero is within 150 m of a call, and T brings it
-down for 10 s (T while it is down puts it away until the next new call). It materialises as
-a bright line at eye height that opens out, flickering, into the visor (dissolving takes
-0.4 s, the same way back): a faint amber tint, a darker rim with corner ticks, scan lines with
-a band rolling down, and the Metro City Patrol star, see-through, low right of the line of
-sight. Each call gets corner brackets in its colour on the spot (bigger when near, pulsing
-while new) with its name and distance in con colour, or an arrow at the visor's edge when it
-is out of sight. The story's objective keeps its gold column.
+**The police visor** is a hologram the City Patrol issues to heroes. A new call switches it
+on, and it stays on until the player switches it off with T (T again switches it on). The
+hero touches two fingers to the right temple to switch it (`visor tap`, 1.1 s, standing or
+walking; other clips skip the gesture), and it switches when the fingers get there (0.35 s
+in). It materialises as a bright line at eye height that opens out, flickering, into the
+visor (switching off takes 0.4 s, the same way back): a faint amber tint, a darker rim with
+corner ticks, scan lines with a band rolling down, and the Metro City Patrol star,
+see-through, low right of the line of sight. Each call gets corner brackets in its colour on
+the spot (bigger when near, pulsing for 8 s while new) with its name and distance in con
+colour, or an arrow at the visor's edge when it is out of sight. In third person the visor shows on the hero too: a see-through amber band
+of light over the eyes, from temple to temple, that opens from the eye line and closes into
+it with the screen (an Engine custom material, `HOLO_VISOR`; hidden in first person). The
+story's objective keeps its gold column.
 
 A fight is resolved when its group is beaten; a rescue when everyone is out and the hurt one
 is with the ambulance. Unanswered (no hero within 60 m) for 4 minutes, it ends: the crooks
@@ -1130,7 +1134,7 @@ run, or put them in a `.bat`.
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
 | `HW_VIEW=fight` | Places a test group of minions near the spawn (the game starts without one). |
-| `HW_AUTOFIGHT=1` | The hero fights on its own (for screenshots); `HW_AUTOFIGHT=17,20` uses only those powers (codes: Freeze 17, Teleport 18, Bubble 19, Sidekick 20, Hypno 21). `HW_CAM_DIST` and `HW_CAM_PITCH` set the hero camera for close-ups. |
+| `HW_AUTOFIGHT=1` | The hero fights on its own (for screenshots); `HW_AUTOFIGHT=17,20` uses only those powers (codes: Freeze 17, Teleport 18, Bubble 19, Sidekick 20, Hypno 21). `HW_CAM_DIST`, `HW_CAM_PITCH` and `HW_CAM_YAW` (degrees round the hero) set the hero camera for close-ups. |
 | `HW_WRECK=n` | n frames in, the cars near the camera are wrecked. |
 
 ### World and camera

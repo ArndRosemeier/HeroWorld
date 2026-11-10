@@ -425,13 +425,14 @@ impl Title {
         )?;
         let mut clip = if heroic { "heroic" } else { "idle" };
         // Screenshots of the hero's own clips up close: HW_CREATOR_CLIP=
-        // hover, fly or power pose.
+        // hover, fly, power pose or visor tap.
         if creating {
             if let Ok(c) = std::env::var("HW_CREATOR_CLIP") {
                 clip = match c.as_str() {
                     "hover" => "hover",
                     "fly" => "fly",
                     "power pose" | "power" => "power pose",
+                    "visor tap" | "tap" => "visor tap",
                     _ => clip,
                 };
             }

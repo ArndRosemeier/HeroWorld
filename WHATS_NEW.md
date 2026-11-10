@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.152 (2026-11-10)
+
+- The police visor stays on until you switch it off with T. A new call switches it on again.
+- In third person you can see the visor on your hero: an amber band of light across the eyes that opens and closes like a hologram.
+- Your hero touches two fingers to the temple to switch the visor on or off (standing or walking).
+
 ## 0.151 (2026-11-10)
 
 - A crime call no longer hangs over an empty street: if the crooks are gone (taken away, or off somewhere and not coming back), the call ends and the radio says they got away.

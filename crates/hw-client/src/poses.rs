@@ -174,6 +174,63 @@ pub fn add_power_pose_clip(model: &mut AnimatedModel) -> Result<(), String> {
     Ok(())
 }
 
+/// Adds "visor tap" (over idle) and "visor tap walk" (over walk): the
+/// right hand goes up to the temple, two fingers touch the police visor's
+/// switch, and it comes down again, the head tipping a little toward it.
+/// Played once, [`crate::visor::TAP_SECONDS`] long; the fingers are at the
+/// temple from about a third of the way in.
+pub fn add_visor_tap_clips(model: &mut AnimatedModel) -> Result<(), String> {
+    let seconds = crate::visor::TAP_SECONDS;
+    let pose = |t: f32| {
+        // Up by 0.3, held (a small press) to 0.6, down by 1.
+        let k = if t < 0.3 {
+            t / 0.3
+        } else if t < 0.6 {
+            1.0
+        } else {
+            1.0 - (t - 0.6) / 0.4
+        };
+        let k = k * k * (3.0 - 2.0 * k);
+        let press = if (0.3..0.6).contains(&t) {
+            (((t - 0.3) / 0.3) * std::f32::consts::PI).sin()
+        } else {
+            0.0
+        };
+        let up = |from: Vec3, to: Vec3| from.lerp(to, k);
+        // Elbow out to the side and up; the forearm folds back so the
+        // fingers meet the temple.
+        let shoulder = up(Vec3::new(-0.15, -1.0, 0.05), Vec3::new(-0.78, 0.32, 0.38));
+        let fore = up(
+            Vec3::new(-0.05, -1.0, 0.15),
+            Vec3::new(0.92, 0.36 + 0.05 * press, 0.02),
+        );
+        Pose {
+            aims: vec![
+                aim(
+                    "upperarm_r",
+                    "lowerarm_r",
+                    shoulder.x,
+                    shoulder.y,
+                    shoulder.z,
+                ),
+                aim("lowerarm_r", "hand_r", fore.x, fore.y, fore.z),
+            ],
+            turns: vec![("head", Vec3::Z, -0.07 * k)],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    };
+    let still = make_clip(model, "visor tap", seconds, pose)?;
+    let walking = make_clip_over(model, "walk", "visor tap walk", seconds, pose)?;
+    model
+        .clips
+        .retain(|c| c.name != "visor tap" && c.name != "visor tap walk");
+    model.clips.push(still);
+    model.clips.push(walking);
+    Ok(())
+}
+
 /// Adds "cuffed": hands bound behind the back in energy cuffs, legs
 /// dangling, a slow sway, for a villain hanging from a police drone.
 pub fn add_cuffed_clip(model: &mut AnimatedModel) -> Result<(), String> {

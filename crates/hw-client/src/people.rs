@@ -1514,6 +1514,8 @@ pub fn build_sharing(
         poses::add_flight_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::add_heroic_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::add_power_pose_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+        // A hand to the temple to switch the police visor.
+        poses::add_visor_tap_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         // Carrying someone hurt to the ambulance.
         poses::add_carry_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::swing_cape(&mut c);
