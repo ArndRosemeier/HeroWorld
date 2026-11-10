@@ -32,6 +32,9 @@ pub struct TraceSpec<'a> {
     pub dead_ends: f64,
     /// Seeds tried at random once the queues run dry.
     pub random_seeds: usize,
+    /// Cosine of the sharpest turn a street may take in one step; a
+    /// sharper one ends it (-1: any turn).
+    pub max_turn_cos: f64,
 }
 
 /// A traced street.
@@ -47,6 +50,10 @@ struct Hash {
     cell: f64,
     map: HashMap<(i64, i64), Vec<(DVec2, u8)>>,
 }
+
+/// Cosine of the sharpest turn a side street takes in one step (40
+/// degrees): sharper, the field has no clear direction there.
+pub const STREET_TURN_COS: f64 = 0.766;
 
 /// Family tags: main streets, cross streets, given roads.
 const MAJOR: u8 = 0;
@@ -276,6 +283,13 @@ fn run(
         let Some(d2) = aligned(p + d1 * h * 0.5, d1) else {
             break;
         };
+        // A street turns gently. A sharp turn in one step means the field
+        // has no clear direction here (it swaps its main and cross
+        // directions round a still point), and following it would lay a
+        // staircase of short legs: the street ends instead.
+        if d2.dot(prev) < spec.max_turn_cos {
+            break;
+        }
         let next = p + d2 * h;
         if !(spec.inside)(next) {
             break;
@@ -359,6 +373,7 @@ mod tests {
             join: 1.5,
             dead_ends: 0.0,
             random_seeds: 20,
+            max_turn_cos: -1.0,
         };
         let lines = trace(&spec, &[], &[DVec2::ZERO], &mut Seed(2).rng());
         let major = lines.iter().filter(|l| l.major).count();

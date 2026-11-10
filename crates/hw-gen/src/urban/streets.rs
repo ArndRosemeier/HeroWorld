@@ -153,6 +153,7 @@ pub fn plan_piece(seed: Seed, town: &Town, piece: &Piece) -> PieceStreets {
             join: 1.3,
             dead_ends: lk.dead_ends,
             random_seeds: 0,
+            max_turn_cos: super::trace::STREET_TURN_COS,
         };
         let mut seeds = vec![centre];
         let (lo, hi) = bounds(outline);

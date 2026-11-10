@@ -70,6 +70,28 @@ fn keys_around(p: DVec2, r: f64) -> impl Iterator<Item = Key> {
     (a.0..=b.0).flat_map(move |x| (a.1..=b.1).map(move |z| (x, z)))
 }
 
+/// How far `p` is outside the strip that segment `si` of road `r` is drawn
+/// as (negative inside; exact in sign, near 0 in size). The strip ends
+/// square where the road ends, as it is drawn ([`WorldRoad::strip_points`]),
+/// not round: a round end would keep grass off ground no road covers.
+fn edge_distance(r: &WorldRoad, si: usize, p: DVec2) -> f64 {
+    let total = r.half + r.pavement;
+    let (a, b) = (r.pts[si], r.pts[si + 1]);
+    let mut d = segment_distance(p, a, b) - total;
+    let m = r.pts.len();
+    // Past either end of the road (within the end's own width) the strip
+    // has stopped, whichever leg's round reach `p` lies in.
+    for (end, next) in [(r.pts[0], r.pts[1]), (r.pts[m - 1], r.pts[m - 2])] {
+        let dir = (end - next).normalize_or_zero();
+        let over = (p - end).dot(dir);
+        let side = (p - end).dot(dir.perp()).abs();
+        if over > 0.0 && over < total * 2.0 + 2.0 && side < total + 2.0 {
+            d = d.max(over);
+        }
+    }
+    d
+}
+
 /// Things grass keeps clear of, besides roads and buildings: a disc.
 fn clearing(p: &Prop) -> Option<f64> {
     Some(match p.kind {
@@ -114,6 +136,9 @@ struct GreenTile {
     building_cells: BTreeMap<Key, Vec<u32>>,
     /// Discs grass keeps clear of.
     clear: BTreeMap<Key, Vec<(DVec2, f64)>>,
+    /// Plates where road ends meet ([`super::surface::road_joins`]): centre
+    /// and pavement radius, by cell.
+    joins: BTreeMap<Key, Vec<(DVec2, f64)>>,
 }
 
 fn tile_key(p: DVec2) -> Key {
@@ -168,6 +193,12 @@ impl GreenTile {
                 }
             }
         }
+        let mut joins: BTreeMap<Key, Vec<(DVec2, f64)>> = BTreeMap::new();
+        for j in super::surface::road_joins(&roads) {
+            for k in keys_around(j.at, j.pavement + REACH) {
+                joins.entry(k).or_default().push((j.at, j.pavement));
+            }
+        }
         let mut building_cells: BTreeMap<Key, Vec<u32>> = BTreeMap::new();
         for (i, b) in buildings.iter().enumerate() {
             let c = b.site.corners();
@@ -188,6 +219,7 @@ impl GreenTile {
             road_cells,
             building_cells,
             clear,
+            joins,
         }
     }
 }
@@ -225,13 +257,14 @@ impl Greenery {
     /// Is `p` on a road or pavement (within `r` of its edge)?
     pub fn on_road(&self, w: &TownWorld, p: DVec2, r: f64) -> bool {
         let t = self.tile(w, p);
-        t.road_cells.get(&key(p)).is_some_and(|l| {
-            l.iter().any(|&(ri, si)| {
-                let road = &t.roads[ri as usize];
-                let (a, b) = (road.pts[si as usize], road.pts[si as usize + 1]);
-                segment_distance(p, a, b) < road.half + road.pavement + r
-            })
-        })
+        let k = key(p);
+        t.road_cells.get(&k).is_some_and(|l| {
+            l.iter()
+                .any(|&(ri, si)| edge_distance(&t.roads[ri as usize], si as usize, p) < r)
+        }) || t
+            .joins
+            .get(&k)
+            .is_some_and(|l| l.iter().any(|(q, jr)| q.distance(p) - jr < r))
     }
 
     /// Is `p` within `r` of a building's footprint?
@@ -264,9 +297,12 @@ impl Greenery {
         let k = key(p);
         if let Some(l) = t.road_cells.get(&k) {
             for &(ri, si) in l {
-                let r = &t.roads[ri as usize];
-                let (a, b) = (r.pts[si as usize], r.pts[si as usize + 1]);
-                road = road.min(segment_distance(p, a, b) - r.half - r.pavement);
+                road = road.min(edge_distance(&t.roads[ri as usize], si as usize, p));
+            }
+        }
+        if let Some(l) = t.joins.get(&k) {
+            for (q, r) in l {
+                road = road.min(q.distance(p) - r);
             }
         }
         let mut c = REACH;

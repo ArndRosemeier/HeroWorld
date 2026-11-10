@@ -23,7 +23,7 @@ use crate::progress::{self, Affinity};
 use crate::{Control, Hero, Motion, Net, Solids, DT, GROUND_Y, TICK_HZ};
 use bevy_ecs::prelude::*;
 use glam::{DVec2, DVec3};
-use hw_core::{NetId, Seed};
+use hw_core::{det, NetId, Seed};
 use hw_gen::building::BuildingUse;
 use hw_gen::urban::area::Area;
 use hw_gen::urban::landmarks::LandmarkKind;
@@ -477,6 +477,8 @@ pub const THANK_REACH: f64 = 30.0;
 pub const LEAVE_SECONDS: f64 = 12.0;
 /// Their walking pace (m/s).
 pub const LEAVE_SPEED: f64 = 1.4;
+/// How far ahead (m) someone walking off looks for something in the way.
+const LEAVE_LOOK: f64 = 0.5;
 
 /// Where the one being mugged stands: in front of the muggers (who stand
 /// 1.5 m ahead of the spot, facing this way).
@@ -501,6 +503,19 @@ fn yaw_quat(dir: DVec2) -> [f32; 4] {
 }
 
 fn spawn_bystander(world: &mut World, tick: u64, incident: u32, at: DVec3, facing: DVec2) {
+    // On the ground where they stand, not at the spot's height: a few
+    // metres off it on a slope, that is half a metre up or down.
+    let at = match world.get_resource::<Solids>() {
+        Some(s) if s.0.inside(at).is_none() => {
+            let y = s.0.ground_for(DVec2::new(at.x, at.z), at.y).max(GROUND_Y);
+            if (y - at.y).abs() < 1.5 {
+                DVec3::new(at.x, y, at.z)
+            } else {
+                at
+            }
+        }
+        _ => at,
+    };
     let id = world.resource_mut::<crate::Ids>().0.allocate();
     world.spawn((
         Net(id),
@@ -565,8 +580,8 @@ fn release_bystanders(world: &mut World, tick: u64, incident: u32) {
 fn walk_bystanders(world: &mut World, tick: u64) {
     let solids = world.resource::<Solids>().0.clone();
     let mut gone = Vec::new();
-    for (e, b, mut m, mut o) in world
-        .query::<(Entity, &Bystander, &mut Motion, &mut crate::Orientation)>()
+    for (e, mut b, mut m, mut o) in world
+        .query::<(Entity, &mut Bystander, &mut Motion, &mut crate::Orientation)>()
         .iter_mut(world)
     {
         let Some((dir, until)) = b.leaving else {
@@ -581,16 +596,41 @@ fn walk_bystanders(world: &mut World, tick: u64) {
             m.0.vel = DVec3::ZERO;
             continue;
         }
-        let step = dir * LEAVE_SPEED * DT;
         let mut body = m.0;
-        let next = DVec2::new(body.pos.x + step.x, body.pos.z + step.y);
-        let y = solids.ground_at(next).max(GROUND_Y);
-        if (y - body.pos.y).abs() < 0.6 {
-            body.pos = DVec3::new(next.x, y, next.y);
-            body.vel = DVec3::new(dir.x, 0.0, dir.y) * LEAVE_SPEED;
-        } else {
-            body.vel = DVec3::ZERO;
-        }
+        // Straight on, or turned aside as little as will do where a wall,
+        // a bench or a step is in the way; the new way is kept.
+        let free = |d: DVec2| {
+            let step = d * LEAVE_SPEED * DT;
+            let next = DVec2::new(body.pos.x + step.x, body.pos.z + step.y);
+            let y = solids.ground_for(next, body.pos.y).max(GROUND_Y);
+            let ahead =
+                DVec3::new(body.pos.x, y, body.pos.z) + DVec3::new(d.x, 0.0, d.y) * LEAVE_LOOK;
+            ((y - body.pos.y).abs() < 0.6
+                && solids.passable_at(ahead + DVec3::Y * 0.3)
+                && solids.passable_at(ahead + DVec3::Y * 1.2))
+            .then_some((next, y))
+        };
+        let turned = [0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0, 180.0]
+            .into_iter()
+            .map(|a: f64| {
+                let (s, c) = (det::sin(a.to_radians()), det::cos(a.to_radians()));
+                DVec2::new(dir.x * c - dir.y * s, dir.x * s + dir.y * c)
+            })
+            .find_map(|d| free(d).map(|n| (d, n)));
+        let dir = match turned {
+            Some((d, (next, y))) => {
+                body.pos = DVec3::new(next.x, y, next.y);
+                body.vel = DVec3::new(d.x, 0.0, d.y) * LEAVE_SPEED;
+                if d != dir {
+                    b.leaving = Some((d, until));
+                }
+                d
+            }
+            None => {
+                body.vel = DVec3::ZERO;
+                dir
+            }
+        };
         m.0 = body;
         let q = yaw_quat(dir);
         if o.0 != q {

@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.160 (2026-11-10)
+
+- Streets are clean where they bend and meet: no more flat green triangles, pavement spikes or slivers of asphalt at junctions.
+- Side streets curve smoothly instead of zig-zagging in steps.
+- Where two roads meet at an angle, the corner is paved round.
+- Side streets are laid out anew (world version 35): the same seed gives different side streets than before.
+- Someone you saved from muggers now stands on the ground and steps round a bench or wall when walking off, instead of hovering on a slope.
+
 ## 0.159 (2026-11-10)
 
 - Fixed: a call behind you showed on the visor as an arrow up in the sky (and on the wrong side). Now the arrow sits at the side you should turn to.

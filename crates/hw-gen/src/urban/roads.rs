@@ -194,6 +194,7 @@ impl Network {
                 join: 1.2,
                 dead_ends: 0.05,
                 random_seeds: 0,
+                max_turn_cos: -1.0,
             };
             let given: Vec<Vec<DVec2>> = roads.iter().map(|r| r.pts.clone()).collect();
             // Seeds all over the town, coarse to fine, so no part is missed.

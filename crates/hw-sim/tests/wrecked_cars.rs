@@ -29,8 +29,29 @@ fn a_blast_wrecks_a_passing_car_and_holds_up_its_lane() {
         .expect("a car near the start");
     // Stand 8 m beside where it will be next tick, and blast it.
     let next = traffic.vehicle(car.id, (sim.tick + 1) as f64 * DT).unwrap();
-    let side = DVec3::new(next.dir.z, 0.0, -next.dir.x).normalize();
-    let stand = next.pos + side * 8.0;
+    // From whichever side the blast reaches it first, not a tree, a
+    // bench or a wall in between (as the blast itself looks).
+    let across = DVec3::new(next.dir.z, 0.0, -next.dir.x).normalize();
+    let reaches = |s: DVec3| {
+        let g = town.world.ground(DVec2::new(s.x, s.z)).max(next.pos.y);
+        let chest = DVec3::new(s.x, g + 1.2, s.z);
+        let aim = (next.pos + DVec3::Y * 0.8 - chest).normalize();
+        let dist = |p: Option<DVec3>| p.map_or(f64::INFINITY, |p| p.distance(chest));
+        let wall = dist(hw_sim::destruction::raycast(
+            &town.obstacles,
+            chest,
+            aim,
+            40.0,
+        ));
+        let prop = dist(sim.street.raycast(chest, aim, 40.0));
+        let car = dist(sim.wrecks.raycast(chest, aim, 40.0, sim.tick));
+        car < wall.min(prop) && !town.obstacles.solid_at(chest)
+    };
+    let stand = [across * 8.0, -across * 8.0, across * 6.0, -across * 6.0]
+        .into_iter()
+        .map(|o| next.pos + o)
+        .find(|s| reaches(*s))
+        .expect("a stand from which the blast reaches the car");
     let ground = town.world.ground(DVec2::new(stand.x, stand.z));
     sim.set_body(
         hero,

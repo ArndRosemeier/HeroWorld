@@ -774,20 +774,23 @@ impl Citizens {
         let forward = to >= from;
         let mut at = 0.0;
         let mouths = &self.mouths[road as usize][side_index(side)];
+        // Every mouth stepped into on the way, also one the leg ends in
+        // (turning into that side street on its far side): its kerb is
+        // where the wait is.
         let mut found: Vec<(f64, f64, Option<u32>)> = mouths
             .iter()
             .filter(|m| {
                 if forward {
-                    m.s0 >= from - 1e-6 && m.s1 <= to + 1e-6
+                    m.s0 >= from - 1e-6 && m.s0 < to - 1e-6
                 } else {
-                    m.s1 <= from + 1e-6 && m.s0 >= to - 1e-6
+                    m.s1 <= from + 1e-6 && m.s1 > to + 1e-6
                 }
             })
             .map(|m| {
                 if forward {
-                    (m.s0 - from, m.s1 - from, m.light)
+                    (m.s0 - from, m.s1.min(to) - from, m.light)
                 } else {
-                    (from - m.s1, from - m.s0, m.light)
+                    (from - m.s1, from - m.s0.max(to), m.light)
                 }
             })
             .collect();

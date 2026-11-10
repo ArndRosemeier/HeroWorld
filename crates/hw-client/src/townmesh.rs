@@ -347,6 +347,13 @@ fn make_cell(job: CellJob) -> CellMeshes {
             draw_road(&mut b, &world, r, &run);
         }
     }
+    // Where road ends meet at an angle, a round plate fills the wedges
+    // between their square ends; each plate drawn by the cell holding it.
+    for j in hw_gen::urban::surface::road_joins(&roads) {
+        if cell_of(j.at) == k {
+            draw_join(&mut b, &world, &roads, &j);
+        }
+    }
     // Buildings: each drawn at the town's block height, then lifted to
     // its own ground, on a plinth where the ground falls away.
     for cb in buildings {
@@ -1304,6 +1311,75 @@ fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &[(DVec2, D
     }
     b.mottle = 0.0;
     b.tex = None;
+}
+
+/// A plate under meeting road ends ([`hw_gen::urban::surface::RoadJoin`]):
+/// a disc of pavement and a disc of carriageway, in the look of the
+/// narrowest road there (whose width the plate has).
+fn draw_join(
+    b: &mut MeshBuilder,
+    w: &TownWorld,
+    roads: &[WorldRoad],
+    j: &hw_gen::urban::surface::RoadJoin,
+) {
+    let meets = |r: &&WorldRoad| {
+        r.pts.len() >= 2
+            && (r.pts[0].distance(j.at) < 0.5 || r.pts[r.pts.len() - 1].distance(j.at) < 0.5)
+    };
+    let Some(r) = roads
+        .iter()
+        .filter(meets)
+        .min_by(|a, b| a.half.total_cmp(&b.half))
+    else {
+        return;
+    };
+    let lane = r.style == Some(hw_gen::urban::streets::StreetStyle::Lanes);
+    let asphalt = if lane {
+        rgb(120, 116, 110)
+    } else if r.main {
+        rgb(58, 58, 62)
+    } else {
+        rgb(78, 76, 74)
+    };
+    b.tex = Some(GroundLayer::Paving.into());
+    b.mottle = 0.08;
+    disc(b, w, j.at, j.pavement, j.pavement_lift, rgb(165, 160, 150));
+    b.tex = Some(if lane {
+        GroundLayer::Cobble.into()
+    } else {
+        GroundLayer::RoadAsphalt.into()
+    });
+    b.mottle = if lane { 0.22 } else { 0.06 };
+    disc(b, w, j.at, j.carriage, j.carriage_lift, asphalt);
+    b.mottle = 0.0;
+    b.tex = None;
+}
+
+/// A flat disc draped on the road height plus `lift`, in rings so it
+/// follows the ground.
+fn disc(b: &mut MeshBuilder, w: &TownWorld, at: DVec2, r: f64, lift: f64, c: Color) {
+    const SIDES: usize = 32;
+    let rings = ((r / hw_gen::urban::surface::ROAD_STEP).ceil() as usize).max(1);
+    let at3 = |p: DVec2| DVec3::new(p.x, w.road_height(p) + lift, p.y);
+    let pt = |ring: usize, k: usize| {
+        let a = std::f64::consts::TAU * k as f64 / SIDES as f64;
+        at + DVec2::new(hw_core::det::cos(a), hw_core::det::sin(a)) * r * ring as f64 / rings as f64
+    };
+    for k in 0..SIDES {
+        b.tri([at3(at), at3(pt(1, k)), at3(pt(1, k + 1))], DVec3::Y, c);
+        for ring in 1..rings {
+            b.quad(
+                [
+                    at3(pt(ring, k)),
+                    at3(pt(ring + 1, k)),
+                    at3(pt(ring + 1, k + 1)),
+                    at3(pt(ring, k + 1)),
+                ],
+                DVec3::Y,
+                c,
+            );
+        }
+    }
 }
 
 /// Like [`strip`], cut into cells about 1.5 m on a side so vertex colours

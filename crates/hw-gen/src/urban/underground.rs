@@ -577,9 +577,11 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
         // Its own lift from the street, over a corner of the hall.
         u.index();
         let mut lift = None;
-        'find: for ring in [0.0, 8.0, 14.0, 20.0, 26.0] {
-            for k in 0..16 {
-                let a = std::f64::consts::TAU * k as f64 / 16.0;
+        // Rings tried coarse first, then the gaps between them, so a hall
+        // under a crowded block still finds a free spot.
+        'find: for ring in [0.0, 8.0, 14.0, 20.0, 26.0, 4.0, 11.0, 17.0, 23.0, 30.0] {
+            for k in 0..32 {
+                let a = std::f64::consts::TAU * k as f64 / 32.0;
                 let l = DVec2::new(
                     hw_core::det::cos(a) * ring,
                     hw_core::det::sin(a) * ring * 0.7,
@@ -591,9 +593,8 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
                 }
             }
         }
+        let mut placed = false;
         if let Some(c) = lift {
-            let top = w.ground(c);
-            let door = nearest_road_dir(&all, c);
             u.voids.push(Void {
                 kind: VoidKind::Shaft,
                 origin: c - DVec2::splat(SHAFT_HALF),
@@ -604,6 +605,25 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
                 height: 0.0,
                 open: true,
             });
+            placed = true;
+        } else {
+            // A block built over the whole hall: the lift stands at the
+            // nearest free spot beside it, with a passage in.
+            'near: for ring in [36.0, 44.0, 52.0, 60.0, 70.0] {
+                for k in 0..32 {
+                    let a = std::f64::consts::TAU * k as f64 / 32.0;
+                    let c = site + DVec2::new(hw_core::det::cos(a), hw_core::det::sin(a)) * ring;
+                    if ground.free(c, SHAFT_HALF + 1.2) && add_lift(w, &mut u, c, site, floor) {
+                        lift = Some(c);
+                        placed = true;
+                        break 'near;
+                    }
+                }
+            }
+        }
+        if let (Some(c), true) = (lift, placed) {
+            let top = w.ground(c);
+            let door = nearest_road_dir(&all, c);
             u.entrances.push(Entrance {
                 name: "Molehaven".into(),
                 pos: c,
