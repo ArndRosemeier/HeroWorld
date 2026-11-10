@@ -23,7 +23,7 @@ fn the_city_has_no_z_fighting() {
         let city = cities
             .entry(seed)
             .or_insert_with(|| GeneratedCity::generate(Seed(seed)));
-        let report = zfight::city(city, cut, detail).run();
+        let report = zfight::city_report(city, cut, detail);
         assert!(
             report.is_clean(),
             "seed {seed}, cut {cut:?}, {detail:?}: {}\n(cargo run -p hw-client --bin zfight)",

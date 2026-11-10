@@ -44,6 +44,8 @@ pub struct CrowdView {
     refresh: f64,
     /// Where the citizens shown stood this frame.
     placed: Vec<glam::DVec3>,
+    /// People indoors to show next update (see [`Self::set_indoor`]).
+    indoor: Vec<Citizen>,
 }
 
 impl Default for CrowdView {
@@ -64,6 +66,7 @@ impl CrowdView {
             near: Vec::new(),
             refresh: 0.0,
             placed: Vec::new(),
+            indoor: Vec::new(),
         }
     }
 
@@ -148,6 +151,12 @@ impl CrowdView {
     /// Near trouble (`alarms`) people run off along their way, or back the
     /// way they came, whichever is away from it; a little further off they
     /// stop and stare.
+    /// The people indoors near the camera, for the next [`Self::update`]
+    /// (from `Citizens::indoors`).
+    pub fn set_indoor(&mut self, people: Vec<Citizen>) {
+        self.indoor = people;
+    }
+
     pub fn update(
         &mut self,
         world: &mut World,
@@ -183,9 +192,18 @@ impl CrowdView {
         }
         let mut seen = BTreeSet::new();
         self.placed.clear();
-        for id in self.near.clone() {
+        // People indoors stand at their places (see `Citizens::indoors`).
+        let inside: BTreeMap<u64, Citizen> = std::mem::take(&mut self.indoor)
+            .into_iter()
+            .map(|c| (c.id, c))
+            .collect();
+        for id in self.near.clone().into_iter().chain(inside.keys().copied()) {
             let delay = self.delay.get(&id).copied().unwrap_or(0.0);
-            let Some(mut c): Option<Citizen> = citizens.citizen(id, time - delay) else {
+            let found = match inside.get(&id) {
+                Some(c) => Some(*c),
+                None => citizens.citizen(id, time - delay),
+            };
+            let Some(mut c): Option<Citizen> = found else {
                 continue;
             };
             if !self.down.contains_key(&id) {

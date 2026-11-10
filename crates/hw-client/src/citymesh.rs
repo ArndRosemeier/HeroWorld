@@ -8,7 +8,7 @@
 use crate::skins::{self, Tex};
 use engine::prelude::*;
 use glam::{DVec2, DVec3, Vec3};
-use hw_gen::building::{BuildingPlan, Door, RoomKind};
+use hw_gen::building::{BuildingPlan, Door};
 use hw_gen::city::{BlockUse, CityPlan, DistrictKind, StreetClass};
 use hw_gen::geom::{EdgeTag, Poly, Rect};
 use hw_gen::water::{self, WATER_LEVEL};
@@ -186,6 +186,17 @@ pub struct MeshBuilder {
     /// No textures at all: faces keep their own colours (for meshes that
     /// cannot carry a texture, like a breakable building's).
     pub flat: bool,
+    /// Places to stand on the floor drawn open, clear of its furniture
+    /// (see `interior::furnish`): where people indoors are shown.
+    pub spots: Vec<Spot>,
+}
+
+/// A place to stand indoors (city coordinates, feet on the floor).
+#[derive(Clone, Copy, Debug)]
+pub struct Spot {
+    pub room: hw_gen::building::RoomKind,
+    pub at: DVec3,
+    pub facing: DVec2,
 }
 
 /// The average colour of a texture layer (linear), so vertex colours can
@@ -234,6 +245,7 @@ impl MeshBuilder {
             mottle: 0.0,
             plain_area: [0.0; 2],
             flat: false,
+            spots: Vec::new(),
         }
     }
 
@@ -829,23 +841,6 @@ impl Palette {
 
     /// Floor colour of a room in a cut-open building, so rooms read from above.
     /// A room's floor: what it is laid with, and its colour.
-    fn room_floor(kind: RoomKind) -> (Tex, Color) {
-        use engine::texgen::{FacadeLayer as F, GroundLayer as G, MedievalLayer as M};
-        match kind {
-            RoomKind::Lobby | RoomKind::Gallery => (G::PlazaStone.into(), rgb(226, 218, 200)),
-            RoomKind::Corridor | RoomKind::Hall | RoomKind::Shop => {
-                (G::PlazaStone.into(), rgb(204, 198, 186))
-            }
-            RoomKind::Core | RoomKind::Storage => (F::Concrete.into(), rgb(150, 148, 142)),
-            RoomKind::Office => (M::Boards.into(), rgb(170, 140, 110)),
-            RoomKind::Apartment | RoomKind::Living | RoomKind::Bedroom => {
-                (M::Boards.into(), rgb(196, 152, 112))
-            }
-            RoomKind::Kitchen => (M::Flagstone.into(), rgb(214, 206, 190)),
-            RoomKind::Lab => (F::ConcretePanel.into(), rgb(200, 210, 206)),
-        }
-    }
-
     fn inner_wall() -> Color {
         rgb(240, 236, 228)
     }
@@ -1156,7 +1151,7 @@ pub fn add_building(
         // Room floors, laid by use. Each stops 1 mm short of its
         // neighbours: shared edges, rounded in city space, would overlap.
         for room in &f.rooms {
-            let (tex, floor) = Palette::room_floor(room.kind);
+            let (tex, floor) = crate::interior::floor_finish(plan, room);
             b.tex = Some(tex);
             let c = room.rect.center();
             let s = room.rect.size() - glam::DVec2::splat(0.002);
@@ -1173,7 +1168,7 @@ pub fn add_building(
         b.tex = Some(engine::texgen::FacadeLayer::Plaster.into());
         draw_cut_walls(b, f, y, facade, &|x, y, z| to_city(x, y, z), u);
         b.tex = None;
-        crate::interior::furnish(b, plan, shown_floors, y + ROOM_FLOOR_TOP, u);
+        crate::interior::furnish(b, plan, shown_floors, y + ROOM_FLOOR_TOP, detail);
     }
 }
 

@@ -60,29 +60,14 @@ fn shade(c: Rgb, k: f64) -> Color {
 /// lights on after dark: every window of such a room sits on one of the
 /// glow channels (see `daylight`), glass by day and glowing from dusk, so
 /// the town's windows light up one by one as the evening comes.
-fn pane(plan: &BuildingPlan, look: &Look, op: &Opening, shop: bool) -> (Color, Surf) {
+fn pane(plan: &BuildingPlan, look: &Look, op: &Opening) -> (Color, Surf) {
     let dark = (col(look.glass), Surf::Glass);
     if op.kind == OpeningKind::Door {
         return dark;
     }
-    let o = plan.site.origin;
-    let mut h = (o.x * 7.31).to_bits() ^ (o.y * 3.17).to_bits().rotate_left(17);
-    h ^= (op.floor as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    h ^= (op.room as u64 + 1).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
-    h ^= h >> 29;
-    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    h ^= h >> 32;
-    let roll = (h % 1000) as f64 / 1000.0;
-    let share = if shop { 0.75 } else { 0.38 };
-    if roll >= share {
+    let Some((tone, habit)) = crate::interior::room_light(plan, op.floor, op.room) else {
         return dark;
-    }
-    let tone = match h >> 40 & 7 {
-        0 => crate::daylight::Tone::Cool,
-        1 | 2 => crate::daylight::Tone::Lamp,
-        _ => crate::daylight::Tone::Warm,
     };
-    let habit = (h >> 44) as usize % crate::daylight::HABITS;
     (dark.0, Surf::Lit(crate::daylight::channel(tone, habit)))
 }
 
@@ -568,7 +553,7 @@ fn far_floor(c: &mut Ctx, level: usize) {
         let ya = (f.elevation + op.sill).max(y0 + 0.05);
         let yb = f.elevation + op.sill + op.height;
         let (color, surf) = match op.kind {
-            OpeningKind::Window | OpeningKind::Entrance => pane(plan, look, op, false),
+            OpeningKind::Window | OpeningKind::Entrance => pane(plan, look, op),
             OpeningKind::Door => (shade(look.frame, 0.8), Surf::Plain),
         };
         let t = (op.along - op.width * 0.5, op.along + op.width * 0.5);
@@ -1115,7 +1100,7 @@ fn opening(c: &mut Ctx, w: &Wall, f: &Floor, op: &Opening, t: (f64, f64), y: (f6
             );
         }
         OpeningKind::Entrance | OpeningKind::Window => {
-            let (glass, surf) = pane(plan, look, op, shop);
+            let (glass, surf) = pane(plan, look, op);
             c.surf(surf);
             c.quad(w.rect(t0, t1, ya, yb, -r), w.out(), glass);
             c.surf(Surf::Plain);
@@ -1560,7 +1545,7 @@ fn porthole(c: &mut Ctx, w: &Wall, op: &Opening, f: &Floor) {
         let a = std::f64::consts::TAU * k as f64 / seg as f64;
         w.at(op.along + rad * a.cos(), cy + rad * a.sin(), d)
     };
-    let (glass, surf) = pane(c.plan, look, op, false);
+    let (glass, surf) = pane(c.plan, look, op);
     c.surf(surf);
     let disc: Vec<DVec3> = (0..seg).map(|k| pt(k, r, 0.03)).collect();
     c.polygon(&disc, w.out(), glass);

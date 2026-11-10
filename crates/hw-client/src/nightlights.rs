@@ -205,13 +205,16 @@ impl NightLights {
     }
 
     /// Lights on (`dark`) or off, the lit set following `eye`, from the
-    /// landmarks and the street props loaded around it (broken ones dark).
+    /// landmarks and the street props loaded around it (broken ones dark),
+    /// and `rooms`: the lit rooms of floors drawn open, with a key that
+    /// changes when they do (see `TownView::room_lamps`).
     pub fn update(
         &mut self,
         world: &mut World,
         eye: Vec3,
         dark: bool,
         props: &PropView,
+        rooms: (u64, &[Lamp]),
     ) -> EngineResult<()> {
         if !dark {
             self.clear(world);
@@ -220,7 +223,7 @@ impl NightLights {
         let key = (
             (eye.x / STEP).round() as i32,
             (eye.z / STEP).round() as i32,
-            props.generation,
+            props.generation ^ rooms.0.rotate_left(17),
         );
         if self.at == Some(key) {
             return Ok(());
@@ -241,6 +244,9 @@ impl NightLights {
                 // Landmarks first, then the nearest.
                 (d < 2000.0).then_some((-1.0, s.lamp))
             })
+            // The rooms we look into are next to the camera: before the
+            // street.
+            .chain(rooms.1.iter().map(|l| (0.0, *l)))
             .chain(street.into_iter().filter_map(|l| {
                 let d = flat(l.position);
                 (d < REACH).then_some((d, l))

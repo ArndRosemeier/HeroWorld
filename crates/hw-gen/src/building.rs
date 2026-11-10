@@ -37,6 +37,8 @@ pub const DOOR_SIZE: DVec2 = DVec2::new(1.8, 2.8);
 pub const ENTRANCE_SIZE: DVec2 = DVec2::new(3.6, 3.6);
 /// Facade bay: one window per this much wall (m).
 pub const WINDOW_BAY: f64 = 3.2;
+/// Width of the entrance hall beside a narrow building's shop (m).
+pub const SIDE_HALL: f64 = 4.0;
 
 /// What a building is for. It decides the room programme.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -652,7 +654,17 @@ impl<'a> Planner<'a> {
                         Some((ga, gb)) => {
                             let mid = (ga + gb) * 0.5;
                             let half = ((x1 - x0) * 0.12).clamp(3.5, 8.0).min((gb - ga) * 0.5);
-                            let (mut l0, mut l1) = (mid - half, mid + half);
+                            // A shop front too narrow for a shop each side of a
+                            // central lobby gets a slim entrance hall at one
+                            // end, and the rest is the shop.
+                            let side_hall = usage.ground_front_room().0 == RoomKind::Shop
+                                && gb - ga < 2.0 * half + 2.0 * MIN_ROOM_WIDTH
+                                && gb - ga >= SIDE_HALL + MIN_ROOM_WIDTH;
+                            let (mut l0, mut l1) = if side_hall {
+                                (ga, ga + SIDE_HALL)
+                            } else {
+                                (mid - half, mid + half)
+                            };
                             // Lobby walls stand on bay lines, and no slivers are left
                             // beside it: it takes them in.
                             let lines = self.x_lines(&outline);
@@ -697,15 +709,17 @@ impl<'a> Planner<'a> {
                                 Rect::from_xz(l0, z.0, l1, z.1),
                             ));
                             doors.push(corridor_door(idx, corridor, l0, l1, front_side, z));
+                            let (door_x, door_w) = if side_hall {
+                                ((l0 + l1) * 0.5, l1 - l0 - 0.6)
+                            } else {
+                                (mid, 2.0 * half - 0.6)
+                            };
                             doors.push(Door {
                                 a: idx,
                                 b: None,
-                                at: DVec2::new(mid, z.0),
+                                at: DVec2::new(door_x, z.0),
                                 along_x: true,
-                                size: DVec2::new(
-                                    ENTRANCE_SIZE.x.min(2.0 * half - 0.6),
-                                    ENTRANCE_SIZE.y,
-                                ),
+                                size: DVec2::new(ENTRANCE_SIZE.x.min(door_w), ENTRANCE_SIZE.y),
                             });
                         }
                         None => {

@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.134 (2026-11-10)
+
+- Interiors are furnished properly. Flats have a kitchen, a dining table with chairs, a sofa group on a rug, a bed with nightstands, a wardrobe, lamps, a radio or television, pictures and plants. Offices have rows of steel desks with typewriters, phones and desk lamps. Doors stand open.
+- Walls and floors fit the house: striped, damask or atomic wallpaper with picture rails in older houses, painted walls in modern ones; parquet in flats, black-and-white lino in kitchens and diners, terrazzo in halls.
+- Shops: a grocer, a clothes shop, an appliance store or a diner with a counter, stools, red booths and a jukebox. Narrow shop buildings now have a shop next to a small entrance hall.
+- After dark the lit rooms really light up, and you see people at home, at work and shopping by the hour.
+
 ## 0.133 (2026-11-10)
 
 - Fixed: your hero, other heroes, villains and hero taxis moved in small steps (30 a second) instead of every frame. They now glide smoothly too, and so does the camera that follows you.

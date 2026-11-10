@@ -282,7 +282,8 @@ impl HostThread {
             self.history.clear();
         }
         if self.history.back().is_none_or(|(t, _)| p.view.tick > *t) {
-            self.history.push_back((p.view.tick, p.view.entities.clone()));
+            self.history
+                .push_back((p.view.tick, p.view.entities.clone()));
             while self.history.len() > HISTORY {
                 self.history.pop_front();
             }
@@ -550,7 +551,10 @@ mod tests {
             }
             was = Some(drawn);
         }
-        assert!(moved_frames > 350, "the hero moved in only {moved_frames} frames");
+        assert!(
+            moved_frames > 350,
+            "the hero moved in only {moved_frames} frames"
+        );
     }
 
     /// A long frame runs at most `MAX_TICKS` and drops the rest.

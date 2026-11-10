@@ -138,6 +138,11 @@ pub struct TownView {
     /// Damaged buildings: Engine draws them breakable instead (see
     /// `damageview`), so the cells leave them out.
     hidden: BTreeSet<u64>,
+    /// The lit rooms of the floors drawn open, and what they were for
+    /// (see [`Self::room_lamps`]).
+    rooms: (Option<RoomsKey>, Vec<engine::lamps::Lamp>),
+    /// Places to stand indoors, by the cell that drew them.
+    spots: BTreeMap<CellKey, Vec<IndoorSpots>>,
     /// Where grass grows (the lawns drawn in each cell).
     pub green: Arc<Greenery>,
     /// Worker threads drawing cells off the main thread, so a frame never
@@ -182,6 +187,16 @@ struct CellMeshes {
     water: Option<PreparedMesh>,
     /// Plans the worker had to make, for the cache.
     plans: Vec<(u64, Arc<BuildingPlan>)>,
+    /// Places to stand on the floors drawn open: building, floor, places.
+    spots: Vec<IndoorSpots>,
+}
+
+/// The places to stand on one building's floor drawn open.
+#[derive(Clone, Debug)]
+pub struct IndoorSpots {
+    pub building: u64,
+    pub level: u32,
+    pub spots: Vec<crate::citymesh::Spot>,
 }
 
 /// Jobs waiting for a worker: redraws (the cut, walking into a building)
@@ -285,6 +300,7 @@ fn make_cell(job: CellJob) -> CellMeshes {
     let (lo, hi) = cell_box(k);
     let mut solid = Vec::new();
     let mut plans = Vec::new();
+    let mut spots = Vec::new();
     // Roads first, one mesh for the cell.
     let mut b = MeshBuilder::new();
     for r in &roads {
@@ -308,6 +324,19 @@ fn make_cell(job: CellJob) -> CellMeshes {
             let mut one = MeshBuilder::new();
             add_building(&mut one, &plan, wb.site.district, cb.look, detail);
             let lift = Vec3::new(0.0, (wb.base - BLOCK_TOP) as f32, 0.0);
+            if let Look::Cut { level } = cb.look {
+                let mut list = std::mem::take(&mut one.spots);
+                for s in &mut list {
+                    s.at.y += lift.y as f64;
+                }
+                if !list.is_empty() {
+                    spots.push(IndoorSpots {
+                        building: cb.id,
+                        level: level.min(plan.floors.len().saturating_sub(1) as u32),
+                        spots: list,
+                    });
+                }
+            }
             b.append(one, lift);
         }
         if wb.base - wb.low > 0.05 {
@@ -355,6 +384,7 @@ fn make_cell(job: CellJob) -> CellMeshes {
         lawns: lawns.into_iter().map(Mesh::prepare).collect(),
         water: water.map(Mesh::prepare),
         plans,
+        spots,
     }
 }
 
@@ -372,6 +402,8 @@ impl TownView {
             cut_level: 1,
             inside: None,
             hidden: BTreeSet::new(),
+            rooms: (None, Vec::new()),
+            spots: BTreeMap::new(),
             green,
             workers: None,
             stamps: BTreeMap::new(),
@@ -398,6 +430,89 @@ impl TownView {
                 .is_some()
     }
 
+    /// Engine lamps for the lit rooms of the floors drawn open (the cut
+    /// view and the building our hero is in), nearest `eye` first, and a
+    /// key that changes when they do. Picked again only when the cut, the
+    /// floor or the quarter hour change; the plans are already built, so
+    /// this is a short walk over a few dozen buildings.
+    pub fn room_lamps(&mut self, eye: DVec2, hour: f32) -> (u64, &[engine::lamps::Lamp]) {
+        const MOST: usize = 32;
+        let key = RoomsKey {
+            cut: self.cut_on.then(|| {
+                (
+                    (self.cut_focus.x / 8.0).round() as i64,
+                    (self.cut_focus.y / 8.0).round() as i64,
+                    self.cut_level,
+                )
+            }),
+            inside: self.inside.map(|i| (i.building, i.level)),
+            hour: (hour * 20.0).round() as i32,
+            eye: ((eye.x / 16.0).round() as i64, (eye.y / 16.0).round() as i64),
+        };
+        if self.rooms.0 != Some(key) {
+            let mut open: Vec<(u64, u32)> = Vec::new();
+            if let Some(i) = self.inside {
+                open.push((i.building, i.level));
+            }
+            if self.cut_on {
+                let (p, r) = (self.cut_focus, CUT_RADIUS);
+                let m = DVec2::splat(r + BUILDING_MARGIN);
+                let mut near: Vec<(f64, u64)> = self
+                    .world
+                    .quarters_in(p - m, p + m)
+                    .iter()
+                    .flat_map(|q| {
+                        q.buildings_with_ids()
+                            .map(|(id, b)| (centre(b).distance(eye), id.0, centre(b).distance(p)))
+                            .filter(|(_, _, d)| *d < r)
+                            .map(|(e, id, _)| (e, id))
+                            .collect::<Vec<_>>()
+                    })
+                    .collect();
+                near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                open.extend(near.into_iter().take(12).map(|(_, i)| (i, self.cut_level)));
+            }
+            let mut lamps: Vec<(f64, engine::lamps::Lamp)> = Vec::new();
+            for (i, level) in open {
+                if self.hidden.contains(&i) {
+                    continue;
+                }
+                let (Some(wb), Some(plan)) = (self.building(i), self.plan(i)) else {
+                    continue;
+                };
+                let level = (level as usize).min(plan.floors.len() - 1);
+                let floor =
+                    wb.base + plan.floors[level].elevation + crate::citymesh::ROOM_FLOOR_TOP;
+                for l in crate::interior::room_lights(&plan, level) {
+                    let on = crate::daylight::lights_on(l.habit, hour);
+                    if on < 0.05 {
+                        continue;
+                    }
+                    let c = plan
+                        .site
+                        .to_city(DVec3::new(l.at.x, floor + l.at.y, l.at.z));
+                    let d = DVec2::new(c.x, c.z).distance(eye);
+                    lamps.push((
+                        d,
+                        engine::lamps::Lamp::point(c.as_vec3(), l.color, l.intensity * on, l.range),
+                    ));
+                }
+            }
+            lamps.sort_by(|a, b| a.0.total_cmp(&b.0));
+            lamps.truncate(MOST);
+            self.rooms = (Some(key), lamps.into_iter().map(|(_, l)| l).collect());
+        }
+        let mut h = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&key, &mut h);
+        (std::hash::Hasher::finish(&h), &self.rooms.1)
+    }
+
+    /// The places to stand on the floors drawn open (the cut view, the
+    /// building our hero is in), in the cells drawn now.
+    pub fn indoor_spots(&self) -> impl Iterator<Item = &IndoorSpots> {
+        self.spots.values().flatten()
+    }
+
     /// The tallest building within `r` of `p` (most floors).
     pub fn tallest_near(&self, p: DVec2, r: f64) -> Option<u64> {
         let m = DVec2::splat(r + BUILDING_MARGIN);
@@ -412,6 +527,46 @@ impl TownView {
             })
             .max()
             .map(|(_, std::cmp::Reverse(id))| id)
+    }
+
+    /// The nearest building to `p` (within `r`) with a room of `kind`
+    /// above the ground floor if it can (for close-up views): the
+    /// building, the floor and the room's index on it.
+    pub fn find_room(
+        &mut self,
+        p: DVec2,
+        r: f64,
+        kind: hw_gen::building::RoomKind,
+    ) -> Option<(u64, usize, usize)> {
+        let m = DVec2::splat(r + BUILDING_MARGIN);
+        let mut near: Vec<(f64, u64)> = self
+            .world
+            .quarters_in(p - m, p + m)
+            .iter()
+            .flat_map(|q| {
+                q.buildings_with_ids()
+                    .map(|(id, b)| (centre(b).distance(p), id.0))
+                    .filter(|(d, _)| *d < r)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        for (_, i) in near {
+            let Some(plan) = self.plan(i) else { continue };
+            let mut found = None;
+            for (level, f) in plan.floors.iter().enumerate() {
+                if let Some(k) = f.rooms.iter().position(|room| room.kind == kind) {
+                    found = Some((i, level, k));
+                    if level > 0 {
+                        break;
+                    }
+                }
+            }
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
     }
 
     fn building(&self, i: u64) -> Option<WorldBuilding> {
@@ -700,6 +855,7 @@ impl TownView {
         }
         self.built.remove(&k);
         self.stamps.remove(&k);
+        self.spots.remove(&k);
     }
 
     /// The buildings whose centres stand in cell `k`.
@@ -769,6 +925,11 @@ impl TownView {
         // Keep plans only for buildings of cells still listed.
         if self.buildings.contains_key(&k) {
             self.plans.extend(m.plans);
+        }
+        if m.spots.is_empty() {
+            self.spots.remove(&k);
+        } else {
+            self.spots.insert(k, m.spots);
         }
         let mut ids: Vec<EntityId> = m
             .solid
@@ -860,6 +1021,15 @@ fn water_mesh(w: &TownWorld, k: CellKey) -> Option<Mesh> {
         }
     }
     (!b.is_empty()).then(|| b.finish())
+}
+
+/// What [`TownView::room_lamps`] were picked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct RoomsKey {
+    cut: Option<(i64, i64, u32)>,
+    inside: Option<(u64, u32)>,
+    hour: i32,
+    eye: (i64, i64),
 }
 
 fn centre(b: &hw_gen::urban::world::WorldBuilding) -> DVec2 {

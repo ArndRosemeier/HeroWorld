@@ -549,7 +549,15 @@ between them) is designed but not built; the town stands in endless streamed gro
 - **Buildings** are planned inside out: floors and rooms first, the facade from the rooms.
   Uses: offices, shops and offices, apartments, houses, works, pavilions, labs, tenements.
   Every building has a furnished interior (lobbies, offices, flats, shops, labs) and a
-  glowing **Aether lift** in its core (Space rises, Ctrl sinks). Buildings on slopes stand
+  glowing **Aether lift** in its core (Space rises, Ctrl sinks). Interiors follow the
+  building's era: wallpaper (stripes, damask, atomic) and picture rails in old and deco
+  houses, painted plaster in modern ones; parquet in flats, lino in kitchens and diners,
+  terrazzo in lobbies; doors stand open. Flats have a kitchen, dining table, sofa group,
+  bed and wardrobe; offices rows of steel desks; shops are a grocer, a clothes shop, an
+  appliance store or a diner (narrow commercial buildings keep a 4 m entrance hall at one
+  end and a shop in the rest). After dark the lit rooms light up (lamps on the same habits
+  as the lit windows). **People indoors:** at home mornings and evenings (abed from 23:30
+  to 6), at work 8-18, shopping while the shops are busy; each stays about a quarter hour. Buildings on slopes stand
   on stone plinths. Surfaces are textured and weathered by age and quarter.
 - **Water:** rivers, lakes and coasts; bridges; granite quays with bollards and steps down
   to the water. Water is a surface you stand on at its level; quay walls block (fly out).

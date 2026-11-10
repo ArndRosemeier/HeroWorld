@@ -214,13 +214,25 @@ fn strong_buildings_need_a_stronger_hero() {
 fn heroes_punch_through_walls_and_unseen_buildings_repair_themselves() {
     let t = town();
     let i = small_building(&t);
-    let (_, _, frame) = centre(&t, i);
+    let (_, plan, frame) = centre(&t, i);
     let mut sim = Sim::for_town(Seed(1), &t);
     let me = PlayerId(1);
     let hero = sim.spawn_hero(me, DVec3::ZERO);
-    // Stand in front of the front wall's first bay (the door is in the
-    // middle), facing it.
-    let x = 1.7;
+    // Stand in front of the front wall's first bay at the end away from
+    // the street door (a narrow shop building has its door near one
+    // end), facing it.
+    let door = plan.floors[0]
+        .doors
+        .iter()
+        .filter(|d| d.b.is_none() && d.along_x && d.at.y < 0.01)
+        .map(|d| d.at.x)
+        .next()
+        .unwrap_or(plan.site.size.x * 0.5);
+    let x = if door > plan.site.size.x * 0.5 {
+        1.7
+    } else {
+        plan.site.size.x - 1.7
+    };
     let at = frame.to_world(DVec3::new(x, 0.0, -0.9));
     let into = frame.to_world(DVec3::new(x, 0.0, 1.0)) - at;
     let aim = DVec3::new(into.x, 0.0, into.z).normalize();

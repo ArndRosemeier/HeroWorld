@@ -40,7 +40,7 @@ fn main() {
         }
     }
     let city = GeneratedCity::generate_with(Seed(seed), &params);
-    let report = zfight::city(&city, cut, detail).run();
+    let report = zfight::city_report(&city, cut, detail);
     println!(
         "seed {seed}{}{}: {}",
         cut.map(|l| format!(", cut at floor {l}"))

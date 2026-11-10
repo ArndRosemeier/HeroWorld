@@ -101,6 +101,41 @@ pub enum Base {
     PaintedWood,
     /// Woven upholstery (near white: tint it).
     Fabric,
+    /// Wallpaper in a pattern (near white: tint it).
+    Wallpaper(Paper),
+    /// Polished wood veneer, grain along u (tint it with the wood).
+    Veneer,
+    /// Block parquet in a basket weave (tint it with the wood).
+    Parquet,
+    /// Linoleum in a chequerboard, glossy (black and near white: tint the
+    /// light squares).
+    Lino,
+    /// Terrazzo: stone chips in polished cement (near white: tint it).
+    Terrazzo,
+}
+
+/// Wallpaper patterns of the golden age. On walls that do not run along
+/// the town's axes Engine's triplanar mapping blends two projections, so
+/// every pattern is mostly vertical: it stays clean when blended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Paper {
+    /// Broad stripes of two tones.
+    Stripes,
+    /// Fine pinstripes on a plain ground.
+    Pinstripe,
+    /// Columns of ogee damask flowers, a sheen against matt.
+    Damask,
+    /// Thin double lines with little atomic stars between them.
+    Atomic,
+}
+
+impl Paper {
+    pub const ALL: [Paper; 4] = [
+        Paper::Stripes,
+        Paper::Pinstripe,
+        Paper::Damask,
+        Paper::Atomic,
+    ];
 }
 
 /// A base and its wear.
@@ -161,11 +196,16 @@ fn kind(b: Base) -> Kind {
             Kind::Render
         }
         Base::Facade(F::Concrete | F::ConcretePanel) => Kind::Concrete,
-        Base::Facade(F::WoodSiding | F::Timber) | Base::PaintedWood | Base::Fabric => Kind::Wood,
+        Base::Facade(F::WoodSiding | F::Timber)
+        | Base::PaintedWood
+        | Base::Fabric
+        | Base::Veneer
+        | Base::Parquet
+        | Base::Wallpaper(_) => Kind::Wood,
         Base::Facade(F::MetalPanel | F::GlassCurtain) | Base::Enamel => Kind::Metal,
         Base::Facade(_) | Base::Medieval(_) | Base::CastStone => Kind::Masonry,
         Base::Roof(_) => Kind::Roof,
-        Base::Ground(_) => Kind::Ground,
+        Base::Ground(_) | Base::Lino | Base::Terrazzo => Kind::Ground,
     }
 }
 
@@ -180,6 +220,11 @@ pub fn make(s: Skin, size: u32) -> TextureLayer {
         Base::CastStone => cast_stone(size),
         Base::PaintedWood => painted_wood(size),
         Base::Fabric => fabric(size),
+        Base::Wallpaper(p) => wallpaper(p, size),
+        Base::Veneer => veneer(size),
+        Base::Parquet => parquet(size),
+        Base::Lino => lino(size),
+        Base::Terrazzo => terrazzo(size),
     };
     weather(&mut t, s);
     t
@@ -456,6 +501,224 @@ fn fabric(size: u32) -> TextureLayer {
         }
     }
     w.store(&mut t, 20.0);
+    t
+}
+
+/// Wallpaper: a printed pattern on paper with a faint fibre, matt where
+/// the ground is and with a little sheen on the print. A tile is 1.2 m
+/// wide and high.
+fn wallpaper(p: Paper, size: u32) -> TextureLayer {
+    let mut t = blank(size, 1.2, 0.6);
+    let mut w = Work::of(&t);
+    let n = w.n as f32;
+    for y in 0..w.n {
+        for x in 0..w.n {
+            let (u, v) = (x as f32 / n, y as f32 / n);
+            let fibre = value(51, 128, u, v) * 0.6 + value(52, 256, u, v) * 0.4;
+            // 0 ground, 1 print.
+            let print = match p {
+                Paper::Stripes => {
+                    // Eight stripes across a tile, each a broad band and a
+                    // thin edge line.
+                    let f = (u * 8.0).fract();
+                    let band = smooth(0.02, 0.04, f) * (1.0 - smooth(0.46, 0.48, f));
+                    let line = smooth(0.56, 0.575, f) * (1.0 - smooth(0.6, 0.615, f));
+                    band.max(line * 0.8)
+                }
+                Paper::Pinstripe => {
+                    let f = (u * 24.0).fract();
+                    smooth(0.0, 0.06, f) * (1.0 - smooth(0.1, 0.16, f))
+                }
+                Paper::Damask => {
+                    // Columns of ogee flowers, every other column dropped
+                    // half a repeat.
+                    let (cols, rows) = (6.0, 4.0);
+                    let cu = (u * cols).floor();
+                    let fu = (u * cols).fract() - 0.5;
+                    let drop = if (cu as i64) % 2 == 0 { 0.0 } else { 0.5 };
+                    let fv = (v * rows + drop).fract() - 0.5;
+                    // An ogee: a diamond with swelling sides, a stem through it.
+                    let d = (fu.abs() * 2.2).powf(1.4) + (fv.abs() * 2.0).powf(0.9);
+                    let flower = 1.0 - smooth(0.62, 0.7, d);
+                    let hollow = 1.0 - smooth(0.25, 0.32, d);
+                    let stem = (1.0 - smooth(0.012, 0.025, fu.abs())) * smooth(0.3, 0.32, fv.abs());
+                    let rail = 1.0 - smooth(0.01, 0.02, (fu.abs() - 0.5).abs());
+                    (flower - hollow * 0.7).max(stem * 0.6).max(rail * 0.5)
+                }
+                Paper::Atomic => {
+                    // Pairs of fine lines, little four-point stars between.
+                    let (cols, rows) = (5.0, 7.0);
+                    let fu = (u * cols).fract();
+                    let lines = [0.06, 0.1]
+                        .iter()
+                        .map(|c| 1.0 - smooth(0.006, 0.014, (fu - c).abs()))
+                        .fold(0.0f32, f32::max);
+                    let cu = (u * cols).floor();
+                    let drop = if (cu as i64) % 2 == 0 { 0.0 } else { 0.5 };
+                    let fv = (v * rows + drop).fract() - 0.5;
+                    let su = (fu - 0.55) * cols / rows;
+                    let (a, b) = (su.abs() * 9.0, fv.abs() * 9.0);
+                    let star = 1.0
+                        - smooth(
+                            0.05,
+                            0.12,
+                            a.min(b) + (a * b).sqrt() * 0.6 + a.max(b) * 0.12,
+                        );
+                    let dot = 1.0 - smooth(0.02, 0.035, (su * su + fv * fv).sqrt());
+                    lines.max(star).max(dot)
+                }
+            };
+            let i = w.idx(x as i64, y as i64);
+            let g = (0.95 + (fibre - 0.5) * 0.04) * (1.0 - 0.3 * print);
+            w.rgb[i] = [g, g * 0.995, g * 0.985];
+            w.height[i] = 0.5 + (fibre - 0.5) * 0.06 + print * 0.04;
+            w.occlusion[i] = 1.0 - 0.05 * print;
+            w.rough[i] = 0.85 - 0.3 * print;
+        }
+    }
+    w.store(&mut t, 12.0);
+    t
+}
+
+/// Wood grain for veneer and parquet: fine streaks along u, slow figure,
+/// a pore now and then. 0..1, about 0.5 on average.
+fn grain(seed: u64, u: f32, v: f32) -> f32 {
+    let figure = value2(seed, 2, 12, u, v);
+    let streak = value2(seed ^ 1, 6, 96, u + figure * 0.08, v);
+    let fine = value2(seed ^ 2, 24, 384, u, v);
+    let pore = (hash(seed ^ 3, (u * 512.0) as i64, (v * 1024.0) as i64) > 0.985) as u8 as f32;
+    (streak * 0.55 + fine * 0.3 + figure * 0.15 - pore * 0.2).clamp(0.0, 1.0)
+}
+
+/// Polished veneer: long grain, light figure, satin lacquer.
+fn veneer(size: u32) -> TextureLayer {
+    let mut t = blank(size, 1.2, 0.5);
+    let mut w = Work::of(&t);
+    let n = w.n as f32;
+    for y in 0..w.n {
+        for x in 0..w.n {
+            let (u, v) = (x as f32 / n, y as f32 / n);
+            let g = grain(61, u, v);
+            let i = w.idx(x as i64, y as i64);
+            let c = 0.82 + (g - 0.5) * 0.3;
+            // Darker grain lines lean towards red-brown.
+            w.rgb[i] = [c, c * 0.97, c * 0.93];
+            w.height[i] = 0.5 + (g - 0.5) * 0.04;
+            w.rough[i] = 0.3 + (g - 0.5) * 0.08;
+        }
+    }
+    w.store(&mut t, 10.0);
+    t
+}
+
+/// Block parquet: squares of four slats, turned every other square (a
+/// basket weave), each slat its own tone, with fine dark joints.
+fn parquet(size: u32) -> TextureLayer {
+    let mut t = blank(size, 1.2, 0.8);
+    let mut w = Work::of(&t);
+    let n = w.n as f32;
+    let blocks = 4.0;
+    for y in 0..w.n {
+        for x in 0..w.n {
+            let (u, v) = (x as f32 / n, y as f32 / n);
+            let (bu, bv) = ((u * blocks).floor(), (v * blocks).floor());
+            let (fu, fv) = ((u * blocks).fract(), (v * blocks).fract());
+            let turned = ((bu + bv) as i64).rem_euclid(2) == 1;
+            let (across, along) = if turned { (fv, fu) } else { (fu, fv) };
+            let slat = (across * 4.0).floor();
+            let fs = (across * 4.0).fract();
+            let joint_d = fs.min(1.0 - fs) * 0.075;
+            let edge_d = along.min(1.0 - along) * 0.3;
+            let joint = 1.0 - smooth(0.0006, 0.0018, joint_d.min(edge_d));
+            let tone = hash(71, (bu * 4.0 + slat) as i64, bv as i64);
+            let (gu, gv) = if turned { (v, u) } else { (u, v) };
+            let g = grain(72 + slat as u64, gv * 0.5, gu * 2.0);
+            let i = w.idx(x as i64, y as i64);
+            let c = (0.8 + (tone - 0.5) * 0.14 + (g - 0.5) * 0.22) * (1.0 - 0.6 * joint);
+            w.rgb[i] = [c, c * 0.96, c * 0.9];
+            w.height[i] = 0.55 - 0.3 * joint + (g - 0.5) * 0.03;
+            w.occlusion[i] = 1.0 - 0.4 * joint;
+            w.rough[i] = 0.38 + 0.4 * joint + (tone - 0.5) * 0.06;
+        }
+    }
+    w.store(&mut t, 30.0);
+    t
+}
+
+/// Linoleum squares, 30 cm, black and near white, glossy, faint marbling.
+fn lino(size: u32) -> TextureLayer {
+    let mut t = blank(size, 1.2, 0.5);
+    let mut w = Work::of(&t);
+    let n = w.n as f32;
+    let squares = 4.0;
+    for y in 0..w.n {
+        for x in 0..w.n {
+            let (u, v) = (x as f32 / n, y as f32 / n);
+            let (su, sv) = ((u * squares).floor(), (v * squares).floor());
+            let (fu, fv) = ((u * squares).fract(), (v * squares).fract());
+            let dark = ((su + sv) as i64).rem_euclid(2) == 1;
+            let edge = fu.min(1.0 - fu).min(fv.min(1.0 - fv)) * 0.3;
+            let joint = 1.0 - smooth(0.0005, 0.0015, edge);
+            let marble = fbm(81, 8, 4, u, v);
+            let i = w.idx(x as i64, y as i64);
+            let base = if dark { 0.11 } else { 0.93 };
+            let c = (base + (marble - 0.5) * 0.06) * (1.0 - 0.3 * joint);
+            w.rgb[i] = [c, c, c * 0.98];
+            w.height[i] = 0.5 - 0.2 * joint;
+            w.rough[i] = 0.2 + 0.4 * joint + (marble - 0.5) * 0.05;
+        }
+    }
+    w.store(&mut t, 20.0);
+    t
+}
+
+/// Terrazzo: white cement with chips of marble in three greys and a few
+/// coloured ones, polished.
+fn terrazzo(size: u32) -> TextureLayer {
+    let mut t = blank(size, 1.6, 0.4);
+    let mut w = Work::of(&t);
+    let n = w.n as f32;
+    let cells = 48.0;
+    for y in 0..w.n {
+        for x in 0..w.n {
+            let (u, v) = (x as f32 / n, y as f32 / n);
+            let (cu, cv) = ((u * cells).floor() as i64, (v * cells).floor() as i64);
+            let (fu, fv) = ((u * cells).fract(), (v * cells).fract());
+            // The nearest chip among the cell's neighbours.
+            let mut best = (9.0f32, 0i64, 0i64);
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    let (i, j) = ((cu + dx).rem_euclid(48), (cv + dy).rem_euclid(48));
+                    let px = dx as f32 + hash(91, i, j);
+                    let py = dy as f32 + hash(92, i, j);
+                    let d = ((fu - px).powi(2) + (fv - py).powi(2)).sqrt();
+                    if d < best.0 {
+                        best = (d, i, j);
+                    }
+                }
+            }
+            let r = 0.18 + 0.25 * hash(93, best.1, best.2);
+            let chip = 1.0 - smooth(r - 0.04, r, best.0);
+            let kind = hash(94, best.1, best.2);
+            let tint = if kind < 0.4 {
+                [0.62, 0.6, 0.58]
+            } else if kind < 0.75 {
+                [0.85, 0.83, 0.8]
+            } else if kind < 0.93 {
+                [0.4, 0.39, 0.38]
+            } else {
+                [0.75, 0.5, 0.42]
+            };
+            let ground = 0.95 + (value(95, 64, u, v) - 0.5) * 0.03;
+            let mut c = [ground, ground * 0.99, ground * 0.97];
+            mix(&mut c, tint, chip);
+            let i = w.idx(x as i64, y as i64);
+            w.rgb[i] = c;
+            w.height[i] = 0.5;
+            w.rough[i] = 0.22;
+        }
+    }
+    w.store(&mut t, 10.0);
     t
 }
 

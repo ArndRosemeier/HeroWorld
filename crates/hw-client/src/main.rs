@@ -110,6 +110,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Milliseconds per frame for putting town cells, drawn on worker threads,
 /// into the world as you move.
+/// People indoors are shown within this distance of the camera...
+const INDOOR_SHOWN_M: f64 = 70.0;
+/// ...and at most this many (the nearest).
+const INDOOR_SHOWN_MAX: usize = 120;
 const BUILD_BUDGET_MS: f64 = 6.0;
 /// Milliseconds per frame for putting cells drawn on worker threads into
 /// the world behind the title (and for its props).
@@ -1216,7 +1220,79 @@ fn main() -> EngineResult<()> {
         view.as_str(),
         "hero" | "inside" | "sky" | "title" | "fight" | "hangout" | "far"
     );
-    if view == "inside" {
+    // `HW_VIEW=room HW_ROOM=flat|shop|office|lobby|kitchen|bedroom|living`:
+    // the free camera looking into the nearest room of that kind, its
+    // floor cut open (furniture close-ups).
+    let room_view = (view == "room")
+        .then(|| std::env::var("HW_ROOM").ok())
+        .flatten()
+        .and_then(|r| {
+            use hw_gen::building::RoomKind as K;
+            let kind = match r.as_str() {
+                "flat" => K::Apartment,
+                "shop" => K::Shop,
+                "office" => K::Office,
+                "lobby" => K::Lobby,
+                "kitchen" => K::Kitchen,
+                "bedroom" => K::Bedroom,
+                "living" => K::Living,
+                "corridor" => K::Corridor,
+                _ => return None,
+            };
+            // `HW_ROOM_SKIP=n` skips the n nearest such rooms' buildings.
+            let skip = env_num("HW_ROOM_SKIP").unwrap_or(0) as usize;
+            let mut from = spawn;
+            let mut found = None;
+            for _ in 0..=skip {
+                found = town.find_room(from, 2500.0, kind);
+                let (i, ..) = found?;
+                // The next search starts just past this building.
+                from = town.centre_of(i)? + DVec2::new(37.0, 23.0);
+            }
+            found
+        });
+    if let Some((i, level, k)) = room_view {
+        if let Some(plan) = town.plan(i) {
+            let base = generated
+                .world
+                .building(hw_gen::urban::quarter::DetailId(i))
+                .map_or(0.0, |b| b.base);
+            let f = &plan.floors[level];
+            let room = &f.rooms[k];
+            let c = room.rect.center();
+            let y = base + f.elevation;
+            // The free camera over the front wall, looking down into the
+            // room; the floor is cut open there (`HW_ROOM_YAW` turns it,
+            // `HW_ROOM_UP` raises it).
+            let up = std::env::var("HW_ROOM_UP")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(5.5);
+            let turn = std::env::var("HW_ROOM_YAW")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.0)
+                .to_radians();
+            let back = DVec2::new(-turn.sin(), -turn.cos()) * (room.rect.size().y * 0.5 + 1.5);
+            let eye = plan
+                .site
+                .to_city(glam::DVec3::new(c.x + back.x, y + up, c.y + back.y));
+            let look = plan.site.to_city(glam::DVec3::new(c.x, y, c.y));
+            let d = look - eye;
+            let yaw = d.x.atan2(d.z).to_degrees() as f32;
+            let pitch = (d.y.atan2(DVec2::new(d.x, d.z).length())).to_degrees() as f32;
+            fly = FlyCamera::new((eye.x as f32, eye.y as f32, eye.z as f32), yaw, pitch);
+            flying = true;
+            town.cut_on = true;
+            let fc = plan.site.to_city(glam::DVec3::new(c.x, 0.0, c.y));
+            town.cut_focus = DVec2::new(fc.x, fc.z);
+            town.cut_level = level as u32;
+            println!(
+                "room view: building {i}, floor {level}, room {k} ({:?})",
+                room.kind
+            );
+        }
+    } else if view == "inside" {
         // Start in the lobby of the tallest building near the start.
         let tower = town.tallest_near(spawn, 400.0);
         if let Some((i, plan)) = tower.and_then(|i| Some((i, town.plan(i)?))) {
@@ -2022,7 +2098,13 @@ fn main() -> EngineResult<()> {
             citizens.set_hour(hour as f64);
             if let (Some(lights), Some(props)) = (extras.lights.as_mut(), extras.props.as_ref()) {
                 let dark = swoop.is_none() && hw_client::nightlights::dark_at(hour);
-                lights.update(world, world.camera().eye(), dark, props)?;
+                let eye = world.camera().eye();
+                let rooms = if dark {
+                    town.room_lamps(glam::DVec2::new(eye.x as f64, eye.z as f64), hour)
+                } else {
+                    (0, &[][..])
+                };
+                lights.update(world, eye, dark, props, rooms)?;
             }
             hw_client::hitch::mark("underground");
             if let Some(under) = extras.under.as_mut() {
@@ -3268,6 +3350,30 @@ fn main() -> EngineResult<()> {
             let eye = world.camera().eye();
             let eye2 = DVec2::new(eye.x as f64, eye.z as f64);
             let dt = frame.dt as f64;
+            // People at home, at work and shopping on the floors drawn
+            // open near the camera: a hash per place, the nearest shown.
+            let mut indoor: Vec<hw_sim::citizens::Citizen> = town
+                .indoor_spots()
+                .flat_map(|f| {
+                    f.spots
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, s)| DVec2::new(s.at.x, s.at.z).distance(eye2) < INDOOR_SHOWN_M)
+                        .filter_map(|(n, s)| {
+                            citizens.indoors(
+                                f.building, f.level, n as u32, s.room, s.at, s.facing, game_time,
+                            )
+                        })
+                })
+                .collect();
+            indoor.sort_by(|a, b| {
+                let d = |c: &hw_sim::citizens::Citizen| {
+                    DVec2::new(c.pos.x, c.pos.z).distance_squared(eye2)
+                };
+                d(a).total_cmp(&d(b)).then(a.id.cmp(&b.id))
+            });
+            indoor.truncate(INDOOR_SHOWN_MAX);
+            crowd.set_indoor(indoor);
             // The traffic drives on and its cars are placed on a worker,
             // while the citizens go to Engine here; the join below is the
             // only meeting point (the borrows keep the two apart).
