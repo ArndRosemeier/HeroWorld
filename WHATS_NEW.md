@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.120 (2026-11-10)
+
+- Built on the newest Engine (0.029): the graphics card no longer re-checks thousands of unused texture slots every time it draws the world, so each frame costs the processor a little less.
+
 ## 0.119 (2026-11-10)
 
 - Built on the newest Engine (0.028). The graphics card now keeps the city's buildings and their shadow casters itself and works out on its own which ones it can see, so the computer's processor has much less to do each frame. Buildings with different facades are drawn together in one go.
