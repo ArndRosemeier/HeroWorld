@@ -28,6 +28,17 @@ fn glow(c: Color) -> Paint {
     Some((Surf::Glow, c))
 }
 
+/// `c` a little lighter (k > 1) or darker (k < 1).
+fn shade(c: Color, k: f64) -> Color {
+    let k = k as f32;
+    Color {
+        r: (c.r * k).clamp(0.0, 1.0),
+        g: (c.g * k).clamp(0.0, 1.0),
+        b: (c.b * k).clamp(0.0, 1.0),
+        a: c.a,
+    }
+}
+
 /// A small deterministic jitter in -1..1 from two numbers.
 fn jitter(a: u32, b: u32) -> f64 {
     let mut h = a.wrapping_mul(0x9E37_79B9) ^ b.wrapping_mul(0x85EB_CA6B);
@@ -47,8 +58,8 @@ pub use hw_sim::roosts::{envelope_r, AIRSHIP_LENGTH, AIRSHIP_RADIUS, GONDOLA_DEC
 /// stern. Origin at the envelope's middle, nose to +z.
 pub fn airship(lod: Lod) -> Mesh {
     let mut b = MeshBuilder::new();
-    let seg = lod.pick(36, 14, 10);
-    let rows = lod.pick(44, 14, 10);
+    let seg = lod.pick(56, 24, 12);
+    let rows = lod.pick(60, 24, 12);
     let canvas = rgb(232, 220, 190);
     let patch = rgb(206, 188, 150);
     let red = rgb(160, 30, 28);
@@ -144,65 +155,313 @@ pub fn airship(lod: Lod) -> Mesh {
     b.finish()
 }
 
-/// The gondola: a wooden galleon hull slung under the envelope, with a
-/// glazed wheelhouse forward, brass rail, engines on outriggers, cables up
-/// to the envelope and a black flag astern.
+/// Length, half beam and depth under the deck of the gondola's hull (the
+/// solids in `hw_sim::airships` are this size).
+const HULL_LEN: f64 = 18.0;
+const HULL_BEAM: f64 = 2.0;
+const HULL_DEPTH: f64 = 2.4;
+
+/// A point on the gondola's hull: `u` from the bow (0) to the transom (1),
+/// `a` round the section from the port gunwale (0) down past the keel (pi/2)
+/// to starboard (pi). A fine bow, full midships, a broad stern under a
+/// raised quarterdeck, the sides tumbling home a little at the top and the
+/// keel sweeping up into the stem.
+fn hull_at(u: f64, a: f64) -> DVec3 {
+    let deck_y = -GONDOLA_DECK;
+    let z = HULL_LEN * 0.5 - u * HULL_LEN;
+    let smooth = |e0: f64, e1: f64, x: f64| {
+        let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
+    // Width: from the stem out to full beam, held, then in a little to
+    // the transom.
+    let bow = (u / 0.38).min(1.0);
+    let w = HULL_BEAM
+        * (1.0 - (1.0 - bow).powi(2)).max(0.0).sqrt().max(0.03)
+        * (1.0 - 0.2 * smooth(0.7, 1.0, u));
+    // Depth: the forefoot rises into the stem, the run aft lifts a little.
+    let d = HULL_DEPTH
+        * (1.0 - 0.6 * (1.0 - (u / 0.32).min(1.0)).powi(2))
+        * (1.0 - 0.28 * smooth(0.8, 1.0, u));
+    // The gunwale's sheer: up at the bow, up more at the quarterdeck.
+    let top = deck_y + 0.4 + 0.45 * (1.0 - u / 0.4).max(0.0).powi(2) + 0.55 * smooth(0.72, 0.9, u);
+    let s = a.sin();
+    let tumble = 1.0 - 0.07 * (1.0 - s);
+    let x = -w * a.cos() * tumble;
+    let y = top - (top - (deck_y - d)) * s.powf(0.85);
+    DVec3::new(x, y, z)
+}
+
+/// The outward normal of the hull at (`u`, `a`).
+fn hull_normal(u: f64, a: f64) -> DVec3 {
+    let (du, da) = (1e-3, 1e-3);
+    let tu = hull_at(u + du, a) - hull_at(u - du, a);
+    let ta = hull_at(u, a + da) - hull_at(u, a - da);
+    let n = tu.cross(ta).normalize_or(DVec3::X);
+    let p = hull_at(u, a);
+    // Out is away from the hull's middle line, a little downwards.
+    let away = DVec3::new(p.x, (p.y + GONDOLA_DECK + 1.0).min(0.0), 0.0);
+    if n.dot(away) < 0.0 {
+        -n
+    } else {
+        n
+    }
+}
+
+/// The gondola: a planked galleon hull slung under the envelope, red
+/// topsides over a dark wale, copper-sheathed below, brass portholes, a
+/// keel and stem post, a windowed stern with lanterns; a planked deck
+/// behind bulwarks and a brass rail, a glazed wheelhouse forward, engines
+/// on outriggers, cables up to the envelope and a black flag astern.
 fn gondola(b: &mut MeshBuilder, lod: Lod, dark: Color, brass: Color) {
     let wood = rgb(120, 74, 40);
     let wood2 = rgb(98, 58, 30);
+    let deck_wood = rgb(158, 118, 76);
+    let red = rgb(138, 32, 26);
+    let copper = rgb(176, 104, 62);
     let deck_y = -GONDOLA_DECK;
-    let len = 18.0;
-    let beam = 2.0;
-    let depth = 2.4;
-    let rows = lod.pick(22, 8, 5);
-    let seg = lod.pick(16, 8, 6);
-    // Cross-sections of a ship's hull from bow (+z) to stern: a U that
-    // narrows to the stem, the keel rising at both ends.
-    let hull: Vec<Vec<DVec3>> = (0..=rows)
-        .map(|i| {
-            let u = i as f64 / rows as f64;
-            let z = len * 0.5 - u * len;
-            let w = beam * (1.0 - (2.0 * u - 1.0).powi(4)).max(0.02).powf(0.6);
-            let d = depth * (1.0 - (2.0 * u - 1.0).powi(6) * 0.6);
-            (0..=seg)
-                .map(|j| {
-                    // From the port gunwale down round the keel to starboard.
-                    let a = PI * j as f64 / seg as f64;
-                    let x = -w * a.cos();
-                    let y = deck_y - d * a.sin().powf(0.8);
-                    DVec3::new(x, y, z)
-                })
+    let len = HULL_LEN;
+    let rows = lod.pick(56, 22, 10);
+    let strakes = lod.pick(14, 8, 5);
+    // Each strake is a narrow seam and its plank (near), or the plank alone.
+    let seams = lod == Lod::Near;
+    let mut cols: Vec<(f64, usize, bool)> = Vec::new();
+    for k in 0..strakes {
+        let a0 = PI * k as f64 / strakes as f64;
+        let step = PI / strakes as f64;
+        if seams {
+            cols.push((a0, k, true));
+            cols.push((a0 + step * 0.07, k, false));
+        } else {
+            cols.push((a0, k, false));
+        }
+    }
+    cols.push((PI, strakes - 1, false));
+    let us: Vec<f64> = (0..=rows).map(|i| i as f64 / rows as f64).collect();
+    let hull: Vec<Vec<DVec3>> = us
+        .iter()
+        .map(|&u| cols.iter().map(|&(a, _, _)| hull_at(u, a)).collect())
+        .collect();
+    // Which strakes are copper (round the keel), the red topside and the
+    // dark wale under it.
+    let mid_of = |k: usize| PI * (k as f64 + 0.5) / strakes as f64;
+    let copper_k = |k: usize| mid_of(k).sin() > 0.8;
+    let top_k = |k: usize| k == 0 || k + 1 == strakes;
+    let wale_k = |k: usize| k == 1 || k + 2 == strakes;
+    surface(b, &hull, false, |i, j| {
+        let (_, k, seam) = cols[j];
+        if seam {
+            return plain(if copper_k(k) {
+                rgb(120, 70, 44)
+            } else {
+                rgb(52, 32, 18)
+            });
+        }
+        if copper_k(k) {
+            // Sheathing plates: a slightly different tone every two rows.
+            let t = jitter(k as u32 * 7 + (i / 2) as u32, 3) * 0.06;
+            return metal(shade(copper, 1.0 + t));
+        }
+        if top_k(k) {
+            return plain(red);
+        }
+        if wale_k(k) {
+            return plain(dark);
+        }
+        if lod == Lod::Far {
+            return plain(wood);
+        }
+        // Planks butt-jointed every few rows, staggered strake to strake,
+        // each its own shade of oak.
+        let plank = (i + k * 3) / 5;
+        let t = jitter(k as u32, plank as u32);
+        plain(shade(if t > 0.3 { wood2 } else { wood }, 1.0 + t * 0.08))
+    });
+    // The transom: the flat stern closing the hull, both faces.
+    let last = &hull[hull.len() - 1];
+    let mid: Vec<DVec3> = last
+        .iter()
+        .map(|p| DVec3::new(0.0, (p.y + deck_y) * 0.5, p.z))
+        .collect();
+    let transom = [last.clone(), mid];
+    b.grid(&transom, false, true, |_, _| plain(wood2));
+    b.grid(&transom, false, false, |_, _| plain(wood2));
+    // The deck at the bulwarks' foot, planked fore and aft; the bulwarks'
+    // inner faces up to the gunwale.
+    let planks = lod.pick(9, 5, 1);
+    let deck: Vec<Vec<DVec3>> = us
+        .iter()
+        .map(|&u| {
+            let p0 = hull_at(u, 0.0);
+            let w = p0.x.abs() * 0.97;
+            (0..=planks)
+                .map(|q| DVec3::new(-w + 2.0 * w * q as f64 / planks as f64, deck_y, p0.z))
                 .collect()
         })
         .collect();
-    surface(b, &hull, false, |_, j| {
-        // Planks: alternate strakes, a dark wale near the top.
-        if j == 1 || j + 2 == seg {
-            plain(dark)
-        } else if lod != Lod::Far && j % 2 == 0 {
-            plain(wood2)
-        } else {
-            plain(wood)
-        }
+    b.grid(&deck, false, true, |i, q| {
+        let t = jitter(q as u32 + 40, ((i + q * 2) / 6) as u32);
+        plain(shade(deck_wood, 1.0 + t * 0.07))
     });
-    // The deck, and its inside face (seen from the roofs below it is the
-    // hull; from above, planks).
-    let deck: Vec<Vec<DVec3>> = hull
+    for a in [0.0, PI] {
+        let wall: Vec<Vec<DVec3>> = us
+            .iter()
+            .map(|&u| {
+                let g = hull_at(u, a);
+                vec![g, DVec3::new(g.x * 0.97, deck_y, g.z)]
+            })
+            .collect();
+        b.grid(&wall, false, true, |_, _| plain(wood2));
+        b.grid(&wall, false, false, |_, _| plain(wood2));
+    }
+    // The keel along the bottom and the stem post sweeping up the bow.
+    let keel: Vec<DVec3> = us
         .iter()
-        .map(|r| vec![r[0], *r.last().expect("a section")])
+        .filter(|&&u| u >= 0.04)
+        .map(|&u| hull_at(u, PI * 0.5) - DVec3::Y * 0.06)
         .collect();
-    b.grid(&deck, false, true, |_, _| plain(wood));
+    tube(b, &keel, (0.1, 0.12), lod.pick(8, 6, 4), plain(dark));
     if lod == Lod::Far {
         return;
     }
-    // A brass rail along both gunwales.
-    for side in [0usize, seg] {
-        let path: Vec<DVec3> = hull.iter().map(|r| r[side] + DVec3::Y * 0.9).collect();
-        tube(b, &spline(&path, 2, false), (0.05, 0.05), 6, metal(brass));
-        for (k, r) in hull.iter().enumerate().step_by(2) {
-            let p = r[side];
-            tube(b, &[p, p + DVec3::Y * 0.9], (0.035, 0.035), 5, metal(brass));
-            let _ = k;
+    let stem: Vec<DVec3> = (0..=10)
+        .map(|s| {
+            let a = PI * 0.5 * (1.0 - s as f64 / 10.0);
+            let p = hull_at(0.0, a);
+            DVec3::new(0.0, p.y, p.z + 0.08)
+        })
+        .chain([hull_at(0.0, 0.0) + DVec3::new(0.0, 0.55, 0.25)])
+        .collect();
+    tube(b, &spline(&stem, 2, false), (0.09, 0.07), 6, plain(dark));
+    // A gilded line along the wale, and the wooden cap on the gunwale.
+    let side_seg = lod.pick(6, 4, 4);
+    for a in [0.0, PI] {
+        let cap: Vec<DVec3> = us
+            .iter()
+            .map(|&u| hull_at(u, a) + DVec3::Y * 0.04)
+            .collect();
+        tube(b, &cap, (0.08, 0.05), side_seg, plain(wood2));
+        // A gilded moulding just under the cap, along the red topside.
+        let gilt: Vec<DVec3> = us
+            .iter()
+            .filter(|&&u| u > 0.02)
+            .map(|&u| {
+                let aa = if a == 0.0 { 0.06 } else { PI - 0.06 };
+                hull_at(u, aa) + hull_normal(u, aa) * 0.015
+            })
+            .collect();
+        tube(b, &gilt, (0.03, 0.03), 4, metal(brass));
+        let k = PI * 1.04 / strakes as f64;
+        let line: Vec<DVec3> = us
+            .iter()
+            .filter(|&&u| u > 0.03)
+            .map(|&u| {
+                let aa = if a == 0.0 { k } else { PI - k };
+                hull_at(u, aa) + hull_normal(u, aa) * 0.015
+            })
+            .collect();
+        tube(b, &line, (0.035, 0.035), 4, metal(brass));
+    }
+    // Brass portholes along the topsides.
+    let port_n = lod.pick(7, 7, 0);
+    let ring_seg = lod.pick(18, 8, 6);
+    for k in 0..port_n {
+        let u = 0.2 + 0.55 * k as f64 / (port_n - 1).max(1) as f64;
+        for a in [PI * 1.55 / strakes as f64, PI - PI * 1.55 / strakes as f64] {
+            let p = hull_at(u, a);
+            let n = hull_normal(u, a);
+            if lod == Lod::Near {
+                lathe(
+                    b,
+                    p,
+                    n,
+                    &[
+                        (0.13, -0.02),
+                        (0.2, 0.0),
+                        (0.2, 0.05),
+                        (0.15, 0.07),
+                        (0.13, 0.05),
+                    ],
+                    ring_seg,
+                    |_| metal(brass),
+                );
+            }
+            lathe(
+                b,
+                p + n * 0.04,
+                n,
+                &[(0.0, 0.02), (0.14, 0.0), (0.14, -0.01)],
+                ring_seg,
+                |_| metal(rgb(36, 52, 62)),
+            );
+        }
+    }
+    // The stern: three glazed windows in brass frames, and a lantern at
+    // each quarter.
+    let back = hull_at(1.0, 0.0);
+    let tz = back.z - 0.02;
+    let ty = back.y - 0.55;
+    for x in [-0.95, 0.0, 0.95] {
+        b.surf = Surf::Metal;
+        b.oriented_box(
+            DVec3::new(x, ty, tz),
+            DVec3::X,
+            DVec3::new(0.34, 0.3, 0.03),
+            brass,
+        );
+        b.oriented_box(
+            DVec3::new(x, ty, tz - 0.03),
+            DVec3::X,
+            DVec3::new(0.27, 0.23, 0.02),
+            rgb(36, 52, 62),
+        );
+        if lod == Lod::Near {
+            b.oriented_box(
+                DVec3::new(x, ty, tz - 0.055),
+                DVec3::X,
+                DVec3::new(0.025, 0.23, 0.01),
+                brass,
+            );
+        }
+        b.surf = Surf::Plain;
+    }
+    for x in [-1.0, 1.0] {
+        let at = DVec3::new(x * (back.x.abs() - 0.15), back.y + 0.1, back.z + 0.15);
+        lathe(
+            b,
+            at,
+            DVec3::Y,
+            &[(0.0, 0.0), (0.12, 0.0), (0.14, 0.05), (0.14, 0.12)],
+            ring_seg,
+            |_| metal(brass),
+        );
+        lathe(
+            b,
+            at + DVec3::Y * 0.12,
+            DVec3::Y,
+            &[(0.11, 0.0), (0.11, 0.3)],
+            ring_seg,
+            |_| glow(rgb(255, 196, 120)),
+        );
+        lathe(
+            b,
+            at + DVec3::Y * 0.42,
+            DVec3::Y,
+            &[(0.15, 0.0), (0.06, 0.16), (0.0, 0.2)],
+            ring_seg,
+            |_| metal(brass),
+        );
+    }
+    // A brass rail along both gunwales, on turned stanchions.
+    for a in [0.0, PI] {
+        let path: Vec<DVec3> = us.iter().map(|&u| hull_at(u, a) + DVec3::Y * 0.9).collect();
+        tube(b, &spline(&path, 2, false), (0.045, 0.045), 6, metal(brass));
+        for (k, &u) in us.iter().enumerate().step_by(lod.pick(4, 3, 3)) {
+            if k == 0 {
+                continue;
+            }
+            let p = hull_at(u, a) + DVec3::Y * 0.06;
+            tube(b, &[p, p + DVec3::Y * 0.84], (0.03, 0.03), 5, metal(brass));
         }
     }
     // The wheelhouse forward: a rounded cabin with big windows.
@@ -275,7 +534,7 @@ fn gondola(b: &mut MeshBuilder, lod: Lod, dark: Color, brass: Color) {
                 (0.25, 2.9),
                 (0.0, 3.0),
             ],
-            lod.pick(20, 12, 8),
+            lod.pick(32, 14, 8),
             |k| if k == 2 { metal(dark) } else { metal(brass) },
         );
         for p in 0..prop_n {

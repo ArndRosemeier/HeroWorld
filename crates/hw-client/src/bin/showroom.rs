@@ -4,6 +4,9 @@
 //! HW_SHOW=cruiser|bubble|hover|taxi|ambulance|wheel|cars|street|lamps|barricades|plaza|life|fences,
 //! or one prop (kiosk, pillar, fountain, jersey, drum, ...; default cars)
 //! HW_LOD=near|mid|far  HW_PAINT=0..7  HW_YAW=degrees  HW_DIST=metres  HW_PITCH=degrees
+//! HW_LOOK_Y=metres (what the camera looks at). Airships float: `airship`
+//! (the pirates', its gondola's deck 2.6 m up) and `liner` (its deck's
+//! floor 1 m up, nose at the origin).
 //!
 //! xvfb-run -a env ENGINE_SCREENSHOT=$PWD/screenshots/show.png HW_SHOW=cruiser \
 //!   cargo run -p hw-client --bin showroom
@@ -69,6 +72,8 @@ fn prop(name: &str, lod: Lod) -> Mesh {
         "railing" => pm::fence(1, lod),
         "rail" => pm::fence(2, lod),
         "sweeper" => hw_client::sweeperview::sweeper(lod),
+        "airship" => hw_client::factionview::airship(lod),
+        "liner" => hw_client::mastmesh::ship(lod),
         _ => Mesh::new(),
     }
 }
@@ -117,12 +122,19 @@ fn main() -> EngineResult<()> {
     let yaw = env_f("HW_YAW", 35.0);
     let pitch = env_f("HW_PITCH", 14.0);
     let dist = env_f("HW_DIST", if names.len() > 1 { 9.0 + width } else { 7.0 });
+    let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
     let mut meshes = Some(meshes);
     Engine::run("showroom", move |world, frame| {
         if frame.first {
             for (i, m) in meshes.take().unwrap_or_default().into_iter().enumerate() {
                 let x = -width * 0.5 + spacing * i as f32;
-                world.place(m, Place::new(x, 0.0, 0.0))?;
+                let lift = env_f("HW_LIFT", 0.0)
+                    + match names[i].as_str() {
+                        "airship" => hw_client::factionview::GONDOLA_DECK as f32 + 2.6,
+                        "liner" => hw_gen::urban::mast::DECK_DROP as f32 + 1.0,
+                        _ => 0.0,
+                    };
+                world.place(m, Place::new(x, lift, 0.0))?;
             }
             world.spawn(Shape::box_at(
                 (0.0, -0.05, 0.0),

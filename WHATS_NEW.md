@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.148 (2026-11-10)
+
+- The sky pirates' airship has a proper galleon for a gondola: planked hull with red topsides and gilded mouldings over a dark wale, copper sheathing below, a row of brass portholes on each side, a keel and stem post, a raised quarterdeck with stern windows and two glowing lanterns, and a planked deck. Its envelope and engines are smoother up close.
+
 ## 0.147 (2026-11-10)
 
 - Airships no longer sail through houses. The sky pirates' raiders turn along the street and hang clear of every wall, roof and spire, and when they leave they rise above the rooftops before sailing off. A raider's airship is solid now too: you bump into it and can land on it.
