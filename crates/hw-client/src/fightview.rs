@@ -43,6 +43,9 @@ pub fn fizzle_text(power: Power, theme: u8, why: u16) -> String {
 
 /// Villains further than this cannot be picked with Tab.
 pub const TARGET_RANGE: f32 = 60.0;
+/// Clicking a villain picks it out to this far (m): further than Tab, for
+/// one you can see down the street.
+pub const CLICK_RANGE: f32 = 150.0;
 /// Villains within this angle of the crosshair count as in view (degrees):
 /// Tab goes through them first, and aimed powers with no target pick only
 /// from them.
@@ -270,6 +273,9 @@ pub fn theme_ui_colour(p: Power, theme: u8) -> egui::Color32 {
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FightInput {
     pub power: u8,
+    /// A click picked a villain out of punching reach: the held left
+    /// button must not also punch.
+    pub picked: bool,
     pub target: Option<NetId>,
     pub revive: bool,
     pub hospital: bool,
@@ -354,6 +360,9 @@ pub struct Bar<'a> {
     pub sheet: Option<&'a Sheet>,
     pub tray: &'a Tray,
     pub alt: bool,
+    /// The ray under the mouse (from the eye), when a click could pick a
+    /// villain (not over a window).
+    pub click_ray: Option<(Vec3, Vec3)>,
 }
 
 impl FightView {
@@ -417,7 +426,12 @@ impl FightView {
         look: Vec3,
         powers: Bar,
     ) -> FightInput {
-        let Bar { sheet, tray, alt } = powers;
+        let Bar {
+            sheet,
+            tray,
+            alt,
+            click_ray,
+        } = powers;
         let kit = sheet.map_or_else(|| Kit::of(&hw_sim::progress::starter()), Kit::of);
         let mut out = FightInput::default();
         // A target that fell or left is dropped.
@@ -456,9 +470,33 @@ impl FightView {
             .map(|(_, p)| (p, true))
             .chain(self.clicked.take().map(|p| (p, true)))
             .collect();
+        // A click on a villain picks it (up close it also punches it); a
+        // click anywhere else punches as before.
+        let mut picked = false;
         if input.mouse_clicked(MouseButton::Left) {
-            fired.push((Power::Strike, false));
+            let under = click_ray
+                .and_then(|(from, dir)| villain_under(all, from, dir, |e| self.sees(me, eye, e)));
+            match under {
+                Some(id) => {
+                    if self.target != Some(id) {
+                        crate::devlog::add(format!("client: clicked villain {id:?}: target"));
+                    }
+                    self.target = Some(id);
+                    let near = me
+                        .zip(all.iter().find(|e| e.id == id))
+                        .is_some_and(|(m, t)| {
+                            pos(m).distance(pos(t)) <= power_spec(Power::Strike).range as f32
+                        });
+                    if near {
+                        fired.push((Power::Strike, false));
+                    } else {
+                        picked = true;
+                    }
+                }
+                None => fired.push((Power::Strike, false)),
+            }
         }
+        out.picked = picked;
         if input.pressed(Key::Q) {
             fired.push((Power::Bolt, false));
         }
@@ -2303,6 +2341,77 @@ fn pos(e: &EntityState) -> Vec3 {
 }
 
 /// Can this entity be picked with Tab?
+/// The villain under a click: the nearest one whose body the ray from
+/// `from` along `dir` passes through, within [`CLICK_RANGE`], that `seen`
+/// allows (none behind a wall). Bodies are upright cylinders a little
+/// wider than the drawn figure, so a click need not be pixel-exact; the
+/// big robots' are bigger.
+pub fn villain_under(
+    all: &[EntityState],
+    from: Vec3,
+    dir: Vec3,
+    seen: impl Fn(&EntityState) -> bool,
+) -> Option<NetId> {
+    let dir = dir.normalize_or_zero();
+    all.iter()
+        .filter(|e| targetable(e))
+        .filter_map(|e| {
+            let (radius, height, base) = match e.kind {
+                EntityKind::Colossus => (4.0, 14.0, 0.0),
+                EntityKind::WeakPoint => (1.4, 2.8, -1.4),
+                EntityKind::Sentry => (1.1, 3.2, 0.0),
+                _ => (0.6, 2.1, 0.0),
+            };
+            let p = pos(e);
+            let t = ray_cylinder(from, dir, p + Vec3::Y * base, radius, height)?;
+            (t <= CLICK_RANGE).then_some((t, e))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        // The first one under the mouse, and only if the hero sees it: a
+        // click never reaches past a villain to the one behind.
+        .filter(|(_, e)| seen(e))
+        .map(|(_, e)| e.id)
+}
+
+/// Where a ray first meets an upright cylinder standing on `foot`: the
+/// distance along the (unit) ray, if it does.
+fn ray_cylinder(from: Vec3, dir: Vec3, foot: Vec3, radius: f32, height: f32) -> Option<f32> {
+    let o = glam::Vec2::new(from.x - foot.x, from.z - foot.z);
+    let d = glam::Vec2::new(dir.x, dir.z);
+    let a = d.length_squared();
+    // Where the ray is within the circle, seen from above.
+    let (t0, t1) = if a < 1e-9 {
+        if o.length() > radius {
+            return None;
+        }
+        (0.0, f32::MAX)
+    } else {
+        let b = o.dot(d);
+        let c = o.length_squared() - radius * radius;
+        let disc = b * b - a * c;
+        if disc < 0.0 {
+            return None;
+        }
+        let r = disc.sqrt();
+        ((-b - r) / a, (-b + r) / a)
+    };
+    // And where it is between the feet and the top.
+    let (y0, y1) = (foot.y - from.y, foot.y + height - from.y);
+    let (h0, h1) = if dir.y.abs() < 1e-9 {
+        if (y0..=y1).contains(&0.0) {
+            (f32::MIN, f32::MAX)
+        } else {
+            return None;
+        }
+    } else {
+        let (u, v) = (y0 / dir.y, y1 / dir.y);
+        (u.min(v), u.max(v))
+    };
+    let enter = t0.max(h0).max(0.0);
+    let leave = t1.min(h1);
+    (enter <= leave).then_some(enter)
+}
+
 pub fn targetable(e: &EntityState) -> bool {
     e.kind.is_enemy()
         && e.combat
@@ -2967,6 +3076,39 @@ mod tests {
             "pushed {push}, leaning {lean}"
         );
         assert_eq!(fight.recoil(NetId(2)), None);
+    }
+
+    #[test]
+    fn a_click_picks_the_villain_under_the_mouse_far_beyond_tab() {
+        let eye = Vec3::new(0.0, 3.0, -4.0);
+        let at = |x: f32, z: f32| (Vec3::new(x, 1.2, z) - eye).normalize();
+        let all = [
+            villain(1, [0.0, 0.0, 6.0]),
+            villain(2, [0.0, 0.0, 12.0]),
+            villain(3, [3.0, 0.0, 120.0]),
+        ];
+        // The nearer of two in a line.
+        assert_eq!(
+            villain_under(&all, eye, at(0.0, 6.0), |_| true),
+            Some(NetId(1))
+        );
+        // One far down the street, twice Tab's reach.
+        const { assert!(120.0 > TARGET_RANGE) };
+        assert_eq!(
+            villain_under(&all, eye, at(3.0, 120.0), |_| true),
+            Some(NetId(3))
+        );
+        // Between them: nobody.
+        assert_eq!(villain_under(&all, eye, at(1.5, 9.0), |_| true), None);
+        // Not one hidden from the hero.
+        assert_eq!(
+            villain_under(&all, eye, at(0.0, 6.0), |e| e.id != NetId(1)),
+            None,
+            "the click went to the hidden one, not past it"
+        );
+        // Too far even for a click.
+        let far = [villain(4, [0.0, 0.0, 200.0])];
+        assert_eq!(villain_under(&far, eye, at(0.0, 200.0), |_| true), None);
     }
 
     #[test]

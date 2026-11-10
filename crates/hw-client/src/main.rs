@@ -439,6 +439,9 @@ fn main() -> EngineResult<()> {
     // but not yet sent with a tick.
     let mut drawn: Vec<hw_net::EntityState> = Vec::new();
     let mut pending_power = 0u8;
+    // The left button went down on a villain out of punching reach (it
+    // picked it): no punching until it is let go.
+    let mut click_picked = false;
     // Karma, levels and powers: the hero file from this PC (None until a new
     // hero picks an origin), the sheet as the host last confirmed it, and
     // the powers window.
@@ -2424,6 +2427,7 @@ fn main() -> EngineResult<()> {
                 let me_state = session
                     .my_hero()
                     .and_then(|id| drawn.iter().find(|e| e.id == id));
+                let click_ray = world.cursor_ray(frame);
                 let cam = world.camera();
                 let look = (cam.target() - cam.eye()).normalize_or_zero();
                 let alt = frame.ui.ctx().input(|i| i.modifiers.alt);
@@ -2437,8 +2441,13 @@ fn main() -> EngineResult<()> {
                         sheet: Some(&my_sheet),
                         tray: &powers.tray,
                         alt,
+                        click_ray: (!on_ui).then_some(click_ray),
                     },
                 );
+                click_picked = (click_picked || f.picked) && input.mouse_down(MouseButton::Left);
+                if click_picked {
+                    hero_input.smash = false;
+                }
                 if f.power != 0 && !(on_ui && f.power == hw_net::Power::Strike.code()) {
                     pending_power = f.power;
                 }
@@ -3691,6 +3700,7 @@ fn main() -> EngineResult<()> {
                         sheet: Some(&my_sheet),
                         tray: &powers.tray,
                         alt: false,
+                        click_ray: None,
                     },
                 );
                 if let Some(c) = moved {

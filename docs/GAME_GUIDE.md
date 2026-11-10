@@ -117,6 +117,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | Ctrl / Shift | Sink / faster when flying (Ctrl also sinks in a lift); Shift also runs at full tilt with Super Speed |
 | Mouse wheel | Zoom in / out (all the way in: first person) |
 | Tab | Target the nearest villain in view; again: the next nearest not yet picked, round and round |
+| Left click on a villain | Target that villain, up to 150 m away (Tab reaches 60 m); within punching reach (3 m) it also punches |
 | Left mouse | Strike |
 | Q | Energy Bolt |
 | 1 to 0, Alt+1 to Alt+0 | The power in that slot of the power tray (see below) |
@@ -265,7 +266,10 @@ targeting, ragdolls, nobody dies.
   wall), those in view of the camera first; each further Tab moves on to the next nearest one not picked yet, and after all of
   them it starts over (after 4 s without Tab it starts again from the nearest). An aimed
   power with nothing targeted takes the villain nearest the crosshair, and a villain that
-  attacks you becomes your target if you have none. The target frame shows name,
+  attacks you becomes your target if you have none. A left click on a villain targets it,
+  up to 150 m away (`CLICK_RANGE`), if the hero can see it; a click never reaches past the
+  first villain under the mouse to one behind. Within punching reach (3 m) the click also
+  punches; farther away it only picks, and holding the button does not punch the air. The target frame shows name,
   rank and level in its **con colour** (how tough it is against you).
 - **Using powers:** one power at a time (0.5 s lock); a power that cannot fire yet (out of
   range, behind a wall) waits up to 1 s and then fires, and one still recharging waits until

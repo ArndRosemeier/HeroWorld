@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.139 (2026-11-10)
+
+- Click a villain to target it, even far down the street (up to 150 m; Tab reaches 60 m). Up close the click also punches.
+
 ## 0.138 (2026-11-10)
 
 - Helping people out at a crash, fire or collapse: a bar fills while you hold E, so you can see it working.
