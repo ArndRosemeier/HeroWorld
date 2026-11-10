@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.119 (2026-11-10)
+
+- Built on the newest Engine (0.028). The graphics card now keeps the city's buildings and their shadow casters itself and works out on its own which ones it can see, so the computer's processor has much less to do each frame. Buildings with different facades are drawn together in one go.
+- Fixed a slow leak: long sessions used to get slower and use more memory the longer you played, because the graphics library never let go of some drawing work. The game now uses Engine's repaired copy.
+
 ## 0.118 (2026-11-09)
 
 - Built on the newest Engine (0.023): it sends many buildings to the graphics card in one go, remembers the shadows of things that don't move, draws far sun shadows on alternate frames and turns its hidden-building test on only where it helps. Busy streets should run smoother, with the same picture.
