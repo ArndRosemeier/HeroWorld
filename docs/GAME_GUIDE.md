@@ -270,7 +270,11 @@ targeting, ragdolls, nobody dies.
   range, behind a wall) waits up to 1 s and then fires, and one still recharging waits until
   it is ready (if that is within 3 s, `combat::RECHARGE_WAIT`). A power that does not fire
   always says why in the middle of the screen ("Atomic Ray: out of range", "can't see them
-  from here", "still recharging", "Not enough energy"; `FxKind::Fizzle`). Blows land with sparks, beams, scorch
+  from here", "still recharging", "Not enough energy"; `FxKind::Fizzle`), also when the key
+  is pressed again and again (each press tells why the last one did not fire, once a second
+  at most). A power key always goes before a held mouse button or Q, and a held button never
+  pushes aside another power waiting to fire. Every power that did not fire is written to
+  `logs/fights.log` with where the hero and the target stood. Blows land with sparks, beams, scorch
   marks, floating numbers, a camera jolt and a moment of hit-stop; whoever takes a blow and
   stays up rocks back from it (0.2-0.3 m and a lean, for a third of a second).
 - **Line of sight:** no blow goes through a wall, for heroes, sidekicks, Hero Hall's heroes

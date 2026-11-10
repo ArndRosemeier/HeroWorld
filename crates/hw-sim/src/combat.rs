@@ -774,6 +774,9 @@ pub struct Fighter {
     /// Why the queued power has not fired yet (a [`hw_net::fizzle`] reason;
     /// 0 for none): told to the hero if it lapses.
     pub waiting: u16,
+    /// Tick the hero was last told why a power did not fire (once a second
+    /// at most, with a key held down).
+    pub told: u64,
     /// The hero's picked target, or the villain's foe.
     pub target: Option<NetId>,
     /// Seconds a teammate has held revive on this downed hero.
@@ -819,6 +822,7 @@ impl Fighter {
             ready: [0; POWERS],
             queued: None,
             waiting: 0,
+            told: 0,
             target: None,
             revive: 0.0,
             engaged: false,
@@ -2306,15 +2310,20 @@ fn heroes_act(
         };
         actors[i].f.engaged = false;
         let kit = actors[i].f.kit;
-        // Left mouse punches, Q blasts (held: again and again), keys 3 to 6
-        // the other powers.
-        let asked = if input.blast && kit.has(Power::Bolt) {
-            Some(Power::Bolt)
-        } else if input.smash {
-            Some(Power::Strike)
-        } else {
-            Power::from_code(input.power).filter(|p| kit.has(*p) && !is_passive(*p))
-        };
+        // Left mouse punches, Q blasts (held: again and again), the other
+        // keys their powers. A power key goes first, and a held button never
+        // pushes aside another power waiting to fire (holding the mouse
+        // would otherwise swallow every key press).
+        let waiting = actors[i].f.queued.map(|q| q.0);
+        let key = Power::from_code(input.power).filter(|p| kit.has(*p) && !is_passive(*p));
+        let blast = (input.blast && kit.has(Power::Bolt))
+            .then_some(Power::Bolt)
+            .filter(|_| waiting.is_none_or(|q| matches!(q, Power::Strike | Power::Bolt)));
+        let smash = input
+            .smash
+            .then_some(Power::Strike)
+            .filter(|_| waiting.is_none_or(|q| q == Power::Strike));
+        let asked = key.or(blast).or(smash);
         if input.target.is_some() || asked.is_some() {
             actors[i].f.target = input.target.or(actors[i].f.target);
         }
@@ -2325,6 +2334,20 @@ fn heroes_act(
             }
         }
         if let Some(p) = asked {
+            // Pressed again (or another key) while the last one could not
+            // fire: say why now, so pressing again and again is never silent.
+            let why = std::mem::take(&mut actors[i].f.waiting);
+            // (Not for a recharge: the new press waits for it and fires.)
+            let quiet = (tick < actors[i].f.told + ticks(1.0) && actors[i].f.told > 0)
+                || matches!(why, fizzle::RECHARGING | fizzle::BUSY);
+            if let Some((q, _)) = actors[i].f.queued.filter(|_| why != 0 && !quiet) {
+                actors[i].f.told = tick;
+                let me = actors[i].id;
+                let mut e = event(tick, FxKind::Fizzle, me, me, actors[i].chest());
+                e.amount = why | (kit.theme(q) as u16) << 8;
+                e.theme = q.code();
+                out.fx.push(e);
+            }
             // A power still recharging waits for it, if not for long.
             let ready = actors[i].f.ready[slot(p)];
             let wait = if ready > tick && ready - tick <= ticks(RECHARGE_WAIT) {
@@ -2347,6 +2370,7 @@ fn heroes_act(
             actors[i].f.queued = None;
             let why = std::mem::take(&mut actors[i].f.waiting);
             if why != 0 {
+                actors[i].f.told = tick;
                 let me = actors[i].id;
                 let mut e = event(tick, FxKind::Fizzle, me, me, actors[i].chest());
                 e.amount = why | (kit.theme(power) as u16) << 8;

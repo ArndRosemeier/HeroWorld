@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.131 (2026-11-10)
+
+- Fixed: pressing a power again and again when it couldn't fire said nothing at all. Now every press tells you why ("Atomic Ray: can't see them from here", "out of range", ...).
+- Fixed: holding the left mouse button could swallow your power keys.
+- Powers that don't fire are written to logs/fights.log, so a fight that goes wrong can be traced.
+
 ## 0.130 (2026-11-10)
 
 - Fixed: pressing a power again just after using it (the Atomic Ray, say) often did nothing. It now fires as soon as it has recharged.

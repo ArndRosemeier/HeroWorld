@@ -21,6 +21,27 @@ use hw_sim::combat::{power_spec, EnemyKind, Kit, POWERS};
 use hw_sim::progress::{is_movement, themes};
 use std::collections::BTreeMap;
 
+/// Appends a line to `logs/fights.log` (beside start.bat), kept under
+/// about 1 MB: started over when it grows past that.
+fn append_fight_log(line: &str) {
+    use std::io::Write as _;
+    let dir = std::path::PathBuf::from("logs");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let path = dir.join("fights.log");
+    let big = std::fs::metadata(&path).is_ok_and(|m| m.len() > 1 << 20);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(!big)
+        .write(true)
+        .truncate(big)
+        .open(&path);
+    if let Ok(mut f) = file {
+        let _ = writeln!(f, "{line}");
+    }
+}
+
 /// Why `power` (in `theme`) did not fire, in a few words for the middle
 /// of the screen (`why`: a [`fizzle`] reason).
 pub fn fizzle_text(power: Power, theme: u8, why: u16) -> String {
@@ -486,6 +507,30 @@ impl FightView {
         out.revive = input.down(Key::E) && !down;
         out.hospital = input.pressed(Key::H) && down;
         out
+    }
+
+    /// Writes a power that did not fire to `logs/fights.log` with where
+    /// everyone stood (server and screen), so a report can be traced.
+    fn log_fizzle(&self, text: &str, e: &Fx, me: Option<NetId>, all: &[EntityState]) {
+        use std::fmt::Write as _;
+        let mine = me.and_then(|m| all.iter().find(|x| x.id == m));
+        let mut line = format!("{:.1}s {text}: hero at server {:.1?}", self.clock, e.at);
+        if let Some(m) = mine {
+            let _ = write!(line, ", on screen {:.1?}", m.pos);
+        }
+        match self.target.and_then(|t| all.iter().find(|x| x.id == t)) {
+            Some(t) => {
+                let d = mine.map_or(f32::NAN, |m| pos(m).distance(pos(t)));
+                let seen = self.sees(mine, pos(t), t);
+                let _ = write!(
+                    line,
+                    "; target {:?} {:?} at {:.1?}, {d:.1} m, clear line on screen {seen}",
+                    t.id, t.kind, t.pos
+                );
+            }
+            None => line.push_str("; no target"),
+        }
+        append_fight_log(&line);
     }
 
     /// A short line in the middle of the screen.
@@ -1054,7 +1099,9 @@ impl FightView {
                     if on_me {
                         if let Some(p) = Power::from_code(e.theme) {
                             let theme = ((e.amount >> 8) as u8).min(1);
-                            self.say(&fizzle_text(p, theme, e.amount & 0xff));
+                            let text = fizzle_text(p, theme, e.amount & 0xff);
+                            self.log_fizzle(&text, e, me, all);
+                            self.say(&text);
                         }
                     }
                 }

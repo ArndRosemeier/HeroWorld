@@ -116,3 +116,52 @@ fn a_power_that_cannot_fire_says_why() {
     assert_eq!(told(55.0, false), vec![fizzle::OUT_OF_RANGE]);
     assert_eq!(told(15.0, true), vec![fizzle::NOT_SEEN]);
 }
+
+#[test]
+fn pressing_again_and_again_says_why_each_time() {
+    // Behind a wall, the key pressed every half second: the old wait was
+    // started over by each press and never lapsed, so nothing was said.
+    let (mut sim, hero, foes) = street(15.0, true);
+    let half = (TICK_HZ as f64 * 0.5) as u64;
+    let fx = run(&mut sim, hero, &foes, 15.0, TICK_HZ as u64 * 4, |k| {
+        k % half == 0
+    });
+    let told = fx
+        .iter()
+        .filter(|e| e.kind == FxKind::Fizzle && e.amount & 0xff == fizzle::NOT_SEEN)
+        .count();
+    // Once a second at most: three or four times in four seconds.
+    assert!((3..=5).contains(&told), "told {told} times");
+}
+
+#[test]
+fn holding_the_mouse_button_does_not_swallow_a_power_key() {
+    // Out of punching reach with the left button held: a bolt, and a
+    // second one asked for while the first recharges, which waits for it
+    // (the held button used to push it aside).
+    let (mut sim, hero, foes) = street(15.0, false);
+    let mut bolts = 0;
+    for k in 0..TICK_HZ as u64 * 2 {
+        put(&mut sim, hero, ground(0.0, 0.0));
+        for (n, &f) in foes.iter().enumerate() {
+            put(&mut sim, f, ground(15.0, (n as f64 - 2.0) * 0.8));
+        }
+        sim.set_input(
+            PlayerId(1),
+            InputState {
+                smash: true,
+                blast: k == 0 || k == 10,
+                target: Some(foes[0]),
+                aim: [1.0, 0.0, 0.0],
+                ..Default::default()
+            },
+        );
+        sim.step();
+        bolts += sim
+            .fx()
+            .iter()
+            .filter(|e| e.kind == FxKind::Bolt && e.from == hero)
+            .count();
+    }
+    assert_eq!(bolts, 2);
+}
