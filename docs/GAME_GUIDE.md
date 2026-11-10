@@ -16,7 +16,7 @@ Where a rule lives in the code it is named in `code` so it can be found and chan
 You play a hero in a procedurally generated golden-age town (1950s Googie and streamline
 retro-future, art deco towers, old towns at the core). You start as a nobody on foot with
 enough karma for one power. Trouble comes to you over the wrist radio: muggings, robberies,
-mutant rampages, lab breakouts, fires, car crashes, collapsed buildings and, now and then,
+mutant rampages, lab breakouts, car crashes, collapsed buildings and, now and then,
 the mad scientist's walking tank. Beating villains and rescuing people earns karma; lifetime
 karma sets your level (1 to 20), unspent karma buys powers. Almost everything breaks:
 buildings element by element, street props, moving cars. The town repairs itself where
@@ -690,7 +690,7 @@ A fight's call stands only while its crooks do: with none of them left, or none 
 | Mutant rampage | 15% | a Mutant Alpha leading 3 brutes | +2 | 16 m | ×2.0 |
 | Lab breakout | 12% | a Robo-Sentry leading 5 technicians at one of the Doctor's labs | +2 | 18 m | ×2.5 |
 | Car crash, someone trapped | 14% | two smashed, smoking cars, 1 driver pinned by the legs (4 s) | – | – | 6 |
-| Fire, people inside | 14% | a house in flames, 3 people (3 s each) | – | – | 2.5 per person |
+| Fire, people inside | parked (0%; HW_INCIDENT=fire forces it) | a house in flames, 3 people (3 s each) | – | – | 2.5 per person |
 | The colossus is loose! | 8% | the walking tank (level 3+, every 25 min at most) | +3 | everyone | ×1.5 |
 | Building collapse | follows a collapse | 3 people in the rubble (5 s each digging) | – | – | 3 per person |
 

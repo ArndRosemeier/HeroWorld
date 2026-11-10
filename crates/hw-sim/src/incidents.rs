@@ -1412,7 +1412,11 @@ impl Incidents {
             (IncidentKind::Rampage, if hot { 0.05 } else { 0.15 }),
             (IncidentKind::Breakout, if hot { 0.04 } else { 0.12 }),
             (IncidentKind::CarCrash, 0.14),
-            (IncidentKind::Fire, 0.14),
+            // Parked (Arnd 2026-11-10): rescuing people from a fire was the
+            // car crash again. Only forced (HW_INCIDENT=fire, tests) until it
+            // is redesigned as a city event the brigade handles; then give it
+            // its weight back (was 0.14).
+            (IncidentKind::Fire, 0.0),
             (IncidentKind::Colossus, 0.08),
             // Parked (Arnd 2026-11-10): the mole folk have no reason to
             // come up yet. Only forced (HW_INCIDENT=moles, tests) until the
@@ -1460,7 +1464,7 @@ impl Incidents {
             IncidentKind::Breakout => !labs.is_empty(),
             IncidentKind::Robbery | IncidentKind::PirateRaid => !shops.is_empty(),
             IncidentKind::IronLanding => iron_ok && !streets.is_empty(),
-            IncidentKind::Fire => !homes.is_empty(),
+            IncidentKind::Fire => self.next_kind == Some(IncidentKind::Fire) && !homes.is_empty(),
             IncidentKind::Colossus => colossus_ok,
             IncidentKind::Surfacing => {
                 self.next_kind == Some(IncidentKind::Surfacing) && !streets.is_empty()

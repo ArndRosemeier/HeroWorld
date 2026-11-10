@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.165 (2026-11-10)
+
+- House fires no longer come up for now. They will come back later as a city event with a fire brigade.
+
 ## 0.164 (2026-11-10)
 
 - Powers now grow in a tree: every origin has its own tree of 22 or 23 powers, plus a travel tree everyone shares. A power needs the ones above it, and where two powers say "or" you pick one for good. Press B to see your tree.
