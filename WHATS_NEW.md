@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.146 (2026-11-10)
+
+- A shield is now a force field you can see: a honeycomb of light round the shielded one, bright at the edge, with ripples running down it.
+- The Tesla tower's coil, ring and ball crawl with living plasma, and bright pulses race down its arcs as they crackle.
+
 ## 0.145 (2026-11-10)
 
 - The Aether Tube has ways out: every few hundred metres a glowing green sign marks a lift up to a green pavilion on the street, and while you are down there a line at the bottom of the screen points to the nearest way up.

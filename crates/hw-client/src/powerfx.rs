@@ -82,11 +82,92 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
 }
 "#;
 
+/// A force field: a honeycomb of light that shows at the rim (Fresnel)
+/// and where ripples run down the shell, nearly clear in the middle so the
+/// one inside stays visible. The vertex colour tints it. `params[0].x`: glow.
+pub const FORCE_FIELD: &str = r#"
+fn hex_edge(uv: vec2<f32>) -> f32 {
+    let r = vec2<f32>(1.0, 1.732);
+    let h = r * 0.5;
+    let a = uv - r * floor(uv / r) - h;
+    let bb = uv - h;
+    let b = bb - r * floor(bb / r) - h;
+    var g = b;
+    if dot(a, a) < dot(b, b) {
+        g = a;
+    }
+    let q = abs(g);
+    return max(q.x * 0.866 + q.y * 0.5, q.y);
+}
+
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    let n = normalize(m.normal);
+    let facing = clamp(abs(dot(n, m.view_dir)), 0.0, 1.0);
+    let rim = pow(1.0 - facing, 2.5);
+    let d = normalize(m.object_pos + vec3<f32>(0.0, 0.0001, 0.0));
+    let uv = vec2<f32>(atan2(d.z, d.x) * 3.8, d.y * 5.5);
+    let edge = smoothstep(0.40, 0.49, hex_edge(uv));
+    let ripple = pow(0.5 + 0.5 * sin(d.y * 14.0 + m.time * 5.0), 4.0);
+    let shimmer = 0.85 + 0.15 * sin(m.time * 23.0 + d.x * 9.0);
+    let lit = rim * 1.3 + edge * (0.35 + 1.1 * ripple);
+    o.color = vec4<f32>(base.color.rgb, clamp(0.03 + rim * 0.55 + edge * (0.12 + 0.3 * ripple), 0.0, 0.85));
+    o.roughness = 0.1;
+    o.metallic = 0.0;
+    o.emission = base.color.rgb * lit * shimmer * m.params[0].x;
+    return o;
+}
+"#;
+
+/// The Tesla tower's glowing coil, rim and ball: bright bands that climb
+/// the coil, plasma veins that writhe over it and a nervous flicker. Adds
+/// to the mesh's own glow, scaled by its colour (the instance tint the
+/// tower's pulse rides on). `params[0].x`: strength.
+pub const TESLA_PLASMA: &str = r#"
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    let p = m.object_pos;
+    let t = m.time;
+    let n = normalize(m.normal);
+    let band = pow(0.5 + 0.5 * sin(p.y * 3.0 - t * 6.0), 6.0);
+    let vein = abs(sin(p.x * 2.3 + sin(p.y * 1.7 + t * 2.0) * 2.0 + t * 1.3)
+        * sin(p.z * 2.1 - t * 1.1 + sin(p.y * 2.2) * 1.5));
+    let veins = pow(1.0 - vein, 6.0);
+    let flick = 0.75 + 0.25 * sin(t * 37.0 + p.y * 5.0);
+    let rim = pow(1.0 - clamp(abs(dot(n, m.view_dir)), 0.0, 1.0), 2.0);
+    let lit = (band * 1.2 + veins * 1.4 + rim * 0.6) * flick;
+    // The mesh's own glow follows its colour: dim it between the bands
+    // and veins so they stand out, and add their light on top.
+    o.color = vec4<f32>(base.color.rgb * (0.3 + 0.7 * clamp(lit, 0.0, 1.0)), base.color.a);
+    o.emission = base.color.rgb * lit * m.params[0].x;
+    return o;
+}
+"#;
+
+/// The tower's arcs (they run along +z): bright pulses race down each
+/// bolt and it stutters, as real sparks do. Scaled by the instance tint.
+/// `params[0].x`: strength.
+pub const TESLA_ARC: &str = r#"
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    let z = m.object_pos.z;
+    let run = pow(0.5 + 0.5 * sin(z * 1.5 - m.time * 90.0), 3.0);
+    let k = floor(m.time * 30.0);
+    let stutter = 0.55 + 0.45 * step(0.3, fract(sin(k * 12.9898 + floor(z * 0.5) * 78.233) * 43758.547));
+    o.color = vec4<f32>(base.color.rgb * (0.5 + 0.5 * run) * stutter, base.color.a);
+    o.emission = base.color.rgb * (0.4 + 2.2 * run) * stutter * m.params[0].x;
+    return o;
+}
+"#;
+
 /// The custom materials of the power effects, once added.
 #[derive(Clone, Copy, Debug)]
 struct FxMaterials {
     bubble: CustomMaterialId,
     ice: CustomMaterialId,
+    field: CustomMaterialId,
+    plasma: CustomMaterialId,
+    arc: CustomMaterialId,
 }
 
 /// Set once by [`install_materials`] on the main thread at the start, read
@@ -107,6 +188,23 @@ pub fn ice_material() -> CustomMaterial {
         .param(0, [1.0, 0.0, 0.0, 0.0])
 }
 
+/// The shield's force field material, ready to add.
+pub fn field_material() -> CustomMaterial {
+    CustomMaterial::new("force field", FORCE_FIELD)
+        .see_through()
+        .param(0, [1.0, 0.0, 0.0, 0.0])
+}
+
+/// The Tesla coil's plasma material, ready to add (solid: it only adds glow).
+pub fn plasma_material() -> CustomMaterial {
+    CustomMaterial::new("tesla plasma", TESLA_PLASMA).param(0, [1.0, 0.0, 0.0, 0.0])
+}
+
+/// The Tesla arcs' material, ready to add.
+pub fn arc_material() -> CustomMaterial {
+    CustomMaterial::new("tesla arc", TESLA_ARC).param(0, [1.0, 0.0, 0.0, 0.0])
+}
+
 /// Adds the power effects' materials to the world. Call once, on the first
 /// frame: Engine builds a material's pipelines when it first draws it, so
 /// adding them at the start keeps that work out of a fight.
@@ -116,7 +214,16 @@ pub fn install_materials(world: &mut World) -> EngineResult<()> {
     }
     let bubble = world.add_material(bubble_material())?;
     let ice = world.add_material(ice_material())?;
-    let _ = MATERIALS.set(FxMaterials { bubble, ice });
+    let field = world.add_material(field_material())?;
+    let plasma = world.add_material(plasma_material())?;
+    let arc = world.add_material(arc_material())?;
+    let _ = MATERIALS.set(FxMaterials {
+        bubble,
+        ice,
+        field,
+        plasma,
+        arc,
+    });
     Ok(())
 }
 
@@ -125,6 +232,71 @@ pub fn dress_bubble(world: &mut World, id: EntityId) {
     if let Some(m) = MATERIALS.get() {
         let _ = world.set_custom_material(id, m.bubble);
     }
+}
+
+/// Gives a freshly placed shield shell its force field (when installed).
+pub fn dress_field(world: &mut World, id: EntityId) {
+    if let Some(m) = MATERIALS.get() {
+        let _ = world.set_custom_material(id, m.field);
+    }
+}
+
+/// Gives a Tesla tower's glowing part its plasma (when installed).
+pub fn dress_plasma(world: &mut World, id: EntityId) {
+    if let Some(m) = MATERIALS.get() {
+        let _ = world.set_custom_material(id, m.plasma);
+    }
+}
+
+/// Gives a Tesla arc shape its racing pulses (when installed).
+pub fn dress_arc(world: &mut World, id: EntityId) {
+    if let Some(m) = MATERIALS.get() {
+        let _ = world.set_custom_material(id, m.arc);
+    }
+}
+
+/// A shield's shell: a smooth unit sphere (place it with a scale) in the
+/// shield's colour; the force field material draws the honeycomb. Centre
+/// at the origin.
+pub fn shield_sphere() -> Mesh {
+    static MESH: OnceLock<Mesh> = OnceLock::new();
+    let unit = MESH.get_or_init(|| {
+        let (around, down) = (48u32, 28u32);
+        let mut m = Mesh::new();
+        let mut ids = Vec::new();
+        for j in 0..=down {
+            let v = j as f32 / down as f32 * std::f32::consts::PI;
+            for i in 0..=around {
+                let u = i as f32 / around as f32 * std::f32::consts::TAU;
+                let n = Vec3::new(v.sin() * u.cos(), v.cos(), v.sin() * u.sin());
+                let id = m.add_point(n).expect("point");
+                let _ = m.set_point_normal(id, n);
+                let _ = m.set_point_color(
+                    id,
+                    Color {
+                        a: 0.18,
+                        ..rgb(140, 220, 255)
+                    },
+                );
+                ids.push(id);
+            }
+        }
+        let at = |i: u32, j: u32| ids[(j * (around + 1) + i) as usize];
+        for j in 0..down {
+            for i in 0..around {
+                let (a, b, c, d) = (at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1));
+                let _ = m.add_triangle(a, b, c);
+                let _ = m.add_triangle(a, c, d);
+            }
+        }
+        m.set_surface_material(SurfaceMaterial {
+            roughness: 0.1,
+            emission: 0.3,
+            ..SurfaceMaterial::DEFAULT
+        });
+        m
+    });
+    unit.clone()
 }
 
 /// Gives a freshly placed ice block its frost (when installed).
@@ -631,5 +803,8 @@ mod tests {
     fn power_materials_compile() {
         bubble_material().check().expect("bubble film");
         ice_material().check().expect("ice frost");
+        field_material().check().expect("force field");
+        plasma_material().check().expect("tesla plasma");
+        arc_material().check().expect("tesla arc");
     }
 }

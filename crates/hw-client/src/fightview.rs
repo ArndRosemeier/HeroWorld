@@ -60,6 +60,8 @@ const LATE: f64 = 0.6;
 const RECOIL_DISTANCE: f32 = 0.32;
 const RECOIL_LEAN: f32 = 14.0;
 const RECOIL_SECONDS: f32 = 0.32;
+/// The force field's size round a shielded person (m; a little taller).
+const SHIELD_RADIUS: f32 = 1.05;
 /// A blow doing this much damage or more counts as heavy.
 const HEAVY_BLOW: u16 = 25;
 
@@ -331,6 +333,8 @@ pub struct FightView {
     clicked: Option<Power>,
     /// The ice round each frozen villain.
     ices: BTreeMap<NetId, EntityId>,
+    /// The force field round each shielded character.
+    shields: BTreeMap<NetId, EntityId>,
     /// Rescue bubbles in the air.
     pub bubbles: crate::powerfx::Bubbles,
     /// Rescue bubbles started this frame: their number, where, and whether
@@ -393,6 +397,7 @@ impl FightView {
             muzzles: BTreeMap::new(),
             clicked: None,
             ices: BTreeMap::new(),
+            shields: BTreeMap::new(),
             bubbles: Default::default(),
             bubbled: Vec::new(),
             lobs: Vec::new(),
@@ -1771,6 +1776,7 @@ impl FightView {
         // Held villains stand in glowing rings; shields sparkle.
         let mut held = Vec::new();
         let mut frozen = Vec::new();
+        let mut shielded = Vec::new();
         self.bubbles.update(world, dt);
         // Bombs fly their arcs and are gone when they burst (the burst is
         // the server's Bomb event).
@@ -1813,8 +1819,30 @@ impl FightView {
                     rings(world, pos(e) + Vec3::Y * 1.1, rgb(160, 210, 255), 0.5);
                 }
             }
-            if c.effects & EFFECT_SHIELD != 0 && sparkle {
-                shell(world, pos(e) + Vec3::Y * 1.0, rgb(140, 220, 255), 14);
+            // Shielded: a force field round them, and sparks off it now and then.
+            if c.effects & EFFECT_SHIELD != 0 {
+                shielded.push(e.id);
+                let p = pos(e) + Vec3::Y * 1.0;
+                let place = Place::new(p.x, p.y, p.z).with_stretch(Vec3::new(
+                    SHIELD_RADIUS,
+                    SHIELD_RADIUS * 1.15,
+                    SHIELD_RADIUS,
+                ));
+                match self.shields.get(&e.id) {
+                    Some(&field) => {
+                        let _ = world.set_place(field, place);
+                    }
+                    None => {
+                        if let Ok(field) = world.place(crate::powerfx::shield_sphere(), place) {
+                            let _ = world.set_casts_shadow(field, false);
+                            crate::powerfx::dress_field(world, field);
+                            self.shields.insert(e.id, field);
+                        }
+                    }
+                }
+                if sparkle {
+                    shell(world, p, rgb(140, 220, 255), 6);
+                }
             }
             // Frozen solid: a block of ice round them.
             if c.effects & EFFECT_FROZEN != 0 {
@@ -1886,6 +1914,18 @@ impl FightView {
         for id in thawed {
             if let Some(ice) = self.ices.remove(&id) {
                 world.despawn(ice);
+            }
+        }
+        // Shields down (or gone): the force field goes.
+        let dropped: Vec<NetId> = self
+            .shields
+            .keys()
+            .filter(|id| !shielded.contains(id))
+            .copied()
+            .collect();
+        for id in dropped {
+            if let Some(field) = self.shields.remove(&id) {
+                world.despawn(field);
             }
         }
         // The target ring, in the target's con colour.

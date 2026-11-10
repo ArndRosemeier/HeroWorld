@@ -258,6 +258,11 @@ impl TeslaView {
         )
     }
 
+    /// For one given tower (the `powerfx` example's close-ups).
+    pub fn for_tower(tower: Landmark) -> Self {
+        Self::with_tower(Some(tower))
+    }
+
     fn with_tower(tower: Option<Landmark>) -> Self {
         Self {
             tower,
@@ -308,6 +313,10 @@ impl TeslaView {
         }
         glow.push(make(world, glow_mesh(|b| tesla_rim(b, &d, true)))?);
         glow.push(make(world, glow_mesh(|b| tesla_ball(b, &d, true)))?);
+        // Plasma that climbs and writhes over the glowing parts.
+        for &id in &glow {
+            crate::powerfx::dress_plasma(world, id);
+        }
         let s = shapes(l, &d);
         let ids = |world: &mut World, v: Vec<Mesh>| -> EngineResult<Vec<EntityId>> {
             v.into_iter().map(|m| make(world, m)).collect()
@@ -315,6 +324,10 @@ impl TeslaView {
         let ground = ids(world, s.ground)?;
         let rod = ids(world, s.rod)?;
         let tendril = ids(world, s.tendril)?;
+        // Pulses racing down every arc.
+        for &id in ground.iter().chain(&rod).chain(&tendril) {
+            crate::powerfx::dress_arc(world, id);
+        }
         let arc = rgb(ARC.0, ARC.1, ARC.2);
         let at = |up: f64| origin + Vec3::Y * up as f32;
         let lamp_dome = world.add_lamp(Lamp::point(at(d.rim_y - 1.0), arc, 40.0, 60.0))?;

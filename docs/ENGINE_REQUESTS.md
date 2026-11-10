@@ -209,11 +209,13 @@ Not needed for the first playable city, but the design depends on them eventuall
   tile drawn rotated and offset, blended at the seams), or a second, larger-scale detail
   layer, would fix it for every textured surface without extra geometry.
 
-- **Custom materials built off the main thread:** `World::add_material` (Engine 0.042) builds
-  a material's two pipelines on the main thread the first time it is drawn
-  (`render/renderer_sync.rs`). HeroWorld adds its power materials (bubble film, ice) on the
-  first frame so this happens at the start; building them on a worker, or with the
-  precompiled pipelines before the first frame, would keep even that out of the frame.
+- **Bug: instanced meshes vanish close up with the GPU scene on.** The Tesla tower's live
+  parts (`spawn_instanced` + instances, `teslaview.rs`) show from 75 m but are not drawn at all
+  from 16 m; `ENGINE_GPU_SCENE=0` draws them, `ENGINE_OCCLUSION=0` does not help. Repro:
+  `POWERFX_TESLA=1 POWERFX_PLAIN=1 POWERFX_NEAR=1 cargo run -p hw-client --example powerfx`
+  (with the WGSL materials on, the same entities draw through the custom-material path and
+  show). Since 0.146 the tower's parts all wear custom materials, so the game no longer hits
+  it there, but other instanced meshes seen from inside their bounds may.
 
 ## Done for HeroWorld (2026-11-09, Engine 0.005)
 
