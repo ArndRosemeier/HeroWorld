@@ -16,6 +16,7 @@ pub mod damageview;
 pub mod daylight;
 pub mod debugmenu;
 pub mod deepview;
+pub mod devlog;
 pub mod diag;
 pub mod dispatchview;
 pub mod drillview;

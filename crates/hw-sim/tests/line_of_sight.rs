@@ -7,7 +7,7 @@ use hw_core::{NetId, Seed};
 use hw_net::{FxKind, InputState, PlayerId, Power};
 use hw_sim::balance::hero_sheet;
 use hw_sim::collision::{Body, Obstacles, Solid};
-use hw_sim::combat::clear_line;
+use hw_sim::combat::{clear_line, in_sight};
 use hw_sim::{Sim, GROUND_Y, TICK_HZ};
 use std::sync::Arc;
 
@@ -153,4 +153,31 @@ fn a_thin_inner_wall_blocks_the_line_wherever_it_stands() {
         let high = DVec3::Y * 3.5;
         assert!(clear_line(&solids, a + high, b + high));
     }
+}
+
+#[test]
+fn a_parked_car_hides_the_chest_but_not_the_head() {
+    // A car-sized box (1.45 m high) across the line: the chests do not see
+    // each other, the heads do, and so does the hero (as the player does
+    // over the car's roof). A wall twice as high still hides them.
+    let car = |high: f64| {
+        let mut solids = Obstacles::flat(GROUND_Y);
+        solids.add(Solid {
+            origin: DVec2::new(4.0, -2.4),
+            along: DVec2::new(0.0, 1.0),
+            inward: DVec2::new(1.0, 0.0),
+            min: DVec2::new(0.0, 0.0),
+            max: DVec2::new(4.8, 1.9),
+            y0: GROUND_Y,
+            y1: GROUND_Y + high,
+        });
+        solids
+    };
+    let chest = DVec3::Y * (hw_sim::collision::BODY_HEIGHT * 0.6);
+    let (a, b) = (ground(0.0, 0.0) + chest, ground(12.0, 0.5) + chest);
+    let solids = car(1.45);
+    assert!(!clear_line(&solids, a, b), "the car is in the chest line");
+    assert!(in_sight(&solids, a, b), "seen over the car");
+    assert!(in_sight(&solids, b, a), "and back");
+    assert!(!in_sight(&car(2.9), a, b), "a wall is a wall");
 }

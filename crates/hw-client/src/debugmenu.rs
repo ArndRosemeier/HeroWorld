@@ -98,6 +98,7 @@ enum Tab {
     Hero,
     Events,
     World,
+    Log,
 }
 
 /// What the menu shows about the game right now.
@@ -131,6 +132,36 @@ pub fn hotkey(ctx: &egui::Context) -> bool {
     ctx.input(|i| i.key_pressed(egui::Key::F12) && i.modifiers.ctrl && i.modifiers.shift)
 }
 
+/// The debug log ([`crate::devlog`]): key presses and what became of
+/// them, newest at the bottom, with Copy and Clear.
+fn log_tab(ui: &mut egui::Ui) {
+    let lines = crate::devlog::lines();
+    ui.horizontal(|ui| {
+        if ui.button("Copy all").clicked() {
+            ui.ctx().copy_text(lines.join("\n"));
+        }
+        if ui.button("Clear").clicked() {
+            crate::devlog::clear();
+        }
+        ui.label(
+            egui::RichText::new(
+                "Also in logs/debug.log. Keys pressed over this window go to the menu.",
+            )
+            .weak()
+            .size(11.0),
+        );
+    });
+    ui.separator();
+    egui::ScrollArea::both()
+        .stick_to_bottom(true)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for l in &lines {
+                ui.label(egui::RichText::new(l).monospace().size(11.0));
+            }
+        });
+}
+
 /// Hours on the time buttons.
 const HOURS: [(&str, f32); 7] = [
     ("Dawn 6:00", 6.0),
@@ -147,7 +178,7 @@ impl DebugMenu {
         Self::default()
     }
 
-    /// Opens on a tab by name (`places`, `hero`, `events`, `world`): for
+    /// Opens on a tab by name (`places`, `hero`, `events`, `world`, `log`): for
     /// screenshots (`HW_DEBUG=<tab>`).
     pub fn open_on(&mut self, tab: &str) {
         self.open = true;
@@ -155,6 +186,7 @@ impl DebugMenu {
             "hero" => Tab::Hero,
             "events" => Tab::Events,
             "world" => Tab::World,
+            "log" => Tab::Log,
             _ => Tab::Places,
         };
     }
@@ -187,7 +219,7 @@ impl DebugMenu {
                     .fill(egui::Color32::from_rgba_unmultiplied(18, 22, 30, 238)),
             )
             .show(ctx, |ui| {
-                if !info.local {
+                if !info.local && self.tab != Tab::Log {
                     ui.label("The debug menu works only in your own world (single player).");
                     return;
                 }
@@ -197,6 +229,7 @@ impl DebugMenu {
                         (Tab::Hero, "Hero"),
                         (Tab::Events, "Events"),
                         (Tab::World, "World"),
+                        (Tab::Log, "Log"),
                     ] {
                         if ui.selectable_label(self.tab == t, name).clicked() {
                             self.tab = t;
@@ -204,11 +237,16 @@ impl DebugMenu {
                     }
                 });
                 ui.separator();
+                if self.tab == Tab::Log {
+                    log_tab(ui);
+                    return;
+                }
                 egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                     Tab::Places => self.places_tab(ui, info, &mut out),
                     Tab::Hero => hero_tab(ui, info, &mut out),
                     Tab::Events => events_tab(ui, info, &mut out),
                     Tab::World => world_tab(ui, info, &mut out),
+                    Tab::Log => {}
                 });
             });
         self.open = open;

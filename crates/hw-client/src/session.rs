@@ -421,6 +421,15 @@ impl Session {
 
     /// Fight events since the last call, with the server tick they are
     /// drawn at now (to drop ones that come too late to show).
+    /// What the server did with our power keys, in words (single player;
+    /// a friend's server keeps its own).
+    pub fn take_server_log(&mut self) -> Vec<String> {
+        match self {
+            Session::Local { host, .. } => host.take_log(),
+            Session::Remote { .. } => Vec::new(),
+        }
+    }
+
     pub fn take_fx(&mut self) -> (Vec<hw_net::Fx>, f64) {
         match self {
             Session::Local { host, .. } => (host.take_fx(), host.view().tick as f64),

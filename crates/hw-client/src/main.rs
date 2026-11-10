@@ -2313,6 +2313,34 @@ fn main() -> EngineResult<()> {
             }
 
             hw_client::hitch::mark("hero input");
+            // The debug log: every key the game got, and any the window got
+            // that the game did not (the UI kept them).
+            if let Some(k) = input.last_key_down() {
+                hw_client::devlog::add(format!("key {k:?}"));
+            } else {
+                let ctx = frame.ui.ctx();
+                let kept: Vec<String> = ctx.input(|i| {
+                    i.events
+                        .iter()
+                        .filter_map(|e| match e {
+                            engine::ui::egui::Event::Key {
+                                key,
+                                pressed: true,
+                                repeat: false,
+                                ..
+                            } => Some(format!("{key:?}")),
+                            _ => None,
+                        })
+                        .collect()
+                });
+                if !kept.is_empty() {
+                    hw_client::devlog::add(format!(
+                        "keys {kept:?} reached the window but not the game (UI wants keyboard {}, pointer {})",
+                        ctx.wants_keyboard_input(),
+                        ctx.wants_pointer_input()
+                    ));
+                }
+            }
             // Hero input, relative to where the camera faces.
             let mut hero_input = hw_net::InputState::default();
             let can_fly = my_sheet.has(hw_net::Power::Flight);
@@ -2546,6 +2574,11 @@ fn main() -> EngineResult<()> {
                 // A power key goes out once, with the next tick.
                 // (a click shorter than a tick still punches).
                 let mut i = hero_input;
+                if pending_power != 0 {
+                    hw_client::devlog::add(format!(
+                        "client: power {pending_power} goes to the server with this tick"
+                    ));
+                }
                 match std::mem::take(&mut pending_power) {
                     0 => {}
                     1 => i.smash = true,
@@ -3223,6 +3256,9 @@ fn main() -> EngineResult<()> {
             // then what happened in fights this frame.
             fight.statuses(world, &heroes, &mut hero_entities);
             let (events, now) = session.take_fx();
+            for line in session.take_server_log() {
+                hw_client::devlog::add(line);
+            }
             fight.muzzles = robots.muzzles(world);
             fight.on_fx(world, &events, now, mine, &hero_entities, &heroes);
             let muzzles = fight.muzzles.clone();
@@ -4018,6 +4054,8 @@ fn tube_status(
         _ => return,
     };
     egui::Area::new(egui::Id::new("tube status"))
+        // Words only: the pointer over it must not take the keys.
+        .interactable(false)
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 44.0))
         .show(ui.ctx(), |ui| {
             egui::Frame::new()

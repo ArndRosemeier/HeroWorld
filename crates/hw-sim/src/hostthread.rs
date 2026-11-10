@@ -73,6 +73,7 @@ struct Published {
     news: Vec<ToClient>,
     fx: Vec<hw_net::Fx>,
     sheet: Option<hw_net::Sheet>,
+    log: Vec<String>,
 }
 
 /// How far behind the ticks sent everything is drawn, in ticks: a frame
@@ -134,6 +135,7 @@ pub struct HostThread {
     view: HostView,
     news: Vec<ToClient>,
     fx: Vec<hw_net::Fx>,
+    log: Vec<String>,
     sheet: Option<hw_net::Sheet>,
 }
 
@@ -159,6 +161,7 @@ impl HostThread {
             view: HostView::default(),
             news: Vec::new(),
             fx: Vec::new(),
+            log: Vec::new(),
             sheet: None,
         };
         s.ask();
@@ -217,6 +220,11 @@ impl HostThread {
     /// World news since the last call.
     pub fn take_news(&mut self) -> Vec<ToClient> {
         std::mem::take(&mut self.news)
+    }
+
+    /// What the server did with power keys since the last call, in words.
+    pub fn take_log(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.log)
     }
 
     /// Fight events since the last call.
@@ -296,6 +304,10 @@ impl HostThread {
         self.view = HostView { players, ..p.view };
         self.news.extend(p.news);
         self.fx.extend(p.fx);
+        if self.log.len() > 400 {
+            self.log.clear();
+        }
+        self.log.extend(p.log);
         if p.sheet.is_some() {
             self.sheet = p.sheet;
         }
@@ -374,6 +386,7 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
                     news: host.take_local_news(),
                     fx: host.take_fx(),
                     sheet: host.take_local_sheet(),
+                    log: host.take_power_log(),
                 };
                 if tx.send(p).is_err() {
                     break;

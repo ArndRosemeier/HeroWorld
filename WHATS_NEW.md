@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.135 (2026-11-10)
+
+- New in the debug menu (Ctrl+Shift+F12): a Log tab. It shows every key press and what became of it, all the way to the game's server and back, with a Copy button. Also in logs/debug.log.
+- You can now shoot villains over parked cars, hedges and cafe tables (and they can shoot you). Before, anything chest-high blocked the shot.
+
 ## 0.134 (2026-11-10)
 
 - Interiors are furnished properly. Flats have a kitchen, a dining table with chairs, a sofa group on a rug, a bed with nightstands, a wardrobe, lamps, a radio or television, pictures and plants. Offices have rows of steel desks with typewriters, phones and desk lamps. Doors stand open.

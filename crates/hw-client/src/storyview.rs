@@ -109,6 +109,8 @@ impl StoryView {
     pub fn panel(&self, ctx: &egui::Context, hero: Option<Vec3>) {
         if let Some(l) = self.lines.front() {
             egui::Area::new(egui::Id::new("story-line"))
+                // Words only: the pointer over it must not take the keys.
+                .interactable(false)
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 52.0))
                 .show(ctx, |ui| {
                     egui::Frame::new()
@@ -140,6 +142,8 @@ impl StoryView {
             return;
         };
         egui::Area::new(egui::Id::new("story-search"))
+            // Words only: the pointer over it must not take the keys.
+            .interactable(false)
             .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -210.0))
             .show(ctx, |ui| {
                 egui::Frame::new()

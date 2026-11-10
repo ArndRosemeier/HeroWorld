@@ -21,27 +21,6 @@ use hw_sim::combat::{power_spec, EnemyKind, Kit, POWERS};
 use hw_sim::progress::{is_movement, themes};
 use std::collections::BTreeMap;
 
-/// Appends a line to `logs/fights.log` (beside start.bat), kept under
-/// about 1 MB: started over when it grows past that.
-fn append_fight_log(line: &str) {
-    use std::io::Write as _;
-    let dir = std::path::PathBuf::from("logs");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let path = dir.join("fights.log");
-    let big = std::fs::metadata(&path).is_ok_and(|m| m.len() > 1 << 20);
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(!big)
-        .write(true)
-        .truncate(big)
-        .open(&path);
-    if let Ok(mut f) = file {
-        let _ = writeln!(f, "{line}");
-    }
-}
-
 /// Why `power` (in `theme`) did not fire, in a few words for the middle
 /// of the screen (`why`: a [`fizzle`] reason).
 pub fn fizzle_text(power: Power, theme: u8, why: u16) -> String {
@@ -381,7 +360,7 @@ impl FightView {
         };
         let chest = |p: Vec3| p + Vec3::Y * (hw_sim::collision::BODY_HEIGHT as f32 * 0.6);
         let from = me.map_or(eye, |m| chest(pos(m)));
-        hw_sim::combat::clear_line(solids, from.as_dvec3(), chest(pos(e)).as_dvec3())
+        hw_sim::combat::in_sight(solids, from.as_dvec3(), chest(pos(e)).as_dvec3())
     }
 
     /// Keys: Tab picks the nearest villain in view, and each further Tab the
@@ -444,9 +423,15 @@ impl FightView {
         }
         for (power, keyed) in fired {
             if down {
+                crate::devlog::add(format!(
+                    "client: {power:?} pressed, not sent: our hero is down"
+                ));
                 continue;
             }
             if !kit.has(power) {
+                crate::devlog::add(format!(
+                    "client: {power:?} pressed, not sent: not in the kit"
+                ));
                 if keyed {
                     self.say(&format!(
                         "You don't have {} yet (B: powers)",
@@ -501,6 +486,22 @@ impl FightView {
                     self.say(&fizzle_text(power, theme, fizzle::ENERGY));
                 }
             }
+            let about = match self.target.and_then(|t| all.iter().find(|e| e.id == t)) {
+                Some(t) => format!(
+                    "target {:?} {:?} {:.1} m away, {:?}, in sight here {}",
+                    t.id,
+                    t.kind,
+                    me.map_or(f32::NAN, |m| pos(m).distance(pos(t))),
+                    t.combat.map(|c| c.status),
+                    self.sees(me, eye, t)
+                ),
+                None => "no target".into(),
+            };
+            crate::devlog::add(format!(
+                "client: {power:?} pressed ({}), sent as power {} ({about})",
+                if keyed { "key" } else { "button or Q" },
+                power.code()
+            ));
             out.power = power.code();
         }
         out.target = self.target;
@@ -509,12 +510,12 @@ impl FightView {
         out
     }
 
-    /// Writes a power that did not fire to `logs/fights.log` with where
-    /// everyone stood (server and screen), so a report can be traced.
+    /// Notes a power that did not fire in the debug log with where everyone
+    /// stood (server and screen), so a report can be traced.
     fn log_fizzle(&self, text: &str, e: &Fx, me: Option<NetId>, all: &[EntityState]) {
         use std::fmt::Write as _;
         let mine = me.and_then(|m| all.iter().find(|x| x.id == m));
-        let mut line = format!("{:.1}s {text}: hero at server {:.1?}", self.clock, e.at);
+        let mut line = format!("hero at server {:.1?}", e.at);
         if let Some(m) = mine {
             let _ = write!(line, ", on screen {:.1?}", m.pos);
         }
@@ -530,7 +531,7 @@ impl FightView {
             }
             None => line.push_str("; no target"),
         }
-        append_fight_log(&line);
+        crate::devlog::add(format!("client: told \"{text}\": {line}"));
     }
 
     /// A short line in the middle of the screen.
@@ -585,7 +586,18 @@ impl FightView {
             self.sounds = Some(make_sounds());
         }
         for e in events {
-            if (now_tick - e.tick as f64) * hw_sim::DT > LATE {
+            let late = (now_tick - e.tick as f64) * hw_sim::DT > LATE;
+            if me == Some(e.from) && me != Some(e.to) {
+                crate::devlog::add(format!(
+                    "client: server says {:?} from us at {:?} (tick {}, {} dmg){}",
+                    e.kind,
+                    e.to,
+                    e.tick,
+                    e.amount,
+                    if late { ", too late to show" } else { "" }
+                ));
+            }
+            if late {
                 continue;
             }
             // Attacked with nothing targeted: the attacker becomes the target.

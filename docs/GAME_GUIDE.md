@@ -273,8 +273,11 @@ targeting, ragdolls, nobody dies.
   from here", "still recharging", "Not enough energy"; `FxKind::Fizzle`), also when the key
   is pressed again and again (each press tells why the last one did not fire, once a second
   at most). A power key always goes before a held mouse button or Q, and a held button never
-  pushes aside another power waiting to fire. Every power that did not fire is written to
-  `logs/fights.log` with where the hero and the target stood. Blows land with sparks, beams, scorch
+  pushes aside another power waiting to fire. Every power key and what became of it is in the
+  debug menu's Log tab (and `logs/debug.log`).
+- **Seeing over things:** a fighter sees another if the line from chest to chest is clear, or the
+  line from head to head (`combat::in_sight`): a parked car, a hedge or a cafe table hides the
+  chest but not the head and shoulders, so heroes and villains shoot each other over them. Blows land with sparks, beams, scorch
   marks, floating numbers, a camera jolt and a moment of hit-stop; whoever takes a blow and
   stays up rocks back from it (0.2-0.3 m and a lean, for a third of a second).
 - **Line of sight:** no blow goes through a wall, for heroes, sidekicks, Hero Hall's heroes
@@ -989,7 +992,7 @@ on the way. Rides are free.
 
 ## 13. Trying things out: debug switches
 
-**The debug menu: Ctrl+Shift+F12** (single player). Four tabs:
+**The debug menu: Ctrl+Shift+F12** (single player). Five tabs:
 
 - **Go to**: open incidents on the radio, the town (start, taxi stands, Aether Spire, lighthouse,
   park fountain, lobby of the tallest tower, a half-timbered house, high above the centre), the
@@ -1011,6 +1014,12 @@ on the way. Rides are free.
   match position, hide far things, and more). Findings go to `ENGINE_AUDIT_LOG`; `logs/quality.log`
   records the frame-rate tuner and camera lens. `env.txt` beside the profile sets environment
   variables for a run (`KEY=VALUE` lines).
+- **Log** (`hw-client/src/devlog.rs`): what became of every key press, from the keyboard to the
+  server and back: each key the game got (and any the window got that the game did not), each
+  power pressed with its target, distance and line of sight on screen, when it went to the
+  server, what the server did with it (fired, waits and why, lapsed, dropped), and what the
+  server reported back. "Copy all" puts it on the clipboard; every line is also in
+  `logs/debug.log` (a new file each start).
 
 `HW_DEBUG=<tab>` (`places`, `hero`, `events`, `world`) opens it at start. The environment
 variables below start the game in a state worth looking at. On Windows: `set HW_LEVEL=10` then

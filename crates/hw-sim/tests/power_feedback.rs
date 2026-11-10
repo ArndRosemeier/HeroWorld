@@ -165,3 +165,26 @@ fn holding_the_mouse_button_does_not_swallow_a_power_key() {
     }
     assert_eq!(bolts, 2);
 }
+
+#[test]
+fn the_server_says_in_words_what_it_did_with_a_press() {
+    // The debug menu's log: the press, and that it fired.
+    let (mut sim, hero, foes) = street(15.0, false);
+    let mut log = Vec::new();
+    for k in 0..TICK_HZ as u64 {
+        put(&mut sim, hero, ground(0.0, 0.0));
+        sim.set_input(
+            PlayerId(1),
+            InputState {
+                blast: k == 0,
+                target: Some(foes[0]),
+                aim: [1.0, 0.0, 0.0],
+                ..Default::default()
+            },
+        );
+        sim.step();
+        log.extend(sim.fights().power_log.iter().cloned());
+    }
+    assert!(log.iter().any(|l| l.contains("-> Bolt")), "{log:?}");
+    assert!(log.iter().any(|l| l.contains("Bolt fired")), "{log:?}");
+}

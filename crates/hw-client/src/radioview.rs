@@ -761,6 +761,8 @@ impl Radio {
                 }
             };
             egui::Area::new(egui::Id::new("rescue"))
+                // Words only: the pointer over it must not take the keys.
+                .interactable(false)
                 .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -170.0))
                 .show(ctx, |ui| {
                     egui::Frame::new()
@@ -783,6 +785,8 @@ impl Radio {
         let mut calls: Vec<(&u32, &Call)> = self.calls.iter().collect();
         calls.sort_by(|a, b| a.1.at.distance(eye).total_cmp(&b.1.at.distance(eye)));
         egui::Area::new(egui::Id::new("radio"))
+            // Words only: the pointer over it must not take the keys.
+            .interactable(false)
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(10.0, 10.0))
             .show(ctx, |ui| {
                 egui::Frame::new()

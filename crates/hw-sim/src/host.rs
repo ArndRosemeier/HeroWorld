@@ -100,6 +100,8 @@ pub struct Host {
     local_news: Vec<ToClient>,
     /// Fight events since the local player last took them.
     fx: Vec<hw_net::Fx>,
+    /// What the server did with power keys, in words (the debug log).
+    power_log: Vec<String>,
     /// The local player's hero file, when it changed.
     local_sheet: Option<hw_net::Sheet>,
     /// Where heroes were in a loaded save, by name: a player of that name
@@ -123,6 +125,7 @@ impl Host {
             next_player: 1,
             local_news: Vec::new(),
             fx: Vec::new(),
+            power_log: Vec::new(),
             local_sheet: None,
             arrivals: BTreeMap::new(),
         }
@@ -460,6 +463,13 @@ impl Host {
             self.tell_all(m);
         }
         self.share_fx();
+        let lines = &self.sim.fights().power_log;
+        if !lines.is_empty() {
+            if self.power_log.len() > 400 {
+                self.power_log.clear();
+            }
+            self.power_log.extend(lines.iter().cloned());
+        }
         for (p, sheet) in self.sim.take_sheets() {
             match self.remotes.get_mut(&p) {
                 Some(r) => {
@@ -490,6 +500,11 @@ impl Host {
     /// save it).
     pub fn take_local_sheet(&mut self) -> Option<hw_net::Sheet> {
         self.local_sheet.take()
+    }
+
+    /// What the server did with power keys since the last call, in words.
+    pub fn take_power_log(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.power_log)
     }
 
     /// Fight events since the last call (for the player at this machine).

@@ -777,6 +777,9 @@ pub struct Fighter {
     /// Tick the hero was last told why a power did not fire (once a second
     /// at most, with a key held down).
     pub told: u64,
+    /// A power key or button was down last tick (the log notes presses,
+    /// not every tick a key is held).
+    pub pressing: bool,
     /// The hero's picked target, or the villain's foe.
     pub target: Option<NetId>,
     /// Seconds a teammate has held revive on this downed hero.
@@ -823,6 +826,7 @@ impl Fighter {
             queued: None,
             waiting: 0,
             told: 0,
+            pressing: false,
             target: None,
             revive: 0.0,
             engaged: false,
@@ -1133,6 +1137,9 @@ pub struct Fights {
     pub spots: Vec<Spot>,
     /// What happened in the last tick (cleared each tick).
     pub events: Vec<Fx>,
+    /// What the server did with heroes' power keys in the last tick, in
+    /// words (the debug menu's log; cleared each tick).
+    pub power_log: Vec<String>,
     pub seed: u64,
     /// The level heroes fight at (the host's hero's): new groups come at it.
     pub team_level: u8,
@@ -1202,6 +1209,7 @@ impl Default for Fights {
         Self {
             spots: Vec::new(),
             events: Vec::new(),
+            power_log: Vec::new(),
             seed: 0,
             team_level: 1,
             rewards: Vec::new(),
@@ -1310,6 +1318,45 @@ pub fn with_roles(seed: Seed, group: &mut [(EnemyKind, u8)]) {
 pub fn group_size(heroes: usize) -> u32 {
     (5 + heroes.saturating_sub(1) as u32).min(8)
 }
+
+/// A [`fizzle`] reason in words, for the debug log.
+fn why_words(why: u16) -> &'static str {
+    match why {
+        fizzle::NO_TARGET => "no target",
+        fizzle::OUT_OF_RANGE => "out of range",
+        fizzle::NOT_SEEN => "target not in sight",
+        fizzle::RECHARGING => "recharging",
+        fizzle::ENERGY => "not enough energy",
+        fizzle::NO_SPOT => "no spot",
+        fizzle::BUSY => "the last power still plays out",
+        _ => "no reason noted",
+    }
+}
+
+/// A queued power cannot fire yet for `why`: noted, and logged when the
+/// reason changes.
+fn note_wait(f: &mut Fighter, why: u16, power: Power, tick: u64, log: &mut Vec<String>) {
+    if f.waiting != why {
+        log.push(format!(
+            "server {tick}: {power:?} waits: {}",
+            why_words(why)
+        ));
+    }
+    f.waiting = why;
+}
+
+/// Can a fighter whose chest is at `a` see one whose chest is at `b`? Yes
+/// if the line from chest to chest is clear, or the line from head to head
+/// ([`HEAD_ABOVE_CHEST`] higher): a parked car, a hedge, a cafe table or a
+/// news stand hides the chest but not the head and shoulders, and a hero
+/// who can see a crook over a car can shoot it (and be shot).
+pub fn in_sight(solids: &Obstacles, a: DVec3, b: DVec3) -> bool {
+    let up = DVec3::Y * HEAD_ABOVE_CHEST;
+    clear_line(solids, a, b) || clear_line(solids, a + up, b + up)
+}
+
+/// How far above the chest point (60% of the body height) the head is (m).
+pub const HEAD_ABOVE_CHEST: f64 = BODY_HEIGHT * 0.3;
 
 /// Is the straight line from `a` to `b` free of walls?
 /// Thin walls count (see [`Obstacles::line_blocked`]); the last few
@@ -1492,6 +1539,8 @@ pub const CARRY_HEIGHT: f64 = 2.6;
 #[derive(Default)]
 struct Out {
     fx: Vec<Fx>,
+    /// What happened to each hero's power keys, in words (the debug log).
+    log: Vec<String>,
     /// Heroes (by actor index) reaching for something to lift.
     lifts: Vec<usize>,
     /// Lifted things let go: (what, velocity).
@@ -1994,6 +2043,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     robots::tidy(world, tick);
     let mut f = world.resource_mut::<Fights>();
     f.events = fx;
+    f.power_log = out.log;
     f.rewards = out.rewards;
     f.deeds = out.deeds;
     f.city = city;
@@ -2170,7 +2220,7 @@ fn npc_heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut
             .and_then(|t| actors.iter().position(|a| a.id == t))
             .filter(|&j| hittable(&actors[j]))
             .filter(|&j| actors[j].body.pos.distance(actors[i].body.pos) <= BOLT_RANGE)
-            .filter(|&j| clear_line(solids, actors[i].chest(), actors[j].chest()))
+            .filter(|&j| in_sight(solids, actors[i].chest(), actors[j].chest()))
         else {
             continue;
         };
@@ -2233,7 +2283,7 @@ fn sidekicks_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut 
         };
         if tick < actors[i].f.busy_until
             || actors[j].body.pos.distance(here) > PUNCH_REACH
-            || !clear_line(solids, actors[i].chest(), actors[j].chest())
+            || !in_sight(solids, actors[i].chest(), actors[j].chest())
         {
             continue;
         }
@@ -2287,7 +2337,7 @@ fn nearest_seen_enemy(
         .enumerate()
         .filter(|(_, a)| hittable(a))
         .map(|(i, a)| (i, a.body.pos.distance(from)))
-        .filter(|&(i, d)| d <= range && clear_line(solids, chest, actors[i].chest()))
+        .filter(|&(i, d)| d <= range && in_sight(solids, chest, actors[i].chest()))
         .min_by(|x, y| x.1.total_cmp(&y.1).then(x.0.cmp(&y.0)))
         .map(|(i, _)| i)
 }
@@ -2324,6 +2374,45 @@ fn heroes_act(
             .then_some(Power::Strike)
             .filter(|_| waiting.is_none_or(|q| q == Power::Strike));
         let asked = key.or(blast).or(smash);
+        let pressing = input.power != 0 || input.blast || input.smash;
+        if pressing && !actors[i].f.pressing {
+            let target = input.target.and_then(|t| actors.iter().find(|a| a.id == t));
+            let about = match target {
+                Some(t) => format!(
+                    "target {:?} {:.1} m away, {}, {}",
+                    t.id,
+                    t.body.pos.distance(actors[i].body.pos),
+                    if hittable(t) {
+                        "can be hit"
+                    } else {
+                        "can NOT be hit"
+                    },
+                    if in_sight(solids, actors[i].chest(), t.chest()) {
+                        "in sight"
+                    } else {
+                        "NOT in sight"
+                    }
+                ),
+                None => "no target".into(),
+            };
+            out.log.push(format!(
+                "server {tick}: input power {} blast {} punch {} -> {} ({about}; hero {:?}, energy {:.0}, waiting: {:?})",
+                input.power,
+                input.blast,
+                input.smash,
+                asked.map_or("nothing".into(), |p| format!("{p:?}")),
+                actors[i].f.status,
+                actors[i].f.energy,
+                waiting,
+            ));
+        }
+        actors[i].f.pressing = pressing;
+        if input.power != 0 && key.is_none() {
+            out.log.push(format!(
+                "server {tick}: power {} is not in this hero's kit (or passive)",
+                input.power
+            ));
+        }
         if input.target.is_some() || asked.is_some() {
             actors[i].f.target = input.target.or(actors[i].f.target);
         }
@@ -2362,10 +2451,18 @@ fn heroes_act(
             continue;
         };
         if !actors[i].f.standing() {
+            out.log.push(format!(
+                "server {tick}: {power:?} dropped: the hero is {:?}",
+                actors[i].f.status
+            ));
             actors[i].f.queued = None;
             continue;
         }
         if tick > until {
+            out.log.push(format!(
+                "server {tick}: {power:?} lapsed: {}",
+                why_words(actors[i].f.waiting)
+            ));
             // It lapsed: say why, so a key press never just does nothing.
             actors[i].f.queued = None;
             let why = std::mem::take(&mut actors[i].f.waiting);
@@ -2421,7 +2518,7 @@ fn heroes_act(
                         // Only what the hero can see: never a villain
                         // behind a wall when one in the open is nearer
                         // the aim.
-                        .filter(|(_, a)| clear_line(solids, chest, a.chest()))
+                        .filter(|(_, a)| in_sight(solids, chest, a.chest()))
                         .filter(|(_, a)| {
                             let to = a.chest() - chest;
                             let d = to.length();
@@ -2440,7 +2537,7 @@ fn heroes_act(
             if let Some(t) = target {
                 let in_reach = actors[t].body.pos.distance(pos) <= spec.range;
                 // No blow and no power through a wall, a punch included.
-                let seen = clear_line(solids, actors[i].chest(), actors[t].chest());
+                let seen = in_sight(solids, actors[i].chest(), actors[t].chest());
                 if !in_reach || !seen {
                     target = None;
                     why = if in_reach {
@@ -2451,7 +2548,7 @@ fn heroes_act(
                 }
             }
             if target.is_none() && !free_aim {
-                actors[i].f.waiting = why;
+                note_wait(&mut actors[i].f, why, power, tick, &mut out.log);
                 continue;
             }
             // Bosses and machines shrug off hypnosis.
@@ -2481,7 +2578,7 @@ fn heroes_act(
             match teleport_to(solids, actors[i].body.pos, aim) {
                 Some(p) => Some(p),
                 None => {
-                    actors[i].f.waiting = fizzle::NO_SPOT;
+                    note_wait(&mut actors[i].f, fizzle::NO_SPOT, power, tick, &mut out.log);
                     continue;
                 }
             }
@@ -2492,7 +2589,7 @@ fn heroes_act(
             match nearest_rescue(rescue_points, actors[i].chest(), aim) {
                 Some(p) => Some(p),
                 None => {
-                    actors[i].f.waiting = fizzle::NO_SPOT;
+                    note_wait(&mut actors[i].f, fizzle::NO_SPOT, power, tick, &mut out.log);
                     continue;
                 }
             }
@@ -2508,18 +2605,24 @@ fn heroes_act(
         };
         let ready = throwing || commanding || tick >= me.ready[slot(power)];
         if tick < me.busy_until || !ready || me.energy < cost {
-            actors[i].f.waiting = if !ready {
+            let why = if !ready {
                 fizzle::RECHARGING
             } else if me.energy < cost {
                 fizzle::ENERGY
             } else {
                 fizzle::BUSY
             };
+            note_wait(&mut actors[i].f, why, power, tick, &mut out.log);
             continue;
         }
         let me_id = actors[i].id;
         let me = &mut actors[i].f;
         me.queued = None;
+        out.log.push(format!(
+            "server {tick}: {power:?} fired at {:?}",
+            target.map(|t| actors[t].id)
+        ));
+        let me = &mut actors[i].f;
         me.energy -= cost;
         me.busy_until = tick + ticks(ACTION_LOCK);
         if (power != Power::Lift || throwing) && !commanding {
@@ -3259,7 +3362,7 @@ fn enemies_act(
                 foe = (0..actors.len())
                     .filter(|&j| j != i && hittable(&actors[j]))
                     .map(|j| (j, actors[j].body.pos.distance(actors[i].body.pos)))
-                    .filter(|&(j, d)| d < CHARM_REACH && clear_line(solids, me, actors[j].chest()))
+                    .filter(|&(j, d)| d < CHARM_REACH && in_sight(solids, me, actors[j].chest()))
                     .min_by(|x, y| x.1.total_cmp(&y.1).then(x.0.cmp(&y.0)))
                     .map(|(j, _)| j);
             } else if foe.is_none() {
@@ -3271,7 +3374,7 @@ fn enemies_act(
                     .map(|j| (j, actors[j].body.pos.distance(actors[i].body.pos)))
                     .filter(|(j, d)| {
                         // A lookout hears the street below without seeing it.
-                        *d < spec.aggro && (en.perch || clear_line(solids, me, actors[*j].chest()))
+                        *d < spec.aggro && (en.perch || in_sight(solids, me, actors[*j].chest()))
                     })
                     .collect();
                 noticed.sort_by(|x, y| x.1.total_cmp(&y.1));
@@ -3358,7 +3461,7 @@ fn enemies_act(
                     let flat = DVec2::new(there.x - here.x, there.z - here.z);
                     let dist = flat.length();
                     let dir = flat.normalize_or(DVec2::X);
-                    let seen = clear_line(solids, actors[i].chest(), actors[j].chest());
+                    let seen = in_sight(solids, actors[i].chest(), actors[j].chest());
                     if en.kind == EnemyKind::Doctor {
                         doctor_storm(actors, i, &mut en, tick, dist, fx);
                     }
@@ -3373,7 +3476,7 @@ fn enemies_act(
                                 // the windup is missed, punch or ray.
                                 let lands = actors[t].f.standing()
                                     && d <= spec.reach + 0.6
-                                    && clear_line(solids, actors[i].chest(), actors[t].chest());
+                                    && in_sight(solids, actors[i].chest(), actors[t].chest());
                                 let dmg = spec.damage * level_scale(actors[i].f.level);
                                 let kind = if ranged { FxKind::Ray } else { FxKind::Punch };
                                 let mut e = event(
@@ -3608,7 +3711,7 @@ fn mend_friend(
                 && a.f.health < a.f.max_health * ORDERLY_BELOW
                 && a.body.pos.distance(actors[i].body.pos) <= ORDERLY_REACH
         })
-        .filter(|&k| clear_line(solids, me, actors[k].chest()))
+        .filter(|&k| in_sight(solids, me, actors[k].chest()))
         .min_by(|&x, &y| {
             let share = |a: &Actor| a.f.health / a.f.max_health.max(1.0);
             share(&actors[x])
