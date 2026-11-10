@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.137 (2026-11-10)
+
+- Fixed: after pressing Tab to pick a target, your power keys often did nothing until you moved away. Tab also put the keyboard on a button of the screen's menus, which then kept every key from the game. Tab now only picks targets.
+
 ## 0.136 (2026-11-10)
 
 - New: a chat window, bottom left, like in City of Heroes and EverQuest. Its Local tab logs what is said near you: gangs warning you off their turf, mole folk thanking you, Hero Hall's heroes giving tips, and Commander Starling on your wrist radio, so you can read a line again after its bubble is gone.
