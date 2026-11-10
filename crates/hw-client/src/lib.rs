@@ -59,6 +59,7 @@ pub mod settings;
 pub mod signalview;
 pub mod skins;
 pub mod soundscape;
+pub mod startflight;
 pub mod storyview;
 pub mod sweeperview;
 pub mod teslaview;

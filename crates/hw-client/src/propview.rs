@@ -161,11 +161,22 @@ impl PropView {
     /// whose ground the town has not planned yet waits while it is planned
     /// in the background.
     pub fn update(&mut self, eye: DVec2, budget_ms: f64) {
+        self.update_around(&[eye], budget_ms);
+    }
+
+    /// Like [`Self::update`] with several places kept loaded (the camera
+    /// and where it is flying to): a tile stays while it is near any.
+    pub fn update_around(&mut self, eyes: &[DVec2], budget_ms: f64) {
+        let near = |p: DVec2| {
+            eyes.iter()
+                .map(|e| e.distance(p))
+                .fold(f64::INFINITY, f64::min)
+        };
         let gone: Vec<TileKey> = self
             .tiles
             .keys()
             .copied()
-            .filter(|k| tile_centre(*k).distance(eye) > PROP_UNLOAD)
+            .filter(|k| near(tile_centre(*k)) > PROP_UNLOAD)
             .collect();
         for k in gone {
             if let Some(t) = self.tiles.remove(&k) {
@@ -174,24 +185,27 @@ impl PropView {
             }
         }
         let h = self.world.half() + TILE;
-        let (lo, hi) = (
-            (eye - DVec2::splat(PROP_LOAD)).max(DVec2::splat(-h)),
-            (eye + DVec2::splat(PROP_LOAD)).min(DVec2::splat(h)),
-        );
-        if lo.x > hi.x || lo.y > hi.y {
-            return;
-        }
-        let (a, b) = (tile_of(lo), tile_of(hi));
         let mut todo: Vec<(f64, TileKey)> = Vec::new();
-        for x in a.0..=b.0 {
-            for z in a.1..=b.1 {
-                let d = tile_centre((x, z)).distance(eye);
-                if d < PROP_LOAD && !self.tiles.contains_key(&(x, z)) {
-                    todo.push((d, (x, z)));
+        for &eye in eyes {
+            let (lo, hi) = (
+                (eye - DVec2::splat(PROP_LOAD)).max(DVec2::splat(-h)),
+                (eye + DVec2::splat(PROP_LOAD)).min(DVec2::splat(h)),
+            );
+            if lo.x > hi.x || lo.y > hi.y {
+                continue;
+            }
+            let (a, b) = (tile_of(lo), tile_of(hi));
+            for x in a.0..=b.0 {
+                for z in a.1..=b.1 {
+                    let d = near(tile_centre((x, z)));
+                    if d < PROP_LOAD && !self.tiles.contains_key(&(x, z)) {
+                        todo.push((d, (x, z)));
+                    }
                 }
             }
         }
         todo.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        todo.dedup_by_key(|t| t.1);
         let wait = budget_ms.is_finite();
         let start = std::time::Instant::now();
         let mut later = Vec::new();
@@ -210,6 +224,18 @@ impl PropView {
         if !later.is_empty() {
             self.world.prefetch(&later, TILE * 0.5);
         }
+    }
+
+    /// Are all prop tiles within `r` of `p` loaded?
+    pub fn ready_near(&self, p: DVec2, r: f64) -> bool {
+        let rr = DVec2::splat(r);
+        let (a, b) = (tile_of(p - rr), tile_of(p + rr));
+        (a.0..=b.0).all(|x| {
+            (a.1..=b.1).all(|z| {
+                tile_centre((x, z)).distance(p) >= r.min(PROP_LOAD)
+                    || self.tiles.contains_key(&(x, z))
+            })
+        })
     }
 
     /// How much of the props around `eye` is loaded: (tiles loaded, tiles

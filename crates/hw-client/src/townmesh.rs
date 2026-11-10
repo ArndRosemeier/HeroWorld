@@ -757,15 +757,15 @@ impl TownView {
     /// while the town plans it in the background (unless the budget is
     /// unlimited: then it is planned on the spot).
     pub fn update(&mut self, world: &mut World, eye: DVec2, budget_ms: f64) {
-        self.drop_far(world, eye);
+        self.drop_far(world, &[eye]);
         // A cell the background path left half placed goes in now.
         while self.placing.is_some() {
-            self.step_placing(world, usize::MAX, eye);
+            self.step_placing(world, usize::MAX, &[eye]);
         }
         let wait = budget_ms.is_finite();
         let start = std::time::Instant::now();
         let mut later = Vec::new();
-        for (_, k, detail) in self.todo(eye) {
+        for (_, k, detail) in self.todo(&[eye]) {
             if wait && !self.built.contains_key(&k) && !self.ready(k) {
                 later.push(cell_centre(k));
                 continue;
@@ -784,12 +784,19 @@ impl TownView {
     /// puts finished cells into the world (for at most `budget_ms`) and
     /// hands out more work, so a frame never waits for a cell.
     pub fn update_background(&mut self, world: &mut World, eye: DVec2, budget_ms: f64) {
-        self.drop_far(world, eye);
+        self.update_background_around(world, &[eye], budget_ms);
+    }
+
+    /// Like [`Self::update_background`] with several places kept loaded (the
+    /// camera and where it is flying to): a cell stays while it is near
+    /// any, and its detail follows the nearest.
+    pub fn update_background_around(&mut self, world: &mut World, eyes: &[DVec2], budget_ms: f64) {
+        self.drop_far(world, eyes);
         let mut workers = self.workers.take().unwrap_or_else(Workers::start);
         let start = std::time::Instant::now();
         // A few meshes per frame: one cell at a time, the next only when the
         // last one is in.
-        let mut spawned = self.step_placing(world, MESHES_PER_FRAME, eye);
+        let mut spawned = self.step_placing(world, MESHES_PER_FRAME, eyes);
         while self.placing.is_none()
             && spawned < MESHES_PER_FRAME
             && start.elapsed().as_secs_f64() * 1000.0 <= budget_ms
@@ -801,16 +808,16 @@ impl TownView {
             // A cell that went out of range while it was drawn is dropped,
             // and so is a drawing that a newer job replaces.
             let newest = self.stamps.get(&m.key) == Some(&m.stamp);
-            if newest && cell_centre(m.key).distance(eye) <= UNLOAD {
+            if newest && nearest(eyes, cell_centre(m.key)) <= UNLOAD {
                 self.start_placing(m);
-                spawned += self.step_placing(world, MESHES_PER_FRAME - spawned, eye);
+                spawned += self.step_placing(world, MESHES_PER_FRAME - spawned, eyes);
             } else if !newest {
                 crate::hitch::count("town cells drawn too late", 1);
             }
         }
         let mut room = (workers.count * 2).saturating_sub(workers.busy.len());
         let mut later = Vec::new();
-        for (_, k, detail) in self.todo(eye) {
+        for (_, k, detail) in self.todo(eyes) {
             if room == 0 {
                 break;
             }
@@ -840,12 +847,12 @@ impl TownView {
         self.workers.as_ref().map_or(0, |w| w.busy.len())
     }
 
-    fn drop_far(&mut self, world: &mut World, eye: DVec2) {
+    fn drop_far(&mut self, world: &mut World, eyes: &[DVec2]) {
         let gone: Vec<CellKey> = self
             .built
             .keys()
             .copied()
-            .filter(|k| cell_centre(*k).distance(eye) > UNLOAD)
+            .filter(|k| nearest(eyes, cell_centre(*k)) > UNLOAD)
             .collect();
         for k in gone {
             self.drop_cell(world, k);
@@ -853,9 +860,9 @@ impl TownView {
     }
 
     /// Cells to build or redraw at another detail, nearest first.
-    fn todo(&self, eye: DVec2) -> Vec<(f64, CellKey, Detail)> {
+    fn todo(&self, eyes: &[DVec2]) -> Vec<(f64, CellKey, Detail)> {
         let want = |k: &CellKey| {
-            let d = cell_centre(*k).distance(eye);
+            let d = nearest(eyes, cell_centre(*k));
             let detail = if d < NEAR_DETAIL + CELL * 0.71 {
                 Detail::Near
             } else if d < DISTANT_DETAIL {
@@ -865,8 +872,11 @@ impl TownView {
             };
             (d, detail)
         };
-        let mut todo: Vec<(f64, CellKey, Detail)> = self
-            .cells_within(eye, LOAD)
+        let cells: BTreeSet<CellKey> = eyes
+            .iter()
+            .flat_map(|&eye| self.cells_within(eye, LOAD))
+            .collect();
+        let mut todo: Vec<(f64, CellKey, Detail)> = cells
             .into_iter()
             .filter_map(|k| {
                 let (d, detail) = want(&k);
@@ -887,6 +897,20 @@ impl TownView {
     /// Builds every cell in range at once (the first frame).
     pub fn build_all(&mut self, world: &mut World, eye: DVec2) {
         self.update(world, eye, f64::INFINITY);
+    }
+
+    /// Is everything within `r` of `p` drawn, at the detail it wants with
+    /// the camera kept at `eyes`, and nothing there half placed?
+    pub fn ready_near(&self, eyes: &[DVec2], p: DVec2, r: f64) -> bool {
+        let placing_here = self
+            .placing
+            .as_ref()
+            .is_some_and(|q| cell_centre(q.key).distance(p) < r);
+        !placing_here
+            && self
+                .todo(eyes)
+                .iter()
+                .all(|(_, k, _)| cell_centre(*k).distance(p) >= r)
     }
 
     /// How much of the town around `eye` is built: (cells built, cells
@@ -1029,11 +1053,11 @@ impl TownView {
     /// sight); once all are spawned and Engine has had a frame to upload
     /// the last ones, moves them into place and retires the old drawing.
     /// Returns the meshes spawned.
-    fn step_placing(&mut self, world: &mut World, max: usize, eye: DVec2) -> usize {
+    fn step_placing(&mut self, world: &mut World, max: usize, eyes: &[DVec2]) -> usize {
         let Some(p) = self.placing.as_mut() else {
             return 0;
         };
-        if cell_centre(p.key).distance(eye) > UNLOAD {
+        if nearest(eyes, cell_centre(p.key)) > UNLOAD {
             let k = p.key;
             self.abandon_placing(world, k);
             return 0;
@@ -1341,4 +1365,11 @@ fn strip(
         ];
         b.quad(quad, DVec3::Y, c);
     }
+}
+
+/// Distance from `p` to the nearest of `eyes` (infinite with none).
+fn nearest(eyes: &[DVec2], p: DVec2) -> f64 {
+    eyes.iter()
+        .map(|e| e.distance(p))
+        .fold(f64::INFINITY, f64::min)
 }

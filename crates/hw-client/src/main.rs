@@ -173,8 +173,6 @@ fn set_game_hour(h: f32) {
     HOUR_SHIFT.store(shift.rem_euclid(24.0).to_bits(), Ordering::Relaxed);
     HOUR_NOW.store(h.to_bits(), Ordering::Relaxed);
 }
-/// Seconds the camera takes to swoop from the title down to the hero.
-const SWOOP_SECONDS: f32 = 2.4;
 /// Seconds of the power pose our hero strikes on a level up.
 const POWER_POSE_SECONDS: f32 = 2.6;
 /// Cells within this distance of the cut focus are redrawn when it changes.
@@ -1561,8 +1559,10 @@ fn main() -> EngineResult<()> {
     // has landed (they take a moment), not on the first frame.
     let mut extras_loaded = false;
     let mut extras_load: Option<ExtrasLoad> = None;
-    // From the title down to the hero: (start, eye, yaw, pitch).
-    let mut swoop: Option<(f32, Vec3, f32, f32)> = None;
+    // From the title down to the hero: waits for the hero's surroundings,
+    // then flies an arc (see `startflight.rs`).
+    let mut swoop: Option<hw_client::startflight::StartFlight> = None;
+    let mut flight_frames = 0u32;
     let mut music_fade_at: Option<f32> = None;
     // Broken buildings, once a game is on.
     let mut damage: Option<DamageView> = None;
@@ -1926,7 +1926,7 @@ fn main() -> EngineResult<()> {
                 if session.is_some() {
                     // Off we go: the camera swoops down to the hero.
                     let (eye, yaw, pitch) = t.camera(&generated.world, &solids);
-                    swoop = Some((frame.time, eye, yaw, pitch));
+                    swoop = Some(hw_client::startflight::StartFlight::new(eye, yaw, pitch));
                     quality_log.mark("the game starts (title left)");
                     hero_cam.yaw = yaw;
                     music_fade_at = Some(frame.time + 20.0);
@@ -3824,26 +3824,54 @@ fn main() -> EngineResult<()> {
                     fly.position.y = fly.position.y.max(floor as f32 + 1.8);
                 }
             }
-            // Just off the title: swoop from its camera down to the hero,
-            // the sun climbing from golden hour to the game's morning.
-            if let Some((t0, from, from_yaw, from_pitch)) = swoop {
-                let k = ((frame.time - t0) / SWOOP_SECONDS).clamp(0.0, 1.0);
-                let k = k * k * (3.0 - 2.0 * k);
+            // Just off the title: the camera holds the title's view until the
+            // hero's surroundings are in, then flies an arc down to the hero,
+            // the sun climbing from golden hour to the game's hour.
+            if let Some(f) = swoop.as_mut() {
+                use hw_client::startflight::{Pose, WARM_RADIUS_M};
                 let cam = world.camera();
-                let to = cam.eye();
-                let dir = (cam.target() - to).normalize_or_zero();
-                let to_yaw = dir.x.atan2(dir.z).to_degrees();
-                let to_pitch = dir.y.clamp(-1.0, 1.0).asin().to_degrees();
-                let turn = (to_yaw - from_yaw + 540.0).rem_euclid(360.0) - 180.0;
-                world.look_first_person(
-                    from.lerp(to, k),
-                    from_yaw + turn * k,
-                    from_pitch + (to_pitch - from_pitch) * k,
-                );
-                let hour = title::TITLE_HOUR + (hour - title::TITLE_HOUR) * k;
-                hw_client::lighting::set_sky(world, hour);
-                if k >= 1.0 {
-                    swoop = None;
+                let (to_eye, look_at) = (cam.eye(), cam.target());
+                let d = (look_at - to_eye).normalize_or_zero();
+                let to = Pose {
+                    eye: to_eye,
+                    yaw: d.x.atan2(d.z).to_degrees(),
+                    pitch: d.y.clamp(-1.0, 1.0).asin().to_degrees(),
+                };
+                let hero = me.map(|p| p.as_vec3());
+                let ready = hero.map(|h| {
+                    let at = DVec2::new(h.x as f64, h.z as f64);
+                    let focus = f.focus(world.camera().eye(), hero);
+                    let mine = session.my_hero();
+                    town.ready_near(&focus, at, WARM_RADIUS_M)
+                        && extras
+                            .props
+                            .as_ref()
+                            .is_none_or(|v| v.ready_near(at, WARM_RADIUS_M))
+                        && mine.is_some_and(|m| hero_entities.contains_key(&m))
+                });
+                match f.step(frame.dt, ready, to, look_at) {
+                    Some((p, k)) => {
+                        world.look_first_person(p.eye, p.yaw, p.pitch);
+                        // `HW_FLIGHT_SHOTS=<dir>`: a picture every 8 frames of the
+                        // flight (to look at the path).
+                        if k > 0.0 {
+                            if let Ok(dir) = std::env::var("HW_FLIGHT_SHOTS") {
+                                flight_frames += 1;
+                                if flight_frames % 8 == 1 {
+                                    world.queue_screenshot(
+                                        std::path::Path::new(&dir)
+                                            .join(format!("flight-{flight_frames:04}.png")),
+                                    );
+                                }
+                            }
+                        }
+                        let hour = title::TITLE_HOUR + (hour - title::TITLE_HOUR) * k;
+                        hw_client::lighting::set_sky(world, hour);
+                    }
+                    None => {
+                        hw_client::hitch::event("the camera reached the hero");
+                        swoop = None;
+                    }
                 }
             }
             hw_client::hitch::mark("fight screen");
@@ -4188,13 +4216,15 @@ fn main() -> EngineResult<()> {
                 );
             }
             hw_client::hitch::mark("town");
-            // Roads and buildings around the camera, full detail close by.
+            // Roads and buildings around the camera, full detail close by;
+            // on the way in from the title also around the hero, so the
+            // camera arrives where everything is in.
             let eye = world.camera().eye();
-            town.update_background(
-                world,
-                DVec2::new(eye.x as f64, eye.z as f64),
-                BUILD_BUDGET_MS,
-            );
+            let focus = match &swoop {
+                Some(f) => f.focus(eye, me.map(|p| p.as_vec3())),
+                None => vec![DVec2::new(eye.x as f64, eye.z as f64)],
+            };
+            town.update_background_around(world, &focus, BUILD_BUDGET_MS);
             hw_client::hitch::mark("doors");
             door_view.update(
                 world,
@@ -4206,10 +4236,7 @@ fn main() -> EngineResult<()> {
             hw_client::hitch::mark("props");
             // Street props, trees and hedges around the camera.
             if let Some(v) = extras.props.as_mut() {
-                v.update(
-                    DVec2::new(eye.x as f64, eye.z as f64),
-                    BUILD_BUDGET_MS * 0.5,
-                );
+                v.update_around(&focus, BUILD_BUDGET_MS * 0.5);
                 v.flush(world)?;
             }
             hw_client::hitch::mark("waterfront");
