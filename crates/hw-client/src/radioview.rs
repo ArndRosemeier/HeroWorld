@@ -1,6 +1,6 @@
 //! The wrist radio: incidents in town as a list (what, how far, which way
-//! as a clock direction, how tough against you), and a beam of light over
-//! each one so it can be found from the rooftops. Rescues show on the
+//! as a clock direction, how tough against you); the police visor
+//! ([`crate::visor`]) marks where each one is. Rescues show on the
 //! spot: a crash's two smashed cars smoking, a house's front in flames, and
 //! the people still trapped waving for help. The last one out is hurt: an
 //! ambulance pulls up down the street, and the hero carries them there.
@@ -338,7 +338,6 @@ pub struct Radio {
     /// Seconds the radio has run (an airship's gentle sway).
     clock: f32,
     pub calls: BTreeMap<u32, Call>,
-    beams: BTreeMap<u32, EntityId>,
     scenes: BTreeMap<u32, Scene>,
     /// The last word on the air: (text, seconds left).
     pub flash: Option<(String, f32)>,
@@ -371,33 +370,29 @@ pub struct StoryMark {
 /// The story's colour on the radio, the compass and the map.
 pub const STORY_GOLD: egui::Color32 = egui::Color32::from_rgb(255, 200, 60);
 
-/// A beam's colour by kind.
-fn beam_colour(kind: IncidentKind) -> Color {
+/// A call's colour by kind, sRGB (its marks on the police visor).
+pub fn call_colour(kind: IncidentKind) -> (u8, u8, u8) {
     match kind {
-        IncidentKind::Mugging => rgb(255, 220, 90),
-        IncidentKind::Robbery => rgb(255, 160, 60),
-        IncidentKind::Rampage => rgb(255, 80, 70),
-        IncidentKind::Breakout => rgb(150, 255, 110),
-        IncidentKind::CarCrash => rgb(120, 200, 255),
-        IncidentKind::Fire => rgb(255, 130, 40),
-        IncidentKind::Colossus => rgb(255, 40, 60),
-        IncidentKind::Collapse => rgb(230, 210, 170),
-        IncidentKind::Surfacing => rgb(200, 150, 255),
-        IncidentKind::PirateRaid => rgb(90, 230, 210),
-        IncidentKind::IronLanding => rgb(255, 60, 30),
+        IncidentKind::Mugging => (255, 220, 90),
+        IncidentKind::Robbery => (255, 160, 60),
+        IncidentKind::Rampage => (255, 80, 70),
+        IncidentKind::Breakout => (150, 255, 110),
+        IncidentKind::CarCrash => (120, 200, 255),
+        IncidentKind::Fire => (255, 130, 40),
+        IncidentKind::Colossus => (255, 40, 60),
+        IncidentKind::Collapse => (230, 210, 170),
+        IncidentKind::Surfacing => (200, 150, 255),
+        IncidentKind::PirateRaid => (90, 230, 210),
+        IncidentKind::IronLanding => (255, 60, 30),
     }
 }
 
-/// The light over a call: a column rising from the spot itself, faint at
-/// the foot (so it never stands in the way up close), full a few storeys
-/// up and fading out high over the rooftops, with a ring of the same light
-/// on the ground round the spot. Glowing and see-through, in the call's
-/// colour; origin on the ground at the call.
-pub fn beacon(kind: IncidentKind) -> Mesh {
-    beacon_lit(beam_colour(kind))
-}
-
-/// A beacon in `colour` (the story's objective is gold).
+/// A column of light rising from a spot, faint at the foot (so it never
+/// stands in the way up close), full a few storeys up and fading out high
+/// over the rooftops, with a ring of the same light on the ground round the
+/// spot. Glowing and see-through, in `colour`; origin on the ground. Only
+/// the story's objective (gold) has one: calls show on the police visor
+/// ([`crate::visor`]) instead.
 pub fn beacon_lit(colour: Color) -> Mesh {
     const SIDES: usize = 32;
     let mut m = Mesh::new();
@@ -563,9 +558,6 @@ impl Radio {
                     doused,
                 },
             );
-            if let Ok(e) = world.place(beacon(kind), Place::new(at.x, at.y, at.z)) {
-                self.beams.insert(*id, e);
-            }
             if kind.trapped() > 0 {
                 self.stage(world, *id);
                 if doused {
@@ -577,9 +569,6 @@ impl Radio {
             self.flash = Some((format!("Calling all heroes: {}!", kind.name()), 5.0));
         } else {
             self.calls.remove(id);
-            if let Some(e) = self.beams.remove(id) {
-                world.despawn(e);
-            }
             self.unstage(world, *id);
             let word = match (*state, kind.trapped() > 0) {
                 (1, true) => "Everyone is out. You saved them!".to_string(),
@@ -1707,9 +1696,6 @@ impl Radio {
     }
 
     pub fn clear(&mut self, world: &mut World) {
-        for (_, e) in std::mem::take(&mut self.beams) {
-            world.despawn(e);
-        }
         let ids: Vec<u32> = self.scenes.keys().copied().collect();
         for id in ids {
             self.unstage(world, id);

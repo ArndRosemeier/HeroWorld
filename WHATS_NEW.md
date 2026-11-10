@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.142 (2026-11-10)
+
+- Crimes no longer light a huge column into the sky. Your new police visor shows them instead: it shimmers into view in front of your eyes when a call comes in or you get near one, and marks where the trouble is.
+- Press T to bring the visor down, or to put it away.
+- The Hero Signal still lights the sky for the worst trouble.
+
 ## 0.141 (2026-11-10)
 
 - Tab and the arrow keys now always belong to the game; the on-screen buttons can no longer catch them. Resting the mouse on a panel no longer blocks your keys either.

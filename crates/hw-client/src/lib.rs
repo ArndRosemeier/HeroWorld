@@ -67,6 +67,7 @@ pub mod townmesh;
 pub mod trafficview;
 pub mod tray;
 pub mod undergroundview;
+pub mod visor;
 pub mod waterfrontview;
 pub mod weathermodel;
 pub mod weatherview;

@@ -126,6 +126,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | H | Call the medical drone when you are down |
 | G | Hail a flying taxi (G again hops out mid-air) |
 | M | Town map with the radio's calls |
+| T | Police visor: bring it down (10 s) or put it away |
 | N | Minimap on or off |
 | O | Free camera |
 | Enter or / | Chat: type a line, Enter says it (over your head and in the chat window), Escape cancels |
@@ -497,12 +498,21 @@ weight, rampages, breakouts and pirate raids a third to a half as often as elsew
 heroes start here.
 
 Each shows on the **wrist radio** (top left, `radioview.rs`) with its name, distance, a clock
-direction ("at 3 o'clock") and con colour, as a **column of light** in the call's colour
-rising from the spot itself (faint at its foot, brightest a few storeys up, fading out 140 m
-high, with a ring of the same light on the ground round the spot), on
-the **compass** strip at the top of the screen, and on the **map** (M). Rampages, breakouts
-and the colossus also light the **Hero Signal**: a searchlight from the Aether Spire throws a
-star onto the sky above the trouble, visible from anywhere in town.
+direction ("at 3 o'clock") and con colour, on the **compass** strip at the top of the
+screen, on the **map** (M), and on the **police visor** (`visor.rs`). Nothing glows over an
+ordinary call in the world itself. Rampages, breakouts and the colossus also light the **Hero
+Signal**: a searchlight from the Aether Spire throws a star onto the sky above the trouble,
+visible from anywhere in town.
+
+**The police visor** is a hologram the City Patrol issues to heroes. It comes down for 8 s
+when a call comes in, stays down while the hero is within 150 m of a call, and T brings it
+down for 10 s (T while it is down puts it away until the next new call). It materialises as
+a bright line at eye height that opens out, flickering, into the visor (dissolving takes
+0.4 s, the same way back): a faint amber tint, a darker rim with corner ticks, scan lines with
+a band rolling down, and the Metro City Patrol star, see-through, low right of the line of
+sight. Each call gets corner brackets in its colour on the spot (bigger when near, pulsing
+while new) with its name and distance in con colour, or an arrow at the visor's edge when it
+is out of sight. The story's objective keeps its gold column.
 
 A fight is resolved when its group is beaten; a rescue when everyone is out and the hurt one
 is with the ambulance. Unanswered (no hero within 60 m) for 4 minutes, it ends: the crooks
@@ -1064,6 +1074,7 @@ run, or put them in a `.bat`.
 | --- | --- |
 | `HW_INCIDENT=1` | The first incident starts at once. |
 | `HW_INCIDENT=mugging\|robbery\|rampage\|breakout\|crash\|fire\|colossus` | ...and of that kind. |
+| `HW_VISOR=1` | The police visor stays down; `HW_VISOR=0.4` freezes it part way in (screenshots). |
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
 | `HW_VIEW=fight` | Places a test group of minions near the spawn (the game starts without one). |

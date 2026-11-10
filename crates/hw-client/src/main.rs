@@ -54,7 +54,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; by default
 //! the city picked in the title's city window; joining players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the light over the first call, with `HW_INCIDENT`), `far` (a main road across town, where people and traffic must follow) or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the first call on the police visor, with `HW_INCIDENT`; `HW_VISOR=1` keeps the visor down, `HW_VISOR=0.4` freezes it part way in), `far` (a main road across town, where people and traffic must follow) or
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
 //! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `weather` (the weather tower and its shower; `weathertop`, `weatherfoot`, `weatherstreet` close up; `HW_WEATHER=brew|rain|clear|bow|fair` picks the moment), `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `far` (a main road across town, where people and traffic must follow) or
@@ -426,6 +426,8 @@ fn main() -> EngineResult<()> {
     let mut fight = FightView::new();
     let mut robots = RobotView::new();
     let mut radio = hw_client::radioview::Radio::default();
+    // The police visor: marks the radio's calls in front of the hero's eyes.
+    let mut visor = hw_client::visor::Visor::from_env();
     // `HW_HOLD=1` (screenshots): the help key is held down all along.
     let hold_help = std::env::var_os("HW_HOLD").is_some();
     let mut signal = hw_client::dispatchview::Signal::default();
@@ -3409,8 +3411,8 @@ fn main() -> EngineResult<()> {
                     fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
                 }
             }
-            // `HW_VIEW=call` (with HW_INCIDENT=<kind>): the light over the
-            // first call, from over the rooftops 50 m off.
+            // `HW_VIEW=call` (with HW_INCIDENT=<kind>): the first call on the
+            // police visor, from over the rooftops 50 m off.
             if view == "call" {
                 if let Some(c) = radio.calls.values().next() {
                     let p = c.at + Vec3::new(35.0, 28.0, 35.0);
@@ -3685,6 +3687,15 @@ fn main() -> EngineResult<()> {
             {
                 let view_proj = world.camera().view_projection(frame.aspect);
                 let me_state = mine.and_then(|id| heroes.iter().find(|e| e.id == id));
+                // The police visor first, so the HUD's panels sit over it.
+                {
+                    let hero = session.my_position(&heroes).map(|p| p.as_vec3());
+                    let toggle = frame.input.pressed(Key::T) && !chat.typing && !on_ui_keys(frame);
+                    let why = visor.update(frame.dt, toggle, &radio, hero);
+                    let level = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
+                    let eye = world.camera().eye();
+                    visor.draw(frame.ui.ctx(), view_proj, eye, &radio, level, why);
+                }
                 let names = |e: &hw_net::EntityState| {
                     e.owner
                         .and_then(|o| session.player_name(o))
