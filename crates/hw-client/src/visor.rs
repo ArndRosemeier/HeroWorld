@@ -400,11 +400,15 @@ fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     let fres = pow(1.0 - facing, 2.0);
     let flick = m.params[0].y;
     let amber = vec3<f32>(1.0, 0.6, 0.16);
-    let a = shown * (0.2 + 0.35 * rim + 0.08 * scan + 0.25 * fres) * flick + edge * 0.8;
-    o.color = vec4<f32>(amber, clamp(a, 0.0, 0.9));
+    // About 20% opaque once settled (Arnd); only the opening edge flares.
+    // The band is seen through twice (its near and far side, both faces
+    // drawn), so each layer is about half of that.
+    let body = shown * clamp(0.07 + 0.03 * rim + 0.01 * scan + 0.02 * fres, 0.0, 0.11) * flick;
+    let a = body + edge * 0.4;
+    o.color = vec4<f32>(amber, clamp(a, 0.0, 0.5));
     o.roughness = 0.1;
     o.metallic = 0.0;
-    o.emission = amber * (shown * (0.3 + 0.8 * rim + 0.15 * scan) * flick + edge * 2.0) * m.params[0].z;
+    o.emission = amber * (shown * (0.03 + 0.08 * rim + 0.02 * scan) * flick + edge * 1.5) * m.params[0].z;
     return o;
 }
 "#;
@@ -459,7 +463,7 @@ pub fn holo_mesh() -> Mesh {
     }
     m.set_surface_material(SurfaceMaterial {
         roughness: 0.1,
-        emission: 0.4,
+        emission: 0.0,
         ..SurfaceMaterial::DEFAULT
     });
     m

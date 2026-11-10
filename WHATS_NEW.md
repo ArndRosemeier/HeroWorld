@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.157 (2026-11-10)
+
+- The visor on your hero is much more see-through now (about 20%), so the face shows through it.
+
 ## 0.156 (2026-11-10)
 
 - Mole folk no longer burst up through the street out of nowhere. That call is resting until we

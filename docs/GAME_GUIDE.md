@@ -514,8 +514,8 @@ visor (switching off takes 0.4 s, the same way back): a faint amber tint, a dark
 corner ticks, scan lines with a band rolling down, and the Metro City Patrol star,
 see-through, low right of the line of sight. Each call gets corner brackets in its colour on
 the spot (bigger when near, pulsing for 8 s while new) with its name and distance in con
-colour, or an arrow at the visor's edge when it is out of sight. In third person the visor shows on the hero too: a see-through amber band
-of light over the eyes, from temple to temple, that opens from the eye line and closes into
+colour, or an arrow at the visor's edge when it is out of sight. In third person the visor shows on the hero too: a faint amber band
+of light over the eyes (about 20% opaque), from temple to temple, that opens from the eye line and closes into
 it with the screen (an Engine custom material, `HOLO_VISOR`; hidden in first person). The
 story's objective keeps its gold column.
 
