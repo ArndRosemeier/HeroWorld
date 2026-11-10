@@ -1828,6 +1828,7 @@ impl FightView {
                     }
                     None => {
                         if let Ok(ice) = world.place(crate::powerfx::ice_block(), place) {
+                            crate::powerfx::dress_ice(world, ice);
                             self.ices.insert(e.id, ice);
                         }
                     }

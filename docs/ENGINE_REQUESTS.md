@@ -209,6 +209,12 @@ Not needed for the first playable city, but the design depends on them eventuall
   tile drawn rotated and offset, blended at the seams), or a second, larger-scale detail
   layer, would fix it for every textured surface without extra geometry.
 
+- **Custom materials built off the main thread:** `World::add_material` (Engine 0.042) builds
+  a material's two pipelines on the main thread the first time it is drawn
+  (`render/renderer_sync.rs`). HeroWorld adds its power materials (bubble film, ice) on the
+  first frame so this happens at the start; building them on a worker, or with the
+  precompiled pipelines before the first frame, would keep even that out of the frame.
+
 ## Done for HeroWorld (2026-11-09, Engine 0.005)
 
 Engine PR #69, merged:

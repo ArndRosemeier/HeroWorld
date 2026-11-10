@@ -1493,8 +1493,13 @@ fn main() -> EngineResult<()> {
         ),
         ("start", format!("view {view}, title {title_mode}")),
     ]);
-    let run = Engine::run(
+    // Screenshots keep full detail (no frame-rate tuner).
+    let mut startup = profile.clone();
+    startup.smooth &= !shooting;
+    let startup = hw_client::settings::startup(&startup);
+    let run = Engine::run_with_settings(
         format!("HeroWorld {}", hw_core::version()),
+        startup,
         move |world, frame| {
             // Notices late frames and writes what went on (see `hitch.rs`).
             let _hitch = hw_client::hitch::begin(world, frame.time);
@@ -1505,7 +1510,9 @@ fn main() -> EngineResult<()> {
                     "first frame, {:.1} s after the start (the town was planned before the window opened)",
                     t0.elapsed().as_secs_f64()
                 ));
-                world.set_view_distance(6000.0)?;
+                // The power effects' WGSL materials (bubble film, ice):
+                // added now so Engine builds their pipelines at the start.
+                hw_client::powerfx::install_materials(world)?;
                 // Meshes live on the graphics card only: Engine lets go of
                 // its RAM copy once uploaded (feet still stand on them).
                 // Robot parts are shattered the frame they are made, before

@@ -32,6 +32,26 @@ pub fn quality_hint(q: Quality) -> String {
     )
 }
 
+/// How far the town is drawn (m).
+pub const VIEW_DISTANCE: f32 = 6000.0;
+
+/// Engine's startup settings from the profile, so the world starts at the
+/// player's quality, frame-rate cap, render scale and vsync (Engine checks
+/// them before the window opens). [`apply`] still runs on the first frame
+/// for what Settings does not cover (lighting per quality, field of view)
+/// and again whenever the player changes a setting.
+pub fn startup(p: &Profile) -> engine::Settings {
+    let mut s = engine::Settings::default()
+        .quality(quality(p))
+        .vsync(p.vsync)
+        .render_scale(p.render_scale.clamp(0.5, 1.0))
+        .view_distance(VIEW_DISTANCE);
+    if p.smooth {
+        s = s.target_fps(SMOOTH_FPS);
+    }
+    s
+}
+
 /// Puts the profile's volumes into the world's sound buses.
 pub fn apply_volumes(world: &mut World, p: &Profile) {
     use engine::audio::Bus;

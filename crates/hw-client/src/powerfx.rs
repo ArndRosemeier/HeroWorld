@@ -6,6 +6,11 @@
 //! Meshes here are small (a few hundred triangles) and made once, the first
 //! time they are wanted; building one takes microseconds, so it stays on
 //! the main thread with the rest of the fight's effects.
+//!
+//! The bubble's soap film and the ice's frost and glint are Engine custom
+//! materials (WGSL run inside the lit shader, so they are still lit and
+//! fogged). [`install_materials`] adds them once at the start; without it
+//! (tools, the showroom) the meshes keep their plain vertex colours.
 
 use engine::prelude::*;
 use glam::Vec3;
@@ -20,6 +25,113 @@ fn rgb(r: u8, g: u8, b: u8) -> Color {
 fn wobble(k: u32) -> f32 {
     let x = k.wrapping_mul(2_654_435_761).rotate_left(13) ^ 0x5bd1_e995;
     (x.wrapping_mul(0x27d4_eb2d) >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0
+}
+
+/// The rescue bubble's film: swirling rainbow bands that drain slowly
+/// downwards, nearly clear where you look straight through and bright at
+/// the rim (Fresnel), with a light that never sits still. The vertex
+/// colour (blue-pink or gold) tints it. `params[0].x`: glow.
+pub const BUBBLE_FILM: &str = r#"
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    let n = normalize(m.normal);
+    let facing = clamp(abs(dot(n, m.view_dir)), 0.0, 1.0);
+    let rim = pow(1.0 - facing, 3.0);
+    let p = normalize(m.object_pos + vec3<f32>(0.0, 0.0001, 0.0));
+    let swirl = sin(p.x * 5.0 + m.time * 0.9) * 0.5
+        + sin(p.z * 4.0 - m.time * 0.7 + p.y * 3.0) * 0.5;
+    let thick = p.y * 1.2 + swirl * 0.6 + m.time * 0.15 + (1.0 - facing) * 2.0;
+    let film = 0.5 + 0.5 * cos(6.2831 * (vec3<f32>(thick) + vec3<f32>(0.0, 0.33, 0.67)));
+    let tint = mix(film, base.color.rgb, 0.6);
+    o.color = vec4<f32>(tint, clamp(0.05 + 0.55 * rim + base.color.a * 0.3, 0.0, 0.8));
+    o.roughness = 0.03;
+    o.metallic = 0.1;
+    o.emission = tint * (0.08 + 0.9 * rim) * m.params[0].x;
+    let w = vec3<f32>(
+        sin(m.time * 2.1 + p.y * 6.0),
+        sin(m.time * 1.7 + p.z * 6.0),
+        sin(m.time * 1.9 + p.x * 6.0)
+    ) * 0.06;
+    o.normal = normalize(n + w);
+    return o;
+}
+"#;
+
+/// Clear ice with cloudy frost inside (thicker toward the foot), a white
+/// rim where you look along the surface, and a glint that sweeps up it.
+/// `params[0].x`: glow.
+pub const ICE_FROST: &str = r#"
+fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
+    var o = base;
+    let n = normalize(m.normal);
+    let facing = clamp(abs(dot(n, m.view_dir)), 0.0, 1.0);
+    let rim = pow(1.0 - facing, 2.5);
+    let q = m.object_pos;
+    let frost = 0.5 + 0.5 * sin(q.x * 9.0 + sin(q.y * 7.0) * 2.0) * sin(q.z * 8.0 + q.y * 3.0);
+    let cloud = clamp(0.22 - q.y * 0.09, 0.0, 0.22) + frost * 0.08;
+    let white = vec3<f32>(0.9, 0.97, 1.0);
+    o.color = vec4<f32>(
+        mix(base.color.rgb, white, clamp(cloud + rim * 0.45, 0.0, 1.0)),
+        clamp(base.color.a * 0.8 + cloud * 0.4 + rim * 0.3, 0.0, 0.9)
+    );
+    o.roughness = mix(0.05, 0.35, clamp(frost * cloud * 2.0, 0.0, 1.0));
+    let sweep = fract(m.time * 0.35 + (q.x + q.z) * 0.1);
+    let band = smoothstep(0.06, 0.0, abs(q.y / 2.5 - sweep));
+    o.emission = vec3<f32>(0.6, 0.85, 1.0) * (rim * 0.35 + band * 0.8) * m.params[0].x;
+    return o;
+}
+"#;
+
+/// The custom materials of the power effects, once added.
+#[derive(Clone, Copy, Debug)]
+struct FxMaterials {
+    bubble: CustomMaterialId,
+    ice: CustomMaterialId,
+}
+
+/// Set once by [`install_materials`] on the main thread at the start, read
+/// on the main thread afterwards.
+static MATERIALS: OnceLock<FxMaterials> = OnceLock::new();
+
+/// The bubble film material, ready to add.
+pub fn bubble_material() -> CustomMaterial {
+    CustomMaterial::new("bubble film", BUBBLE_FILM)
+        .see_through()
+        .param(0, [1.0, 0.0, 0.0, 0.0])
+}
+
+/// The ice material, ready to add.
+pub fn ice_material() -> CustomMaterial {
+    CustomMaterial::new("ice frost", ICE_FROST)
+        .see_through()
+        .param(0, [1.0, 0.0, 0.0, 0.0])
+}
+
+/// Adds the power effects' materials to the world. Call once, on the first
+/// frame: Engine builds a material's pipelines when it first draws it, so
+/// adding them at the start keeps that work out of a fight.
+pub fn install_materials(world: &mut World) -> EngineResult<()> {
+    if MATERIALS.get().is_some() {
+        return Ok(());
+    }
+    let bubble = world.add_material(bubble_material())?;
+    let ice = world.add_material(ice_material())?;
+    let _ = MATERIALS.set(FxMaterials { bubble, ice });
+    Ok(())
+}
+
+/// Gives a freshly placed rescue bubble its film (when installed).
+pub fn dress_bubble(world: &mut World, id: EntityId) {
+    if let Some(m) = MATERIALS.get() {
+        let _ = world.set_custom_material(id, m.bubble);
+    }
+}
+
+/// Gives a freshly placed ice block its frost (when installed).
+pub fn dress_ice(world: &mut World, id: EntityId) {
+    if let Some(m) = MATERIALS.get() {
+        let _ = world.set_custom_material(id, m.ice);
+    }
 }
 
 /// A block of clear ice round a person: a rough slab, wider at the foot,
@@ -395,6 +507,7 @@ impl Bubbles {
                 Place::new(centre.x, centre.y, centre.z),
             )
             .ok()?;
+        dress_bubble(world, sphere);
         self.next = self.next.wrapping_add(1);
         self.list.insert(
             self.next,
@@ -505,5 +618,18 @@ impl Bubbles {
                     .with_emissive_intensity(4.0),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The WGSL of both materials compiles inside Engine's lit shader (no
+    /// GPU needed: Engine checks it with naga).
+    #[test]
+    fn power_materials_compile() {
+        bubble_material().check().expect("bubble film");
+        ice_material().check().expect("ice frost");
     }
 }

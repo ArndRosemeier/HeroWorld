@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.143 (2026-11-10)
+
+- The rescue bubble is a real soap bubble now: rainbow swirls drift and drain down its film, it is almost clear where you look straight through and shines at the edge.
+- Frozen enemies sit in frosty ice: cloudy at the foot, white at the edges, with a glint that sweeps up the block.
+- Glass and other see-through things are drawn in the right order from every side.
+- Built on the newest Engine (0.045). The game now starts directly at your picture settings.
+
 ## 0.142 (2026-11-10)
 
 - Crimes no longer light a huge column into the sky. Your new police visor shows them instead: it shimmers into view in front of your eyes when a call comes in or you get near one, and marks where the trouble is.
