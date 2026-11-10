@@ -850,6 +850,9 @@ pub enum FxKind {
     Hypno,
     /// A hypnotised villain `to` came to its senses.
     HypnoEnd,
+    /// A fight won with little harm to the street: `to` gets the
+    /// careful-hero bonus (`amount`: its karma, paid as a Karma event too).
+    Careful,
 }
 
 impl FxKind {
@@ -900,6 +903,7 @@ impl FxKind {
             FxKind::SidekickCall => 43,
             FxKind::Hypno => 44,
             FxKind::HypnoEnd => 45,
+            FxKind::Careful => 46,
         }
     }
 
@@ -950,6 +954,7 @@ impl FxKind {
             43 => FxKind::SidekickCall,
             44 => FxKind::Hypno,
             45 => FxKind::HypnoEnd,
+            46 => FxKind::Careful,
             _ => return Err(WireError),
         })
     }

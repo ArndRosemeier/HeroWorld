@@ -28,7 +28,9 @@ use hw_gen::building::BuildingUse;
 use hw_gen::urban::area::Area;
 use hw_gen::urban::landmarks::LandmarkKind;
 use hw_net::FxKind;
+use hw_net::PlayerId;
 use hw_net::{Power, ToClient};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// At least this long between two incidents starting (s).
@@ -339,6 +341,9 @@ pub struct Incident {
     /// A fire put out by a freeze ray: it burns no longer (the people
     /// inside hold out much longer, and come out sooner).
     pub doused: bool,
+    /// Each player's collateral tally when it started: what they break
+    /// before it is won decides the careful-hero bonus.
+    pub collateral_from: BTreeMap<PlayerId, f64>,
 }
 
 impl Incident {
@@ -557,6 +562,9 @@ pub struct Incidents {
     /// Buildings that came down since the last second (people trapped).
     collapses: Vec<u64>,
     news: Vec<ToClient>,
+    /// Every player's collateral tally now (the server copies it in
+    /// before each step; see [`crate::destruction::Damage::collateral`]).
+    pub(crate) collateral: BTreeMap<PlayerId, f64>,
 }
 
 /// Two to four open at once: more with more heroes.
@@ -564,9 +572,15 @@ pub fn wanted(heroes: usize) -> usize {
     (1 + heroes).clamp(2, 4)
 }
 
-/// A hero as incidents see them: who, where, their level, and whether they
-/// are on foot (neither flight nor super speed).
-type Seen = (NetId, DVec3, u8, bool);
+/// A hero as incidents see them: who, where, their level, whether they
+/// are on foot (neither flight nor super speed), and their player.
+type Seen = (NetId, DVec3, u8, bool, PlayerId);
+
+/// A fight won while breaking at most this much of the street (credits:
+/// a window or two, a lamp post) earns the careful-hero bonus.
+pub const CAREFUL_COST: f64 = 2_000.0;
+/// The bonus: this share of the fight's karma on top.
+pub const CAREFUL_BONUS: f32 = 0.15;
 
 fn ticks(seconds: f64) -> u64 {
     (seconds * TICK_HZ as f64).round() as u64
@@ -616,9 +630,9 @@ impl Incidents {
         let mut heroes: Vec<Seen> = world
             .query::<(&Hero, &Net, &Motion, &Fighter)>()
             .iter(world)
-            .map(|(_, n, m, f)| {
+            .map(|(h, n, m, f)| {
                 let afoot = !f.kit.has(Power::Flight) && !f.kit.has(Power::SuperSpeed);
-                (n.0, m.0.pos, f.level, afoot)
+                (n.0, m.0.pos, f.level, afoot, h.owner)
             })
             .collect();
         heroes.sort_by_key(|h| h.0);
@@ -725,6 +739,7 @@ impl Incidents {
             nearest: f64::INFINITY,
             coming_until: 0,
             doused: false,
+            collateral_from: self.collateral.clone(),
         }
     }
 
@@ -1134,7 +1149,9 @@ impl Incidents {
             release_bystanders(world, tick, inc.id);
             if let Some(spot) = inc.spot {
                 match inc.state {
-                    State::Resolved if inc.calmed.is_none() => self.reward(world, &inc, heroes),
+                    State::Resolved if inc.calmed.is_none() => {
+                        self.reward(world, tick, &inc, heroes)
+                    }
                     _ => Self::send_home(world, spot),
                 }
                 self.free.push(spot);
@@ -1143,18 +1160,34 @@ impl Incidents {
         }
     }
 
-    fn reward(&self, world: &mut World, inc: &Incident, heroes: &[Seen]) {
+    fn reward(&self, world: &mut World, tick: u64, inc: &Incident, heroes: &[Seen]) {
         let (size, only, _) = inc.kind.group();
         let base = combat::enemy_spec(only.unwrap_or(EnemyKind::Brute)).karma;
         let mut f = world.resource_mut::<Fights>();
         for h in heroes.iter().filter(|h| h.1.distance(inc.at) < REWARD) {
             let one = progress::defeat_karma(base, inc.level, h.2) as f32;
+            let karma = (one * size as f32 * inc.kind.bonus()).round() as u32;
             f.rewards.push(combat::Reward {
                 hero: h.0,
-                karma: (one * size as f32 * inc.kind.bonus()).round() as u32,
+                karma,
                 deed: Some(Affinity::Justice),
                 lean: 0,
             });
+            // Won without wrecking the street: a little more, as a Guardian.
+            let tally = |m: &BTreeMap<PlayerId, f64>| m.get(&h.4).copied().unwrap_or(0.0);
+            let spent = tally(&self.collateral) - tally(&inc.collateral_from);
+            if spent <= CAREFUL_COST {
+                let bonus = ((karma as f32 * CAREFUL_BONUS).round() as u32).max(1);
+                f.rewards.push(combat::Reward {
+                    hero: h.0,
+                    karma: bonus,
+                    deed: Some(Affinity::Guardian),
+                    lean: 0,
+                });
+                let mut e = combat::event(tick, FxKind::Careful, h.0, h.0, h.1);
+                e.amount = bonus.min(u16::MAX as u32) as u16;
+                f.events.push(e);
+            }
         }
     }
 
@@ -1187,7 +1220,7 @@ impl Incidents {
         self.count += 1;
         self.last_start = Some(tick);
         let mut rng = seed.rng();
-        let &(_, hero, _, afoot) = rng.pick(heroes);
+        let &(_, hero, _, afoot, _) = rng.pick(heroes);
         let me = DVec2::new(hero.x, hero.z);
         // Near enough to run to for a hero on foot.
         let (near, far) = if afoot {
@@ -1421,6 +1454,7 @@ impl Incidents {
             nearest: f64::INFINITY,
             coming_until: 0,
             doused: false,
+            collateral_from: self.collateral.clone(),
         };
         if kind == IncidentKind::Colossus {
             self.last_colossus = Some(tick);

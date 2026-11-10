@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.123 (2026-11-10)
+
+- Fights read better. The camera no longer slips into walls beside or behind your hero; it comes in close when it must and glides back out.
+- Nobody fights through walls any more: not you, not villains, not sidekicks. Thin inner walls used to let blows through. Tab only picks villains you can see.
+- Villains rock back when a blow lands.
+- Careful work pays: win a fight without wrecking the street and you get a little extra karma.
+
 ## 0.122 (2026-11-10)
 
 - Fixed: after the medical drone brought your hero to hospital, the hero hung stiffly in the drone's pose and played no animations any more. Walking, idling and fighting work again after a revive.

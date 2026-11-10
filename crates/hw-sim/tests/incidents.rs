@@ -439,3 +439,65 @@ fn rescue_bubbles_float_people_out_and_the_freeze_ray_douses_the_fire() {
     );
     assert!(sim.sheet(me).unwrap().karma > karma + 30, "no karma for it");
 }
+
+/// A robbery near the hero, won at once (a cheat), after the hero broke
+/// buildings worth `wreck` blows; was there a careful-hero bonus?
+fn careful_win(wreck: usize) -> bool {
+    use hw_net::FxKind;
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    let me = PlayerId(1);
+    let hero = sim.spawn_hero(me, sim.spawn_point(1));
+    sim.incidents.next_kind = Some(incidents::IncidentKind::Robbery);
+    let mut news = Vec::new();
+    run(&mut sim, incidents::FIRST_SECONDS + 2.0, &mut news);
+    let inc = sim.incidents.open[0].clone();
+    sim.set_body(
+        hero,
+        Body {
+            pos: inc.at + DVec3::new(0.0, 1.0, 20.0),
+            vel: DVec3::ZERO,
+            grounded: false,
+        },
+    );
+    sim.step();
+    // Smashing up the buildings round the fight.
+    let mut broken = 0;
+    'search: for r in 1..=12 {
+        for k in 0..24 {
+            if broken >= wreck {
+                break 'search;
+            }
+            let a = k as f64 * std::f64::consts::TAU / 24.0;
+            let d = r as f64 * 3.0;
+            let at = inc.at + DVec3::new(a.cos() * d, 2.0, a.sin() * d);
+            broken += sim.hit_buildings(at, 3.0, 50_000.0, Some(me)).broken;
+        }
+    }
+    assert!(broken >= wreck, "found only {broken} to break");
+    for (id, _, at, mut f) in sim.enemies() {
+        if at.distance(inc.at) < 30.0 {
+            f.health = 0.0;
+            f.status = Status::Down;
+            f.until = sim.tick;
+            sim.set_fighter(id, f);
+        }
+    }
+    let mut careful = false;
+    for _ in 0..15 * TICK_HZ as u64 {
+        sim.step();
+        careful |= sim
+            .fx()
+            .iter()
+            .any(|e| e.kind == FxKind::Careful && e.to == hero && e.amount > 0);
+    }
+    news.extend(news_of(&mut sim));
+    assert!(news.iter().any(|n| n.0 == inc.id && n.3 == 1), "won");
+    careful
+}
+
+#[test]
+fn a_fight_won_without_wrecking_the_street_earns_a_bonus() {
+    assert!(careful_win(0), "careful: a bonus");
+    assert!(!careful_win(4), "a wrecked street: none");
+}

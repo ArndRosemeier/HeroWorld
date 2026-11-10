@@ -181,6 +181,9 @@ level) and to **unspent karma** (which buys powers). Spending never lowers your 
   (`progress::defeat_karma`). Every hero within 60 m of the defeat gets it.
 - **Resolving an incident:** a bonus on top of the villains' own, shared by every hero
   within 120 m (section 7).
+- **Careful work:** a hero who wins an incident's fight having broken at most 2 000
+  credits of the street (a window or two, a lamp post) since it started gets 15% of that
+  bonus on top, as Guardian karma ("Careful work!", `incidents::CAREFUL_COST`).
 - **Rescues:** Guardian karma for each person got out, double for handing the hurt one
   to the ambulance.
 - **Reviving a teammate** pays no karma but pushes the Guardian affinity.
@@ -251,15 +254,23 @@ or two; a bot that buys as it goes owns about a dozen at level 20.
 City of Heroes is the model: groups of minions, tougher lieutenants and bosses, tab
 targeting, ragdolls, nobody dies.
 
-- **Targeting:** Tab picks the nearest villain within 60 m, those in view of the camera
-  first; each further Tab moves on to the next nearest one not picked yet, and after all of
+- **Targeting:** Tab picks the nearest villain within 60 m that you can see (none behind a
+  wall), those in view of the camera first; each further Tab moves on to the next nearest one not picked yet, and after all of
   them it starts over (after 4 s without Tab it starts again from the nearest). An aimed
   power with nothing targeted takes the villain nearest the crosshair, and a villain that
   attacks you becomes your target if you have none. The target frame shows name,
   rank and level in its **con colour** (how tough it is against you).
 - **Using powers:** one power at a time (0.5 s lock); a power that cannot fire yet (out of
   range, recharging) waits up to 1 s and then fires. Blows land with sparks, beams, scorch
-  marks, floating numbers, a camera jolt and a moment of hit-stop.
+  marks, floating numbers, a camera jolt and a moment of hit-stop; whoever takes a blow and
+  stays up rocks back from it (0.2-0.3 m and a lean, for a third of a second).
+- **Line of sight:** no blow goes through a wall, for heroes, sidekicks, Hero Hall's heroes
+  and villains alike: punches and aimed powers need a clear line from chest to chest
+  (`combat::clear_line`, exact for walls however thin), and a villain's blow misses if its
+  foe stepped behind a wall during the windup. Firing at a target out of sight says so.
+- **Camera:** the camera stays out of walls: the boom behind the hero is shortened so that a
+  small box round the camera (its near plane) touches nothing, it comes in at once and
+  eases back out (`hw-client/src/camclip.rs`).
 - **Telegraphs:** every villain attack has a visible windup before it lands (0.45 to 0.8 s
   for minions, longer for the big ones), so you can step out of the way.
 - **Regeneration:** health 14/s and energy 25/s out of combat; 1/s and 6/s while in
@@ -778,8 +789,9 @@ on the way. Rides are free.
 - **The town repairs itself:** a damaged building or prop nobody has been within 300 m of
   for 10 minutes is put back whole, unseen.
 - **Collateral** is tallied per player (what broken elements, props and wrecks cost the
-  city) but has **no effect yet**; the planned karma and trust cost (with a careful-hero
-  bonus) is not built. The villains' barricades cost nothing.
+  city: window 900, inner wall 400, wall 2 500, slab or roof 3 000, column 6 000). Winning
+  an incident's fight with at most 2 000 of it earns the careful-hero bonus (section 4);
+  a karma or trust cost for wrecking is not built. The villains' barricades cost nothing.
 - Everyone in a co-op game sees the same ruins, including friends who join later.
 
 ---
@@ -943,7 +955,7 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | Combat | Minions, lieutenant, boss, colossus, drones, revive, hospital; Hero Hall's five heroes give tips and answer ignored fights | Teaming up with the town's heroes, the Doctor in person |
 | Factions | Eight factions, regard, turf warnings; mole folk, sky pirates and the Iron Legion with their own incidents and homes | Patrol units, turf changing hands |
 | Co-op | Host's level for all | Per-player sidekick and exemplar levels |
-| Destruction | Buildings, props, cars, self-repair, collateral tally | Collateral cost and careful-hero bonus, digging and craters |
+| Destruction | Buildings, props, cars, self-repair, collateral tally, careful-hero bonus | Collateral cost, digging and craters |
 | Saves | Hero on each PC; world save in `hw-headless` and for host migration | World save for the single-player game |
 | Money | Karma only | Dollars for equipment (maybe) |
 | UI | HUD, radio, compass, map, minimap, autorun, powers, menu, debug menu (Ctrl+Shift+F12) | |

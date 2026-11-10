@@ -1142,14 +1142,17 @@ pub fn group_size(heroes: usize) -> u32 {
 }
 
 /// Is the straight line from `a` to `b` free of walls?
+/// Thin walls count (see [`Obstacles::line_blocked`]); the last few
+/// centimetres at each end do not, so a fighter brushing a wall still sees.
 pub fn clear_line(solids: &Obstacles, a: DVec3, b: DVec3) -> bool {
+    const END: f64 = 0.1;
     let d = b - a;
     let len = d.length();
-    let n = (len / 0.5).ceil() as usize;
-    (1..n).all(|i| {
-        let p = a + d * (i as f64 / n as f64);
-        !solids.solid_at(p)
-    })
+    if len <= 2.0 * END {
+        return true;
+    }
+    let step = d * (END / len);
+    !solids.line_blocked(a + step, b - step)
 }
 
 pub(crate) fn ticks(seconds: f64) -> u64 {
@@ -1405,8 +1408,8 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     let rescue_points = std::mem::take(&mut world.resource_mut::<Fights>().rescue_points);
     heroes_act(&mut actors, &solids, &rescue_points, tick, &mut out);
     world.resource_mut::<Fights>().rescue_points = rescue_points;
-    npc_heroes_act(&mut actors, tick, &mut out);
-    sidekicks_act(&mut actors, tick, &mut out);
+    npc_heroes_act(&mut actors, &solids, tick, &mut out);
+    sidekicks_act(&mut actors, &solids, tick, &mut out);
     land_throws(&mut actors, &mut throws, tick, &mut out);
     throws.append(&mut out.throws);
     land_sky(&mut actors, &mut sky, &solids, tick, &mut out);
@@ -1921,7 +1924,7 @@ pub(crate) fn hit(
 }
 
 /// The town's own heroes bolt their targets from the air.
-fn npc_heroes_act(actors: &mut [Actor], tick: u64, out: &mut Out) {
+fn npc_heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out) {
     use crate::npcheroes::{BOLT_DAMAGE, BOLT_EVERY, BOLT_RANGE};
     for i in 0..actors.len() {
         if !actors[i].npc || !actors[i].f.standing() || tick < actors[i].f.busy_until {
@@ -1933,6 +1936,7 @@ fn npc_heroes_act(actors: &mut [Actor], tick: u64, out: &mut Out) {
             .and_then(|t| actors.iter().position(|a| a.id == t))
             .filter(|&j| hittable(&actors[j]))
             .filter(|&j| actors[j].body.pos.distance(actors[i].body.pos) <= BOLT_RANGE)
+            .filter(|&j| clear_line(solids, actors[i].chest(), actors[j].chest()))
         else {
             continue;
         };
@@ -1956,7 +1960,7 @@ fn npc_heroes_act(actors: &mut [Actor], tick: u64, out: &mut Out) {
 /// Sidekicks fight: the villain they were sent at, else their hero's
 /// target, else one going for their hero or them. They punch when close
 /// (`sidekick` walks them there).
-fn sidekicks_act(actors: &mut [Actor], tick: u64, out: &mut Out) {
+fn sidekicks_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out) {
     use crate::sidekick::{GUARD_REACH, PUNCH_EVERY, PUNCH_REACH};
     for i in 0..actors.len() {
         let Some(sk) = actors[i].sidekick else {
@@ -1993,7 +1997,10 @@ fn sidekicks_act(actors: &mut [Actor], tick: u64, out: &mut Out) {
         let Some(j) = foe else {
             continue;
         };
-        if tick < actors[i].f.busy_until || actors[j].body.pos.distance(here) > PUNCH_REACH {
+        if tick < actors[i].f.busy_until
+            || actors[j].body.pos.distance(here) > PUNCH_REACH
+            || !clear_line(solids, actors[i].chest(), actors[j].chest())
+        {
             continue;
         }
         let damage = power_spec(Power::Sidekick).damage * level_scale(actors[i].f.level);
@@ -2029,6 +2036,25 @@ fn nearest_enemy(actors: &[Actor], from: DVec3, range: f64) -> Option<usize> {
         .map(|(i, a)| (i, a.body.pos.distance(from)))
         .filter(|(_, d)| *d <= range)
         .min_by(|x, y| x.1.total_cmp(&y.1))
+        .map(|(i, _)| i)
+}
+
+/// The nearest villain within `range` of `chest` (m, measured from the
+/// feet) with nothing solid between, if any.
+fn nearest_seen_enemy(
+    actors: &[Actor],
+    solids: &Obstacles,
+    chest: DVec3,
+    range: f64,
+) -> Option<usize> {
+    let from = chest - DVec3::Y * (BODY_HEIGHT * 0.6);
+    actors
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| hittable(a))
+        .map(|(i, a)| (i, a.body.pos.distance(from)))
+        .filter(|&(i, d)| d <= range && clear_line(solids, chest, actors[i].chest()))
+        .min_by(|x, y| x.1.total_cmp(&y.1).then(x.0.cmp(&y.0)))
         .map(|(i, _)| i)
 }
 
@@ -2107,7 +2133,9 @@ fn heroes_act(
         if aimed {
             target = match actors[i].f.target {
                 Some(t) => actors.iter().position(|a| a.id == t),
-                None if power == Power::Strike => nearest_enemy(actors, pos, spec.range),
+                None if power == Power::Strike => {
+                    nearest_seen_enemy(actors, solids, actors[i].chest(), spec.range)
+                }
                 None => {
                     let chest = actors[i].chest();
                     let reach = spec.range.min(25.0);
@@ -2115,6 +2143,10 @@ fn heroes_act(
                         .iter()
                         .enumerate()
                         .filter(|(_, a)| hittable(a))
+                        // Only what the hero can see: never a villain
+                        // behind a wall when one in the open is nearer
+                        // the aim.
+                        .filter(|(_, a)| clear_line(solids, chest, a.chest()))
                         .filter(|(_, a)| {
                             let to = a.chest() - chest;
                             let d = to.length();
@@ -2131,8 +2163,8 @@ fn heroes_act(
             };
             if let Some(t) = target {
                 let in_reach = actors[t].body.pos.distance(pos) <= spec.range;
-                let seen = power == Power::Strike
-                    || clear_line(solids, actors[i].chest(), actors[t].chest());
+                // No blow and no power through a wall, a punch included.
+                let seen = clear_line(solids, actors[i].chest(), actors[t].chest());
                 if !in_reach || !seen {
                     target = None;
                 }
@@ -3035,9 +3067,11 @@ fn enemies_act(
                             let target = actors.iter().position(|a| a.id == who);
                             if let Some(t) = target {
                                 let d = actors[t].body.pos.distance(actors[i].body.pos);
+                                // A foe who stepped behind a wall during
+                                // the windup is missed, punch or ray.
                                 let lands = actors[t].f.standing()
                                     && d <= spec.reach + 0.6
-                                    && (!ranged || seen);
+                                    && clear_line(solids, actors[i].chest(), actors[t].chest());
                                 let dmg = spec.damage * level_scale(actors[i].f.level);
                                 let kind = if ranged { FxKind::Ray } else { FxKind::Punch };
                                 let mut e = event(

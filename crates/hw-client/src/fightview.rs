@@ -32,6 +32,25 @@ pub const TARGET_CONE: f32 = 55.0;
 const CYCLE_RESET: f32 = 4.0;
 /// Fight events older than this (seconds) are not shown any more.
 const LATE: f64 = 0.6;
+/// A struck fighter rocks back this far (m) and leans this much (degrees)
+/// from a heavy blow (lighter ones less), over this many seconds.
+const RECOIL_DISTANCE: f32 = 0.32;
+const RECOIL_LEAN: f32 = 14.0;
+const RECOIL_SECONDS: f32 = 0.32;
+/// A blow doing this much damage or more counts as heavy.
+const HEAVY_BLOW: u16 = 25;
+
+/// The recoil's shape over time, 0 to 1: a snap back, then easing home.
+fn recoil_shape(t: f32) -> f32 {
+    const SNAP: f32 = 0.05;
+    if t < SNAP {
+        t / SNAP
+    } else {
+        (1.0 - (t - SNAP) / (RECOIL_SECONDS - SNAP))
+            .max(0.0)
+            .powi(2)
+    }
+}
 
 /// The name and rank shown in the target frame.
 pub fn enemy_name(kind: EntityKind) -> (&'static str, &'static str) {
@@ -235,6 +254,10 @@ pub struct FightView {
     ices: BTreeMap<NetId, EntityId>,
     /// Rescue bubbles in the air.
     bubbles: crate::powerfx::Bubbles,
+    /// The solid town: Tab and aimed powers pick only villains in sight.
+    pub solids: Option<std::sync::Arc<hw_sim::collision::Obstacles>>,
+    /// A short recoil per struck villain: (direction, seconds since).
+    recoils: BTreeMap<NetId, (Vec3, f32)>,
 }
 
 impl Default for FightView {
@@ -280,7 +303,20 @@ impl FightView {
             clicked: None,
             ices: BTreeMap::new(),
             bubbles: Default::default(),
+            solids: None,
+            recoils: BTreeMap::new(),
         }
+    }
+
+    /// Can our hero (or, with none, the camera at `eye`) see `e`, with no
+    /// wall between chest and chest? The server checks the same line.
+    pub fn sees(&self, me: Option<&EntityState>, eye: Vec3, e: &EntityState) -> bool {
+        let Some(solids) = &self.solids else {
+            return true;
+        };
+        let chest = |p: Vec3| p + Vec3::Y * (hw_sim::collision::BODY_HEIGHT as f32 * 0.6);
+        let from = me.map_or(eye, |m| chest(pos(m)));
+        hw_sim::combat::clear_line(solids, from.as_dvec3(), chest(pos(e)).as_dvec3())
     }
 
     /// Keys: Tab picks the nearest villain in view, and each further Tab the
@@ -312,7 +348,11 @@ impl FightView {
             }
             self.last_tab = self.clock;
             let from = me.map_or(eye, pos);
-            self.target = cycle_target(all, from, eye, look, self.target, &mut self.cycled);
+            let mut cycled = std::mem::take(&mut self.cycled);
+            let seen = |e: &EntityState| self.sees(me, eye, e);
+            let next = cycle_target(all, from, eye, look, self.target, &mut cycled, seen);
+            self.cycled = cycled;
+            self.target = next;
             if self.target.is_none() {
                 self.say("No villain in sight");
             }
@@ -357,7 +397,7 @@ impl FightView {
             let aimed = aimed(power) || (power == Power::Lift && carrying);
             // No target yet: take the one nearest the crosshair.
             if aimed && self.target.is_none() {
-                self.target = pick_target(all, eye, look);
+                self.target = pick_target(all, eye, look, |e| self.sees(me, eye, e));
             }
             if power == Power::Hypno {
                 let immune = self
@@ -382,6 +422,8 @@ impl FightView {
                         } else {
                             "Out of range"
                         });
+                    } else if !self.sees(me, eye, t) {
+                        self.say("Can't see them from here");
                     }
                 }
                 let energy = m.combat.map_or(0.0, |c| c.energy as f32 / 255.0 * 100.0);
@@ -403,6 +445,14 @@ impl FightView {
     }
 
     /// The clip to show for `id` instead of its walk, if any.
+    /// How far a struck fighter is pushed back from its place now, and
+    /// how far it leans back (degrees, as a negative pitch).
+    pub fn recoil(&self, id: NetId) -> Option<(Vec3, f32)> {
+        let &(push, t) = self.recoils.get(&id)?;
+        let k = recoil_shape(t);
+        Some((push * RECOIL_DISTANCE * k, -RECOIL_LEAN * push.length() * k))
+    }
+
     pub fn action(&self, id: NetId) -> Option<&'static str> {
         self.actions.get(&id).map(|a| a.0)
     }
@@ -462,6 +512,31 @@ impl FightView {
                         .find(|s| s.id == e.from)
                         .map_or(at, |s| pos(s) + Vec3::Y * 1.3)
                 });
+            // Whoever takes a blow and stays up rocks back from it.
+            let struck = matches!(
+                e.kind,
+                FxKind::Strike
+                    | FxKind::Bolt
+                    | FxKind::Punch
+                    | FxKind::Ray
+                    | FxKind::ThrowHit
+                    | FxKind::Shell
+                    | FxKind::Stomp
+                    | FxKind::Pulse
+                    | FxKind::Leap
+                    | FxKind::Beam
+                    | FxKind::Meteor
+                    | FxKind::Nova
+                    | FxKind::Shockwave
+                    | FxKind::Shatter
+            );
+            if struck && e.amount > 0 && e.from != e.to && !e.knock && !e.defeat {
+                let d = at - origin;
+                let away = Vec3::new(d.x, 0.0, d.z).normalize_or_zero();
+                let heavy = e.amount >= HEAVY_BLOW;
+                self.recoils
+                    .insert(e.to, (away * if heavy { 1.0 } else { 0.6 }, 0.0));
+            }
             match e.kind {
                 FxKind::Strike => {
                     let clip = if self.cross {
@@ -818,6 +893,22 @@ impl FightView {
                         if self.target == Some(e.to) {
                             self.target = None;
                         }
+                    }
+                }
+                FxKind::Careful => {
+                    // The fight is won and the street still stands.
+                    if on_me {
+                        self.float(
+                            at + Vec3::Y * 1.3,
+                            "Careful work!".into(),
+                            egui::Color32::from_rgb(140, 230, 170),
+                            true,
+                        );
+                        self.note = Some((
+                            format!("Careful work: the street is spared. +{} karma", e.amount),
+                            4.0,
+                        ));
+                        self.play(world, |s| &s.chime, at, 0.7, 1.1);
                     }
                 }
                 FxKind::HypnoEnd => {
@@ -1289,6 +1380,10 @@ impl FightView {
         for c in &mut self.cooldown {
             *c = (*c - dt).max(0.0);
         }
+        self.recoils.retain(|_, r| {
+            r.1 += dt;
+            r.1 < RECOIL_SECONDS
+        });
         self.hitstop.retain(|_, t| {
             *t -= dt;
             *t > 0.0
@@ -1926,12 +2021,17 @@ pub fn attacker(e: &Fx, me: Option<NetId>, all: &[EntityState]) -> Option<NetId>
 }
 
 /// The villain nearest the crosshair (the line from `eye` along `look`),
-/// within range and in view: what an aimed power hits when nothing is
-/// targeted.
-pub fn pick_target(all: &[EntityState], eye: Vec3, look: Vec3) -> Option<NetId> {
+/// within range and in view (and in sight: `seen`): what an aimed power
+/// hits when nothing is targeted.
+pub fn pick_target(
+    all: &[EntityState],
+    eye: Vec3,
+    look: Vec3,
+    seen: impl Fn(&EntityState) -> bool,
+) -> Option<NetId> {
     let look = look.normalize_or_zero();
     all.iter()
-        .filter(|e| targetable(e))
+        .filter(|e| targetable(e) && seen(e))
         .filter_map(|e| {
             let to = pos(e) + Vec3::Y * 1.1 - eye;
             let d = to.length();
@@ -1959,11 +2059,13 @@ pub fn cycle_target(
     look: Vec3,
     current: Option<NetId>,
     cycled: &mut Vec<NetId>,
+    seen: impl Fn(&EntityState) -> bool,
 ) -> Option<NetId> {
     let look = look.normalize_or_zero();
     let mut list: Vec<(bool, f32, NetId)> = all
         .iter()
-        .filter(|e| targetable(e))
+        // Never one behind a wall: nothing could reach it.
+        .filter(|e| targetable(e) && seen(e))
         .filter_map(|e| {
             let d = pos(e).distance(from);
             if d > TARGET_RANGE {
@@ -2476,12 +2578,12 @@ mod tests {
         ];
         let eye = Vec3::new(0.0, 1.1, 0.0);
         assert_eq!(
-            pick_target(&all, eye, Vec3::X),
+            pick_target(&all, eye, Vec3::X, |_| true),
             Some(NetId(2)),
             "dead ahead"
         );
         // Behind the camera is never picked.
-        assert_eq!(pick_target(&all[2..], eye, Vec3::X), None);
+        assert_eq!(pick_target(&all[2..], eye, Vec3::X, |_| true), None);
     }
 
     #[test]
@@ -2499,7 +2601,7 @@ mod tests {
         let mut target = None;
         let mut seen = Vec::new();
         for _ in 0..8 {
-            target = cycle_target(&all, from, eye, Vec3::X, target, &mut cycled);
+            target = cycle_target(&all, from, eye, Vec3::X, target, &mut cycled, |_| true);
             seen.push(target.unwrap().0);
         }
         // In view nearest first, then the one behind, then round again.
@@ -2520,13 +2622,63 @@ mod tests {
         let mut seen = Vec::new();
         let mut look = Vec3::X;
         for _ in 0..3 {
-            target = cycle_target(&all, Vec3::ZERO, Vec3::ZERO, look, target, &mut cycled);
+            target = cycle_target(
+                &all,
+                Vec3::ZERO,
+                Vec3::ZERO,
+                look,
+                target,
+                &mut cycled,
+                |_| true,
+            );
             let t = all.iter().find(|e| Some(e.id) == target).unwrap();
             look = pos(t).normalize();
             seen.push(target.unwrap().0);
         }
         seen.sort();
         assert_eq!(seen, [1, 2, 3], "everyone once before any repeats");
+    }
+
+    #[test]
+    fn a_struck_villain_rocks_back_and_returns() {
+        let mut fight = FightView::new();
+        fight.recoils.insert(NetId(1), (Vec3::X, 0.0));
+        assert_eq!(recoil_shape(0.0), 0.0);
+        assert!((recoil_shape(0.05) - 1.0).abs() < 1e-4, "full push at once");
+        assert!(recoil_shape(0.2) < 0.5, "easing back");
+        assert_eq!(recoil_shape(RECOIL_SECONDS), 0.0, "home again");
+        fight.recoils.insert(NetId(1), (Vec3::X, 0.05));
+        let (push, lean) = fight.recoil(NetId(1)).expect("recoiling");
+        assert!(
+            push.x > 0.3 && lean < -10.0,
+            "pushed {push}, leaning {lean}"
+        );
+        assert_eq!(fight.recoil(NetId(2)), None);
+    }
+
+    #[test]
+    fn villains_behind_a_wall_are_never_picked() {
+        let all = vec![villain(1, [4.0, 0.0, 0.0]), villain(2, [9.0, 0.0, 0.0])];
+        let behind = |e: &EntityState| e.id != NetId(1);
+        assert_eq!(
+            pick_target(&all, Vec3::ZERO, Vec3::X, behind),
+            Some(NetId(2))
+        );
+        let mut cycled = Vec::new();
+        for _ in 0..3 {
+            let t = cycle_target(
+                &all,
+                Vec3::ZERO,
+                Vec3::ZERO,
+                Vec3::X,
+                None,
+                &mut cycled,
+                behind,
+            );
+            assert_eq!(t, Some(NetId(2)));
+        }
+        let none = |_: &EntityState| false;
+        assert_eq!(pick_target(&all, Vec3::ZERO, Vec3::X, none), None);
     }
 
     #[test]
@@ -2541,6 +2693,7 @@ mod tests {
             Vec3::X,
             Some(NetId(1)),
             &mut cycled,
+            |_| true,
         );
         assert_eq!(next, Some(NetId(2)));
         // A lone villain stays the target.
@@ -2553,6 +2706,7 @@ mod tests {
             Vec3::X,
             Some(NetId(1)),
             &mut cycled,
+            |_| true,
         );
         assert_eq!(t, Some(NetId(1)));
     }
@@ -2594,10 +2748,18 @@ mod tests {
     fn the_beaten_cannot_be_targeted() {
         let mut v = villain(1, [5.0, 0.0, 0.0]);
         v.combat.as_mut().unwrap().status = Status::Down;
-        assert_eq!(pick_target(&[v], Vec3::ZERO, Vec3::X), None);
+        assert_eq!(pick_target(&[v], Vec3::ZERO, Vec3::X, |_| true), None);
         let mut cycled = Vec::new();
         assert_eq!(
-            cycle_target(&[v], Vec3::ZERO, Vec3::ZERO, Vec3::X, None, &mut cycled),
+            cycle_target(
+                &[v],
+                Vec3::ZERO,
+                Vec3::ZERO,
+                Vec3::X,
+                None,
+                &mut cycled,
+                |_| true
+            ),
             None
         );
     }

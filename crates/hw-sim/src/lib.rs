@@ -463,6 +463,28 @@ fn fly_step(body: &mut Body, input: InputState) {
 }
 
 /// The server's simulation state.
+/// How far down the street from the spawn the screenshot fight's group
+/// stands (m); the hero is put [`FIRST_FIGHT_HERO`] along the same way.
+pub const FIRST_FIGHT_AT: f64 = 32.0;
+pub const FIRST_FIGHT_HERO: f64 = 19.0;
+
+/// The way from the spawn `(mid, dir)` down which the screenshot fight
+/// happens: back along the spawn line if the street runs on there, else
+/// the first of the other ways that is open, so hero and villains stand in
+/// the street and not inside a house.
+pub fn first_fight_way(solids: &Obstacles, (mid, dir): (DVec2, DVec2)) -> (DVec2, DVec2) {
+    let open = |way: DVec2| {
+        let y = solids.ground_at(mid).max(GROUND_Y);
+        let a = DVec3::new(mid.x, y + 1.2, mid.y);
+        let far = mid + way * (FIRST_FIGHT_AT + 4.0);
+        let b = DVec3::new(far.x, solids.ground_at(far).max(GROUND_Y) + 1.2, far.y);
+        combat::clear_line(solids, a, b)
+    };
+    let ways = [-dir, dir, dir.perp(), -dir.perp()];
+    let way = ways.into_iter().find(|&w| open(w)).unwrap_or(-dir);
+    (mid, way)
+}
+
 pub struct Sim {
     pub world: World,
     pub seed: Seed,
@@ -988,6 +1010,9 @@ impl Sim {
         sidekick::step(&mut self.world, self.tick);
         npcheroes::step(&mut self.world, self.tick, &self.incidents.open);
         self.machines_break_the_city();
+        self.incidents
+            .collateral
+            .clone_from(&self.damage.collateral);
         self.incidents.step(&mut self.world, self.tick);
         self.raise_crime_alarms();
         let solids = self.solids();
@@ -1451,10 +1476,11 @@ impl Sim {
     /// the crates, a short run from where heroes appear (tests and the
     /// fight screenshot; the game starts without it).
     pub fn place_first_fight(&mut self) -> usize {
-        let (mid, dir) = self.spawn;
-        let p = mid - dir * 32.0;
-        let ground = self.world.resource::<Solids>().0.ground_at(p).max(GROUND_Y);
-        self.add_fight_spot(DVec3::new(p.x, ground, p.y), dir)
+        let solids = self.world.resource::<Solids>().0.clone();
+        let (mid, way) = first_fight_way(&solids, self.spawn);
+        let p = mid + way * FIRST_FIGHT_AT;
+        let ground = solids.ground_at(p).max(GROUND_Y);
+        self.add_fight_spot(DVec3::new(p.x, ground, p.y), -way)
     }
 
     /// The encounter spots and what happened in the last tick.

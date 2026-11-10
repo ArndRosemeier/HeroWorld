@@ -178,6 +178,8 @@ struct HeroCamera {
     distance: f32,
     /// Degrees per pixel of mouse, and -1 for inverted up and down.
     look: (f32, f32),
+    /// The boom as drawn, kept out of walls (see `camclip`).
+    boom: hw_client::camclip::Boom,
 }
 
 impl HeroCamera {
@@ -208,27 +210,13 @@ impl HeroCamera {
             self.distance =
                 (self.distance - wheel * Self::ZOOM_PER_POINT).clamp(0.0, Self::MAX_DISTANCE);
         }
+        use hw_client::camclip;
         let head = target + Vec3::Y * (BODY_HEIGHT as f32 - 0.15);
         let dir = Camera::direction(self.yaw, self.pitch);
-        // Pull the camera in front of walls between it and the hero.
-        let wanted = self.distance;
-        let mut d = wanted;
-        let step = 0.25;
-        let mut t = 0.3;
-        while t < wanted {
-            let p = head - dir * t;
-            let q = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
-            let hidden = open_above.is_some_and(|y| q.y > y);
-            if !hidden
-                && (solids.solid_at(q)
-                    || q.y < solids.ground_for(glam::DVec2::new(q.x, q.z), q.y) + 0.2)
-            {
-                d = (t - step).max(0.0);
-                break;
-            }
-            t += step;
-        }
-        let eye = if d < 0.4 { head } else { head - dir * d };
+        // Short of walls between the camera and the hero, near plane included.
+        let clear = camclip::clear_length(solids, head, dir, self.distance, open_above);
+        let length = self.boom.follow(clear, frame.dt);
+        let eye = camclip::eye(head, dir, length);
         world.look_first_person(eye, self.yaw, self.pitch);
     }
 }
@@ -1178,13 +1166,14 @@ fn main() -> EngineResult<()> {
         }
     }
     if view == "fight" {
-        // Down the street, facing the mad scientist's minions.
-        let p = spawn - spawn_dir * 19.0;
+        // Down the street, facing the mad scientist's minions, in the open.
+        let (mid, way) = hw_sim::first_fight_way(&solids, (spawn, spawn_dir));
+        let p = mid + way * hw_sim::FIRST_FIGHT_HERO;
+        let p = hw_client::camclip::open_spot(&solids, p, 2.0, ground(p));
         if let Some(s) = session.as_mut() {
             s.teleport(glam::DVec3::new(p.x, ground(p) + 0.3, p.y));
         }
-        let ahead = -spawn_dir;
-        hero_cam_yaw = ahead.x.atan2(ahead.y).to_degrees() as f32 + 18.0;
+        hero_cam_yaw = way.x.atan2(way.y).to_degrees() as f32 + 18.0;
     }
     if view == "hangout" {
         // Down the street from a Chrome Jackets corner.
@@ -1259,6 +1248,7 @@ fn main() -> EngineResult<()> {
             _ => -12.0,
         },
         distance: 7.0,
+        boom: Default::default(),
     };
     // `HW_CAM_DIST` and `HW_CAM_PITCH` set the hero camera (close-up screenshots).
     let cam_env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f32>().ok());
@@ -2243,7 +2233,11 @@ fn main() -> EngineResult<()> {
                     && (frame.time / 0.75).floor() != ((frame.time - frame.dt) / 0.75).floor()
                 {
                     if fight.target.is_none() {
-                        fight.target = fightview::pick_target(&drawn, cam.eye(), look);
+                        let eye = cam.eye();
+                        let t = fightview::pick_target(&drawn, eye, look, |e| {
+                            fight.sees(me_state, eye, e)
+                        });
+                        fight.target = t;
                     }
                     let close = me_state
                         .zip(fight.target.and_then(|t| drawn.iter().find(|e| e.id == t)))
@@ -2494,6 +2488,7 @@ fn main() -> EngineResult<()> {
             }
             // Broken and mended street props: their places, and lamps on them.
             radio.solids = Some(solids.clone());
+            fight.solids = Some(solids.clone());
             radio.town = Some(generated.world.clone());
             news.retain(|m| match m {
                 hw_net::ToClient::Incident { id, at, yaw, .. } => {
@@ -2992,6 +2987,11 @@ fn main() -> EngineResult<()> {
                     if o.length() < 0.02 {
                         settle.remove(&h.id);
                     }
+                }
+                // A blow rocks the struck one back for a moment.
+                if let Some((push, lean)) = fight.recoil(h.id) {
+                    offset += push;
+                    d.pitch += lean;
                 }
                 let o = tipped_origin(feet + offset, &d);
                 world.set_place(

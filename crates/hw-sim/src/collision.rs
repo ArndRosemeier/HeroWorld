@@ -67,6 +67,33 @@ impl Solid {
         self.origin + self.along * l.x + self.inward * l.y
     }
 
+    /// Does the segment from `a` to `b` pass through the inside of this box?
+    fn crosses(&self, a: DVec3, b: DVec3) -> bool {
+        let la = self.to_local(DVec2::new(a.x, a.z));
+        let lb = self.to_local(DVec2::new(b.x, b.z));
+        let (mut t0, mut t1) = (0.0f64, 1.0f64);
+        for (s, e, lo, hi) in [
+            (la.x, lb.x, self.min.x, self.max.x),
+            (la.y, lb.y, self.min.y, self.max.y),
+            (a.y, b.y, self.y0, self.y1),
+        ] {
+            let d = e - s;
+            if d.abs() < 1e-12 {
+                if s <= lo || s >= hi {
+                    return false;
+                }
+                continue;
+            }
+            let (u0, u1) = ((lo - s) / d, (hi - s) / d);
+            t0 = t0.max(u0.min(u1));
+            t1 = t1.min(u0.max(u1));
+            if t0 >= t1 {
+                return false;
+            }
+        }
+        true
+    }
+
     fn corners(&self) -> [DVec2; 4] {
         [
             self.to_world(self.min),
@@ -925,18 +952,8 @@ impl Obstacles {
 
     /// Is `p` inside any solid?
     pub fn solid_at(&self, p: DVec3) -> bool {
-        // Rock round the underground's open spaces.
-        if let Some(u) = &self.under {
-            let q = DVec2::new(p.x, p.z);
-            if p.y < self.ground_at(q) - 0.2 {
-                let deep = self.deep_town(q, p.y);
-                let near =
-                    !u.near(q, 4.0).is_empty() || deep.is_some_and(|t| t.deep_voids_near(q, 4.0));
-                let open = u.open_at(p) || deep.is_some_and(|t| t.deep_open_at(p));
-                if near && !open {
-                    return true;
-                }
-            }
+        if self.rock_at(p) {
+            return true;
         }
         let sets = self.near_at(DVec2::new(p.x, p.z), 0.0, p.y);
         let found = sets.iter().flat_map(|x| x.iter()).any(|s| {
@@ -949,6 +966,52 @@ impl Obstacles {
                 && l.y < s.max.y
         });
         found
+    }
+
+    /// Rock round the underground's open spaces.
+    fn rock_at(&self, p: DVec3) -> bool {
+        let Some(u) = &self.under else {
+            return false;
+        };
+        let q = DVec2::new(p.x, p.z);
+        if p.y >= self.ground_at(q) - 0.2 {
+            return false;
+        }
+        let deep = self.deep_town(q, p.y);
+        let near = !u.near(q, 4.0).is_empty() || deep.is_some_and(|t| t.deep_voids_near(q, 4.0));
+        let open = u.open_at(p) || deep.is_some_and(|t| t.deep_open_at(p));
+        near && !open
+    }
+
+    /// Does anything solid stand on the straight line from `a` to `b`?
+    /// Exact for walls however thin (points half a metre apart step over a
+    /// 0.2 m inner wall); rock underground, being thick, is sampled.
+    pub fn line_blocked(&self, a: DVec3, b: DVec3) -> bool {
+        /// The line is looked at in pieces this long (m), each against the
+        /// solids near it.
+        const PIECE: f64 = 2.0;
+        let d = b - a;
+        let len = d.length();
+        if len < 1e-9 {
+            return self.solid_at(a);
+        }
+        if self.under.is_some() {
+            let n = (len / 0.5).ceil() as usize;
+            if (1..n).any(|i| self.rock_at(a + d * (i as f64 / n as f64))) {
+                return true;
+            }
+        }
+        let pieces = (len / PIECE).ceil().max(1.0) as usize;
+        (0..pieces).any(|k| {
+            let p0 = a + d * (k as f64 / pieces as f64);
+            let p1 = a + d * ((k + 1) as f64 / pieces as f64);
+            let mid = (p0 + p1) * 0.5;
+            let r = DVec2::new(p1.x - p0.x, p1.z - p0.z).length() * 0.5 + 0.01;
+            self.near_at(DVec2::new(mid.x, mid.z), r, mid.y)
+                .iter()
+                .flat_map(|x| x.iter())
+                .any(|s| s.crosses(p0, p1))
+        })
     }
 
     /// The building and floor a point is in, if any.
