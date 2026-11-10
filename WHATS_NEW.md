@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.130 (2026-11-10)
+
+- Fixed: pressing a power again just after using it (the Atomic Ray, say) often did nothing. It now fires as soon as it has recharged.
+- A power that can't fire always tells you why: out of range, a wall in the way, still recharging, not enough energy.
+
 ## 0.129 (2026-11-10)
 
 - Your hero looks and moves more like a hero. Hovering, you now stand tall on the air, legs together, instead of crouching.

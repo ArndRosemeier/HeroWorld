@@ -22,7 +22,7 @@ use bevy_ecs::prelude::*;
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
 use hw_net::{
-    CombatState, EntityKind, Fx, FxKind, InputState, PlayerId, Power, Sheet, Status,
+    fizzle, CombatState, EntityKind, Fx, FxKind, InputState, PlayerId, Power, Sheet, Status,
     EFFECT_ARMOURED, EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_CHARMED, EFFECT_CHILLED,
     EFFECT_FROZEN, EFFECT_HELD, EFFECT_RALLIED, EFFECT_SHIELD, EFFECT_SUPER_JUMP,
     EFFECT_SUPER_SPEED, EFFECT_TOUGH,
@@ -36,6 +36,10 @@ pub const HERO_ENERGY: f32 = 100.0;
 pub const ACTION_LOCK: f64 = 0.5;
 /// A power that cannot fire (out of range, recharging) waits this long.
 pub const QUEUE_SECONDS: f64 = 1.0;
+/// A power asked for while it recharges waits for it, if it is ready
+/// within this many seconds (so pressing again just after a shot fires it
+/// as soon as it can, not never).
+pub const RECHARGE_WAIT: f64 = 3.0;
 /// Seconds after the last blow given or taken that a fighter counts as in
 /// combat (slow regeneration).
 pub const COMBAT_SECONDS: f64 = 6.0;
@@ -765,8 +769,11 @@ pub struct Fighter {
     pub busy_until: u64,
     /// Tick each power is ready again (by [`Power::code`] - 1).
     pub ready: [u64; POWERS],
-    /// A power waiting to fire, and when it was asked for.
+    /// A power waiting to fire, and the last tick it may still fire on.
     pub queued: Option<(Power, u64)>,
+    /// Why the queued power has not fired yet (a [`hw_net::fizzle`] reason;
+    /// 0 for none): told to the hero if it lapses.
+    pub waiting: u16,
     /// The hero's picked target, or the villain's foe.
     pub target: Option<NetId>,
     /// Seconds a teammate has held revive on this downed hero.
@@ -811,6 +818,7 @@ impl Fighter {
             busy_until: 0,
             ready: [0; POWERS],
             queued: None,
+            waiting: 0,
             target: None,
             revive: 0.0,
             engaged: false,
@@ -2317,13 +2325,34 @@ fn heroes_act(
             }
         }
         if let Some(p) = asked {
-            actors[i].f.queued = Some((p, tick));
+            // A power still recharging waits for it, if not for long.
+            let ready = actors[i].f.ready[slot(p)];
+            let wait = if ready > tick && ready - tick <= ticks(RECHARGE_WAIT) {
+                ready
+            } else {
+                0
+            };
+            actors[i].f.queued = Some((p, (tick + ticks(QUEUE_SECONDS)).max(wait)));
+            actors[i].f.waiting = 0;
         }
-        let Some((power, asked)) = actors[i].f.queued else {
+        let Some((power, until)) = actors[i].f.queued else {
             continue;
         };
-        if tick > asked + ticks(QUEUE_SECONDS) || !actors[i].f.standing() {
+        if !actors[i].f.standing() {
             actors[i].f.queued = None;
+            continue;
+        }
+        if tick > until {
+            // It lapsed: say why, so a key press never just does nothing.
+            actors[i].f.queued = None;
+            let why = std::mem::take(&mut actors[i].f.waiting);
+            if why != 0 {
+                let me = actors[i].id;
+                let mut e = event(tick, FxKind::Fizzle, me, me, actors[i].chest());
+                e.amount = why | (kit.theme(power) as u16) << 8;
+                e.theme = power.code();
+                out.fx.push(e);
+            }
             continue;
         }
         let spec = power_spec(power);
@@ -2383,15 +2412,22 @@ fn heroes_act(
                         .map(|(k, _)| k)
                 }
             };
+            let mut why = fizzle::NO_TARGET;
             if let Some(t) = target {
                 let in_reach = actors[t].body.pos.distance(pos) <= spec.range;
                 // No blow and no power through a wall, a punch included.
                 let seen = clear_line(solids, actors[i].chest(), actors[t].chest());
                 if !in_reach || !seen {
                     target = None;
+                    why = if in_reach {
+                        fizzle::NOT_SEEN
+                    } else {
+                        fizzle::OUT_OF_RANGE
+                    };
                 }
             }
             if target.is_none() && !free_aim {
+                actors[i].f.waiting = why;
                 continue;
             }
             // Bosses and machines shrug off hypnosis.
@@ -2420,7 +2456,10 @@ fn heroes_act(
         let blink = if power == Power::Teleport {
             match teleport_to(solids, actors[i].body.pos, aim) {
                 Some(p) => Some(p),
-                None => continue,
+                None => {
+                    actors[i].f.waiting = fizzle::NO_SPOT;
+                    continue;
+                }
             }
         } else {
             None
@@ -2428,7 +2467,10 @@ fn heroes_act(
         let rescue = if power == Power::Bubble {
             match nearest_rescue(rescue_points, actors[i].chest(), aim) {
                 Some(p) => Some(p),
-                None => continue,
+                None => {
+                    actors[i].f.waiting = fizzle::NO_SPOT;
+                    continue;
+                }
             }
         } else {
             None
@@ -2442,6 +2484,13 @@ fn heroes_act(
         };
         let ready = throwing || commanding || tick >= me.ready[slot(power)];
         if tick < me.busy_until || !ready || me.energy < cost {
+            actors[i].f.waiting = if !ready {
+                fizzle::RECHARGING
+            } else if me.energy < cost {
+                fizzle::ENERGY
+            } else {
+                fizzle::BUSY
+            };
             continue;
         }
         let me_id = actors[i].id;

@@ -14,12 +14,31 @@ use engine::ui::egui;
 use glam::{Mat4, Vec3};
 use hw_core::NetId;
 use hw_net::{
-    EntityKind, EntityState, Fx, FxKind, Power, Sheet, Status, EFFECT_CHARMED, EFFECT_CHILLED,
-    EFFECT_FROZEN, EFFECT_HELD, EFFECT_RALLIED, EFFECT_SHIELD, EFFECT_SUPER_SPEED,
+    fizzle, EntityKind, EntityState, Fx, FxKind, Power, Sheet, Status, EFFECT_CHARMED,
+    EFFECT_CHILLED, EFFECT_FROZEN, EFFECT_HELD, EFFECT_RALLIED, EFFECT_SHIELD, EFFECT_SUPER_SPEED,
 };
 use hw_sim::combat::{power_spec, EnemyKind, Kit, POWERS};
 use hw_sim::progress::{is_movement, themes};
 use std::collections::BTreeMap;
+
+/// Why `power` (in `theme`) did not fire, in a few words for the middle
+/// of the screen (`why`: a [`fizzle`] reason).
+pub fn fizzle_text(power: Power, theme: u8, why: u16) -> String {
+    let name = themes(power)[theme.min(1) as usize].name;
+    match why {
+        fizzle::OUT_OF_RANGE if power == Power::Strike => "Too far to punch".into(),
+        fizzle::OUT_OF_RANGE => format!("{name}: out of range"),
+        fizzle::NOT_SEEN => format!("{name}: can't see them from here"),
+        fizzle::NO_TARGET if power == Power::Strike => "Nobody close enough to punch".into(),
+        fizzle::NO_TARGET => format!("{name}: no target (Tab picks one)"),
+        fizzle::RECHARGING => format!("{name} is still recharging"),
+        fizzle::ENERGY => format!("Not enough energy for {name}"),
+        fizzle::NO_SPOT if power == Power::Teleport => "Nowhere to land there".into(),
+        fizzle::NO_SPOT => "Nobody to rescue nearby".into(),
+        fizzle::BUSY => format!("{name}: too soon after the last power"),
+        _ => format!("{name} did not fire"),
+    }
+}
 
 /// Villains further than this cannot be picked with Tab.
 pub const TARGET_RANGE: f32 = 60.0;
@@ -416,6 +435,7 @@ impl FightView {
                 continue;
             }
             let spec = power_spec(power);
+            let theme = kit.theme(power).min(1);
             let carrying = me
                 .and_then(|m| m.combat)
                 .is_some_and(|c| c.effects & hw_net::EFFECT_CARRYING != 0);
@@ -442,18 +462,22 @@ impl FightView {
                 {
                     let d = pos(m).distance(pos(t));
                     if d > spec.range as f32 {
-                        self.say(if power == Power::Strike {
-                            "Too far to punch"
-                        } else {
-                            "Out of range"
-                        });
+                        self.say(&fizzle_text(power, theme, fizzle::OUT_OF_RANGE));
                     } else if !self.sees(me, eye, t) {
-                        self.say("Can't see them from here");
+                        self.say(&fizzle_text(power, theme, fizzle::NOT_SEEN));
                     }
                 }
                 let energy = m.combat.map_or(0.0, |c| c.energy as f32 / 255.0 * 100.0);
-                if !carrying && energy + 0.5 < spec.cost {
-                    self.say("Not enough energy");
+                // Longer than the server waits for it: it will not fire.
+                let left = self.cooldown[(power.code() - 1) as usize];
+                if !carrying && left as f64 > hw_sim::combat::RECHARGE_WAIT {
+                    self.say(&format!(
+                        "{} recharges in {:.0} s",
+                        themes(power)[theme as usize].name,
+                        left.ceil()
+                    ));
+                } else if !carrying && energy + 0.5 < spec.cost {
+                    self.say(&fizzle_text(power, theme, fizzle::ENERGY));
                 }
             }
             out.power = power.code();
@@ -1023,6 +1047,15 @@ impl FightView {
                             egui::Color32::from_rgb(120, 240, 150),
                             false,
                         );
+                    }
+                }
+                FxKind::Fizzle => {
+                    // A power we asked for did not fire: say why.
+                    if on_me {
+                        if let Some(p) = Power::from_code(e.theme) {
+                            let theme = ((e.amount >> 8) as u8).min(1);
+                            self.say(&fizzle_text(p, theme, e.amount & 0xff));
+                        }
                     }
                 }
                 FxKind::Careful => {

@@ -267,7 +267,10 @@ targeting, ragdolls, nobody dies.
   attacks you becomes your target if you have none. The target frame shows name,
   rank and level in its **con colour** (how tough it is against you).
 - **Using powers:** one power at a time (0.5 s lock); a power that cannot fire yet (out of
-  range, recharging) waits up to 1 s and then fires. Blows land with sparks, beams, scorch
+  range, behind a wall) waits up to 1 s and then fires, and one still recharging waits until
+  it is ready (if that is within 3 s, `combat::RECHARGE_WAIT`). A power that does not fire
+  always says why in the middle of the screen ("Atomic Ray: out of range", "can't see them
+  from here", "still recharging", "Not enough energy"; `FxKind::Fizzle`). Blows land with sparks, beams, scorch
   marks, floating numbers, a camera jolt and a moment of hit-stop; whoever takes a blow and
   stays up rocks back from it (0.2-0.3 m and a lean, for a third of a second).
 - **Line of sight:** no blow goes through a wall, for heroes, sidekicks, Hero Hall's heroes

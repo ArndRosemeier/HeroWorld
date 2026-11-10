@@ -901,6 +901,28 @@ pub enum FxKind {
     Bomb,
     /// A lab orderly `from` patched up villain `to` (`amount`: health).
     Patch,
+    /// Hero `from` (= `to`) asked for a power that did not fire: `theme` is
+    /// the power's code, `amount` the reason (a [`fizzle`] constant) plus
+    /// the power's theme times 256.
+    Fizzle,
+}
+
+/// Why a power a hero asked for did not fire ([`FxKind::Fizzle`]).
+pub mod fizzle {
+    /// Nothing to aim it at.
+    pub const NO_TARGET: u16 = 1;
+    /// The target is further than the power reaches.
+    pub const OUT_OF_RANGE: u16 = 2;
+    /// A wall or something solid is in the way.
+    pub const NOT_SEEN: u16 = 3;
+    /// The power is still recharging.
+    pub const RECHARGING: u16 = 4;
+    /// Not enough energy.
+    pub const ENERGY: u16 = 5;
+    /// A teleport with nowhere to land, a bubble with nobody to rescue.
+    pub const NO_SPOT: u16 = 6;
+    /// The last power is still playing out.
+    pub const BUSY: u16 = 7;
 }
 
 impl FxKind {
@@ -956,6 +978,7 @@ impl FxKind {
             FxKind::Lob => 48,
             FxKind::Bomb => 49,
             FxKind::Patch => 50,
+            FxKind::Fizzle => 51,
         }
     }
 
@@ -1011,6 +1034,7 @@ impl FxKind {
             48 => FxKind::Lob,
             49 => FxKind::Bomb,
             50 => FxKind::Patch,
+            51 => FxKind::Fizzle,
             _ => return Err(WireError),
         })
     }
