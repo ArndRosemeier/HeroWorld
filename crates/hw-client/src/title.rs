@@ -422,7 +422,19 @@ impl Title {
             h.pedestal,
             Place::new(feet.x, feet.y, feet.z).with_yaw_deg(yaw),
         )?;
-        let clip = if heroic { "heroic" } else { "idle" };
+        let mut clip = if heroic { "heroic" } else { "idle" };
+        // Screenshots of the hero's own clips up close: HW_CREATOR_CLIP=
+        // hover, fly or power pose.
+        if creating {
+            if let Ok(c) = std::env::var("HW_CREATOR_CLIP") {
+                clip = match c.as_str() {
+                    "hover" => "hover",
+                    "fly" => "fly",
+                    "power pose" | "power" => "power pose",
+                    _ => clip,
+                };
+            }
+        }
         if h.clip != clip {
             h.clip = clip;
             world.play_animation(h.entity, clip)?;

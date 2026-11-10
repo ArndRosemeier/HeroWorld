@@ -63,8 +63,36 @@ pub fn hero_rules(catalog: &CharacterCatalog, config: &CharacterConfig) -> Chara
         c.outfit.insert(0, "briefs".into());
     }
     c.garment_colors.retain(|g, _| c.outfit.contains(g));
+    dye_suit(&mut c);
     c
 }
+
+/// A hero's suit is dyed cloth, not a print: coloured suit pieces without a
+/// finish of their own get one (a finish dyes them one colour in Actors).
+fn dye_suit(c: &mut CharacterConfig) {
+    for g in &c.outfit {
+        if !c.garment_colors.contains_key(g) || c.costume.finishes.contains_key(g) {
+            continue;
+        }
+        if let Some((_, f)) = SUIT_FINISHES.iter().find(|(p, _)| g.starts_with(p)) {
+            c.costume.finishes.insert(g.clone(), (*f).into());
+        }
+    }
+}
+
+/// Finishes for coloured suit pieces that have none: spandex for tights and
+/// tops (the giraffe-print tank top read as a mottled chest), leather for
+/// gloves and boots. Garment id prefixes.
+const SUIT_FINISHES: [(&str, &str); 8] = [
+    ("tights", "satin"),
+    ("tank-top", "satin"),
+    ("briefs", "satin"),
+    ("turtleneck-halter", "satin"),
+    ("gloves-", "leather"),
+    ("gauntlet-gloves", "leather"),
+    ("biker-boots", "leather"),
+    ("leather-boots", "leather"),
+];
 
 #[cfg(test)]
 mod tests {
@@ -88,5 +116,32 @@ mod tests {
         d.body.muscle = 0.8;
         assert_ne!(key(&c), key(&d));
         assert_eq!(decode(b"not json"), None);
+    }
+
+    #[test]
+    fn a_coloured_suit_is_dyed_but_a_chosen_finish_stays() {
+        let mut c = CharacterConfig {
+            outfit: vec![
+                "briefs".into(),
+                "tights".into(),
+                "tank-top".into(),
+                "biker-boots".into(),
+            ],
+            ..Default::default()
+        };
+        for g in ["tights", "tank-top", "biker-boots"] {
+            c.garment_colors.insert(g.into(), "#c02020".into());
+        }
+        c.costume.finishes.insert("tights".into(), "cloth".into());
+        dye_suit(&mut c);
+        let r = c.costume.finishes;
+        assert_eq!(r.get("tank-top").map(String::as_str), Some("satin"));
+        assert_eq!(r.get("biker-boots").map(String::as_str), Some("leather"));
+        assert_eq!(
+            r.get("tights").map(String::as_str),
+            Some("cloth"),
+            "the player's pick"
+        );
+        assert_eq!(r.get("briefs"), None, "not coloured: its own look");
     }
 }

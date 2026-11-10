@@ -22,7 +22,26 @@ pub struct Drive {
     pub yaw: f32,
     /// Degrees, forward positive (the body tips about its middle).
     pub pitch: f32,
-    pub roll: f32,
+    /// Degrees about the body's own head-to-feet axis, before it tips: a
+    /// flier lying flat banks into a turn with it (left side down for a
+    /// left turn is negative).
+    pub bank: f32,
+}
+
+impl Drive {
+    /// The body's turn: yaw, then the tip forward, then the bank.
+    pub fn rotation(&self) -> Quat {
+        Quat::from_rotation_y(self.yaw.to_radians())
+            * Quat::from_rotation_x(self.pitch.to_radians())
+            * Quat::from_rotation_y(self.bank.to_radians())
+    }
+
+    /// [`Drive::rotation`] as an Engine `Place`'s yaw, pitch and roll
+    /// (degrees; Place turns yaw, then pitch, then roll about forward).
+    pub fn place_angles(&self) -> (f32, f32, f32) {
+        let (y, x, z) = self.rotation().to_euler(glam::EulerRot::YXZ);
+        (y.to_degrees(), x.to_degrees(), z.to_degrees())
+    }
 }
 
 /// Height of the body's middle above the feet: a flier tips about it.
@@ -35,7 +54,7 @@ pub const AIR_GRACE: f32 = 0.15;
 pub struct HeroAnim {
     yaw: f32,
     pitch: f32,
-    roll: f32,
+    bank: f32,
     /// Seconds in the air (not flying).
     air: f32,
     /// Seconds left of the landing clip.
@@ -54,7 +73,7 @@ impl Default for HeroAnim {
         Self {
             yaw: 0.0,
             pitch: 0.0,
-            roll: 0.0,
+            bank: 0.0,
             air: 0.0,
             landing: 0.0,
             rising: 0.0,
@@ -115,7 +134,7 @@ impl HeroAnim {
         }
         let turn_rate = angle_delta(old_yaw, self.yaw) / dt;
 
-        let (clip, rate, once, pitch, roll) = if fly_now {
+        let (clip, rate, once, pitch, bank) = if fly_now {
             self.air = 0.0;
             self.landing = 0.0;
             let s = vel.length();
@@ -125,8 +144,11 @@ impl HeroAnim {
                 let climb = (vel.y / s).clamp(-1.0, 1.0).asin().to_degrees();
                 let flatness = ((s - 4.0) / 10.0).clamp(0.0, 1.0);
                 let pitch = (82.0 - climb) * (0.55 + 0.45 * flatness);
-                let roll = (-turn_rate * 0.25).clamp(-40.0, 40.0);
-                ("fly", 1.0, false, pitch.clamp(0.0, 150.0), roll)
+                // Into a turn like a plane: the faster and tighter, the
+                // steeper (the turn's sideways pull against gravity).
+                let pull = turn_rate.to_radians() * s / hw_sim::GRAVITY as f32;
+                let bank = -pull.atan().to_degrees().clamp(-55.0, 55.0) * (0.4 + 0.6 * flatness);
+                ("fly", 1.0, false, pitch.clamp(0.0, 150.0), bank)
             } else {
                 // Hovering: lean a little into the drift.
                 ("hover", 1.0, false, (speed * 4.0).min(15.0), 0.0)
@@ -173,25 +195,22 @@ impl HeroAnim {
         };
         let k = if fly_now { 4.0 } else { 10.0 };
         self.pitch = ease(self.pitch, pitch, k, dt);
-        self.roll = ease(self.roll, roll, 3.0, dt);
+        self.bank = ease(self.bank, bank, 3.0, dt);
         Drive {
             clip,
             rate,
             once,
             yaw: self.yaw,
             pitch: self.pitch,
-            roll: self.roll,
+            bank: self.bank,
         }
     }
 }
 
 /// Where to put the model's feet so that it tips about its middle.
 pub fn tipped_origin(feet: Vec3, d: &Drive) -> Vec3 {
-    let r = Quat::from_rotation_y(d.yaw.to_radians())
-        * Quat::from_rotation_x(d.pitch.to_radians())
-        * Quat::from_rotation_z(d.roll.to_radians());
     let mid = Vec3::Y * PIVOT;
-    feet + mid - r * mid
+    feet + mid - d.rotation() * mid
 }
 
 #[cfg(test)]
@@ -271,14 +290,47 @@ mod tests {
             once: false,
             yaw: 30.0,
             pitch: 80.0,
-            roll: 10.0,
+            bank: 10.0,
         };
         let feet = Vec3::new(5.0, 2.0, -3.0);
         let o = tipped_origin(feet, &d);
-        let r = Quat::from_rotation_y(d.yaw.to_radians())
-            * Quat::from_rotation_x(d.pitch.to_radians())
-            * Quat::from_rotation_z(d.roll.to_radians());
-        let mid = o + r * (Vec3::Y * PIVOT);
+        let mid = o + d.rotation() * (Vec3::Y * PIVOT);
         assert!((mid - (feet + Vec3::Y * PIVOT)).length() < 1e-4);
+        // Engine's Place angles give the same turn.
+        let (y, p, r) = d.place_angles();
+        let place = Quat::from_rotation_y(y.to_radians())
+            * Quat::from_rotation_x(p.to_radians())
+            * Quat::from_rotation_z(r.to_radians());
+        assert!(place.dot(d.rotation()).abs() > 0.9999);
+    }
+
+    #[test]
+    fn a_flier_banks_into_its_turn() {
+        // Flying fast along +Z, turning left (towards +X, the body's left).
+        let mut a = HeroAnim::default();
+        let mut d = a.step(Vec3::new(0.0, 0.0, 20.0), false, Some(true), 0.016);
+        let mut heading = 0.0f32;
+        for _ in 0..90 {
+            heading += 40f32.to_radians() * 0.016;
+            let v = Vec3::new(heading.sin(), 0.0, heading.cos()) * 20.0;
+            d = a.step(v, false, Some(true), 0.016);
+        }
+        assert_eq!(d.clip, "fly");
+        let r = d.rotation();
+        // Lying flat: the head leads, the chest faces the ground ...
+        assert!((r * Vec3::Y).y.abs() < 0.4, "head {:?}", r * Vec3::Y);
+        // ... and the left side dips into the turn, the right rises.
+        let left = r * Vec3::X;
+        assert!(left.y < -0.25, "banked: left side {left:?}");
+        // Flying straight again levels the wings.
+        for _ in 0..200 {
+            d = a.step(
+                Vec3::new(heading.sin(), 0.0, heading.cos()) * 20.0,
+                false,
+                Some(true),
+                0.016,
+            );
+        }
+        assert!((d.rotation() * Vec3::X).y.abs() < 0.05);
     }
 }

@@ -59,8 +59,14 @@ the last run is pointed out once on the title.
 - **Looks:** the hero creator (`creator.rs`, on Actors' Rust generator): body, face, hair
   and costume in a few clicks, or every slider in the detailed view; a dice button. Six
   golden-age costumes to start from: circus strongman, mystery man, sky ace, rocket ranger,
-  jungle queen, silver-screen sleuth, in any colours. (A full costume creator, capes and
-  masks are in progress in another thread.)
+  jungle queen, silver-screen sleuth, in any colours. A hero kit adds a cape, mask, belt
+  and chest emblem. A coloured suit piece without a finish of its own is dyed one colour:
+  tights, tops and briefs in satin (spandex), gloves and boots in leather
+  (`looks::hero_rules`), so no garment's print shows through a costume.
+- **How a hero moves** (`heroview.rs`, `poses.rs`): flying fast, the body lies flat with one
+  fist ahead and banks into turns like a plane (up to 55 degrees, steeper the faster and
+  tighter the turn); slower than 4 m/s it hovers upright, legs together, arms easy at its
+  sides. A level up strikes a 2.6 s power pose, a fist to the sky, standing or hovering.
 - **Origin** (`progress::ORIGINS`), picked once. It gives 600 points to one affinity
   (section 4):
 
@@ -1037,6 +1043,7 @@ run, or put them in a `.bat`.
 | --- | --- |
 | `HW_TITLE=0` | Skip the title. `HW_TITLE_PANEL=new\|friends\|settings\|creator\|city`, `HW_TITLE_TIME`, `HW_TITLE_AUTOSTART` drive it. |
 | `HW_CREATOR_SECTION`, `HW_CREATOR_DETAILED=1` | Open the creator at a section, in the detailed view. |
+| `HW_CREATOR_CLIP=hover\|fly\|power` | The creator's hero plays that clip (close-ups of the hero's own poses). |
 | `HW_MENU=main\|settings\|controls` | Open the Escape menu. |
 | `HW_WHATS_NEW=1` | Open "What's new". |
 | `HW_HOST=1`, `HW_JOIN=<code or ip:port>` | Host or join without the title. |

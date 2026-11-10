@@ -168,6 +168,8 @@ fn set_game_hour(h: f32) {
 }
 /// Seconds the camera takes to swoop from the title down to the hero.
 const SWOOP_SECONDS: f32 = 2.4;
+/// Seconds of the power pose our hero strikes on a level up.
+const POWER_POSE_SECONDS: f32 = 2.6;
 /// Cells within this distance of the cut focus are redrawn when it changes.
 const CUT_REACH: f64 = hw_client::townmesh::CUT_RADIUS + 120.0;
 
@@ -429,6 +431,8 @@ fn main() -> EngineResult<()> {
     // hero picks an origin), the sheet as the host last confirmed it, and
     // the powers window.
     let mut powers = PowersView::new();
+    // Until when our hero strikes the level-up power pose.
+    let mut power_pose_until = f32::NEG_INFINITY;
     powers.tray = profile.tray.clone();
     let mut hero_file: Option<hw_net::Sheet> = profile.hero.clone();
     // HW_LEVEL=n starts a hero at level n with karma to spend (for trying
@@ -3075,12 +3079,13 @@ fn main() -> EngineResult<()> {
                     d.pitch += lean;
                 }
                 let o = tipped_origin(feet + offset, &d);
+                let (yaw, pitch, roll) = d.place_angles();
                 world.set_place(
                     e,
                     Place::new(o.x, o.y, o.z)
-                        .with_yaw_deg(d.yaw)
-                        .with_pitch_deg(d.pitch)
-                        .with_roll_deg(d.roll)
+                        .with_yaw_deg(yaw)
+                        .with_pitch_deg(pitch)
+                        .with_roll_deg(roll)
                         .with_scale(size),
                 )?;
                 // Fighting clips over walking; a stance while squaring up.
@@ -3093,6 +3098,13 @@ fn main() -> EngineResult<()> {
                     None if in_fight && d.clip == "idle" => ("fight stance", false),
                     // The one being mugged cowers until it is over.
                     None if bystander && d.clip == "idle" => ("hands up", false),
+                    // A level up: a fist to the sky, standing or hovering.
+                    None if mine == Some(h.id)
+                        && frame.time < power_pose_until
+                        && matches!(d.clip, "idle" | "hover") =>
+                    {
+                        ("power pose", true)
+                    }
                     None => (d.clip, d.once),
                 };
                 if anim.shown != clip {
@@ -3116,7 +3128,8 @@ fn main() -> EngineResult<()> {
                                 | "jump land"
                                 | "fight stance"
                                 | "pistol idle"
-                        );
+                        )
+                        || (clip == "power pose" && h.grounded);
                     let _ = world.set_foot_ik(e, on_ground.then(FootIk::default));
                     anim.shown = clip;
                 }
@@ -3223,6 +3236,7 @@ fn main() -> EngineResult<()> {
                 let after = hw_sim::progress::level_of(s.lifetime);
                 if sheet_synced && after > before {
                     powers.level_up(after);
+                    power_pose_until = frame.time + POWER_POSE_SECONDS;
                 }
                 if hero_file.as_ref() == Some(&s) {
                     sheet_synced = true;

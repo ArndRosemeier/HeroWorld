@@ -1,6 +1,6 @@
 //! Clips the packs don't have, posed here on a character's own skeleton:
-//! flying ("fly", the classic one fist ahead) and hovering ("hover", legs
-//! loose, arms out for balance).
+//! flying ("fly", the classic one fist ahead), hovering ("hover", upright,
+//! legs together, arms easy at the sides) and the hero's stances.
 //!
 //! Each is laid over the idle clip, so the breathing and the small shifts
 //! of weight stay. Limbs are posed by aiming bones in the character's own
@@ -59,21 +59,27 @@ pub fn add_flight_clips(model: &mut AnimatedModel) -> Result<(), String> {
         let v = (t * std::f32::consts::TAU + 0.8).sin();
         Pose {
             aims: vec![
-                // Arms a little out, open hands, as if treading air.
-                aim("upperarm_l", "lowerarm_l", 0.5, -1.0, 0.08 + 0.05 * v),
-                aim("lowerarm_l", "hand_l", 0.35, -1.0, 0.45 + 0.08 * v),
-                aim("upperarm_r", "lowerarm_r", -0.5, -1.0, 0.08 - 0.05 * v),
-                aim("lowerarm_r", "hand_r", -0.35, -1.0, 0.45 - 0.08 * v),
-                // One knee forward, the other leg hanging back, toes down.
-                aim("thigh_l", "calf_l", 0.07, -1.0, -0.05 + 0.04 * w),
-                aim("calf_l", "foot_l", 0.06, -1.0, -0.35 - 0.04 * w),
-                aim("thigh_r", "calf_r", -0.05, -1.0, 0.3 - 0.04 * w),
-                aim("calf_r", "foot_r", -0.04, -1.0, -0.12 + 0.04 * w),
-                aim("foot_l", "ball_l", 0.0, -1.0, 0.6),
-                aim("foot_r", "ball_r", 0.0, -1.0, 0.75),
+                // Upright and at ease on the air: arms down and a little
+                // out, drifting, fists loose.
+                aim("upperarm_l", "lowerarm_l", 0.3, -1.0, 0.03 + 0.03 * v),
+                aim("lowerarm_l", "hand_l", 0.2, -1.0, 0.16 + 0.04 * v),
+                aim("upperarm_r", "lowerarm_r", -0.3, -1.0, 0.03 - 0.03 * v),
+                aim("lowerarm_r", "hand_r", -0.2, -1.0, 0.16 - 0.04 * v),
+                // Legs long and together, one knee a touch soft, toes
+                // pointed down: no crouch.
+                aim("thigh_l", "calf_l", 0.03, -1.0, 0.02 + 0.015 * w),
+                aim("calf_l", "foot_l", 0.02, -1.0, -0.05 - 0.015 * w),
+                aim("thigh_r", "calf_r", -0.03, -1.0, 0.07 - 0.015 * w),
+                aim("calf_r", "foot_r", -0.02, -1.0, -0.13 + 0.015 * w),
+                aim("foot_l", "ball_l", 0.0, -1.0, 0.45),
+                aim("foot_r", "ball_r", 0.0, -1.0, 0.5),
             ],
-            turns: vec![],
-            lift: 0.05 * (t * std::f32::consts::TAU).sin(),
+            // Chest out, chin up.
+            turns: vec![
+                ("spine_03", Vec3::X, -0.06 - 0.01 * v),
+                ("head", Vec3::X, -0.08),
+            ],
+            lift: 0.04 * w,
             seated: false,
         }
     })?;
@@ -114,6 +120,53 @@ pub fn add_heroic_clip(model: &mut AnimatedModel) -> Result<(), String> {
     })?;
     model.clips.retain(|c| c.name != "heroic");
     model.clips.push(heroic);
+    Ok(())
+}
+
+/// Adds "power pose": a fist punched up to the sky, the other on the hip,
+/// chin up to follow it, for a level up. Played once; it ends held.
+pub fn add_power_pose_clip(model: &mut AnimatedModel) -> Result<(), String> {
+    let clip = make_clip(model, "power pose", 2.4, |t| {
+        // The punch goes up in the first fifth, then holds, breathing.
+        let k = (t / 0.2).clamp(0.0, 1.0);
+        let k = k * k * (3.0 - 2.0 * k);
+        let up = |from: Vec3, to: Vec3| from.lerp(to, k);
+        let b = (t * std::f32::consts::TAU * 1.5).sin();
+        // Out to the side of the head, so the arm reads from every side.
+        let shoulder = up(Vec3::new(-0.7, 0.2, 0.5), Vec3::new(-0.42, 1.0, 0.1));
+        let fore = up(Vec3::new(-0.1, 0.9, 0.5), Vec3::new(-0.14, 1.0, 0.04));
+        Pose {
+            aims: vec![
+                aim(
+                    "upperarm_r",
+                    "lowerarm_r",
+                    shoulder.x,
+                    shoulder.y,
+                    shoulder.z,
+                ),
+                aim("lowerarm_r", "hand_r", fore.x, fore.y, fore.z),
+                // The other fist on the hip.
+                aim("upperarm_l", "lowerarm_l", 0.8, -0.55, -0.2 + 0.02 * b),
+                aim("lowerarm_l", "hand_l", -0.5, -0.8, -0.12),
+                // Feet planted apart.
+                aim("thigh_l", "calf_l", 0.2, -1.0, 0.0),
+                aim("calf_l", "foot_l", 0.17, -1.0, -0.03),
+                aim("thigh_r", "calf_r", -0.2, -1.0, 0.0),
+                aim("calf_r", "foot_r", -0.17, -1.0, -0.03),
+                aim("foot_l", "ball_l", 0.15, -0.3, 1.0),
+                aim("foot_r", "ball_r", -0.15, -0.3, 1.0),
+            ],
+            // Chest out, the head tipped back to the fist.
+            turns: vec![
+                ("spine_03", Vec3::X, -0.1 - 0.015 * b),
+                ("head", Vec3::X, -0.12 - 0.2 * k),
+            ],
+            lift: -0.02,
+            seated: false,
+        }
+    })?;
+    model.clips.retain(|c| c.name != "power pose");
+    model.clips.push(clip);
     Ok(())
 }
 
@@ -271,6 +324,7 @@ pub fn swing_cape(c: &mut actors_engine::CharacterModel) {
         ("fly", Vec3::new(0.0, 0.99, 0.14) * 14.0),
         ("hover", Vec3::new(0.0, 0.3, 0.6)),
         ("heroic", Vec3::new(0.6, 0.0, 2.6)),
+        ("power pose", Vec3::new(0.8, -0.4, 3.2)),
     ];
     for (name, travel) in winds {
         if let Some(i) = c.model.clips.iter().position(|k| k.name == name) {

@@ -1481,6 +1481,7 @@ pub fn build_sharing(
     if hero {
         poses::add_flight_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::add_heroic_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+        poses::add_power_pose_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::swing_cape(&mut c);
     }
     if matches!(who, Who::Villain(..)) {
