@@ -521,6 +521,8 @@ get away, or the fire brigade comes. **A hero on the way** (closing in from with
 keeps it waiting: while they get nearer it lasts at least their running time from there
 (×1.5, +30 s), up to 5 minutes past its usual end, and the town's own heroes leave it to
 them (they stop waiting 12 s after the hero stops closing in).
+A fight's call stands only while its crooks do: with none of them left, or none (standing) within
+80 m of it for 30 s, they got away and the call ends, so the visor never marks an empty street.
 
 | Incident | Chance | Who / what | Level | Reach | Bonus |
 | --- | --- | --- | --- | --- | --- |

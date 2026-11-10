@@ -586,3 +586,99 @@ fn holding_the_help_key_shows_how_far_along_it_is() {
     }
     assert_eq!(after.last(), Some(&0), "{after:?}");
 }
+
+/// A call never marks an empty street: a fight whose villains are all gone
+/// (none left, or all far off and not coming back) ends as "they got away",
+/// and the radio hears it.
+#[test]
+fn a_call_ends_when_its_villains_are_gone() {
+    use hw_sim::combat::{Enemy, Fights};
+    use hw_sim::Motion;
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    sim.spawn_hero(PlayerId(1), sim.spawn_point(1));
+    sim.incidents.next_kind = Some(incidents::IncidentKind::Robbery);
+    let mut news = Vec::new();
+    run(&mut sim, incidents::FIRST_SECONDS + 2.0, &mut news);
+    let inc = sim.incidents.open[0].clone();
+    let spot = inc.spot.expect("a fight");
+    // While it is open its robbers stand at it.
+    for _ in 0..10 {
+        run(&mut sim, 1.0, &mut news);
+        let near = sim
+            .world
+            .query::<(&Enemy, &Motion)>()
+            .iter(&sim.world)
+            .filter(|(e, m)| e.spot == spot && m.0.pos.distance(inc.at) < 10.0)
+            .count();
+        assert!(near > 0, "an open call with nobody at it");
+    }
+
+    // Held far off (say, stuck behind something): they got away.
+    let far = inc.at + DVec3::new(0.0, 0.0, incidents::STRAY_REACH + 60.0);
+    let hold = |sim: &mut Sim| {
+        let mut q = sim.world.query::<(&Enemy, &mut Motion)>();
+        for (e, mut m) in q.iter_mut(&mut sim.world) {
+            if e.spot == spot {
+                m.0.pos = far;
+            }
+        }
+    };
+    let mut gone_at = None;
+    for s in 0..(incidents::STRAY_SECONDS as u32 + 3) {
+        hold(&mut sim);
+        run(&mut sim, 1.0, &mut news);
+        if !sim.incidents.open.iter().any(|i| i.id == inc.id) {
+            gone_at = Some(s);
+            break;
+        }
+    }
+    let s = gone_at.expect("the call stayed open with its robbers far away");
+    assert!(
+        s as f64 >= incidents::STRAY_SECONDS - 1.0,
+        "ended too soon: {s} s"
+    );
+    assert!(
+        news.iter().any(|n| n.0 == inc.id && n.3 == 2),
+        "not on the radio"
+    );
+    let left = sim
+        .world
+        .query::<&Enemy>()
+        .iter(&sim.world)
+        .filter(|e| e.spot == spot)
+        .count();
+    assert_eq!(left, 0, "they went home");
+
+    // None left at all (whatever took them): the call ends at once.
+    sim.incidents.next_kind = Some(incidents::IncidentKind::Robbery);
+    sim.incidents.forced = Some(incidents::IncidentKind::Robbery);
+    run(&mut sim, 2.0, &mut news);
+    let inc = sim
+        .incidents
+        .open
+        .iter()
+        .find(|i| i.kind == incidents::IncidentKind::Robbery)
+        .cloned()
+        .expect("another robbery");
+    let spot = inc.spot.unwrap();
+    let crooks: Vec<_> = sim
+        .world
+        .query::<(bevy_ecs::entity::Entity, &Enemy)>()
+        .iter(&sim.world)
+        .filter(|(_, e)| e.spot == spot)
+        .map(|(e, _)| e)
+        .collect();
+    assert!(!crooks.is_empty());
+    for e in crooks {
+        sim.world.despawn(e);
+    }
+    assert!(sim.world.resource::<Fights>().spots[spot].members > 0);
+    run(&mut sim, 1.5, &mut news);
+    assert!(
+        !sim.incidents.open.iter().any(|i| i.id == inc.id),
+        "a call with no robbers left stayed open"
+    );
+    assert!(news.iter().any(|n| n.0 == inc.id && n.3 == 2));
+    assert_eq!(sim.world.resource::<Fights>().spots[spot].members, 0);
+}

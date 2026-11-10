@@ -93,6 +93,12 @@ pub const CALM_SECONDS: f64 = 3.0;
 /// Talked down, the mole folk climb back into their hole: gone after this
 /// long (s).
 pub const HOME_SECONDS: f64 = 6.0;
+/// A fight's call stands only while its villains do: once none of them
+/// (standing, down or carried) is this near it (m) for
+/// [`STRAY_SECONDS`], they got away and the call ends. With none left at
+/// all it ends at once. A call never marks an empty street.
+pub const STRAY_REACH: f64 = 80.0;
+pub const STRAY_SECONDS: f64 = 30.0;
 /// The Iron-Masked Empire lands only once the team reaches this level.
 pub const IRON_LEVEL: u8 = 2;
 
@@ -346,6 +352,9 @@ pub struct Incident {
     pub collateral_from: BTreeMap<PlayerId, f64>,
     /// The help bar last sent (see [`Incident::held`]).
     pub held_sent: u8,
+    /// A fight's villains have all been away from it since this tick
+    /// (see [`STRAY_REACH`]).
+    pub strayed: Option<u64>,
 }
 
 impl Incident {
@@ -809,6 +818,7 @@ impl Incidents {
             doused: false,
             collateral_from: self.collateral.clone(),
             held_sent: 0,
+            strayed: None,
         }
     }
 
@@ -1176,6 +1186,13 @@ impl Incidents {
                 }
             }
         }
+        // Where each fight's villains are: (spot, place, beaten: lying
+        // down or carried off, so the police have them wherever they are).
+        let crooks: Vec<(usize, DVec3, bool)> = world
+            .query::<(&combat::Enemy, &Motion, &Fighter)>()
+            .iter(world)
+            .map(|(e, m, f)| (e.spot, m.0.pos, !f.fighting()))
+            .collect();
         let mut ended = Vec::new();
         for (k, inc) in self.open.iter_mut().enumerate() {
             if let Some(t) = inc.calmed {
@@ -1201,8 +1218,33 @@ impl Incidents {
                 }
                 None => inc.left == 0 && inc.hurt.is_none(),
             };
+            // Its villains still about? (A call with nobody there is a lie.)
+            let (crew, by) = match inc.spot {
+                Some(i) => {
+                    let mine = crooks.iter().filter(|c| c.0 == i);
+                    let by = mine
+                        .clone()
+                        .any(|c| c.2 || c.1.distance(inc.at) < STRAY_REACH);
+                    (mine.count(), by)
+                }
+                None => (1, true),
+            };
+            if by {
+                inc.strayed = None;
+            } else if inc.strayed.is_none() {
+                inc.strayed = Some(tick);
+            }
+            let got_away = crew == 0
+                || inc
+                    .strayed
+                    .is_some_and(|t| tick >= t + ticks(STRAY_SECONDS));
             if beaten {
                 inc.state = State::Resolved;
+                ended.push(k);
+            } else if got_away {
+                // Gone without being beaten (none left, or all far off):
+                // the crooks got away.
+                inc.state = State::TimedOut;
                 ended.push(k);
             } else if tick >= inc.expires && !inc.answered {
                 inc.state = State::TimedOut;
@@ -1541,6 +1583,7 @@ impl Incidents {
             doused: false,
             collateral_from: self.collateral.clone(),
             held_sent: 0,
+            strayed: None,
         };
         if kind == IncidentKind::Colossus {
             self.last_colossus = Some(tick);

@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.151 (2026-11-10)
+
+- A crime call no longer hangs over an empty street: if the crooks are gone (taken away, or off somewhere and not coming back), the call ends and the radio says they got away.
+
 ## 0.150 (2026-11-10)
 
 - HeroWorld is in alpha, and the title screen now says so with a big red ALPHA stamp on the logo. Expect rough edges, and tell us what you find.
