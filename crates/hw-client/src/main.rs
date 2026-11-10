@@ -4243,6 +4243,11 @@ fn main() -> EngineResult<()> {
             if let Some(w) = extras.waterfront.as_mut() {
                 w.update(world, DVec2::new(eye.x as f64, eye.z as f64), true);
             }
+            if hide_hud {
+                // Painters on their own layers never show up in the layer list
+                // above, so everything painted this frame is dropped as well.
+                frame.ui.ctx().graphics_mut(|g| *g = Default::default());
+            }
             Ok(())
         },
     );

@@ -137,6 +137,8 @@ section { padding-block: clamp(56px, 8vw, 110px); position: relative; }
 .tilt-l { transform: rotate(-1.2deg); }
 .tilt-r { transform: rotate(1deg); }
 .hero-shot { aspect-ratio: 2 / 1; max-width: 100%; }
+.hero-shot .scene { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; transition: opacity 0.8s; }
+.hero-shot .scene.shown { opacity: 1; }
 .hero-shot img { animation: kenburns 26s ease-in-out infinite alternate; transform-origin: 70% 60%; }
 @keyframes kenburns { from { transform: scale(1); } to { transform: scale(1.12) translate(-1.5%, -1%); } }
 

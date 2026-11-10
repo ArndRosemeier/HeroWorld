@@ -25,7 +25,7 @@
   <div class="cover-inner">
     <div class="masthead">
       <div class="issue">
-        <span class="issue-no" id="issue-no">No. 0.150</span>
+        <span class="issue-no" id="issue-no">No. 0.163</span>
         <span class="price">FREE</span>
       </div>
       <h1 class="logo" aria-label="HeroWorld">
@@ -38,6 +38,7 @@
     <div class="cover-art">
       <figure class="panel tilt-l hero-shot">
         <img src="media/town.webp" alt="A town of red roofs at golden hour with the Aether Spire in the middle" width="1600" height="805">
+        <canvas class="scene" id="scene" aria-hidden="true"></canvas>
       </figure>
       <div class="burst burst-cover" aria-hidden="true"><span>Fly!<br>Fight!<br>Rescue!</span></div>
     </div>
@@ -63,7 +64,7 @@
       <h2 id="what-h" class="caption-box">What is HeroWorld?</h2>
       <div class="panels three">
         <figure class="panel pop">
-          <img src="media/sky.webp" alt="A caped hero flying over a misty town of red roofs" loading="lazy">
+          <img src="media/sky.webp" alt="A town square with fifties cars, crates and passers-by, a flying saucer overhead and the Aether Spire behind" loading="lazy">
           <figcaption><b>You start as a nobody.</b> One power from the Aether, a wrist radio and a whole town to look after.</figcaption>
         </figure>
         <figure class="panel pop">
@@ -71,7 +72,7 @@
           <figcaption><b>Trouble finds you.</b> Muggings, robberies, fires, crashes, mutant rampages, and people to carry out of the rubble.</figcaption>
         </figure>
         <figure class="panel pop">
-          <img src="media/powers.webp" alt="A level 20 hero fighting a gang in a plaza" loading="lazy">
+          <img src="media/powers.webp" alt="A caped hero blasting a gangster car with an atomic ray in the old town" loading="lazy">
           <figcaption><b>You become a legend.</b> Karma is your level and your money. Climb from level 1 to 20 and buy powers from seven tiers.</figcaption>
         </figure>
       </div>
@@ -106,16 +107,16 @@
           <figcaption><b>The colossus.</b> A mad scientist's walking tank that drops robo-sentries as it stomps through the streets.</figcaption>
         </figure>
         <figure class="panel pop">
-          <img src="media/airship.webp" alt="A cream airship with red fins moored above an art deco building" loading="lazy">
+          <img src="media/airship.webp" alt="A silver airship with red fins moored at its mast above the town at dusk" loading="lazy">
           <figcaption><b>Sky pirates</b> raid from their airships.</figcaption>
         </figure>
         <figure class="panel pop">
-          <img src="media/tesla.webp" alt="A Tesla tower crackling with living plasma arcs at night" loading="lazy">
-          <figcaption><b>The Tesla tower</b> crackles over the villain quarter.</figcaption>
+          <img src="media/tesla.webp" alt="Green searchlights sweeping the night sky over the villain quarter" loading="lazy">
+          <figcaption><b>The villain quarter</b> sweeps the night with green searchlights.</figcaption>
         </figure>
         <figure class="panel pop wide">
-          <img src="media/fight.webp" alt="A caped hero fighting a thug on a lawn beside a fifties car" loading="lazy">
-          <figcaption><span><b>Gangs and factions</b> of every stripe: the Iron-Masked Empire, sky pirates, mole folk, relic hunters. Not all of them are evil, and they remember how you treat them.</span></figcaption>
+          <img src="media/fight.webp" alt="Mole Haven underground: mushroom houses, market stalls and mole folk around a glowing Aether pool" loading="lazy">
+          <figcaption><span><b>Gangs and factions</b> of every stripe: the Iron-Masked Empire, sky pirates, the mole folk of Mole Haven (above), relic hunters. Not all of them are evil, and they remember how you treat them.</span></figcaption>
         </figure>
       </div>
     </div>
@@ -218,6 +219,7 @@
 </button>
 <audio id="theme" src="media/theme.ogg" preload="none" loop></audio>
 
+<script src="scene.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

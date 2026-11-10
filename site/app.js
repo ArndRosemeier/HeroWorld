@@ -34,6 +34,12 @@
     requestAnimationFrame(draw);
   }
 
+  // ---- The live town on the cover (the still picture stays without WebGL 2) ----
+  var scene = document.getElementById("scene");
+  if (scene && window.HWScene) {
+    try { window.HWScene.start(scene, { still: still }); } catch (e) { /* the picture stays */ }
+  }
+
   // ---- Noon to night ----
   var compare = document.getElementById("compare");
   var slider = document.getElementById("daynight");

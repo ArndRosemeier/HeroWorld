@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.163 (2026-11-10)
+
+- The website's cover is now a live, animated comic town: cars, flying taxis, an airship, a rocket launch and a hero flying a loop. New screenshots of Mole Haven, the villain quarter, the rocket port and a street fight.
+
 ## 0.162 (2026-11-10)
 
 - Behind the scenes: each build now runs only the checks that guard against crashes, lost saves and broken co-op; the wider gameplay checks run once a day. New builds are ready sooner.
