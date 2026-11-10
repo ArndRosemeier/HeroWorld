@@ -1198,7 +1198,7 @@ dependencies = [
 [[package]]
 name = "engine"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Engine?branch=main#4628d567305af9da83cd184a6b1bd31e579d2eaa"
+source = "git+https://github.com/ArndRosemeier/Engine?branch=main#78563b2a982ece42b0ec5fba1d417ede2e6b6101"
 dependencies = [
  "bytemuck",
  "egui",
@@ -4684,7 +4684,7 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 [[package]]
 name = "wgpu"
 version = "25.0.2"
-source = "git+https://github.com/ArndRosemeier/Engine?branch=main#4628d567305af9da83cd184a6b1bd31e579d2eaa"
+source = "git+https://github.com/ArndRosemeier/Engine?branch=main#78563b2a982ece42b0ec5fba1d417ede2e6b6101"
 dependencies = [
  "arrayvec",
  "bitflags 2.13.2",

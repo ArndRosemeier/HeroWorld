@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.153 (2026-11-10)
+
+- Engine 0.047: on computers without a real graphics card (software drawing), airships and
+  other things built from many copies no longer vanish when you come close.
+
 ## 0.152 (2026-11-10)
 
 - The police visor stays on until you switch it off with T. A new call switches it on again.

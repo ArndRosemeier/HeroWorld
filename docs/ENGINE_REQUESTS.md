@@ -209,13 +209,15 @@ Not needed for the first playable city, but the design depends on them eventuall
   tile drawn rotated and offset, blended at the seams), or a second, larger-scale detail
   layer, would fix it for every textured surface without extra geometry.
 
-- **Bug: instanced meshes vanish close up with the GPU scene on.** The Tesla tower's live
-  parts (`spawn_instanced` + instances, `teslaview.rs`) show from 75 m but are not drawn at all
-  from 16 m; `ENGINE_GPU_SCENE=0` draws them, `ENGINE_OCCLUSION=0` does not help. Repro:
-  `POWERFX_TESLA=1 POWERFX_PLAIN=1 POWERFX_NEAR=1 cargo run -p hw-client --example powerfx`
-  (with the WGSL materials on, the same entities draw through the custom-material path and
-  show). Since 0.146 the tower's parts all wear custom materials, so the game no longer hits
-  it there, but other instanced meshes seen from inside their bounds may.
+## Done for HeroWorld (2026-11-10, Engine 0.047)
+
+Engine PR #112, merged:
+
+- **Instanced meshes vanished close up with the GPU scene on** (the Tesla coil, the pirate
+  airship from ~10 m). Only on Mesa's software driver (lavapipe: containers, CI, verify
+  runs), not on real cards: it carried an empty GPU draw count over to the plain draws after
+  it. Engine turns GPU draw counts off on that driver. Repro was `POWERFX_TESLA=1
+  POWERFX_PLAIN=1 POWERFX_NEAR=1 cargo run -p hw-client --example powerfx`.
 
 ## Done for HeroWorld (2026-11-09, Engine 0.005)
 
