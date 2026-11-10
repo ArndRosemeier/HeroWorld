@@ -77,6 +77,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_round_brews_rains_clears_and_shows_a_bow() {
         let s = |t: f64| shower(t);
         assert_eq!(s(10.0).cloud, 0.0);

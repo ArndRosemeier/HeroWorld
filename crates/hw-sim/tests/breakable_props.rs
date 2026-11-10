@@ -96,6 +96,7 @@ fn a_punch_fells_a_lamp_away_from_the_hero_and_everyone_sees_it() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn cars_flip_and_statues_need_a_stronger_hero() {
     let t = GeneratedTown::generate(Seed(1), 6000.0);
     let mut street = PropDamage::new(t.world.clone());
@@ -137,6 +138,7 @@ fn cars_flip_and_statues_need_a_stronger_hero() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_blast_down_the_street_hits_the_first_lamp_in_the_way() {
     let t = GeneratedTown::generate(Seed(1), 6000.0);
     let i = nearest(&t, |k| matches!(k, PropKind::Lamp(_)));

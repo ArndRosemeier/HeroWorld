@@ -2567,6 +2567,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn furnished_floors_have_furniture() {
         for (usage, floors) in [
             (BuildingUse::Apartments, 4),
@@ -2637,6 +2638,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn flats_have_a_bed_a_sofa_and_a_kitchen() {
         // Count big pieces by their footprints: a flat floor holds as many
         // beds and sofas as it has flats.
@@ -2659,6 +2661,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn every_shop_kind_is_furnished() {
         let p = plan(BuildingUse::ShopsAndOffices, 3);
         let f = &p.floors[0];

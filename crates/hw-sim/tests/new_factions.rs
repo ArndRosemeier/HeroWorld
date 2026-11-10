@@ -58,6 +58,7 @@ fn group(sim: &mut Sim, inc: &incidents::Incident) -> Vec<(hw_core::NetId, Enemy
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn mole_folk_talked_down_go_home_and_molehaven_remembers() {
     let (mut sim, hero, inc) = with_incident(IncidentKind::Surfacing);
     let me = PlayerId(1);
@@ -111,6 +112,7 @@ fn mole_folk_talked_down_go_home_and_molehaven_remembers() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn fighting_mole_folk_wins_no_friends_in_molehaven() {
     let (mut sim, hero, inc) = with_incident(IncidentKind::Surfacing);
     let me = PlayerId(1);
@@ -141,6 +143,7 @@ fn fighting_mole_folk_wins_no_friends_in_molehaven() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn sky_pirates_raid_a_shop_and_leave_a_passer_by_alone() {
     let (mut sim, hero, inc) = with_incident(IncidentKind::PirateRaid);
     let crew = group(&mut sim, &inc);
@@ -167,6 +170,7 @@ fn sky_pirates_raid_a_shop_and_leave_a_passer_by_alone() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_iron_legion_holds_townsfolk_until_it_is_beaten() {
     let (mut sim, hero, inc) = with_incident(IncidentKind::IronLanding);
     let legion = group(&mut sim, &inc);
@@ -222,7 +226,7 @@ fn the_iron_legion_holds_townsfolk_until_it_is_beaten() {
 }
 
 #[test]
-#[ignore = "slow: scripts/check.sh --full and CI run it"]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_empire_waits_until_the_team_can_take_it() {
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let mut sim = Sim::for_town(Seed(3), &town);
@@ -246,6 +250,7 @@ fn the_empire_waits_until_the_team_can_take_it() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn pirates_keep_watch_on_the_quay_and_delvers_guard_molehaven() {
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let mut sim = Sim::for_town(Seed(3), &town);

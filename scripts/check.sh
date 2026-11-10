@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 # The checks a change must pass before it is pushed. See docs/CHECKS.md.
 #
-#   scripts/check.sh            fast: fmt, clippy, and the tests of the crates
-#                               this change touches (and the crates that use
-#                               them), slow tests left out. Run it before every push.
-#   scripts/check.sh --all      the same tests for every crate.
-#   scripts/check.sh --full     everything, slow tests too: what CI runs.
-#                               Not the on-demand tests.
+# Tests come in three tiers (docs/CHECKS.md): blockers run every time;
+# gameplay and slow tests are marked #[ignore = "daily (...)"] and run once a
+# day (CI's first run of the day); looks and balance are marked
+# #[ignore = "on demand (...)"] and nothing runs them automatically.
+#
+#   scripts/check.sh            fast: fmt, clippy, and the blocker tests of the
+#                               crates this change touches (and the crates that
+#                               use them). Run it before every push.
+#   scripts/check.sh --all      the blocker tests of every crate (CI, every push).
+#   scripts/check.sh --daily    blockers, gameplay and slow tests: CI's first
+#                               run of each day. --full is the same.
 #   scripts/check.sh --on-demand  only the on-demand tests: looks (z-fighting,
 #                               textures, model budgets, ...) and balance.
-#                               Nothing runs them automatically.
-#   scripts/check.sh hw-sim ... the tests of the crates named.
+#   scripts/check.sh hw-sim ... the blocker tests of the crates named.
 #
 # "This change" is everything that differs from origin/main: commits not yet
 # pushed, staged and unstaged edits, new files. Set HW_CHECK_BASE to compare
@@ -22,10 +26,10 @@ mode=touched
 named=()
 for a in "$@"; do
     case "$a" in
-        --full) mode=full ;;
+        --full | --daily) mode=full ;;
         --on-demand) mode=on-demand ;;
         --all) mode=all ;;
-        -h | --help) sed -n '2,17p' "$0"; exit 0 ;;
+        -h | --help) sed -n '2,21p' "$0"; exit 0 ;;
         -*) echo "unknown option $a" >&2; exit 2 ;;
         *) mode=named; named+=("$a") ;;
     esac
@@ -87,10 +91,10 @@ step "cargo clippy"
 cargo clippy --workspace --all-targets -- -D warnings
 
 if [ "$mode" = full ]; then
-    step "cargo test, everything"
+    step "cargo test, daily: everything but the on-demand tests"
     skips=()
     for n in "${on_demand[@]}"; do skips+=(--skip "$n"); done
-    cargo test --workspace -- --include-ignored --skip level_twenty_in_about_ten_hours --skip at_the_climb_tests_pace "${skips[@]}"
+    cargo test --workspace --no-fail-fast -- --include-ignored --skip level_twenty_in_about_ten_hours --skip at_the_climb_tests_pace "${skips[@]}"
     step "done"
     exit 0
 fi
@@ -137,29 +141,47 @@ case "$mode" in
         fi
         ;;
 esac
-echo "== tests of: $want(slow tests left out; --full runs them)"
+echo "== blocker tests of: $want(daily and on-demand tests left out)"
 
 # Build every test binary of the workspace (the same build as clippy's
 # workspace, so nothing is rebuilt twice), then run the wanted crates' ones
 # the way cargo test would: from the crate's folder, with its manifest dir.
 step "building tests"
 list="$(mktemp)"
-trap 'rm -f "$list"' EXIT
 cargo test --workspace --no-run --message-format=json-render-diagnostics |
     grep '"reason":"compiler-artifact"' | grep -E '"profile":\{[^}]*"test":true' | grep '"executable":"' |
     sed -E 's/.*"package_id":"path\+file:\/\/([^#"]*)#[^"]*".*"executable":"([^"]*)".*/\1\t\2/' >"$list"
 
 step "running tests"
-failed=()
+# Several test programs at once, one per core: most hold one or two tests and
+# would leave the other cores idle. Each one's output goes to its own file and
+# is shown only when it fails.
+jobs="$(nproc 2>/dev/null || echo 4)"
+logs="$(mktemp -d)"
+trap 'rm -rf "$list" "$logs"' EXIT
+n=0
 while IFS=$'\t' read -r dir exe; do
     case "$dir" in /[A-Za-z]:/*) dir="${dir#/}" ;; esac # file:///C:/... on Windows
     crate="$(basename "$dir")"
     case " $want " in *" $crate "*) ;; *) continue ;; esac
-    echo "-- $crate: $(basename "$exe")"
-    if ! (cd "$dir" && CARGO_MANIFEST_DIR="$dir" CARGO_PKG_NAME="$crate" "$exe" -q); then
-        failed+=("$crate/$(basename "$exe")")
-    fi
+    name="$crate/$(basename "$exe")"
+    (
+        start=$SECONDS
+        if (cd "$dir" && CARGO_MANIFEST_DIR="$dir" CARGO_PKG_NAME="$crate" "$exe" -q </dev/null) \
+            >"$logs/$n.log" 2>&1; then
+            echo "-- $name ($((SECONDS - start)) s)"
+        else
+            echo "$name" >"$logs/$n.failed"
+            echo "-- $name FAILED:"
+            cat "$logs/$n.log"
+        fi
+    ) &
+    n=$((n + 1))
+    while [ "$(jobs -rp | wc -l)" -ge "$jobs" ]; do sleep 0.2; done
 done <"$list"
+wait
+failed=()
+for f in "$logs"/*.failed; do [ -e "$f" ] && failed+=("$(cat "$f")"); done
 
 if [ ${#failed[@]} -gt 0 ]; then
     echo "== FAILED: ${failed[*]}" >&2

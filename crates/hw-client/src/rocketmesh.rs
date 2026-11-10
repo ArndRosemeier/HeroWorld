@@ -1338,6 +1338,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn digits_light_their_segments() {
         assert_eq!(lit(8), [true; 7]);
         assert_eq!(lit(1).iter().filter(|x| **x).count(), 2);

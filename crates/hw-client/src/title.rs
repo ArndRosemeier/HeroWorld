@@ -2134,6 +2134,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn letters_land_and_stand_still_when_asked() {
         let em = 100.0;
         let (off, scale, spin, alpha) = letter_pose(3, 10.0, false, em);
@@ -2145,6 +2146,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn room_codes_are_upper_case_addresses_are_not() {
         assert_eq!("abc12x".to_string().to_uppercase_code(), "ABC12X");
         assert_eq!(

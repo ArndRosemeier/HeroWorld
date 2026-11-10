@@ -148,6 +148,7 @@ mod tests {
     use hw_core::Seed;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_quarters_edge_is_tagged_and_barricaded() {
         let w = TownWorld::generate(Seed(3), TownParams::sample(Seed(3), 20_000.0));
         let d = w.town.dystopia.as_ref().unwrap();

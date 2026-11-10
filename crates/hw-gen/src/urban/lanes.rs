@@ -522,6 +522,7 @@ mod tests {
     /// through must be open road. (Before 0.065 one sample in eight hit a
     /// house or a parked car.)
     #[test]
+    #[ignore = "daily (slow blocker): scripts/check.sh --daily, and CI's first run of the day"]
     fn street_cars_keep_clear_of_buildings_and_props() {
         use crate::urban::world::CAR_HALF;
         use std::collections::BTreeMap;
@@ -589,6 +590,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn every_lane_is_on_a_loop_and_loops_are_smooth() {
         let w = town().everything();
         let all: Vec<usize> = (0..w.roads.len()).collect();

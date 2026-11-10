@@ -886,6 +886,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn level_and_powers_helpers() {
         let s = at_level(hw_sim::progress::starter(), 10);
         assert_eq!(hw_sim::progress::level_of(s.lifetime), 10);
@@ -901,6 +902,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn places_are_found_and_clear() {
         let town = hw_sim::GeneratedTown::generate(hw_core::Seed(1), hw_sim::DEFAULT_POPULATION);
         let solids = &town.obstacles;

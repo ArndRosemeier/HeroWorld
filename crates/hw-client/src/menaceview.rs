@@ -678,6 +678,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_drone_flies_its_loop_smoothly() {
         let p = Patrol {
             centre: DVec2::new(100.0, -50.0),

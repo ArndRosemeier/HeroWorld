@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.162 (2026-11-10)
+
+- Behind the scenes: each build now runs only the checks that guard against crashes, lost saves and broken co-op; the wider gameplay checks run once a day. New builds are ready sooner.
+
 ## 0.161 (2026-11-10)
 
 - Behind the scenes: checks for looks and balance (z-fighting, textures and the like) now run only when asked, so each new build is checked and ready sooner.

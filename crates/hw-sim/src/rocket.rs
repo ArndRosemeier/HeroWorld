@@ -388,6 +388,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_launch_goes_up_and_comes_back() {
         let s = sched();
         assert!((FIRST.0..FIRST.1).contains(&s.first));
@@ -454,6 +455,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_scrub_stops_the_count_but_not_the_next() {
         let mut s = sched();
         let c = s.first + PERIOD;

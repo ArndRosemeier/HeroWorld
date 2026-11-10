@@ -76,6 +76,7 @@ fn put(sim: &mut Sim, id: NetId, at: DVec3) {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_freeze_ray_freezes_minions_and_a_blow_shatters_the_ice() {
     let (mut sim, _hero, foes) = street(&[Power::Freeze, Power::Bolt], 30.0);
     let kind = sim.enemies()[0].1;
@@ -182,6 +183,7 @@ fn sidekick_of(sim: &mut Sim, owner: NetId) -> Option<(NetId, DVec3)> {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_sidekick_keeps_at_its_heros_side_and_fights() {
     let (mut sim, hero, foes) = street(&[Power::Sidekick], 60.0);
     let fx = press(&mut sim, use_power(Power::Sidekick, None, DVec3::X), 2);
@@ -216,6 +218,7 @@ fn the_sidekick_keeps_at_its_heros_side_and_fights() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_hypno_ray_turns_a_minion_against_its_friends() {
     let (mut sim, _hero, foes) = street(&[Power::Hypno], 12.0);
     assert!(charmable(sim.enemies()[0].1));

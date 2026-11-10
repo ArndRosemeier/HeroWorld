@@ -2728,6 +2728,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_deep_tile_builds() {
         let w = TownWorld::generate(
             hw_core::Seed(3),

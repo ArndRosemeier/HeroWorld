@@ -302,6 +302,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn interpolation_glides_between_snapshots() {
         let mut interp = Interpolator::new();
         let at = |x: f64| EntityState {

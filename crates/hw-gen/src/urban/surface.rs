@@ -413,6 +413,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn strip_points_step_and_mitre() {
         let r = straight();
         let pts = r.strip_points();
@@ -435,6 +436,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn tight_bends_are_eased() {
         // A staircase of 3 m legs, too tight for a 10 m wide road.
         let pts: Vec<DVec2> = (0..8)
@@ -447,6 +449,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn ends_meeting_at_an_angle_get_a_plate() {
         let a = WorldRoad {
             pts: vec![DVec2::ZERO, DVec2::new(20.0, 0.0)],
@@ -470,6 +473,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn carriageway_stands_above_pavement() {
         let r = straight();
         let t = SurfaceTile::new(std::slice::from_ref(&r), (0, 0));
@@ -554,7 +558,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "slow: scripts/check.sh --full and CI run it"]
+    #[ignore = "daily (slow blocker): scripts/check.sh --daily, and CI's first run of the day"]
     fn towns_roads_neither_fold_nor_leave_bare_ground() {
         for seed in 1..=3 {
             for people in [300.0, 5_000.0, 40_000.0, 300_000.0] {

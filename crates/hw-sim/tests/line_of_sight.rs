@@ -156,6 +156,7 @@ fn a_thin_inner_wall_blocks_the_line_wherever_it_stands() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_parked_car_hides_the_chest_but_not_the_head() {
     // A car-sized box (1.45 m high) across the line: the chests do not see
     // each other, the heads do, and so does the hero (as the player does

@@ -248,6 +248,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_crate_lands_on_the_ground() {
         let mut p = Physics::new(Arc::new(Obstacles::flat(GROUND_Y)));
         let id = NetId(1);
@@ -264,6 +265,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_crate_lands_on_a_box_of_the_city() {
         let mut solids = Obstacles::flat(GROUND_Y);
         // A 4 m high block, turned 30 degrees.
@@ -295,6 +297,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_hero_shoves_a_crate() {
         let mut p = Physics::new(Arc::new(Obstacles::flat(GROUND_Y)));
         let id = NetId(1);

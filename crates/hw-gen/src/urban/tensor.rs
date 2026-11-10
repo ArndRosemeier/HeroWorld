@@ -189,6 +189,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn directions_are_unsigned_and_add_up() {
         let a = Tensor::along(0.3, 1.0);
         let b = Tensor::along(0.3 + std::f64::consts::PI, 1.0);
@@ -205,6 +206,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn radial_fields_ring_the_centre() {
         let r = Basis::Radial {
             center: DVec2::ZERO,

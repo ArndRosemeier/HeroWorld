@@ -286,6 +286,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn alarms_are_raised_kept_up_and_ended_on_every_machine() {
         let mut server = Alarms::default();
         let mut client = Alarms::default();

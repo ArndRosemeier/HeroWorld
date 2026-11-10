@@ -206,6 +206,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_sun_steps_but_keeps_time() {
         // Frames within one step share the sun (the shadow cache holds)...
         let a = 15.5;
@@ -225,6 +226,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn night_and_day() {
         assert_eq!(night(12.0), 0.0);
         assert_eq!(night(22.0), 1.0);
@@ -234,6 +236,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn better_quality_shadows_reach_farther() {
         let ends: Vec<f32> = Quality::ALL
             .iter()

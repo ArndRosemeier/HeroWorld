@@ -876,6 +876,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_leaf_turns_from_shut_to_open_about_its_hinge() {
         let l = LeafSpot {
             hinge: Vec3::new(2.0, 0.0, 5.0),
@@ -893,6 +894,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_closed_building_shows_its_street_doors_and_an_open_floor_all_its_doors() {
         let city = hw_gen::city::CityPlan::generate(
             hw_core::Seed(3),

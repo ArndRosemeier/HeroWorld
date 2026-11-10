@@ -969,6 +969,7 @@ mod tests {
 
     /// No piece of a megacity is too big to plan when someone comes near.
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn districts_stay_small_in_a_megacity() {
         let w = TownWorld::generate(Seed(1), TownParams::sample(Seed(1), 2_000_000.0));
         let core = w.core();
@@ -990,7 +991,7 @@ mod tests {
     /// far one goes, and coming back finds the same buildings and props,
     /// by the same ids, as on the way out.
     #[test]
-    #[ignore = "slow: scripts/check.sh --full and CI run it"]
+    #[ignore = "daily (slow blocker): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_walk_across_a_megacity_keeps_memory_bounded_and_the_world_the_same() {
         let w = TownWorld::generate(Seed(2), TownParams::sample(Seed(2), 2_000_000.0));
         let core = w.core();

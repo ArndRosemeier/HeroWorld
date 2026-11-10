@@ -1758,6 +1758,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn rivers_are_water_and_their_banks_too_high_to_step_onto() {
         let city = CityPlan::generate(hw_core::Seed(1), &hw_gen::city::CityParams::default());
         let o = Obstacles::from_city(&city, &[], 0.0, 0.0);
@@ -1957,6 +1958,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn sliding_along_a_wall_keeps_the_sideways_part() {
         let o = one_box();
         let mut b = Body {

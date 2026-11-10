@@ -283,6 +283,7 @@ mod tests {
     use hw_gen::urban::TownParams;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_quarter_has_corners_and_a_gate() {
         let world = std::sync::Arc::new(hw_gen::urban::world::TownWorld::generate(
             Seed(3),

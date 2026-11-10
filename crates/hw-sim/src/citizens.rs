@@ -1635,6 +1635,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn people_indoors_keep_hours() {
         let mut c = town();
         let place =
@@ -1787,6 +1788,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn citizens_walk_on_pavements_and_move_smoothly() {
         let c = town();
         let p = c.world.spawn_line().0;
@@ -1819,6 +1821,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn people_cross_roads_with_traffic_only_while_the_lights_say_walk() {
         let t = GeneratedTown::generate(Seed(1), 20_000.0);
         let signals = crate::traffic::Traffic::new(t.area.clone()).signals();
@@ -1859,6 +1862,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn finding_people_near_a_player_is_quick() {
         let t = GeneratedTown::generate(Seed(1), 40_000.0);
         let c = people(t.area);

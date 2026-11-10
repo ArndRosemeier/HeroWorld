@@ -1666,6 +1666,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn it_works_rumbles_and_blows() {
         let mut v = DrillView::with_rig(Some(rig_at()));
         let (mut rumbles, mut bursts, mut roar) = (0, 0, 0.0f32);

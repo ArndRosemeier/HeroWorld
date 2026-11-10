@@ -33,6 +33,7 @@ fn run(sim: &mut Sim, seconds: f64, news: &mut Vec<(u32, u8, [f32; 3], u8)>) {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn an_incident_starts_near_a_hero_and_is_resolved_by_beating_its_villains() {
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let mut sim = Sim::for_town(Seed(3), &town);
@@ -83,6 +84,7 @@ fn an_incident_starts_near_a_hero_and_is_resolved_by_beating_its_villains() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn an_unanswered_incident_times_out_and_more_follow() {
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let mut sim = Sim::for_town(Seed(3), &town);
@@ -113,6 +115,7 @@ fn an_unanswered_incident_times_out_and_more_follow() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn heroes_get_people_out_of_a_fire_one_by_one() {
     use hw_net::InputState;
     use hw_sim::incidents::IncidentKind;
@@ -211,6 +214,7 @@ fn heroes_get_people_out_of_a_fire_one_by_one() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_mugging_has_a_victim_and_the_crooks_turn_on_a_hero_who_steps_in() {
     use hw_net::EntityKind;
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
@@ -316,6 +320,7 @@ fn a_mugging_has_a_victim_and_the_crooks_turn_on_a_hero_who_steps_in() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_building_brought_down_traps_people_in_its_rubble() {
     use hw_sim::incidents::IncidentKind;
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
@@ -361,6 +366,7 @@ fn a_building_brought_down_traps_people_in_its_rubble() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_debug_menu_starts_any_incident_at_once() {
     use hw_sim::incidents::IncidentKind;
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
@@ -387,6 +393,7 @@ fn the_debug_menu_starts_any_incident_at_once() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn rescue_bubbles_float_people_out_and_the_freeze_ray_douses_the_fire() {
     use hw_net::{InputState, Power};
     use hw_sim::incidents::IncidentKind;
@@ -526,12 +533,14 @@ fn careful_win(wreck: usize) -> bool {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_fight_won_without_wrecking_the_street_earns_a_bonus() {
     assert!(careful_win(0), "careful: a bonus");
     assert!(!careful_win(4), "a wrecked street: none");
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn holding_the_help_key_shows_how_far_along_it_is() {
     use hw_net::InputState;
     use hw_sim::incidents::IncidentKind;
@@ -594,6 +603,7 @@ fn holding_the_help_key_shows_how_far_along_it_is() {
 /// (none left, or all far off and not coming back) ends as "they got away",
 /// and the radio hears it.
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_call_ends_when_its_villains_are_gone() {
     use hw_sim::combat::{Enemy, Fights};
     use hw_sim::Motion;
@@ -687,6 +697,7 @@ fn a_call_ends_when_its_villains_are_gone() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_car_crash_traps_one_person_and_holds_up_the_traffic() {
     use hw_sim::incidents::IncidentKind;
     let town = GeneratedTown::generate(Seed(3), 20_000.0);

@@ -1673,6 +1673,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn near_finds_every_street_car_in_reach() {
         let mut t = traffic();
         t.advance_to(60.0);
@@ -1701,6 +1702,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn cars_on_one_lane_keep_their_distance() {
         let mut t = traffic();
         for l in t.ground.iter().filter(|l| l.count > 0) {
@@ -1729,7 +1731,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "slow: scripts/check.sh --full and CI run it"]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn cars_give_way_at_junctions_and_keep_moving() {
         let mut t = traffic();
         let zones: usize = t.zones.iter().map(|z| z.len()).sum();
@@ -1792,6 +1794,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn traffic_light_props_show_their_junctions_cycle() {
         use hw_gen::urban::props::PropKind;
         let t = traffic();
@@ -1838,6 +1841,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn cars_stop_for_someone_standing_in_the_road() {
         let mut t = traffic();
         t.advance_to(40.0);
@@ -1904,6 +1908,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn no_car_stands_where_the_road_is_blocked() {
         let mut t = traffic();
         t.advance_to(40.0);

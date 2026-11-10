@@ -1516,6 +1516,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_plant_has_its_parts() {
         for near in [true, false] {
             let mut b = MeshBuilder::new();
@@ -1536,6 +1537,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_atom_spins_on_its_pylon() {
         let (c, planes) = orbits();
         assert!(c.y > PYLON_H);
@@ -1549,6 +1551,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_valve_blows_now_and_then_and_the_light_breathes() {
         let mut v = AtomView::with_plant(None);
         let (mut blows, mut lo, mut hi) = (0, f32::MAX, f32::MIN);

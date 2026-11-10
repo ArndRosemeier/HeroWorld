@@ -197,6 +197,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn every_city_has_a_river_and_most_a_coast() {
         let mut coastal = 0;
         let mut two = 0;

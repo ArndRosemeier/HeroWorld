@@ -309,6 +309,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn names_are_cleaned() {
         assert_eq!(clean_name("  Zap\n "), "Zap");
         assert_eq!(clean_name(&"x".repeat(40)).len(), 24);

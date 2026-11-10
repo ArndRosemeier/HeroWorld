@@ -716,6 +716,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn calls_behind_point_to_the_side_never_up() {
         let vp = camera();
         // Behind and a little to the left, on the ground below the eye: the
@@ -752,6 +753,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn t_switches_it_on_and_off_and_nothing_else_does() {
         let radio = Radio::default();
         let mut v = Visor::default();

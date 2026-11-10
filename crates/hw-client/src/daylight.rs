@@ -93,6 +93,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn channels_cover_one_to_fifteen() {
         let mut seen = std::collections::BTreeSet::new();
         for t in TONES {

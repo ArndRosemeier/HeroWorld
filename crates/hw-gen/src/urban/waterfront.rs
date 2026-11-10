@@ -161,6 +161,7 @@ mod tests {
     use hw_core::Seed;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn river_towns_get_quay_walls_and_steps() {
         let tw = crate::urban::world::TownWorld::generate(
             Seed(3),

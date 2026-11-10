@@ -51,6 +51,7 @@ fn use_power(p: Power, target: Option<NetId>) -> InputState {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn every_tier_has_two_powers_and_passives_have_no_key() {
     for t in 1..=7 {
         let n = Power::ALL
@@ -87,6 +88,7 @@ fn street(level: u8, powers: &[Power], at: f64) -> (Sim, NetId) {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn mend_heals_the_hero_and_friends_near() {
     let mut sim = arena(2);
     let a = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(8, &[Power::Mend]));
@@ -117,6 +119,7 @@ fn mend_heals_the_hero_and_friends_near() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_beam_goes_through_every_villain_in_its_line() {
     // Three of the group stand one behind the other down the street: a beam
     // at the nearest goes through the two behind it, and misses the rest.
@@ -151,6 +154,7 @@ fn a_beam_goes_through_every_villain_in_its_line() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_meteor_lands_a_moment_later_on_the_whole_group() {
     let (mut sim, hero) = street(16, &[Power::Meteor], 30.0);
     let target = sim.enemies()[0].0;
@@ -172,6 +176,7 @@ fn a_meteor_lands_a_moment_later_on_the_whole_group() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_nova_flattens_everyone_round_the_hero() {
     let (mut sim, hero) = street(20, &[Power::Nova], 6.0);
     let fx = press(&mut sim, use_power(Power::Nova, None), 2);
@@ -203,6 +208,7 @@ fn punished(powers: &[Power], seconds: f64) -> f32 {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn invulnerable_and_vitality_keep_a_hero_on_their_feet() {
     let plain = punished(&[], 4.0);
     let tough = punished(&[Power::Invulnerable], 4.0);
@@ -214,6 +220,7 @@ fn invulnerable_and_vitality_keep_a_hero_on_their_feet() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn rally_makes_friends_near_hit_harder() {
     let mut sim = arena(4);
     let a = sim.spawn_hero_with(
@@ -237,6 +244,7 @@ fn rally_makes_friends_near_hit_harder() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn super_speed_outruns_everyone_on_foot() {
     let run = |powers: &[Power], boost: bool| {
         let mut sim = arena(5);
@@ -303,7 +311,7 @@ const PLAN: [Power; 15] = [
 
 /// Ten hours of play in one go: levels 1 to 20 (about a minute in release,
 /// several in a debug build, so it runs with `--ignored` and in the balance
-/// example; `scripts/check.sh --full` skips it by name).
+/// example; `scripts/check.sh --daily` skips it by name).
 #[test]
 #[ignore = "ten hours of play: run it with --ignored or the balance example"]
 fn a_new_hero_reaches_level_twenty_in_about_ten_hours() {

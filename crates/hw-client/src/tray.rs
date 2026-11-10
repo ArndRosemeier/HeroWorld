@@ -241,6 +241,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn powers_keep_their_usual_keys() {
         let mut t = Tray::default();
         t.sync(&sheet(&[Power::SuperJump, Power::Bolt, Power::Nova]));
@@ -255,6 +256,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn moving_swaps_and_giving_up_frees_the_slot() {
         let mut t = Tray::default();
         t.sync(&sheet(&[Power::Bolt, Power::Hold]));
@@ -280,6 +282,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn survives_the_profile() {
         let mut t = Tray::default();
         t.sync(&sheet(&[Power::Bolt, Power::Beam]));

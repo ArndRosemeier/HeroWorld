@@ -10,7 +10,7 @@ use hw_sim::{GeneratedTown, Sim, AREA_SHIFT};
 use std::sync::Arc;
 
 #[test]
-#[ignore = "slow: scripts/check.sh --full and CI run it"]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn people_and_traffic_follow_a_hero_across_a_big_city() {
     let t = GeneratedTown::generate(Seed(2), 400_000.0);
     let mut sim = Sim::for_town(Seed(2), &t);

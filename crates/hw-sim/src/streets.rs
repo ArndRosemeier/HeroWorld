@@ -194,6 +194,7 @@ mod tests {
     use hw_core::Seed;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_tank_finds_its_way_along_main_roads() {
         let t = crate::GeneratedTown::generate(Seed(1), crate::DEFAULT_POPULATION);
         let s = Streets::new(&t.world, TANK_STREET);

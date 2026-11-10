@@ -133,6 +133,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn players_far_apart_get_their_own_bubbles() {
         let mut b = Bubbles::default();
         b.update(&[(PlayerId(2), at(0.0)), (PlayerId(1), at(5000.0))]);
@@ -147,6 +148,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn bubbles_merge_when_players_meet_and_split_with_a_margin() {
         let mut b = Bubbles::default();
         let (p, q) = (PlayerId(1), PlayerId(2));
@@ -171,6 +173,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_chain_of_players_is_one_bubble() {
         let mut b = Bubbles::default();
         let players: Vec<_> = (1..=5)

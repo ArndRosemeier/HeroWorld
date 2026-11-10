@@ -176,6 +176,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn waits_until_ready_then_flies_an_arc_and_ends_on_the_game_camera() {
         let from = Vec3::new(0.0, 120.0, 0.0);
         let mut f = StartFlight::new(from, 30.0, -10.0);
@@ -216,6 +217,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn flies_anyway_after_the_longest_wait() {
         let mut f = StartFlight::new(Vec3::ZERO, 0.0, 0.0);
         let to = pose(Vec3::new(100.0, 0.0, 0.0), 90.0, 0.0);

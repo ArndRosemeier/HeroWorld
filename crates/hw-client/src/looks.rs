@@ -99,6 +99,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn compact_and_back() {
         let mut c = CharacterConfig::default();
         c.body.muscle = 0.9;
@@ -119,6 +120,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_coloured_suit_is_dyed_but_a_chosen_finish_stays() {
         let mut c = CharacterConfig {
             outfit: vec![

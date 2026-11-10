@@ -3,6 +3,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Run it by hand (Actions, CI, Run workflow) for the daily tests at once.
+  workflow_dispatch:
 jobs:
   check:
     runs-on: windows-latest
@@ -23,6 +25,35 @@ jobs:
           path: assets/packs
           key: actors-packs-${{ hashFiles('assets/actors-packs.version') }}
       - run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/fetch-packs.ps1
-      # Everything, slow tests too (docs/CHECKS.md).
-      - run: scripts/check.sh --full
+      # Blocker tests on every push; the gameplay and slow tests too on the
+      # first run of each day (Berlin time), or when run by hand. The day's
+      # stamp is an empty cache entry. On-demand tests never run here.
+      # See docs/CHECKS.md.
+      - id: day
         shell: bash
+        run: echo "day=$(TZ=Europe/Berlin date +%F)" >> "$GITHUB_OUTPUT"
+      - id: stamp
+        uses: actions/cache/restore@v4
+        with:
+          path: .daily-stamp
+          key: daily-tests-${{ steps.day.outputs.day }}
+          lookup-only: true
+      - name: Daily tests (first run of the day)
+        if: steps.stamp.outputs.cache-hit != 'true' || github.event_name == 'workflow_dispatch'
+        run: scripts/check.sh --daily
+        shell: bash
+      - name: Blocker tests
+        if: steps.stamp.outputs.cache-hit == 'true' && github.event_name != 'workflow_dispatch'
+        run: scripts/check.sh --all
+        shell: bash
+      # Once the day's run has happened, red or green, the stamp is saved, so
+      # later pushes that day run only the blockers.
+      - name: Stamp the day
+        if: always() && steps.stamp.outputs.cache-hit != 'true'
+        shell: bash
+        run: touch .daily-stamp
+      - if: always() && steps.stamp.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .daily-stamp
+          key: daily-tests-${{ steps.day.outputs.day }}

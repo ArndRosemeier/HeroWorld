@@ -1408,12 +1408,14 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn different_seeds_differ() {
         let (a, b) = (plan(1), plan(2));
         assert_ne!(a.streets, b.streets);
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn every_district_is_there_and_built() {
         for seed in 1..6 {
             let p = plan(seed);
@@ -1429,6 +1431,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn city_has_a_sensible_size() {
         let p = plan(7);
         let n = p.buildings.len();
@@ -1469,6 +1472,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn lots_sit_in_blocks_and_buildings_in_lots() {
         let p = plan(4);
         for l in &p.lots {
@@ -1521,6 +1525,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn every_building_plan_is_sound() {
         let p = plan(6);
         for (_, s) in &p.buildings {
@@ -1529,6 +1534,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn nothing_is_built_in_the_water() {
         for seed in 1..8 {
             let p = plan(seed);
@@ -1571,6 +1577,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn hamlets_to_megalopolises() {
         let mut tallest = Vec::new();
         for (radius, min_buildings, max_buildings) in [

@@ -196,6 +196,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn walks_round_a_wall() {
         let mut solids = Obstacles::flat(0.0);
         // A wall 12 m long across the way, 3 m high.
@@ -216,6 +217,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_walled_in_goal_has_no_path() {
         let mut solids = Obstacles::flat(0.0);
         for (a, b) in [

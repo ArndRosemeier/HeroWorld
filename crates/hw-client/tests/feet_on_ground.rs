@@ -7,8 +7,8 @@
 //! and standing still the lower sole is within [`FLOAT`] of it.
 //!
 //! Slow (a part of the town is built and streamed in, about a minute in a
-//! debug build): a slow test, so the quick check leaves it out and
-//! `scripts/check.sh --full` and CI run it on every push. Skipped
+//! debug build). Feet are looks, so it is an on-demand test: only
+//! `scripts/check.sh --on-demand` runs it. Skipped
 //! (with a note) without the Actors packs (`scripts/fetch-packs.sh`).
 
 use engine::anim::FootIk;

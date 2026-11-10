@@ -545,6 +545,7 @@ mod tests {
     use hw_sim::rocket::{Schedule, IGNITION, LANDED, LIFTOFF};
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_launch_is_heard() {
         let pad = Pad {
             landmark: hw_gen::urban::landmarks::Landmark {

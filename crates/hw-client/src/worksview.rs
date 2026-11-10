@@ -3236,6 +3236,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_robot_is_built_station_by_station() {
         // Follow one serial down the line.
         let n = 10i64;
@@ -3267,6 +3268,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_crane_carries_its_part_from_rack_to_robot() {
         let mut held = 0;
         let mut t = 100.0 * CYCLE;
@@ -3301,6 +3303,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn robots_march_into_the_shed_and_go() {
         let walk = march_time();
         assert!((6.0..20.0).contains(&walk), "{walk}");
@@ -3325,6 +3328,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn welding_arms_reach_their_seams() {
         let mut t = 7.0 * CYCLE;
         while t < 8.0 * CYCLE {

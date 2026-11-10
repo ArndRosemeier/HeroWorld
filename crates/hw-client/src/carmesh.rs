@@ -2536,6 +2536,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn doors_and_shell_make_the_whole_car() {
         for m in [CarModel::Cruiser, CarModel::Bubble, CarModel::Hover] {
             for lod in [Lod::Near, Lod::Mid, Lod::Far] {
@@ -2567,6 +2568,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_taxi_canopy_is_the_closed_taxis_canopy() {
         for lod in [Lod::Near, Lod::Mid, Lod::Far] {
             let count = |canopy: bool| {
@@ -2618,6 +2620,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn wheels_touch_the_ground() {
         let mut b = MeshBuilder::new();
         car_into(&mut b, CarModel::Cruiser, 0, Lod::Near, true);

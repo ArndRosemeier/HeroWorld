@@ -89,7 +89,7 @@ fn fight(sim: &mut Sim, hero: NetId, k: usize, goal: DVec3) {
 }
 
 #[test]
-#[ignore = "slow: scripts/check.sh --full and CI run it"]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_bot_plays_the_doctors_story_end_to_end() {
     let mut sim = town();
     assert!(sim.story.available(), "seed 3's town has the story");
@@ -180,7 +180,7 @@ fn a_bot_plays_the_doctors_story_end_to_end() {
 }
 
 #[test]
-#[ignore = "slow: scripts/check.sh --full and CI run it"]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_team_follows_the_hosts_story() {
     let mut sim = town();
     let host = sim.spawn_hero(PlayerId(1), DVec3::new(0.0, 5.0, 0.0));
@@ -208,6 +208,7 @@ fn the_team_follows_the_hosts_story() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn chapters_are_placed_apart_and_near_the_quarter() {
     let mut sim = town();
     let _ = &mut sim;

@@ -375,6 +375,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn only_what_is_said_near_the_hero_is_logged() {
         let mut log = ChatLog::new();
         let hero = Some(Vec3::ZERO);
@@ -387,6 +388,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_repeated_line_is_logged_once() {
         let mut log = ChatLog::new();
         log.add(Channel::Local, "Brute", "Go away!", Voice::Villain);
@@ -420,6 +422,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn every_channel_has_a_tab_name() {
         for c in Channel::ALL {
             assert!(!c.name().is_empty());

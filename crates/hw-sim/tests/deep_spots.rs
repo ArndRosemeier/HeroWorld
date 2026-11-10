@@ -28,6 +28,7 @@ fn run_at(sim: &mut Sim, hero: hw_core::NetId, at: DVec3, seconds: f64) {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_mole_camp_wakes_for_a_hero_below_and_is_forgotten_after() {
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let core = town.world.core();

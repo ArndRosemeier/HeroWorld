@@ -484,6 +484,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_run_speeds_up_cruises_and_stops_at_the_end() {
         for total in [30.0, 400.0] {
             let mut last = 0.0;

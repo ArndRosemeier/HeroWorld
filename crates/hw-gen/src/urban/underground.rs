@@ -789,6 +789,7 @@ mod tests {
     use hw_core::Seed;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_town_has_tunnels_lifts_and_molehaven() {
         for seed in [1u64, 3, 11] {
             let w = TownWorld::generate(Seed(seed), TownParams::sample(Seed(seed), 40_000.0));

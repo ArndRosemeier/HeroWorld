@@ -606,6 +606,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_founding_point_is_dry_and_water_matches_the_site() {
         for s in 0..40 {
             let pop = det::powf(10.0, 2.0 + (s % 5) as f64);

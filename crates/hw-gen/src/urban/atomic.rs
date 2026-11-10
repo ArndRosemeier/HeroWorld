@@ -337,6 +337,7 @@ mod tests {
     use hw_core::Seed;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_layout_fits_its_yard() {
         let all = footprints();
         for f in &all {
@@ -369,6 +370,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_plant_stands_out_of_town_by_a_road() {
         let mut planted = 0;
         for s in [1u64, 3, 7, 11] {

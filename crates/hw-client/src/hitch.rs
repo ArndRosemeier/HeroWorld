@@ -724,6 +724,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_late_frame_is_written_with_its_sections_and_context() {
         let dir = scratch("late");
         let mut g = guard(&dir);
@@ -744,6 +745,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn an_even_slow_frame_rate_is_not_a_hitch() {
         let dir = scratch("even");
         let mut g = guard(&dir);
@@ -756,6 +758,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_storm_of_hitches_is_counted_not_written_out() {
         let dir = scratch("storm");
         let mut g = guard(&dir);
@@ -770,6 +773,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_pause_is_not_a_hitch() {
         let dir = scratch("pause");
         let mut g = guard(&dir);
@@ -784,6 +788,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_slow_update_is_a_hitch_even_when_drawing_is_slow() {
         let dir = scratch("update");
         let mut g = guard(&dir);
@@ -797,6 +802,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn stats_gather_every_frame_while_on() {
         let dir = scratch("stats");
         let mut g = guard(&dir);
@@ -816,6 +822,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn memory_can_be_read() {
         if cfg!(any(windows, target_os = "linux")) {
             let m = Memory::now().expect("memory");

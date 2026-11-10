@@ -1,11 +1,11 @@
 # Checks before a push
 
 ```
-scripts/check.sh            # before every push: fmt, clippy, tests of what you touched
-scripts/check.sh --all      # the same tests for every crate
-scripts/check.sh --full     # everything, slow tests too (CI runs this on every push)
+scripts/check.sh            # before every push: fmt, clippy, blocker tests of what you touched
+scripts/check.sh --all      # the blocker tests of every crate (CI, every push)
+scripts/check.sh --daily    # blockers, gameplay and slow tests (CI, first run of the day); --full is the same
 scripts/check.sh --on-demand  # only the looks and balance tests; nothing runs them automatically
-scripts/check.sh hw-gen     # the tests of the crates you name
+scripts/check.sh hw-gen     # the blocker tests of the crates you name
 ```
 
 ## The fast check (default)
@@ -17,7 +17,9 @@ scripts/check.sh hw-gen     # the tests of the crates you name
    `hw-core` → everything; `hw-gen`, `hw-net` → also `hw-sim`, `hw-client`; `hw-sim` →
    also `hw-client`. `VERSION` and `WHATS_NEW.md` run hw-core's tests only; `Cargo.toml`,
    `Cargo.lock` and `assets/` run everything; docs and scripts run no tests.
-3. Tests marked `#[ignore = "slow: ..."]` are left out.
+3. Only blockers run: tests marked `#[ignore = "daily (...)"]` or
+   `#[ignore = "on demand (...)"]` are left out. The test programs run several at a time,
+   one per core; each prints its time, and only a failing one prints its output.
 
 On Linux it installs `libasound2-dev`, `libudev-dev` and `zstd` when they are missing and
 it runs as root (a fresh cloud sandbox).
@@ -40,50 +42,39 @@ token or secret is in it.
 
 ## How bad a failure is: three tiers
 
-Every test belongs to one of three tiers (Arnd, 2026-11-10: "sort tests by severity of
-fail"; z-fighting, for example, is only cosmetic):
+Every test belongs to one of three tiers, and the tier decides when it runs (Arnd,
+2026-11-10: only blockers every time, gameplay once a day, looks on demand):
 
-1. **Blockers**: a crash, lost saves, co-op players seeing different worlds (same seed,
-   same world), the network, memory that keeps growing, walking through solid things.
-2. **Gameplay**: a mechanic does the wrong thing (fights, powers, factions, incidents,
-   story, traffic, doors, a town plan that is not sound).
-3. **Looks and balance**: z-fighting, textures, feet on the ground, model budgets and
-   LOD levels, smoothness, colours, UI layout, how fast a hero levels. These are marked
-   `#[ignore = "on demand (looks): scripts/check.sh --on-demand"]` (or `(balance)`) and
-   **nothing runs them automatically**: not the fast check, not `--full`, not CI. Run
-   `scripts/check.sh --on-demand` when you work on how things look or on balance.
+| Tier | A failure means | Mark | Runs |
+| --- | --- | --- | --- |
+| 1. Blockers | a crash, lost saves, co-op players seeing different worlds (same seed, same world), the network, memory that keeps growing, walking through solid things | none | every `check.sh` and every CI run |
+| 2. Gameplay | a mechanic does the wrong thing (fights, powers, factions, incidents, story, traffic, doors, a town plan that is not sound) | `#[ignore = "daily (gameplay): ..."]` | once a day: CI's first run of the day (Berlin time), or `check.sh --daily` |
+| 3. Looks and balance | z-fighting, textures, feet on the ground, model budgets and LOD levels, smoothness, colours, UI layout, how fast a hero levels | `#[ignore = "on demand (looks): ..."]` or `(balance)` | never automatically: `check.sh --on-demand` |
 
-Tiers 1 and 2 run before every push (the crates touched) and in CI. A new test that only
-checks looks or balance gets the on-demand mark. `check.sh` finds on-demand tests by that
-mark, so the mark must sit in the attributes right above the `fn`.
+A blocker that takes more than about 10 s in a debug build is marked
+`#[ignore = "daily (slow blocker): ..."]` and runs with the daily set, so every-time checks
+stay quick (memory over long trips, soak and ten-bot play, the megacity walk, roads that
+fold). Run `--daily` yourself when you change what a daily test covers, and `--on-demand`
+when you work on how things look or on balance.
 
-## Slow tests
+A new test gets the mark of its tier. When in doubt between blocker and gameplay, ask: would
+a player lose their hero, their friends or the game? Then it is a blocker. `check.sh` finds
+on-demand tests by their mark, so the mark must sit in the attributes right above the `fn`.
 
-A tier 1 or 2 test that takes more than about 12 s in a debug build is marked
-`#[ignore = "slow: scripts/check.sh --full and CI run it"]`. They are not dropped: CI runs
-`--full` on every push to main, and you run `--full` yourself when you change what they
-cover (memory over long trips, soak and ten-bot play, traffic at junctions). Measured
-2026-11-10 (0.154, 4-core sandbox):
+CI (`.github/workflows/ci.yml`) runs `--daily` on the first push of the day and stamps the
+day (an empty cache entry `daily-tests-<date>`), red or green; later pushes that day run
+`--all`. Running the workflow by hand (Actions, CI, Run workflow) runs `--daily` at once.
 
-| Test | Crate | Debug-build time |
-| --- | --- | --- |
-| `the_empire_waits_until_the_team_can_take_it` | hw-sim | 165 s |
-| `ten_bots_play_for_ten_minutes` | hw-sim | 76 s |
-| `an_evening_of_co_op_play` (soak) | hw-sim | 45 s |
-| `a_walk_across_a_megacity_keeps_memory_bounded_and_the_world_the_same` | hw-gen | 34 s |
-| `raiders_clear_every_building_in_towns_of_every_size` | hw-sim | 30 s |
-| `people_and_traffic_follow_a_hero_across_a_big_city` | hw-sim | 25 s |
-| `a_bot_plays_the_doctors_story_end_to_end` | hw-sim | 23 s |
-| `cars_give_way_at_junctions_and_keep_moving` | hw-sim | 20 s |
-| `towns_by_the_water_have_a_pirate_landing_and_a_mole_gate` | hw-sim | 16 s |
-| `a_long_trip_across_a_big_city_keeps_memory_bounded` | hw-sim | 14 s |
-
+The slowest tests, measured 2026-11-10 (0.154, debug build, 4-core sandbox): daily
+`the_empire_waits_until_the_team_can_take_it` 165 s, `ten_bots_play_for_ten_minutes` 76 s,
+`an_evening_of_co_op_play` 45 s, the megacity walk 34 s, `raiders_clear_every_building_in_towns_of_every_size`
+30 s; all else under 26 s.
 The biggest on-demand ones: `the_city_has_no_z_fighting` 1157 s (57 s before the furnished
 interiors of 0.134), `buildings_are_textured` 112 s (failing since 0.135),
 `feet_stand_on_what_is_drawn` about 50 s.
 
-A new test that runs that long gets the same mark. The ten-hour climb
-(`a_new_hero_reaches_level_twenty_in_about_ten_hours`) stays out even of `--full`; run it
+The ten-hour climb
+(`a_new_hero_reaches_level_twenty_in_about_ten_hours`) stays out even of `--daily`; run it
 with `--ignored` or the balance example. So does the rookies' climb in a real town
 (`a_new_hero_near_the_jackets_climbs_at_the_climb_tests_pace`, tests/rookies.rs, about a
 minute in release): run it with `cargo test --release -p hw-sim --test rookies -- --ignored`.

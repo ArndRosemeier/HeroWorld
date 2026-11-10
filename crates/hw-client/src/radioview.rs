@@ -1852,6 +1852,7 @@ mod tests {
     use glam::Vec2;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn calls_give_the_clock_direction() {
         let ahead = Vec2::new(0.0, 1.0);
         assert_eq!(clock(ahead, Vec2::new(0.0, 5.0)), 12);

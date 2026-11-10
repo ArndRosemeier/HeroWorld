@@ -746,6 +746,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_route_is_smooth_and_comes_home() {
         let w = TownWorld::generate(Seed(2), TownParams::sample(Seed(2), 20_000.0));
         let mast = w
@@ -785,6 +786,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn towns_of_every_size_get_a_mast() {
         for (seed, pop) in [(1u64, 800.0), (3, 6_000.0), (5, 60_000.0), (7, 600_000.0)] {
             let t = std::time::Instant::now();

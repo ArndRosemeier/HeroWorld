@@ -283,7 +283,7 @@ mod tests {
     use hw_gen::urban::TownParams;
 
     #[test]
-    #[ignore = "slow: scripts/check.sh --full and CI run it"]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn towns_by_the_water_have_a_pirate_landing_and_a_mole_gate() {
         let mut roosts = 0;
         let mut gates = 0;

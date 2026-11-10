@@ -174,6 +174,7 @@ mod tests {
     const HEAD: Vec3 = Vec3::new(0.0, 1.6, 0.0);
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_boom_stops_short_of_a_wall_behind() {
         let s = walled(3.0);
         let len = clear_length(&s, HEAD, Vec3::X, 8.0, None);
@@ -184,6 +185,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_wall_beside_the_boom_keeps_the_near_plane_out() {
         // A wall running along the boom, 0.2 m to its side from 1 m back:
         // the centre line is clear, the side of the camera box is not.
@@ -202,6 +204,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_ground_behind_pulls_the_camera_in() {
         // Looking up steeply: the boom goes down into the street.
         let dir = Vec3::new(0.5, 0.8, 0.0).normalize();
@@ -210,6 +213,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_cut_open_floor_above_does_not_count() {
         let s = walled(1.0);
         // Looking down from above: the boom rises through the wall, which
@@ -220,6 +224,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_boom_snaps_in_and_eases_out() {
         let mut b = Boom::default();
         assert_eq!(b.follow(6.0, 0.016), 6.0);
@@ -234,6 +239,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_fight_starts_in_the_open() {
         let s = walled(0.0);
         // Wanted right at the wall: moved off it.

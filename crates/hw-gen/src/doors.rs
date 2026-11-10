@@ -252,6 +252,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn street_doors_and_entrances_get_doors_and_leaves_stay_in_their_room() {
         let mut front = 0;
         let mut glass = 0;

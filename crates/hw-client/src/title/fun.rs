@@ -914,6 +914,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn still_means_no_shaking() {
         let mut f = Fun::new(true);
         f.bang(1.0, 1.0);

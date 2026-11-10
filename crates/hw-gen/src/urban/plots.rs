@@ -632,6 +632,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn blocks_fill_with_sound_buildings() {
         let mut uses = std::collections::BTreeSet::new();
         for s in 0..3u64 {

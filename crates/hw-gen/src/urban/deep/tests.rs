@@ -25,6 +25,7 @@ fn tiles_round(w: &TownWorld, r: f64) -> Vec<TileKey> {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_tube_runs_under_the_main_roads_with_stations() {
     for seed in [1u64, 3, 11] {
         let w = town(seed, 40_000.0);
@@ -79,6 +80,7 @@ fn the_tube_runs_under_the_main_roads_with_stations() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn deep_tiles_are_sound() {
     for seed in [1u64, 3] {
         let w = town(seed, 40_000.0);
@@ -179,6 +181,7 @@ fn deep_tiles_are_sound() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_doctors_lab_is_under_the_dystopia() {
     let mut found = 0;
     for seed in [1u64, 3, 11] {
@@ -207,6 +210,7 @@ fn the_doctors_lab_is_under_the_dystopia() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn galleries_meet_across_tile_edges() {
     let w = town(3, 40_000.0);
     let mut met = 0;
@@ -264,6 +268,7 @@ fn the_cache_stays_bounded() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_tube_has_nooks_ways_up_and_people() {
     for seed in [1u64, 3] {
         let w = town(seed, 40_000.0);

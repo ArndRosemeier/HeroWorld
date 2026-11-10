@@ -572,6 +572,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn levels_follow_lifetime_karma() {
         assert_eq!(level_of(0), 1);
         assert_eq!(karma_to_next(1), 960);
@@ -606,6 +607,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn prices_grow_with_powers_owned_and_fall_with_affinity() {
         let mut s = new_hero(2); // Born Mighty
         s.karma = 10_000;
@@ -628,6 +630,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn tiers_open_by_level_and_karma_must_suffice() {
         let mut s = new_hero(0);
         assert_eq!(can_buy(&s, Power::Hold, 0), Err(BuyError::TooLow(3)));
@@ -646,6 +649,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn giving_a_power_up_returns_ninety_percent() {
         let mut s = new_hero(0);
         let cost = buy(&mut s, Power::Bolt, 0).unwrap();
@@ -657,6 +661,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn earning_karma_levels_up_and_leans() {
         let mut s = new_hero(4);
         assert_eq!(earn(&mut s, 400, Some(Affinity::Justice)), None);
@@ -667,6 +672,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn tougher_villains_pay_more() {
         assert_eq!(defeat_karma(10.0, 3, 3), 10);
         assert!(defeat_karma(10.0, 4, 3) > 10);

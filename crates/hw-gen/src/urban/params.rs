@@ -388,6 +388,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn size_follows_population() {
         let a = TownParams::sample(Seed(1), 100.0).scale();
         let b = TownParams::sample(Seed(1), 1e7).scale();

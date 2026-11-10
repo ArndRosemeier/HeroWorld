@@ -253,6 +253,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn only_the_last_choice_comes_out() {
         let live = City {
             seed: 1,
@@ -280,6 +281,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn going_back_to_the_live_city_stops_the_plan() {
         let live = City {
             seed: 1,
@@ -299,6 +301,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn wanting_the_same_city_twice_plans_it_once() {
         let live = City {
             seed: 1,

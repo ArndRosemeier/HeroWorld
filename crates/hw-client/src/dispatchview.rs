@@ -434,6 +434,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn bearings_run_clockwise_from_north() {
         let b = |x: f32, z: f32| bearing(glam::Vec2::new(x, z)).to_degrees().round();
         assert_eq!(b(0.0, -1.0), 0.0);
@@ -443,6 +444,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn only_the_worst_trouble_lights_the_signal() {
         assert!(lights_signal(IncidentKind::Breakout));
         assert!(!lights_signal(IncidentKind::Mugging));

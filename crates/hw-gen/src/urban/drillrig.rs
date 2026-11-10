@@ -263,6 +263,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_geyser_blows_once_a_cycle() {
         let (mut erupts, mut was) = (0, false);
         let mut t = 0.0;

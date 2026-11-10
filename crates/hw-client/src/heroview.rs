@@ -218,6 +218,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn running_walking_and_standing() {
         let mut a = HeroAnim::default();
         let d = a.step(Vec3::ZERO, true, Some(false), 0.016);
@@ -229,6 +230,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_fall_ends_in_a_landing() {
         let mut a = HeroAnim::default();
         for _ in 0..40 {
@@ -241,6 +243,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_moment_off_the_ground_is_no_fall() {
         let mut a = HeroAnim::default();
         let run = Vec3::new(7.0, 0.0, 0.0);
@@ -265,6 +268,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn others_flight_is_told_from_their_motion() {
         let mut a = HeroAnim::default();
         let mut d = a.step(Vec3::ZERO, false, None, 0.016);

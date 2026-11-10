@@ -37,6 +37,7 @@ fn walk(dir: DVec2) -> InputState {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn down_the_lift_through_the_tunnels_and_up_again() {
     let town = GeneratedTown::generate(Seed(1), 40_000.0);
     let mut sim = Sim::for_town(Seed(1), &town);

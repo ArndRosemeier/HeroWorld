@@ -500,6 +500,7 @@ mod tests {
     fn sendable<T: Send + 'static>() {}
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn parts_are_made_without_a_world_and_cross_threads() {
         sendable::<EngineResult<ExtrasParts>>();
         let g = hw_sim::GeneratedTown::generate(hw_core::Seed(1), 20_000.0);

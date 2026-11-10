@@ -188,6 +188,7 @@ mod tests {
     use crate::urban::{Town, TownParams};
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn one_compact_quarter_out_from_the_core() {
         for s in [1u64, 3, 7] {
             let params = TownParams::sample(Seed(s), 40_000.0);

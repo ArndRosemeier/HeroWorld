@@ -1895,6 +1895,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn day_and_night() {
         assert_eq!(daylight(12.0), 1.0);
         assert_eq!(daylight(2.0), 0.0);
@@ -1902,6 +1903,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_music_follows_the_scenery() {
         let mut s = scene(&[]);
         assert_eq!(Mood::of(&s), Mood::TownDay);
@@ -1954,6 +1956,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn idle_clips_are_forgotten() {
         let mut b = Bank::new(CLIPS);
         let mut t = 0.0;

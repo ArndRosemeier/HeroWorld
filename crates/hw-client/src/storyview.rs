@@ -350,6 +350,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_radio_tells_the_story_as_it_moves_on() {
         let first = lines(None, st(0, REPORT));
         assert!(first[0].text.contains("Hero Hall"));
@@ -365,6 +366,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_radio_names_the_chapter_and_the_goal() {
         let m = mark(st(2, GO));
         assert!(m.heading.contains("chapter 3 of 7"));

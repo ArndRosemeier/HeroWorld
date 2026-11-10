@@ -446,6 +446,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn it_zooms_out_as_you_climb() {
         assert_eq!(level_for(WALK_REACH), 0);
         assert_eq!(level_for(600.0), 1);
@@ -453,6 +454,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_tiles_round_a_spot_cover_it() {
         let at = DVec2::new(300.0, -50.0);
         let keys = keys_round(0, at, 110.0);
@@ -462,6 +464,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn up_on_the_map_is_where_the_camera_looks() {
         // An empty map still paints a round disc, clear outside it.
         let mut img = Vec::new();

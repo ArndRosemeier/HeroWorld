@@ -9,6 +9,7 @@ use hw_sim::quarter::{CORNER_EXTRA, WAKE};
 use hw_sim::{GeneratedTown, Sim, TICK_HZ};
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn villains_wait_on_the_quarters_corners_for_heroes() {
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let mut sim = Sim::for_town(Seed(3), &town);
@@ -83,6 +84,7 @@ fn villains_wait_on_the_quarters_corners_for_heroes() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn technicians_shoot_down_from_the_quarters_roofs() {
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let mut sim = Sim::for_town(Seed(3), &town);
@@ -160,6 +162,7 @@ fn technicians_shoot_down_from_the_quarters_roofs() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn barricades_block_the_way_until_knocked_down() {
     use hw_gen::urban::props::{BarricadePiece, PropKind};
     let town = GeneratedTown::generate(Seed(3), 20_000.0);

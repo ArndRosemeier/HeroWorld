@@ -349,6 +349,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_hash_sign_makes_one_closed_face() {
         // # : two lines each way, crossing in four points; plus a dead end.
         let lines = [
@@ -370,6 +371,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_lone_ring_is_a_face() {
         let ring: Vec<DVec2> = (0..=24)
             .map(|k| {
@@ -384,6 +386,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn ends_short_of_a_line_join_it() {
         let lines = [
             line(&[

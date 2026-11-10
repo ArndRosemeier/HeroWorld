@@ -132,6 +132,7 @@ fn fight(seed: u64, players: u16) -> Outcome {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn one_hero_beats_five_minions_and_it_is_a_fight() {
     let o = fight(1, 1);
     println!("{o:?}");
@@ -154,6 +155,7 @@ fn a_test_fight_ends_the_same_every_time() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn two_heroes_win_faster_against_a_bigger_group() {
     let solo = fight(3, 1);
     let duo = fight(3, 2);
@@ -164,6 +166,7 @@ fn two_heroes_win_faster_against_a_bigger_group() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_downed_hero_is_revived_by_a_teammate() {
     let mut sim = arena(2);
     let a = sim.spawn_hero(PlayerId(1), DVec3::new(0.0, GROUND_Y, 0.0));
@@ -215,6 +218,7 @@ fn a_downed_hero_is_revived_by_a_teammate() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn alone_a_downed_hero_is_flown_to_hospital() {
     let mut sim = arena(5);
     let a = sim.spawn_hero(PlayerId(1), DVec3::new(20.0, GROUND_Y, 0.0));
@@ -255,6 +259,7 @@ fn alone_a_downed_hero_is_flown_to_hospital() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_beaten_group_comes_back_once_the_heroes_have_gone() {
     let o = fight(4, 1);
     assert_eq!(o.villains_left, 0);

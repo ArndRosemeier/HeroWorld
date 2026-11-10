@@ -553,6 +553,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (slow blocker): scripts/check.sh --daily, and CI's first run of the day"]
     fn wild_trees_are_the_same_however_the_land_is_tiled() {
         let w = TownWorld::generate(Seed(5), TownParams::sample(Seed(5), 20_000.0));
         let g = Greenery::new(&w);
@@ -576,6 +577,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_same_town_grows_the_same_grass() {
         let w = TownWorld::generate(Seed(9), TownParams::sample(Seed(5), 20_000.0));
         let (a, b) = (Greenery::new(&w), Greenery::new(&w));

@@ -59,6 +59,7 @@ fn wait(sim: &mut Sim, hero: NetId, x: f64, seconds: f64) -> (bool, bool) {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_new_hero_is_warned_off_turf_before_anyone_attacks() {
     let fresh = [0; hw_net::FACTIONS];
     assert_eq!(
@@ -79,6 +80,7 @@ fn a_new_hero_is_warned_off_turf_before_anyone_attacks() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_trespasser_who_walks_right_up_is_attacked() {
     let (mut sim, hero) = turf([0; hw_net::FACTIONS]);
     let (_, attacked) = wait(&mut sim, hero, 6.0, 1.0);
@@ -86,6 +88,7 @@ fn a_trespasser_who_walks_right_up_is_attacked() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_hostile_faction_attacks_on_sight_and_a_neutral_one_lets_people_pass() {
     // Deeds have turned the Lab hostile: no warning.
     let mut hated = [0i8; hw_net::FACTIONS];
@@ -102,6 +105,7 @@ fn a_hostile_faction_attacks_on_sight_and_a_neutral_one_lets_people_pass() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn beating_villains_moves_the_heros_standing() {
     let mut sim = Sim::with_solids(Seed(2), Arc::new(Obstacles::flat(GROUND_Y)));
     sim.set_spawn((DVec2::ZERO, DVec2::X));
@@ -149,6 +153,7 @@ fn beating_villains_moves_the_heros_standing() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_warning_is_heard_in_the_street() {
     let (mut sim, hero) = turf([0; hw_net::FACTIONS]);
     let (warned, _) = wait(&mut sim, hero, 14.0, 1.0);
@@ -160,6 +165,7 @@ fn a_warning_is_heard_in_the_street() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn chrome_jackets_hang_out_round_the_quarter() {
     use hw_sim::combat::EnemyKind;
     use hw_sim::GeneratedTown;

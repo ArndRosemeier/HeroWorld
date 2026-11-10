@@ -3066,6 +3066,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn aimed_powers_pick_nearest_the_crosshair() {
         let all = vec![
             villain(1, [10.0, 0.0, 3.0]),
@@ -3083,6 +3084,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn tab_cycles_nearest_first_through_everyone_in_range() {
         let all = vec![
             villain(1, [12.0, 0.0, 3.0]),
@@ -3105,6 +3107,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn tab_moves_on_even_when_the_order_shifts() {
         // The camera turns to the new target after every Tab, which
         // reorders the list; Tab must still go on to someone new.
@@ -3136,6 +3139,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_struck_villain_rocks_back_and_returns() {
         let mut fight = FightView::new();
         fight.recoils.insert(NetId(1), (Vec3::X, 0.0));
@@ -3153,6 +3157,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_click_picks_the_villain_under_the_mouse_far_beyond_tab() {
         let eye = Vec3::new(0.0, 3.0, -4.0);
         let at = |x: f32, z: f32| (Vec3::new(x, 1.2, z) - eye).normalize();
@@ -3186,6 +3191,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn villains_behind_a_wall_are_never_picked() {
         let all = vec![villain(1, [4.0, 0.0, 0.0]), villain(2, [9.0, 0.0, 0.0])];
         let behind = |e: &EntityState| e.id != NetId(1);
@@ -3211,6 +3217,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn tab_after_an_auto_target_moves_on() {
         // The attacker became the target on its own: Tab goes to another.
         let all = vec![villain(1, [5.0, 0.0, 0.0]), villain(2, [8.0, 0.0, 0.0])];
@@ -3241,6 +3248,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn an_attacker_becomes_the_target_when_none_is_set() {
         let me = NetId(9);
         let all = vec![villain(1, [5.0, 0.0, 0.0])];
@@ -3274,6 +3282,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_beaten_cannot_be_targeted() {
         let mut v = villain(1, [5.0, 0.0, 0.0]);
         v.combat.as_mut().unwrap().status = Status::Down;
@@ -3294,6 +3303,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_hero_set_down_from_the_drone_animates_again() {
         // Down, carried off to hospital, standing again: the drone's
         // hanging pose must not outlive the ride (it held every clip off).
@@ -3336,6 +3346,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_fight_sounds_are_made() {
         let _ = make_sounds();
         let _ = drone_mesh(true);

@@ -86,6 +86,7 @@ fn run(
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn pressing_again_while_it_recharges_fires_when_ready() {
     let (mut sim, hero, foes) = street(15.0, false);
     // A second press a fifth of a second after the first: the bolt is still
@@ -112,12 +113,14 @@ fn told(at: f64, wall: bool) -> Vec<u16> {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_power_that_cannot_fire_says_why() {
     assert_eq!(told(55.0, false), vec![fizzle::OUT_OF_RANGE]);
     assert_eq!(told(15.0, true), vec![fizzle::NOT_SEEN]);
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn pressing_again_and_again_says_why_each_time() {
     // Behind a wall, the key pressed every half second: the old wait was
     // started over by each press and never lapsed, so nothing was said.
@@ -167,6 +170,7 @@ fn holding_the_mouse_button_does_not_swallow_a_power_key() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_server_says_in_words_what_it_did_with_a_press() {
     // The debug menu's log: the press, and that it fired.
     let (mut sim, hero, foes) = street(15.0, false);

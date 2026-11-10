@@ -43,6 +43,7 @@ fn descend() -> InputState {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn down_into_a_tube_station_and_about_its_hall() {
     let town = GeneratedTown::generate(Seed(1), 40_000.0);
     let w = town.world.clone();
@@ -96,6 +97,7 @@ fn down_into_a_tube_station_and_about_its_hall() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn down_a_lift_to_the_deeps() {
     let town = GeneratedTown::generate(Seed(1), 40_000.0);
     let w = town.world.clone();
@@ -135,6 +137,7 @@ fn down_a_lift_to_the_deeps() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_capsule_takes_the_hero_to_another_station() {
     let town = GeneratedTown::generate(Seed(1), 40_000.0);
     let w = town.world.clone();
@@ -187,6 +190,7 @@ fn a_capsule_takes_the_hero_to_another_station() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn out_of_the_tube_by_an_exit() {
     let town = GeneratedTown::generate(Seed(1), 40_000.0);
     let w = town.world.clone();

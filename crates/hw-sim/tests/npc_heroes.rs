@@ -36,6 +36,7 @@ fn stand(sim: &mut Sim, hero: hw_core::NetId, at: DVec3) {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_town_heroes_greet_a_newcomer_with_tips() {
     let (mut sim, hero) = town();
     let all = npcs(&mut sim);
@@ -65,6 +66,7 @@ fn the_town_heroes_greet_a_newcomer_with_tips() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_town_hero_answers_a_fight_nobody_came_to() {
     let (mut sim, hero) = town();
     sim.incidents.first_after = 0.0;

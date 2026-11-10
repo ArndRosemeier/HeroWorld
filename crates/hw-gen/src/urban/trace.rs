@@ -349,6 +349,7 @@ mod tests {
     use hw_core::{Noise, Seed};
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_grid_field_traces_a_grid() {
         let field = Field {
             basis: vec![Basis::Grid {

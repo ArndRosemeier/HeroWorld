@@ -30,6 +30,7 @@ fn place(sim: &mut Sim, hero: hw_core::NetId, at: DVec3) {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_taxi_ride_crosses_the_town() {
     let (mut sim, me, hero) = town_sim();
     let stands = sim.taxis.stands.clone();
@@ -125,6 +126,7 @@ fn a_taxi_ride_crosses_the_town() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn hopping_out_drops_the_hero_where_the_taxi_is() {
     let (mut sim, me, hero) = town_sim();
     let stands = sim.taxis.stands.clone();

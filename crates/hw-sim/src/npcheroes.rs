@@ -352,6 +352,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn flying_climbs_crosses_and_lands() {
         let mut b = Body {
             pos: DVec3::new(0.0, 10.0, 0.0),

@@ -363,6 +363,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn tile_keys_hold_their_points() {
         for level in 0..3u8 {
             for p in [DVec2::new(5.0, -3.0), DVec2::new(-700.0, 1300.0)] {
@@ -375,6 +376,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn quads_and_segments() {
         let c = [
             DVec2::new(0.0, 0.0),
@@ -389,6 +391,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_town_tile_shows_houses_and_streets() {
         use hw_core::Seed;
         use hw_gen::urban::TownParams;
@@ -420,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_villains_quarter_is_tinted() {
         let plain = colour(Px::Building as u8);
         let grim = colour(Px::Building as u8 | VILLAINS);

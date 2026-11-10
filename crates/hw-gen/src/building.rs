@@ -1265,6 +1265,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn every_programme_and_size_is_sound() {
         for s in all_sites() {
             let p = BuildingPlan::generate(&s);
@@ -1273,6 +1274,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn same_site_same_plan() {
         for s in all_sites() {
             assert_eq!(BuildingPlan::generate(&s), BuildingPlan::generate(&s));
@@ -1290,6 +1292,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn shops_open_to_the_street() {
         let p = BuildingPlan::generate(&site(BuildingUse::ShopsAndOffices, 40.0, 24.0, 4, 5));
         let shop_doors = p
@@ -1308,6 +1311,7 @@ pub(crate) mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn site_transform() {
         let mut s = site(BuildingUse::Offices, 20.0, 10.0, 3, 1);
         s.along = DVec2::new(0.0, 1.0);

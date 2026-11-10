@@ -19,6 +19,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_day_runs_and_wraps() {
         assert_eq!(hour_at(0.0), START_HOUR);
         assert!((hour_at(SECONDS_PER_HOUR * 2.0) - 17.5).abs() < 1e-9);

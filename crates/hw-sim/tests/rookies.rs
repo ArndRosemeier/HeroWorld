@@ -24,6 +24,7 @@ fn flat(p: DVec3) -> DVec2 {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_new_hero_starts_near_the_jackets_and_a_seasoned_one_in_the_centre() {
     let (_, mut sim) = town();
     let line = sim
@@ -146,6 +147,7 @@ fn run_towards(sim: &mut Sim, hero: NetId, from: DVec2, goal: DVec3, speed: f64)
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn an_incident_waits_for_a_hero_on_the_way() {
     let (_, mut sim) = town();
     let me = PlayerId(1);
@@ -214,7 +216,7 @@ fn an_incident_waits_for_a_hero_on_the_way() {
 /// fighting is the balance bot's. The bot leaves fires and crashes to
 /// others, which a player would not, so level 3 may come a little later.
 /// Forty minutes of a town: like the ten-hour climb it stays out of
-/// `scripts/check.sh --full`; run it with `--ignored` (release: ~1 min).
+/// `scripts/check.sh --daily`; run it with `--ignored` (release: ~1 min).
 #[test]
 #[ignore = "forty minutes of play: run it with --ignored in release"]
 fn a_new_hero_near_the_jackets_climbs_at_the_climb_tests_pace() {

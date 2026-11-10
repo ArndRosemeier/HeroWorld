@@ -32,6 +32,7 @@ fn centre(t: &GeneratedTown, i: u64) -> (DVec3, Arc<hw_gen::building::BuildingPl
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn every_building_stands_whole_and_engine_places_it_where_the_town_does() {
     let t = town();
     let all = ids(&t);
@@ -175,6 +176,7 @@ fn a_level_one_hero_brings_down_a_small_building_and_a_late_joiner_sees_the_same
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn strong_buildings_need_a_stronger_hero() {
     let t = town();
     // The building with the strongest material.
@@ -211,6 +213,7 @@ fn strong_buildings_need_a_stronger_hero() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn heroes_punch_through_walls_and_unseen_buildings_repair_themselves() {
     let t = town();
     let i = small_building(&t);

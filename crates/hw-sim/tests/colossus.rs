@@ -144,6 +144,7 @@ fn fight(seed: u64, players: u16) -> Outcome {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_colossus_goes_down_gets_up_and_goes_down_for_good() {
     let o = fight(7, 2);
     println!("{o:?}");
@@ -166,6 +167,7 @@ fn the_colossus_fight_is_repeatable() {
 /// In a real town it keeps to the main roads: wider than it is, so its feet
 /// and hull stay out of the buildings.
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_colossus_walks_down_main_roads() {
     use hw_sim::streets::{Streets, TANK_STREET};
     let town = hw_sim::GeneratedTown::generate(Seed(1), hw_sim::DEFAULT_POPULATION);

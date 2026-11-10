@@ -436,6 +436,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn area_and_centroid() {
         let p = square(10.0);
         assert!((p.area() - 100.0).abs() < 1e-9);
@@ -447,6 +448,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn split_preserves_area_and_tags() {
         let p = square(10.0);
         let (a, b) = p
@@ -468,6 +470,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn cut_edge_is_tagged_on_the_cut() {
         let p = square(10.0);
         let (a, _) = p
@@ -481,6 +484,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn inset_by_tag() {
         let mut p = square(20.0);
         p.tags[0] = EdgeTag::Street(1);
@@ -494,6 +498,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn obb_of_rotated_rectangle() {
         let (c, s) = (0.6, 0.8);
         let u = DVec2::new(c, s);
@@ -506,6 +511,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn span_of_square() {
         let p = square(10.0);
         let (lo, hi) = p.span_at(DVec2::X, DVec2::Y, 3.0).unwrap();

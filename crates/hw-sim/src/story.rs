@@ -726,6 +726,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn chapters_open_in_order_and_fit_the_radio() {
         let mut last = 0;
         for c in &CHAPTERS {

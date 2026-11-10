@@ -298,6 +298,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn everything_fits_on_the_smallest_yard() {
         let r = WORKS_PLAZAS[WORKS_PLAZAS.len() - 1];
         assert!(reach() < r - 0.4, "reach {}", reach());

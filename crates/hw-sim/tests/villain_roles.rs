@@ -73,6 +73,7 @@ fn power(p: Power, target: NetId) -> InputState {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_doctors_groups_have_roles_and_other_crews_do_not() {
     let base = |n: usize| -> Vec<(EnemyKind, u8)> {
         (0..n)
@@ -110,6 +111,7 @@ fn the_doctors_groups_have_roles_and_other_crews_do_not() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_shield_stops_bolts_from_afar_but_not_a_punch() {
     let (mut sim, hero, foes) = street(EnemyKind::Bulwark, 1, 10.0);
     let wall = foes[0];
@@ -180,6 +182,7 @@ fn bombed(steps: f64) -> (usize, u32) {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_bomb_bursts_where_the_hero_stood_and_a_step_aside_escapes_it() {
     let (bursts, hurt) = bombed(0.0);
     assert_eq!(bursts, 1);
@@ -190,6 +193,7 @@ fn a_bomb_bursts_where_the_hero_stood_and_a_step_aside_escapes_it() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_orderly_patches_up_a_hurt_friend() {
     let (mut sim, hero, foes) = street(EnemyKind::Orderly, 2, 12.0);
     // One of them is badly hurt.

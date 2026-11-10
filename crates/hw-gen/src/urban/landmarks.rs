@@ -712,6 +712,7 @@ mod tests {
     use hw_core::Seed;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_drill_rig_stands_over_molehaven() {
         for s in [1u64, 3, 7, 11] {
             let w = TownWorld::generate(Seed(s), TownParams::sample(Seed(s), 40_000.0));
@@ -751,6 +752,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn spire_stands_near_the_core_and_lighthouse_by_the_sea() {
         for s in [1u64, 3, 7] {
             let w = TownWorld::generate(Seed(s), TownParams::sample(Seed(s), 40_000.0));

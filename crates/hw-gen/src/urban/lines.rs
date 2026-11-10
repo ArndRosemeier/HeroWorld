@@ -118,6 +118,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn contour_of_a_cone_is_one_closed_ring() {
         let mut g = Grid::new(100.0, 5.0, 0.0f32);
         for j in 0..g.h {

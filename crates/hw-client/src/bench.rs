@@ -576,6 +576,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_route_goes_on_to_a_road_that_meets_the_end() {
         let a = [DVec2::new(0.0, 0.0), DVec2::new(100.0, 0.0)];
         let b = [DVec2::new(100.0, 0.0), DVec2::new(100.0, 300.0)];
@@ -586,6 +587,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_dead_end_turns_back() {
         let a = [DVec2::new(0.0, 0.0), DVec2::new(100.0, 0.0)];
         let roads: Vec<&[DVec2]> = vec![&a];
@@ -595,6 +597,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_offset_keeps_to_one_side_and_its_distance() {
         let p = [DVec2::new(0.0, 0.0), DVec2::new(0.0, 100.0)];
         let o = offset(&p, 5.0);
@@ -604,6 +607,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn percentiles_pick_from_the_sorted_frames() {
         let v: Vec<f32> = (1..=100).map(|i| i as f32).collect();
         let s = Summary::of(&v);
@@ -614,6 +618,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn lap_growth_names_what_keeps_climbing() {
         let lap = |entities: usize, textures: usize, mb: f64| Lap {
             end_frame: 0,

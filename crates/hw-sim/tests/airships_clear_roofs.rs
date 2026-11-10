@@ -88,6 +88,7 @@ fn pirate_clears(seed: u64, population: f64) -> bool {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_liner_clears_every_roof_on_its_round() {
     for (seed, pop) in [(2u64, 20_000.0), (3, 6_000.0)] {
         liner_clears(seed, pop);
@@ -95,7 +96,7 @@ fn the_liner_clears_every_roof_on_its_round() {
 }
 
 #[test]
-#[ignore = "slow: scripts/check.sh --full and CI run it"]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_liner_clears_every_roof_in_towns_of_every_size() {
     for (seed, pop) in [(1u64, 800.0), (5, 60_000.0), (7, 600_000.0)] {
         liner_clears(seed, pop);
@@ -103,6 +104,7 @@ fn the_liner_clears_every_roof_in_towns_of_every_size() {
 }
 
 #[test]
+#[ignore = "daily (slow blocker): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_pirate_ship_hangs_clear_of_every_building() {
     let mut moored = 0;
     for seed in [1u64, 2, 3, 4] {
@@ -112,7 +114,7 @@ fn the_pirate_ship_hangs_clear_of_every_building() {
 }
 
 #[test]
-#[ignore = "slow: scripts/check.sh --full and CI run it"]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_pirate_ship_hangs_clear_in_towns_of_every_size() {
     for (seed, pop) in [
         (5u64, 1_500.0),
@@ -168,7 +170,7 @@ fn raiders_hang_and_sail_clear_of_every_building() {
 }
 
 #[test]
-#[ignore = "slow: scripts/check.sh --full and CI run it"]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn raiders_clear_every_building_in_towns_of_every_size() {
     for (seed, pop) in [(1u64, 800.0), (5, 60_000.0), (7, 600_000.0)] {
         raiders_clear(seed, pop);

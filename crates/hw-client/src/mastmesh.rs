@@ -1378,6 +1378,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_hatch_and_door_are_on_the_ship() {
         let h = hatch();
         assert!(h.y < -SHIP_R && h.y > -DECK_DROP - 0.5, "{h}");

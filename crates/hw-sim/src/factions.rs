@@ -264,6 +264,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_empire_is_evil_and_the_others_are_not_all_bad() {
         let fresh = [0i8; FACTIONS];
         let att = |f| Attitude::of(toward_hero(f, &fresh));
@@ -291,6 +292,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn talking_mole_folk_down_wins_molehaven_over() {
         let mut regard = [0i8; FACTIONS];
         for _ in 0..4 {
@@ -323,6 +325,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_new_hero_is_regarded_like_townsfolk() {
         let fresh = [0i8; FACTIONS];
         for f in Faction::ALL {
@@ -335,6 +338,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn gangs_ignore_a_passer_by_off_their_turf() {
         assert_eq!(
             react(meet(Attitude::Unfriendly, 5.0)),
@@ -345,6 +349,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn turf_is_warned_then_defended() {
         let on_turf = |distance, warned| Encounter {
             turf: true,
@@ -368,6 +373,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn crooks_turn_on_a_hero_who_steps_in() {
         let crime = |distance| Encounter {
             crime: Some(8.0),
@@ -378,6 +384,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn beating_a_gang_turns_it_hostile_and_pleases_its_rivals() {
         let mut regard = [0i8; FACTIONS];
         let mut beaten = 0;

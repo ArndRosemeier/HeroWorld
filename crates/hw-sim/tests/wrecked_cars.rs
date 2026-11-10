@@ -10,6 +10,7 @@ use hw_sim::destruction::REPAIR_SECONDS;
 use hw_sim::{GeneratedTown, Sim, DT, TICK_HZ};
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_blast_wrecks_a_passing_car_and_holds_up_its_lane() {
     let town = GeneratedTown::generate(Seed(3), 20_000.0);
     let mut sim = Sim::for_town(Seed(3), &town);

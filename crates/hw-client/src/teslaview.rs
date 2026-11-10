@@ -648,6 +648,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_bolt_runs_from_end_to_end() {
         let (a, b) = (DVec3::new(0.0, 40.0, 9.0), DVec3::new(0.0, 0.0, 10.0));
         let p = bolt_path(a, b, 0.16, 5, &mut shape_rng(3));
@@ -670,6 +671,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn arcs_come_and_go_and_bolts_strike() {
         let mut t = TeslaView::with_tower(Some(tower()));
         let (mut lit, mut dark, mut bolts, mut hops) = (0, 0, 0, 0);
@@ -704,6 +706,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn far_away_it_rests() {
         let mut t = TeslaView::with_tower(Some(tower()));
         for _ in 0..600 {

@@ -534,6 +534,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_cart_keeps_off_the_mast_and_terminal() {
         use hw_gen::urban::mast::mast_footprints;
         let path = cart_path();
@@ -552,6 +553,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn crates_come_down_then_ride_off() {
         let mut lowered = [false; 2];
         let mut gone_again = false;

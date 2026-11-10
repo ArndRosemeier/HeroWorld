@@ -274,6 +274,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn the_pad_fits_on_its_plinth() {
         for plaza in GANTRY_PLAZAS {
             for f in footprints(plaza) {
@@ -303,6 +304,7 @@ mod sizes {
     use hw_core::Seed;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_rocket_port_at_any_size() {
         // A hamlet, a market town and a big city: each gets its pad out
         // past its edge.

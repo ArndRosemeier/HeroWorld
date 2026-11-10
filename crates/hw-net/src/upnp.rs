@@ -368,6 +368,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn maps_a_port_on_a_router_and_frees_it_again() {
         let (search, calls) = fake_router();
         let m = map_udp(7777, "HeroWorld", &search).expect("mapped");
@@ -385,6 +386,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn no_router_says_so() {
         // Nobody listens there.
         let quiet = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -394,6 +396,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn reads_router_descriptions() {
         let (url, service) =
             control_url("http://192.168.1.1:5000/rootDesc.xml", DESCRIPTION).unwrap();

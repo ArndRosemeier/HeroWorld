@@ -1008,6 +1008,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn noise_tiles() {
         for p in [3, 7, 16] {
             let a = value(5, p, 0.0, 0.3);

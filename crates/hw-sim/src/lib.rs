@@ -2072,6 +2072,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn steps_count_ticks() {
         let mut sim = flat_sim(1);
         for _ in 0..3 {
@@ -2081,6 +2082,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_hero_runs_where_told_and_lands() {
         let mut sim = flat_sim(1);
         let p = PlayerId(1);
@@ -2106,6 +2108,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn heroes_stand_and_run_on_the_town_hills() {
         let town = GeneratedTown::generate(Seed(10), 3000.0);
         let mut sim = Sim::for_town(Seed(10), &town);
@@ -2191,6 +2194,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn heroes_spawn_on_open_street_in_the_city() {
         let mut sim = Sim::new(Seed(3));
         for k in 1..=10u16 {
@@ -2212,6 +2216,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn removing_a_hero() {
         let mut sim = flat_sim(1);
         sim.spawn_hero(PlayerId(1), DVec3::ZERO);

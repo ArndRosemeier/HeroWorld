@@ -53,6 +53,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_look_comes_back_whole() {
         let look: Vec<u8> = (0..2000u32).map(|i| (i * 7 % 251) as u8).collect();
         let p = pieces(&look);

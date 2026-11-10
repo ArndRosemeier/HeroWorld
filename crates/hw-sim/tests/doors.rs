@@ -46,6 +46,7 @@ fn run(city: &GeneratedCity, body: &mut Body, dir: DVec2, ticks: u32) {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_shut_door_stops_you_and_an_open_one_lets_you_in() {
     let city = GeneratedCity::generate(Seed(1));
     let (b, key, at, into) = front_door(&city);
@@ -105,6 +106,7 @@ fn a_shut_door_stops_you_and_an_open_one_lets_you_in() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn people_walking_up_open_a_door_and_it_shuts_behind_them() {
     let city = GeneratedCity::generate(Seed(1));
     let (b, key, at, into) = front_door(&city);

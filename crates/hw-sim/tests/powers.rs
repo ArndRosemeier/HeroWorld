@@ -131,6 +131,7 @@ fn a_new_hero_reaches_level_five_in_about_an_hour() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn friends_of_different_levels_fight_together_at_one_level() {
     let mut sim = arena(12);
     let host = PlayerId(1);
@@ -219,6 +220,7 @@ fn press(sim: &mut Sim, input: InputState, ticks: u64) -> Vec<hw_net::Fx> {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_binding_hold_stops_a_villain() {
     let (mut sim, hero, brute) = duel(&[Power::Hold]);
     let fx = press(
@@ -242,6 +244,7 @@ fn a_binding_hold_stops_a_villain() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_force_shield_halves_blows_for_the_hero_and_friends() {
     let mut sim = arena(4);
     let a = sim.spawn_hero_with(
@@ -274,6 +277,7 @@ fn a_force_shield_halves_blows_for_the_hero_and_friends() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn lift_and_throw_hits_a_villain_with_a_crate() {
     let (mut sim, hero, brute) = duel(&[Power::Lift]);
     sim.spawn_crate(ground(1.5, 0.0) + DVec3::Y * 0.5, [0.0, 0.0, 0.0, 1.0]);
@@ -299,6 +303,7 @@ fn lift_and_throw_hits_a_villain_with_a_crate() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_shockwave_knocks_down_everyone_close() {
     let mut sim = arena(5);
     let hero = sim.spawn_hero_with(
@@ -330,6 +335,7 @@ fn a_shockwave_knocks_down_everyone_close() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn flight_is_an_unlock_and_super_jump_jumps_higher() {
     let peak = |powers: &[Power], fly: bool| {
         let mut sim = arena(6);
@@ -361,6 +367,7 @@ fn flight_is_an_unlock_and_super_jump_jumps_higher() {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn powers_are_bought_and_given_up_over_the_network() {
     let mut host = Host::with_sim(arena(7));
     let addr = host.listen("127.0.0.1:0").unwrap();
@@ -424,6 +431,7 @@ fn held(sim: &mut Sim) -> Vec<NetId> {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn nothing_lifted_outlives_its_power() {
     let lift = InputState {
         power: Power::Lift.code(),

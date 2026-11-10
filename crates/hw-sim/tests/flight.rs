@@ -17,6 +17,7 @@ fn tallest(city: &GeneratedCity) -> usize {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn take_off_cross_the_city_and_land_on_a_roof() {
     let city = GeneratedCity::generate(Seed(1));
     let solids = &city.obstacles;

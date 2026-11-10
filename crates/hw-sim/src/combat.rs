@@ -3990,6 +3990,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn a_minion_falls_in_one_or_two_hits() {
         for kind in [EnemyKind::Brute, EnemyKind::Technician] {
             let h = enemy_spec(kind).health;

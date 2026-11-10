@@ -81,6 +81,7 @@ impl Walk<'_> {
 }
 
 #[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn walk_in_ride_the_lift_and_step_out_upstairs() {
     let city = GeneratedCity::generate(Seed(1));
     let (index, plan) = city

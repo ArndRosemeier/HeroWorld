@@ -1643,6 +1643,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn citizen_maps_come_down_by_half_but_not_below_the_floor() {
         let mut big = AlbedoMap {
             width: 4,
