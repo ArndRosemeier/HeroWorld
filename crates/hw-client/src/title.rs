@@ -132,7 +132,8 @@ struct Taxi {
 pub struct Title {
     pub profile: Profile,
     clock: f32,
-    last_time: Option<f32>,
+    /// Past the first frame (whose step is 0).
+    started: bool,
     frames: u32,
     still: bool,
     panel: Panel,
@@ -206,7 +207,7 @@ impl Title {
             still,
             profile,
             clock: start,
-            last_time: None,
+            started: false,
             frames: 0,
             // HW_TITLE_PANEL opens a panel at start (for screenshots).
             panel: match std::env::var("HW_TITLE_PANEL").as_deref() {
@@ -567,9 +568,16 @@ impl Title {
         loading: (f32, &str),
     ) -> EngineResult<Option<Choice>> {
         let mut sfx_reveal = false;
-        let now = frame.time;
-        let dt = self.last_time.map_or(0.0, |t| (now - t).clamp(0.0, 0.1));
-        self.last_time = Some(now);
+        // Engine's step, not the gap between frame starts: it follows when
+        // the display shows each frame and evens out the moments the CPU
+        // gets to them, so the cover and logo move evenly while work goes
+        // on behind them. The first frame stands at 0.
+        let dt = if self.started {
+            frame.dt.clamp(0.0, 0.1)
+        } else {
+            0.0
+        };
+        self.started = true;
         self.clock += dt;
         self.dt = dt;
         if self.reveal_at.is_none() && self.world_ready && self.clock >= fun::LANDED + 0.4 {

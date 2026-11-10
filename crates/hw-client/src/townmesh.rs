@@ -152,6 +152,31 @@ pub struct TownView {
     /// late (the cut moved again meanwhile) is thrown away.
     stamps: BTreeMap<CellKey, u64>,
     next_stamp: u64,
+    /// A finished cell going into the world a few meshes per frame (see
+    /// [`Placing`]).
+    placing: Option<Placing>,
+}
+
+/// Meshes of one cell put into the world per frame. Engine uploads each new
+/// mesh in the frame after its spawn (about a millisecond each); a whole
+/// cell (25 to 40 meshes) at once stopped a frame for 30 to 250 ms.
+const MESHES_PER_FRAME: usize = 6;
+
+/// Where a cell's meshes wait, out of sight, until all of them are uploaded:
+/// then they move into place together and the old drawing goes in the same
+/// frame, so a cell never shows half drawn or twice.
+const PARKED_Y: f32 = -100_000.0;
+
+/// A finished cell going into the world over several frames.
+struct Placing {
+    key: CellKey,
+    detail: Detail,
+    /// Still to spawn: the mesh and whether it is flat ground (no shadow).
+    meshes: Vec<(PreparedMesh, bool)>,
+    /// Spawned so far, parked at [`PARKED_Y`].
+    ids: Vec<EntityId>,
+    plans: Vec<(u64, Arc<BuildingPlan>)>,
+    spots: Vec<IndoorSpots>,
 }
 
 /// What one cell needs to be drawn, sent to a worker.
@@ -407,6 +432,7 @@ impl TownView {
             green,
             workers: None,
             stamps: BTreeMap::new(),
+            placing: None,
             next_stamp: 0,
         };
         v.cut_focus = v
@@ -709,6 +735,10 @@ impl TownView {
     /// unlimited: then it is planned on the spot).
     pub fn update(&mut self, world: &mut World, eye: DVec2, budget_ms: f64) {
         self.drop_far(world, eye);
+        // A cell the background path left half placed goes in now.
+        while self.placing.is_some() {
+            self.step_placing(world, usize::MAX, eye);
+        }
         let wait = budget_ms.is_finite();
         let start = std::time::Instant::now();
         let mut later = Vec::new();
@@ -734,18 +764,25 @@ impl TownView {
         self.drop_far(world, eye);
         let mut workers = self.workers.take().unwrap_or_else(Workers::start);
         let start = std::time::Instant::now();
-        while let Ok(m) = workers.done.try_recv() {
+        // A few meshes per frame: one cell at a time, the next only when the
+        // last one is in.
+        let mut spawned = self.step_placing(world, MESHES_PER_FRAME, eye);
+        while self.placing.is_none()
+            && spawned < MESHES_PER_FRAME
+            && start.elapsed().as_secs_f64() * 1000.0 <= budget_ms
+        {
+            let Ok(m) = workers.done.try_recv() else {
+                break;
+            };
             workers.busy.remove(&m.key);
             // A cell that went out of range while it was drawn is dropped,
             // and so is a drawing that a newer job replaces.
             let newest = self.stamps.get(&m.key) == Some(&m.stamp);
             if newest && cell_centre(m.key).distance(eye) <= UNLOAD {
-                self.place_cell(world, m);
+                self.start_placing(m);
+                spawned += self.step_placing(world, MESHES_PER_FRAME - spawned, eye);
             } else if !newest {
                 crate::hitch::count("town cells drawn too late", 1);
-            }
-            if start.elapsed().as_secs_f64() * 1000.0 > budget_ms {
-                break;
             }
         }
         let mut room = (workers.count * 2).saturating_sub(workers.busy.len());
@@ -847,6 +884,7 @@ impl TownView {
     }
 
     fn drop_cell(&mut self, world: &mut World, k: CellKey) {
+        self.abandon_placing(world, k);
         for e in self.entities.remove(&k).unwrap_or_default() {
             world.despawn(e);
         }
@@ -917,8 +955,99 @@ impl TownView {
         }
     }
 
+    /// Takes a finished cell to put in over the next frames.
+    fn start_placing(&mut self, m: CellMeshes) {
+        debug_assert!(self.placing.is_none(), "one cell is placed at a time");
+        let mut meshes: Vec<(PreparedMesh, bool)> = Vec::new();
+        meshes.extend(m.solid.into_iter().map(|mesh| (mesh, false)));
+        meshes.extend(m.lawns.into_iter().map(|mesh| (mesh, true)));
+        meshes.extend(m.water.into_iter().map(|mesh| (mesh, false)));
+        // Spawned from the end: keep the order the cell listed them in.
+        meshes.reverse();
+        self.placing = Some(Placing {
+            key: m.key,
+            detail: m.detail,
+            ids: Vec::with_capacity(meshes.len()),
+            meshes,
+            plans: m.plans,
+            spots: m.spots,
+        });
+    }
+
+    /// Spawns up to `max` meshes of the cell being placed (parked out of
+    /// sight); once all are spawned and Engine has had a frame to upload
+    /// the last ones, moves them into place and retires the old drawing.
+    /// Returns the meshes spawned.
+    fn step_placing(&mut self, world: &mut World, max: usize, eye: DVec2) -> usize {
+        let Some(p) = self.placing.as_mut() else {
+            return 0;
+        };
+        if cell_centre(p.key).distance(eye) > UNLOAD {
+            let k = p.key;
+            self.abandon_placing(world, k);
+            return 0;
+        }
+        if p.meshes.is_empty() {
+            // Every mesh had a frame to upload: show the cell.
+            let p = self.placing.take().expect("checked above");
+            self.finish_placing(world, p);
+            return 0;
+        }
+        let mut n = 0;
+        while n < max {
+            let Some((mesh, flat)) = p.meshes.pop() else {
+                break;
+            };
+            let id = world.spawn_prepared(mesh);
+            let _ = world.set_place(id, Place::new(0.0, PARKED_Y, 0.0));
+            if flat {
+                // Flat ground casts no shadow worth its cost.
+                let _ = world.set_casts_shadow(id, false);
+            }
+            world.set_name(id, format!("town cell {} {}", p.key.0, p.key.1));
+            p.ids.push(id);
+            n += 1;
+        }
+        n
+    }
+
+    /// The cell's meshes are all uploaded: into place, old drawing out.
+    fn finish_placing(&mut self, world: &mut World, p: Placing) {
+        let k = p.key;
+        for e in self.entities.remove(&k).unwrap_or_default() {
+            world.despawn(e);
+        }
+        for &id in &p.ids {
+            let _ = world.set_place(id, Place::new(0.0, 0.0, 0.0));
+        }
+        if self.buildings.contains_key(&k) {
+            self.plans.extend(p.plans);
+        }
+        if p.spots.is_empty() {
+            self.spots.remove(&k);
+        } else {
+            self.spots.insert(k, p.spots);
+        }
+        crate::hitch::count("town cells placed", 1);
+        crate::hitch::count("town meshes spawned", p.ids.len() as u64);
+        self.entities.insert(k, p.ids);
+        self.built.insert(k, p.detail);
+    }
+
+    /// Forgets a half-placed drawing of cell `k` (it went out of range, or
+    /// a newer drawing is put in on the spot).
+    fn abandon_placing(&mut self, world: &mut World, k: CellKey) {
+        if self.placing.as_ref().is_some_and(|p| p.key == k) {
+            let p = self.placing.take().expect("checked above");
+            for id in p.ids {
+                world.despawn(id);
+            }
+        }
+    }
+
     fn place_cell(&mut self, world: &mut World, m: CellMeshes) {
         let k = m.key;
+        self.abandon_placing(world, k);
         for e in self.entities.remove(&k).unwrap_or_default() {
             world.despawn(e);
         }

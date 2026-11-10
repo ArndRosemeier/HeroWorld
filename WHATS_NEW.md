@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.144 (2026-11-10)
+
+- The start screen runs smoothly while the city loads behind it: textures and characters no longer freeze a frame when they first appear (Engine 0.046 makes their smaller sizes on the graphics card), town blocks and props come in a few pieces per frame, and the title animation follows the screen's own rhythm.
+
 ## 0.143 (2026-11-10)
 
 - The rescue bubble is a real soap bubble now: rainbow swirls drift and drain down its film, it is almost clear where you look straight through and shines at the edge.

@@ -161,6 +161,9 @@ impl Step {
     }
 }
 
+/// Steps put into the world per frame at most (each spawns a few meshes).
+const STEPS_PER_FRAME: usize = 2;
+
 /// A step this slow is noted in the hitch log.
 const SLOW_STEP_MS: f64 = 12.0;
 
@@ -240,7 +243,15 @@ impl ExtrasLoad {
             }
         }
         let t = Instant::now();
+        let mut done = 0;
         loop {
+            // Engine uploads what a step spawned in the frame after (a few
+            // meshes each): a handful of steps at once stopped frames for
+            // 40-180 ms on the title.
+            if done == STEPS_PER_FRAME {
+                return Ok(None);
+            }
+            done += 1;
             let Some(step) = self.steps.pop_front() else {
                 return Ok(Some(self.finish()));
             };
