@@ -122,6 +122,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | Q | Energy Bolt |
 | 1 to 0, Alt+1 to Alt+0 | The power in that slot of the power tray (see below) |
 | B | Powers and karma window (also faction standings) |
+| E | Open or shut the door you stand at (a rescue or a downed teammate near takes E first) |
 | E (hold) | Revive a downed teammate; help trapped people out; pick up the hurt |
 | H | Call the medical drone when you are down |
 | G | Hail a flying taxi (G again hops out mid-air) |
@@ -577,13 +578,28 @@ between them) is designed but not built; the town stands in endless streamed gro
   glowing **Aether lift** in its core (Space rises, Ctrl sinks). Interiors follow the
   building's era: wallpaper (stripes, damask, atomic) and picture rails in old and deco
   houses, painted plaster in modern ones; parquet in flats, lino in kitchens and diners,
-  terrazzo in lobbies; doors stand open. Flats have a kitchen, dining table, sofa group,
+  terrazzo in lobbies. Flats have a kitchen, dining table, sofa group,
   bed and wardrobe; offices rows of steel desks; shops are a grocer, a clothes shop, an
   appliance store or a diner (narrow commercial buildings keep a 4 m entrance hall at one
   end and a shop in the rest). After dark the lit rooms light up (lamps on the same habits
   as the lit windows). **People indoors:** at home mornings and evenings (abed from 23:30
   to 6), at work 8-18, shopping while the shops are busy; each stays about a quarter hour. Buildings on slopes stand
   on stone plinths. Surfaces are textured and weathered by age and quarter.
+- **Doors** (`hw-gen/src/doors.rs`, `hw-sim/src/doors.rs`, `hw-client/src/doorview.rs`):
+  every doorway up to 2 m wide has a real door, shut until someone opens it, and a shut
+  door is solid (heroes, villains, thrown crates and lines of sight stop at it). Street
+  doors are a pair of painted leaves (panelled with a brass knob and fanlight on older
+  houses; streamline with a chrome-ringed porthole, speed lines and a bar handle on newer
+  ones); shop and lobby entrances get a pair of chrome-framed glass doors with push bars
+  in the middle of fixed glass; doors between rooms are panelled wood or flush with a
+  porthole, like the rest of the furniture. Leaves swing 90° into the room behind (0.7 s).
+  **E** within 2.6 m of a doorway opens or shuts it (the server checks the distance and
+  never shuts a door on someone). People on foot (villains, sidekicks, the town's heroes)
+  open a shut door they walk up to (within 1.4 m, heading at it) and it shuts 2.5 s after
+  nobody is within 2.2 m. Wider openings (hall wings, the lift core) stay open. Only open
+  doors are remembered (in collision, the save, and for players who join). Behind an open
+  street door of a building you are not in, a small lit hall shows. View:
+  `HW_VIEW=door HW_DOOR=front|glass|inner [HW_DOOR_OPEN=1] [HW_DOOR_SKIP=n]`.
 - **Water:** rivers, lakes and coasts; bridges; granite quays with bollards and steps down
   to the water. Water is a surface you stand on at its level; quay walls block (fly out).
 - **Landmarks:** the **Aether Spire** (every town, on a raised plaza near the old centre,

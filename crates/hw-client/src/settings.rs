@@ -213,6 +213,7 @@ pub const CONTROLS: &[(&str, &str)] = &[
     ("Q / 2", "Energy bolt"),
     ("3 to 6", "Your other powers"),
     ("B", "Powers and karma"),
+    ("E", "Open or shut a door"),
     ("E (hold)", "Revive a downed teammate"),
     ("H", "Call the medical drone when you are down"),
     ("G", "Hail a flying taxi (G again hops out)"),

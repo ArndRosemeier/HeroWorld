@@ -15,6 +15,7 @@ pub mod collision;
 pub mod combat;
 pub mod deepspots;
 pub mod destruction;
+pub mod doors;
 pub mod factions;
 pub mod host;
 pub mod hostthread;
@@ -540,6 +541,8 @@ pub struct Sim {
     /// The airships heroes bump into: the liner on its timetable and the
     /// pirates' moored ship.
     pub airships: airships::Airships,
+    /// Doors people walked through, and news of doors opening and shutting.
+    pub doors: doors::Doors,
 }
 
 impl Sim {
@@ -864,6 +867,7 @@ impl Sim {
             area_moved: false,
             rockets: Vec::new(),
             airships: airships::Airships::default(),
+            doors: doors::Doors::default(),
         }
     }
 
@@ -1074,6 +1078,7 @@ impl Sim {
             movers.extend(t.car_solids(&heroes, 25.0, now));
         }
         self.world.resource::<Solids>().0.set_movers(movers);
+        self.walk_through_doors();
         self.pay_karma();
         self.sync_levels();
         self.clear_rubble();
@@ -1263,7 +1268,64 @@ impl Sim {
         news.extend(self.incidents.take_news());
         news.extend(self.story.take_news());
         news.extend(self.damage.take_news());
+        news.extend(self.doors.take_news());
         news
+    }
+
+    /// Player `player`'s hero opens (`open`) or shuts a door it stands at.
+    pub fn use_door(&mut self, player: PlayerId, building: u64, key: u32, open: bool) {
+        let Some(at) = self.hero_of(player).and_then(|h| self.position(h)) else {
+            return;
+        };
+        let people = self.people_feet();
+        let solids = self.solids();
+        if let Err(why) = self
+            .doors
+            .hero_uses(&solids, at, building, key, open, &people)
+        {
+            println!("door {building}/{key}: {why:?}");
+        }
+    }
+
+    /// Everyone's feet: heroes and everyone else with a body.
+    fn people_feet(&mut self) -> Vec<DVec3> {
+        self.world
+            .query_filtered::<&Motion, Without<Prop>>()
+            .iter(&self.world)
+            .map(|m| m.0.pos)
+            .collect()
+    }
+
+    /// People on foot open shut doors they walk up to and shut them behind
+    /// them (heroes use E).
+    fn walk_through_doors(&mut self) {
+        if !self.tick.is_multiple_of(3) {
+            return;
+        }
+        let mut walkers = Vec::new();
+        let mut everyone = Vec::new();
+        let mut heroes = Vec::new();
+        for (m, hero) in self
+            .world
+            .query_filtered::<(&Motion, Has<Hero>), Without<Prop>>()
+            .iter(&self.world)
+        {
+            everyone.push(m.0.pos);
+            if hero {
+                heroes.push(m.0.pos);
+            } else if m.0.grounded {
+                walkers.push((m.0.pos, m.0.vel));
+            }
+        }
+        let solids = self.solids();
+        self.doors.step(
+            &solids,
+            &walkers,
+            &everyone,
+            &heroes,
+            self.tick,
+            TICK_HZ as f64,
+        );
     }
 
     fn step_physics(&mut self, heroes: &[(PlayerId, NetId, DVec3)]) {

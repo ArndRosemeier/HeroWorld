@@ -45,6 +45,40 @@ struct Decor {
     seed: u64,
 }
 
+/// Every wood an inside door can be made of (see [`inner_door`]).
+pub const DOOR_WOODS: [(u8, u8, u8); 11] = [
+    (96, 58, 36),
+    (120, 74, 44),
+    (84, 52, 34),
+    (120, 70, 42),
+    (140, 86, 52),
+    (104, 60, 40),
+    (196, 150, 100),
+    (176, 124, 76),
+    (214, 176, 126),
+    (130, 96, 66),
+    (110, 84, 60),
+];
+
+/// How a building's inside doors look: flush with a porthole (modern
+/// buildings) or panelled, and the wood (an index into [`DOOR_WOODS`]).
+/// The same as the rest of its furniture.
+pub fn inner_door(plan: &BuildingPlan) -> (bool, usize) {
+    let d = Decor::of(plan);
+    let w = d.wood;
+    let wood = DOOR_WOODS
+        .iter()
+        .position(|c| rgb(c.0, c.1, c.2) == w)
+        .unwrap_or(0);
+    (d.era == Era::Modern, wood)
+}
+
+/// Is the building of an older style (painted, panelled street doors
+/// rather than streamline ones)?
+pub fn old_fashioned(plan: &BuildingPlan) -> bool {
+    !matches!(Decor::of(plan).era, Era::Modern | Era::Bare)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Era {
     /// Old-town and 19th-century houses: dark woods, damask, boards.
@@ -57,6 +91,17 @@ enum Era {
     Shabby,
     /// Works, labs: bare.
     Bare,
+}
+
+impl Era {
+    fn woods(self) -> &'static [(u8, u8, u8)] {
+        match self {
+            Era::Old => &DOOR_WOODS[0..3],
+            Era::Deco => &DOOR_WOODS[3..6],
+            Era::Modern => &DOOR_WOODS[6..9],
+            Era::Shabby | Era::Bare => &DOOR_WOODS[9..11],
+        }
+    }
 }
 
 impl Decor {
@@ -76,12 +121,7 @@ impl Decor {
             Era::Modern => pick_of(&[Paper::Atomic, Paper::Pinstripe, Paper::Atomic]),
             Era::Shabby | Era::Bare => Paper::Stripes,
         };
-        let woods: &[(u8, u8, u8)] = match era {
-            Era::Old => &[(96, 58, 36), (120, 74, 44), (84, 52, 34)],
-            Era::Deco => &[(120, 70, 42), (140, 86, 52), (104, 60, 40)],
-            Era::Modern => &[(196, 150, 100), (176, 124, 76), (214, 176, 126)],
-            Era::Shabby | Era::Bare => &[(130, 96, 66), (110, 84, 60)],
-        };
+        let woods = era.woods();
         let w = woods[(seed >> 13) as usize % woods.len()];
         Decor {
             era,
@@ -330,7 +370,14 @@ pub fn room_lights(plan: &BuildingPlan, level: usize) -> Vec<RoomLight> {
 /// Keep-out boxes in front of doorways (centre, half size).
 fn door_keepout(d: &Door) -> (DVec2, DVec2) {
     let along = d.size.x * 0.5 + 0.35;
-    let across = 1.15;
+    // Clear of an open leaf: half the doorway each for two, all of it for
+    // one (see `hw_gen::doors`).
+    let leaf = if d.size.x >= 1.4 {
+        d.size.x * 0.5
+    } else {
+        d.size.x
+    };
+    let across = (leaf + 0.3).max(1.15);
     if d.along_x {
         (d.at, DVec2::new(along, across))
     } else {
@@ -1174,56 +1221,15 @@ fn dress_doors(fu: &mut Furnisher, f: &Floor) {
                 );
             }
         }
-        // Inner doors: two leaves standing open into one of the rooms.
-        let Some(b) = d.b else { continue };
-        let into = if f.rooms[d.a].kind == RoomKind::Corridor {
-            b
-        } else {
-            d.a
-        };
-        let room = &f.rooms[into];
-        if matches!(room.kind, RoomKind::Core) {
-            continue;
-        }
-        let side = if (room.rect.center() - d.at).dot(normal) > 0.0 {
-            1.0
-        } else {
-            -1.0
-        };
-        let n = normal * side;
-        // Only where the opening lies within the room's wall and the
-        // leaves fit in its depth (a doorway wider than a narrow hall
-        // keeps no leaves: they would stand in its walls).
-        let inner_r = room.rect.inset(WALL_HALF + PAPER + 0.05);
-        let (lo, hi, depth) = if d.along_x {
-            (inner_r.min.x, inner_r.max.x, inner_r.size().y)
-        } else {
-            (inner_r.min.y, inner_r.max.y, inner_r.size().x)
-        };
-        let mid = if d.along_x { d.at.x } else { d.at.y };
-        if mid - w * 0.5 < lo || mid + w * 0.5 > hi || depth < w * 0.5 + 0.1 {
-            continue;
-        }
-        // The hinge 8 cm in from the opening's edge: the leaf and its
-        // panels and knobs stay clear of the casing's side (closer, they
-        // fought it).
-        let leaf_w = w * 0.5 - 0.08;
-        for s in [-1.0, 1.0] {
-            // The hinge on the room's face.
-            let hinge = d.at + along * s * (w * 0.5 - 0.08) + n * WALL_HALF;
-            let c = hinge + n * (leaf_w * 0.5);
-            // The leaf's face looks along the wall, away from the opening.
-            let wood = fu.decor.wood;
-            let mut m = fu.maker(c, 0.0, along * s);
-            door_leaf(&mut m, leaf_w, INNER_TOP - 0.02, modern, wood);
-        }
+        // The leaves themselves move (opened and shut): `doorview` draws
+        // them.
     }
 }
 
 /// A door leaf `w` wide standing on the floor, its faces looking along
 /// local ±z, its width along local x: panelled for old houses, flush
 /// with a porthole for modern ones.
-fn door_leaf(m: &mut Maker, w: f64, h: f64, modern: bool, wood: Color) {
+pub fn door_leaf(m: &mut Maker, w: f64, h: f64, modern: bool, wood: Color) {
     let t = 0.022;
     if modern {
         m.block(

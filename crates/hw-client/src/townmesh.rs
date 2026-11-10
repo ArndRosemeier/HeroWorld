@@ -143,6 +143,10 @@ pub struct TownView {
     rooms: (Option<RoomsKey>, Vec<engine::lamps::Lamp>),
     /// Places to stand indoors, by the cell that drew them.
     spots: BTreeMap<CellKey, Vec<IndoorSpots>>,
+    /// Doors and fixed entrance glass each cell shows (see `doorview`).
+    doors: BTreeMap<CellKey, CellDoors>,
+    /// Goes up whenever a cell's doors come or go.
+    door_generation: u64,
     /// Where grass grows (the lawns drawn in each cell).
     pub green: Arc<Greenery>,
     /// Worker threads drawing cells off the main thread, so a frame never
@@ -177,6 +181,14 @@ struct Placing {
     ids: Vec<EntityId>,
     plans: Vec<(u64, Arc<BuildingPlan>)>,
     spots: Vec<IndoorSpots>,
+    doors: CellDoors,
+}
+
+/// The doors and fixed entrance glass of one cell.
+#[derive(Default)]
+struct CellDoors {
+    doors: Vec<crate::doorview::DoorSpot>,
+    panes: Vec<crate::doorview::PaneSpot>,
 }
 
 /// What one cell needs to be drawn, sent to a worker.
@@ -214,6 +226,7 @@ struct CellMeshes {
     plans: Vec<(u64, Arc<BuildingPlan>)>,
     /// Places to stand on the floors drawn open: building, floor, places.
     spots: Vec<IndoorSpots>,
+    doors: CellDoors,
 }
 
 /// The places to stand on one building's floor drawn open.
@@ -326,6 +339,7 @@ fn make_cell(job: CellJob) -> CellMeshes {
     let mut solid = Vec::new();
     let mut plans = Vec::new();
     let mut spots = Vec::new();
+    let mut doors = CellDoors::default();
     // Roads first, one mesh for the cell.
     let mut b = MeshBuilder::new();
     for r in &roads {
@@ -363,6 +377,12 @@ fn make_cell(job: CellJob) -> CellMeshes {
                 }
             }
             b.append(one, lift);
+            // Up close, the doors are their own moving leaves.
+            if detail == Detail::Near {
+                let (d, p) = crate::doorview::door_spots(&plan, cb.id, wb.base, cb.look);
+                doors.doors.extend(d);
+                doors.panes.extend(p);
+            }
         }
         if wb.base - wb.low > 0.05 {
             // The plinth is the building's own base stone.
@@ -410,6 +430,7 @@ fn make_cell(job: CellJob) -> CellMeshes {
         water: water.map(Mesh::prepare),
         plans,
         spots,
+        doors,
     }
 }
 
@@ -429,6 +450,8 @@ impl TownView {
             hidden: BTreeSet::new(),
             rooms: (None, Vec::new()),
             spots: BTreeMap::new(),
+            doors: BTreeMap::new(),
+            door_generation: 0,
             green,
             workers: None,
             stamps: BTreeMap::new(),
@@ -894,6 +917,33 @@ impl TownView {
         self.built.remove(&k);
         self.stamps.remove(&k);
         self.spots.remove(&k);
+        if self.doors.remove(&k).is_some() {
+            self.door_generation += 1;
+        }
+    }
+
+    fn set_doors(&mut self, k: CellKey, d: CellDoors) {
+        self.door_generation += 1;
+        if d.doors.is_empty() && d.panes.is_empty() {
+            self.doors.remove(&k);
+        } else {
+            self.doors.insert(k, d);
+        }
+    }
+
+    /// The doors the built cells show (see `doorview`).
+    pub fn door_spots(&self) -> impl Iterator<Item = &crate::doorview::DoorSpot> {
+        self.doors.values().flat_map(|d| d.doors.iter())
+    }
+
+    /// The fixed glass of entrances the built cells show.
+    pub fn pane_spots(&self) -> impl Iterator<Item = &crate::doorview::PaneSpot> {
+        self.doors.values().flat_map(|d| d.panes.iter())
+    }
+
+    /// Changes whenever the doors shown change.
+    pub fn door_generation(&self) -> u64 {
+        self.door_generation
     }
 
     /// The buildings whose centres stand in cell `k`.
@@ -971,6 +1021,7 @@ impl TownView {
             meshes,
             plans: m.plans,
             spots: m.spots,
+            doors: m.doors,
         });
     }
 
@@ -1028,6 +1079,7 @@ impl TownView {
         } else {
             self.spots.insert(k, p.spots);
         }
+        self.set_doors(k, p.doors);
         crate::hitch::count("town cells placed", 1);
         crate::hitch::count("town meshes spawned", p.ids.len() as u64);
         self.entities.insert(k, p.ids);
@@ -1060,6 +1112,7 @@ impl TownView {
         } else {
             self.spots.insert(k, m.spots);
         }
+        self.set_doors(k, m.doors);
         let mut ids: Vec<EntityId> = m
             .solid
             .into_iter()

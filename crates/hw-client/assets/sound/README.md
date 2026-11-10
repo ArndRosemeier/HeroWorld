@@ -105,3 +105,4 @@ ones that fit a 1950s town (no modern horns or engines):
 - `alarm_bell`
 - `scream_crowd_1`
 - `crowd_gasp`
+- `door_open`, `door_shut` (doors, 0.146): Seed Audio `bytedance-seed/seed-audio-1-0`. Open: "The sound of a solid wooden front door opening: a brass latch clicks, then a short soft hinge creak, close up, indoors, no voices" (0-2.3 s). Shut: "The sound of a heavy wooden door swinging shut: a firm solid thud and the latch clicking into place, close up, no voices" (0.35-1.9 s). Mono, loudness -18 LUFS. Raw takes: project files `heroworld/sounds/doors/`.

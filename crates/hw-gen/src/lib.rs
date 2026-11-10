@@ -4,6 +4,7 @@
 
 pub mod building;
 pub mod city;
+pub mod doors;
 pub mod geom;
 pub mod style;
 pub mod urban;

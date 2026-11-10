@@ -8,13 +8,14 @@ use glam::{DVec2, DVec3};
 use hw_gen::building::BuildingPlan;
 use hw_gen::building::BuildingSite;
 use hw_gen::city::CityPlan;
+use hw_gen::doors::DoorKind;
 use hw_gen::geom::Rect;
 use hw_gen::urban::footprint::Footprint;
 use hw_gen::urban::greenery::Greenery;
 use hw_gen::urban::quarter::{DetailId, Quarter, UnitKind, PIECE_ROADS};
 use hw_gen::urban::underground::Underground;
 use hw_gen::urban::world::{TownWorld, WATER_LEVEL};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 
@@ -123,6 +124,26 @@ struct Collider {
     damage: RwLock<Option<Damaged>>,
     /// Goes up whenever the damage changes, so copies (physics) know to rebuild.
     version: AtomicU64,
+    /// Its doors as solids, made on first use.
+    doors: OnceLock<Arc<[DoorSolids]>>,
+    /// Its solids with its doors as they stand now, and the door version
+    /// they were made for (see [`Obstacles::door_version`]).
+    with_doors: RwLock<Option<(u64, Arc<[Solid]>)>>,
+    /// Its solids with fixed glass but no door leaves (where people may
+    /// walk: a closed door opens for them).
+    walkable: OnceLock<Arc<[Solid]>>,
+}
+
+/// One door of a building as solids.
+#[derive(Debug)]
+struct DoorSolids {
+    key: u32,
+    /// The doorway filled (shut), floor to ceiling.
+    shut: Solid,
+    /// The leaves standing open.
+    open: Vec<Solid>,
+    /// What stays whatever the door does: glass beside and above it.
+    fixed: Vec<Solid>,
 }
 
 /// What is left of a damaged building, for collision.
@@ -161,14 +182,57 @@ impl Collider {
             solids: OnceLock::new(),
             damage: RwLock::new(None),
             version: AtomicU64::new(0),
+            doors: OnceLock::new(),
+            with_doors: RwLock::new(None),
+            walkable: OnceLock::new(),
         }
     }
 
-    fn set(&self) -> SolidSet<'static> {
-        match self.damage.read().expect("damage lock").as_ref() {
-            Some(d) => SolidSet::Shared(d.solids.clone()),
-            None => SolidSet::Shared(self.solids().clone()),
+    /// Its solids: a damaged building's remains (its doors gone with the
+    /// walls), else its own with its doors open or shut as `open` has them
+    /// (made for door version `v`), or, without `doors`, with no leaves at
+    /// all.
+    fn set(&self, doors: bool, open: impl FnOnce() -> (BTreeSet<u32>, u64)) -> SolidSet<'static> {
+        if let Some(d) = self.damage.read().expect("damage lock").as_ref() {
+            return SolidSet::Shared(d.solids.clone());
         }
+        let ds = self.door_solids();
+        if ds.is_empty() {
+            return SolidSet::Shared(self.solids().clone());
+        }
+        if !doors {
+            let w = self.walkable.get_or_init(|| {
+                let mut out = self.solids().to_vec();
+                out.extend(ds.iter().flat_map(|d| d.fixed.iter().cloned()));
+                out.into()
+            });
+            return SolidSet::Shared(w.clone());
+        }
+        let (open, v) = open();
+        if let Some((cv, set)) = self.with_doors.read().expect("doors lock").as_ref() {
+            if *cv == v {
+                return SolidSet::Shared(set.clone());
+            }
+        }
+        let mut out = self.solids().to_vec();
+        for d in ds.iter() {
+            out.extend(d.fixed.iter().cloned());
+            if open.contains(&d.key) {
+                out.extend(d.open.iter().cloned());
+            } else {
+                out.push(d.shut.clone());
+            }
+        }
+        let set: Arc<[Solid]> = out.into();
+        *self.with_doors.write().expect("doors lock") = Some((v, set.clone()));
+        SolidSet::Shared(set)
+    }
+
+    fn door_solids(&self) -> &Arc<[DoorSolids]> {
+        self.doors.get_or_init(|| match self.plan() {
+            Some(p) => door_solids(p, self.base).into(),
+            None => Vec::new().into(),
+        })
     }
 
     fn plinth_solid(&self) -> Option<Solid> {
@@ -243,6 +307,12 @@ pub struct Obstacles {
     /// The deep underground (tube, lab, ruins, the Deeps) and the solid
     /// parts of what stands down there, by deep tile.
     deep: Option<DeepSolids>,
+    /// Doors standing open, by building, with a version per building.
+    /// Every door is shut unless it is here, so only what changed is kept
+    /// (a building nobody is near costs nothing).
+    doors: RwLock<BTreeMap<ColliderId, (BTreeSet<u32>, u64)>>,
+    /// Door versions come from this counter, so they never repeat.
+    door_tick: AtomicU64,
 }
 
 /// The deep underground's fixtures as solids, made for a tile the first
@@ -781,12 +851,13 @@ impl Obstacles {
     }
 
     /// The solids near a point, a set per collider (builds colliders on
-    /// first touch).
-    fn near(&self, p: DVec2, r: f64) -> Vec<SolidSet<'_>> {
+    /// first touch). Without `doors`, buildings come without their door leaves (open or
+    /// shut).
+    fn near_with(&self, p: DVec2, r: f64, doors: bool) -> Vec<SolidSet<'_>> {
         let mut sets: Vec<SolidSet<'_>> = self
             .near_colliders(p, r)
             .into_iter()
-            .map(|(_, c)| c.set())
+            .map(|(i, c)| self.set_of(i, &c, doors))
             .collect();
         let movers = self.movers.read().expect("movers lock").clone();
         if movers
@@ -804,7 +875,11 @@ impl Obstacles {
     /// [`Self::near`] for something at height `y`: with the deep
     /// underground's fixtures when it is down there (or by a street lift).
     fn near_at(&self, p: DVec2, r: f64, y: f64) -> Vec<SolidSet<'_>> {
-        let mut sets = self.near(p, r);
+        self.near_at_with(p, r, y, true)
+    }
+
+    fn near_at_with(&self, p: DVec2, r: f64, y: f64, doors: bool) -> Vec<SolidSet<'_>> {
+        let mut sets = self.near_with(p, r, doors);
         if let Some(d) = &self.deep {
             if d.town.deep_matters(p, y) {
                 sets.extend(d.near(p, r).into_iter().map(SolidSet::Shared));
@@ -832,8 +907,21 @@ impl Obstacles {
     pub fn solids_near(&self, p: DVec2, r: f64) -> Vec<(ColliderId, SolidSet<'_>)> {
         self.near_colliders(p, r)
             .into_iter()
-            .map(|(i, c)| (i, c.set()))
+            .map(|(i, c)| (i, self.set_of(i, &c, true)))
             .collect()
+    }
+
+    /// Collider `i`'s solids with its doors as they stand (see
+    /// [`Collider::set`]).
+    fn set_of(&self, i: ColliderId, c: &Collider, doors: bool) -> SolidSet<'static> {
+        c.set(doors, || {
+            self.doors
+                .read()
+                .expect("doors lock")
+                .get(&i)
+                .cloned()
+                .unwrap_or_default()
+        })
     }
 
     /// Buildings (by collider id, as [`Inside::building`] names them) whose
@@ -933,6 +1021,10 @@ impl Obstacles {
 
     /// Changes whenever collider `i`'s solids change.
     pub fn version(&self, i: ColliderId) -> u64 {
+        (self.damage_version(i) << 32) ^ self.door_version(i)
+    }
+
+    fn damage_version(&self, i: ColliderId) -> u64 {
         if let Some(c) = self.fixed(i) {
             return c.version.load(Ordering::Relaxed);
         }
@@ -945,6 +1037,134 @@ impl Obstacles {
         })
     }
 
+    /// Changes whenever a door of building `i` opens or shuts (0: all shut).
+    pub fn door_version(&self, i: ColliderId) -> u64 {
+        self.doors
+            .read()
+            .expect("doors lock")
+            .get(&i)
+            .map_or(0, |e| e.1)
+    }
+
+    /// Is door `key` of building `i` open?
+    pub fn door_open(&self, i: ColliderId, key: u32) -> bool {
+        self.doors
+            .read()
+            .expect("doors lock")
+            .get(&i)
+            .is_some_and(|e| e.0.contains(&key))
+    }
+
+    /// Opens or shuts door `key` of building `i`. False if nothing changed:
+    /// no such door, a damaged building (its doors went with the walls),
+    /// or the door stands so already.
+    pub fn set_door(&self, i: ColliderId, key: u32, open: bool) -> bool {
+        if self.is_damaged(i) || self.door_open(i, key) == open {
+            return false;
+        }
+        let Some(c) = self.find(i) else { return false };
+        if !c.door_solids().iter().any(|d| d.key == key) {
+            return false;
+        }
+        let mut doors = self.doors.write().expect("doors lock");
+        let v = self.door_tick.fetch_add(1, Ordering::Relaxed) + 1;
+        let e = doors.entry(i).or_default();
+        if open {
+            e.0.insert(key);
+        } else {
+            e.0.remove(&key);
+        }
+        e.1 = v;
+        if e.0.is_empty() {
+            // All shut again: nothing to remember (version 0 is "all shut").
+            doors.remove(&i);
+        }
+        true
+    }
+
+    /// Every door standing open: (building, door key), in order.
+    pub fn open_doors(&self) -> Vec<(ColliderId, u32)> {
+        self.doors
+            .read()
+            .expect("doors lock")
+            .iter()
+            .flat_map(|(i, (keys, _))| keys.iter().map(move |k| (*i, *k)))
+            .collect()
+    }
+
+    /// Shuts every door (a world loaded from a save, or a fresh one).
+    pub fn shut_all_doors(&self) {
+        self.doors.write().expect("doors lock").clear();
+    }
+
+    /// The doors of whole buildings whose doorway centre is within `r` of
+    /// `p` (and on the floor `p` is on, give or take a step), nearest first.
+    pub fn doors_near(&self, p: DVec3, r: f64) -> Vec<DoorAt> {
+        let q = DVec2::new(p.x, p.z);
+        let mut out = Vec::new();
+        for (i, c) in self.near_colliders(q, r) {
+            if c.damage.read().expect("damage lock").is_some() {
+                continue;
+            }
+            let Some(plan) = c.plan() else { continue };
+            for d in c.door_solids().iter() {
+                let Some(door) = plan.door(d.key) else {
+                    continue;
+                };
+                let Some(f) = plan.floors.iter().find(|f| f.level == door.level) else {
+                    continue;
+                };
+                let floor = c.base + f.elevation;
+                if p.y < floor - 1.0 || p.y > floor + 2.0 {
+                    continue;
+                }
+                let at = plan
+                    .site
+                    .to_city(glam::DVec3::new(door.at.x, floor, door.at.y));
+                let dist = DVec2::new(at.x, at.z).distance(q);
+                if dist > r {
+                    continue;
+                }
+                let into = plan.site.along * door.into.x + plan.site.inward * door.into.y;
+                out.push(DoorAt {
+                    building: i,
+                    key: d.key,
+                    kind: door.kind,
+                    at,
+                    into,
+                    half: door.half,
+                    open: self.door_open(i, d.key),
+                    distance: dist,
+                });
+            }
+        }
+        out.sort_by(|a, b| a.distance.total_cmp(&b.distance));
+        out
+    }
+
+    /// Would door `key` of building `i`, shutting, close on something at
+    /// one of `feet` (people's feet)?
+    pub fn door_in_the_way(&self, i: ColliderId, key: u32, feet: &[DVec3]) -> bool {
+        let Some(c) = self.find(i) else { return false };
+        let Some(d) = c
+            .door_solids()
+            .iter()
+            .find(|d| d.key == key)
+            .map(|d| d.shut.clone())
+        else {
+            return false;
+        };
+        feet.iter().any(|f| {
+            let l = d.to_local(DVec2::new(f.x, f.z));
+            f.y + BODY_HEIGHT > d.y0
+                && f.y < d.y1
+                && l.x > d.min.x - BODY_RADIUS
+                && l.x < d.max.x + BODY_RADIUS
+                && l.y > d.min.y - BODY_RADIUS
+                && l.y < d.max.y + BODY_RADIUS
+        })
+    }
+
     /// Does open ground follow terrain or water (not one flat height)?
     pub fn has_relief(&self) -> bool {
         self.terrain.is_some() || self.water.is_some()
@@ -952,10 +1172,20 @@ impl Obstacles {
 
     /// Is `p` inside any solid?
     pub fn solid_at(&self, p: DVec3) -> bool {
+        self.solid_at_with(p, true)
+    }
+
+    /// [`Self::solid_at`] with every door taken as open and out of the
+    /// way: where people may walk (a closed door opens for them).
+    pub fn passable_at(&self, p: DVec3) -> bool {
+        !self.solid_at_with(p, false)
+    }
+
+    fn solid_at_with(&self, p: DVec3, doors: bool) -> bool {
         if self.rock_at(p) {
             return true;
         }
-        let sets = self.near_at(DVec2::new(p.x, p.z), 0.0, p.y);
+        let sets = self.near_at_with(DVec2::new(p.x, p.z), 0.0, p.y, doors);
         let found = sets.iter().flat_map(|x| x.iter()).any(|s| {
             let l = s.to_local(DVec2::new(p.x, p.z));
             p.y > s.y0
@@ -1422,6 +1652,89 @@ fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
         }
     }
     out
+}
+
+/// A door near a point (see [`Obstacles::doors_near`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct DoorAt {
+    pub building: ColliderId,
+    pub key: u32,
+    pub kind: DoorKind,
+    /// The doorway's centre on the wall line, at its floor.
+    pub at: DVec3,
+    /// Into the room its leaves swing into (unit, x and z).
+    pub into: DVec2,
+    /// Half its width.
+    pub half: f64,
+    pub open: bool,
+    /// From the point asked about, across the ground.
+    pub distance: f64,
+}
+
+/// Half a door leaf's thickness, for collision (m).
+const LEAF_HALF: f64 = 0.03;
+
+/// A building's doors as solids (see [`DoorSolids`]).
+fn door_solids(plan: &BuildingPlan, base: f64) -> Vec<DoorSolids> {
+    let site = &plan.site;
+    let n = plan.floors.len();
+    let solid = |a: DVec2, b: DVec2, y0: f64, y1: f64| Solid {
+        origin: site.origin,
+        along: site.along,
+        inward: site.inward,
+        min: a.min(b),
+        max: a.max(b),
+        y0,
+        y1,
+    };
+    plan.door_leaves()
+        .into_iter()
+        .filter_map(|d| {
+            let k = plan.floors.iter().position(|f| f.level == d.level)?;
+            let f = &plan.floors[k];
+            let y = base + f.elevation;
+            let top = if k + 1 < n {
+                y + f.height - SLAB
+            } else {
+                y + f.height
+            };
+            let back = -d.wall_half;
+            let front = d.plane + LEAF_HALF;
+            let shut = solid(d.point(-d.half, back), d.point(d.half, front), y, top);
+            let open = d
+                .leaves
+                .iter()
+                .map(|l| {
+                    solid(
+                        l.hinge - d.along * LEAF_HALF,
+                        l.hinge + l.open * l.width + d.along * LEAF_HALF,
+                        y,
+                        y + d.height,
+                    )
+                })
+                .collect();
+            let mut fixed: Vec<Solid> = d
+                .panes
+                .iter()
+                .map(|&(a, b)| solid(d.point(a, back), d.point(b, front), y, top))
+                .collect();
+            // Over the leaves: glass or the wall's lintel.
+            if top - (y + d.height) > 0.02 {
+                fixed.push(solid(
+                    d.point(-d.half, back),
+                    d.point(d.half, front),
+                    y + d.height,
+                    top,
+                ));
+            }
+            Some(DoorSolids {
+                key: d.key,
+                shut,
+                open,
+                fixed,
+            })
+        })
+        .collect()
 }
 
 /// A rectangle minus an optional hole, as up to four rectangles.

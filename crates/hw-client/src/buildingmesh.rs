@@ -1085,7 +1085,11 @@ fn opening(c: &mut Ctx, w: &Wall, f: &Floor, op: &Opening, t: (f64, f64), y: (f6
         DVec3::Y,
         reveal_c,
     );
+    // Up close the door is its own leaves (and the entrance its own glass),
+    // which open and shut: `doorview` draws them.
+    let moving = c.detail == Detail::Near && op.kind != OpeningKind::Window;
     match op.kind {
+        _ if moving => {}
         OpeningKind::Door => {
             c.quad(w.rect(t0, t1, ya, yb, -r), w.out(), shade(look.frame, 0.75));
             // Handle.

@@ -20,6 +20,7 @@ pub mod deepview;
 pub mod devlog;
 pub mod diag;
 pub mod dispatchview;
+pub mod doorview;
 pub mod drillview;
 pub mod dystopiaview;
 pub mod edgeview;

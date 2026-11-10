@@ -24,19 +24,20 @@ fn standable(solids: &Obstacles, p: DVec2, near_y: f64) -> Option<f64> {
     if (y - near_y).abs() > 3.0 {
         return None;
     }
-    let free = !solids.solid_at(DVec3::new(p.x, y + 0.5, p.y))
-        && !solids.solid_at(DVec3::new(p.x, y + 1.5, p.y));
+    let free = solids.passable_at(DVec3::new(p.x, y + 0.5, p.y))
+        && solids.passable_at(DVec3::new(p.x, y + 1.5, p.y));
     free.then_some(y)
 }
 
 /// Is the straight walk from `a` to `b` (feet) free? Checks every half metre
-/// at knee and head height.
+/// at knee and head height. Doors count as open: people open a closed one
+/// as they come to it (see [`crate::doors`]).
 pub fn walkable_line(solids: &Obstacles, a: DVec3, b: DVec3) -> bool {
     let d = b - a;
     let n = (DVec2::new(d.x, d.z).length() / 0.5).ceil().max(1.0) as usize;
     (1..=n).all(|i| {
         let p = a + d * (i as f64 / n as f64);
-        !solids.solid_at(p + DVec3::Y * 0.5) && !solids.solid_at(p + DVec3::Y * 1.5)
+        solids.passable_at(p + DVec3::Y * 0.5) && solids.passable_at(p + DVec3::Y * 1.5)
     })
 }
 

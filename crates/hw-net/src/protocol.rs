@@ -1109,6 +1109,13 @@ pub enum ToClient {
         kind: ImpactKind,
         broke: bool,
     },
+    /// Doors opened or shut: (building, door key, open). `live`: it
+    /// happened just now, so swing them and play the sound; otherwise it
+    /// is how a joining player finds them.
+    Doors {
+        doors: Vec<(u64, u32, bool)>,
+        live: bool,
+    },
     /// Street props broke: (the prop's id in the town, which way it fell
     /// as a yaw byte). `live` as for [`ToClient::Damage`].
     PropsBroken {
@@ -1250,6 +1257,13 @@ pub enum ToServer {
         parts: u8,
         bytes: Vec<u8>,
     },
+    /// Open (`open`) or shut door `key` of building `building` (the hero
+    /// stands at it: E).
+    Door {
+        building: u64,
+        key: u32,
+        open: bool,
+    },
 }
 
 impl ToClient {
@@ -1264,6 +1278,7 @@ impl ToClient {
             ToClient::Impact { .. } => 12 + 6 + 1 + 1,
             ToClient::PropsBroken { props, .. } => 1 + 1 + 9 * props.len().min(255),
             ToClient::PropsRepaired { props } => 1 + 8 * props.len().min(255),
+            ToClient::Doors { doors, .. } => 1 + 1 + 13 * doors.len().min(255),
             ToClient::CarsWrecked { cars, .. } => 1 + 1 + 21 * cars.len().min(255),
             ToClient::Traffic { cars, .. } => 8 + 4 + 2 + 1 + 20 * cars.len().min(255),
             ToClient::CarsCleared { cars } => 1 + 8 * cars.len().min(255),
@@ -1334,6 +1349,13 @@ impl ToClient {
                 w.u8(9).u8(n as u8);
                 for i in &props[..n] {
                     w.u64(*i);
+                }
+            }
+            ToClient::Doors { doors, live } => {
+                let n = doors.len().min(255);
+                w.u8(21).bool(*live).u8(n as u8);
+                for (b, k, open) in &doors[..n] {
+                    w.u64(*b).u32(*k).bool(*open);
                 }
             }
             ToClient::CarsWrecked { cars, live } => {
@@ -1602,6 +1624,15 @@ impl ToClient {
                 parts: r.u8()?,
                 bytes: r.bytes()?,
             },
+            21 => {
+                let live = r.bool()?;
+                let n = r.u8()? as usize;
+                let mut doors = Vec::with_capacity(n);
+                for _ in 0..n {
+                    doors.push((r.u64()?, r.u32()?, r.bool()?));
+                }
+                ToClient::Doors { doors, live }
+            }
             20 => ToClient::Story {
                 done: r.u8()?,
                 stage: r.u8()?,
@@ -1634,6 +1665,7 @@ impl ToServer {
             ToServer::Buy { .. } => 3,
             ToServer::GiveUp { .. } => 2,
             ToServer::Look { bytes, .. } => 1 + 2 + 2 + bytes.len(),
+            ToServer::Door { .. } => 1 + 8 + 4 + 1,
         }
     }
 
@@ -1661,6 +1693,13 @@ impl ToServer {
             ToServer::Tube { dest } => {
                 w.u8(7).u16(*dest);
             }
+            ToServer::Door {
+                building,
+                key,
+                open,
+            } => {
+                w.u8(8).u64(*building).u32(*key).bool(*open);
+            }
         }
     }
 
@@ -1682,6 +1721,11 @@ impl ToServer {
                 power: Power::from_code(r.u8()?).ok_or(WireError)?,
             },
             7 => ToServer::Tube { dest: r.u16()? },
+            8 => ToServer::Door {
+                building: r.u64()?,
+                key: r.u32()?,
+                open: r.bool()?,
+            },
             _ => return Err(WireError),
         })
     }
@@ -2115,6 +2159,14 @@ mod tests {
                         },
                     ),
                     (8, ToServer::Tube { dest: 513 }),
+                    (
+                        9,
+                        ToServer::Door {
+                            building: 1 << 40 | 77,
+                            key: 2 << 12 | 5,
+                            open: true,
+                        },
+                    ),
                 ],
             },
             ClientMsg::Bye,
@@ -2177,6 +2229,13 @@ mod tests {
                     },
                 ),
                 (8, ToClient::CarsCleared { cars: vec![65538] }),
+                (
+                    8,
+                    ToClient::Doors {
+                        doors: vec![(1 << 40 | 3, 4097, true), (12, 0, false)],
+                        live: true,
+                    },
+                ),
                 (
                     8,
                     ToClient::AreaMoved {

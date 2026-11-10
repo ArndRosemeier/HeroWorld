@@ -96,6 +96,7 @@ fn is_world_news(m: &ToClient) -> bool {
         m,
         ToClient::Damage { .. }
             | ToClient::Repaired { .. }
+            | ToClient::Doors { .. }
             | ToClient::Impact { .. }
             | ToClient::PropsBroken { .. }
             | ToClient::PropsRepaired { .. }
@@ -868,6 +869,20 @@ impl Session {
         match self {
             Session::Local { host, .. } => host.post(move |h, me| h.sim.hail_taxi(me, dest)),
             Session::Remote { conn, .. } => conn.hail_taxi(dest),
+        }
+    }
+
+    /// Opens (`open`) or shuts a door our hero stands at (E).
+    pub fn use_door(&mut self, building: u64, key: u32, open: bool) {
+        match self {
+            Session::Local { host, .. } => {
+                host.post(move |h, me| h.sim.use_door(me, building, key, open))
+            }
+            Session::Remote { conn, .. } => conn.send(hw_net::ToServer::Door {
+                building,
+                key,
+                open,
+            }),
         }
     }
 

@@ -25,6 +25,8 @@ pub struct WorldSave {
     pub damage: Vec<(u64, Vec<u32>)>,
     /// Broken street props: index and which way each fell (a yaw byte).
     pub props: Vec<(u64, u8)>,
+    /// Doors standing open: building and door key.
+    pub doors: Vec<(u64, u32)>,
     /// Where each player's hero was, by name (a host taking over, or a
     /// world loaded again, puts them back there).
     pub heroes: Vec<(String, glam::DVec3)>,
@@ -52,6 +54,9 @@ impl WorldSave {
         for (i, fell) in &self.props {
             out += &format!("prop {i} {fell}\n");
         }
+        for (b, k) in &self.doors {
+            out += &format!("door {b} {k}\n");
+        }
         for (name, p) in &self.heroes {
             // The name last: it may have spaces.
             let name = name.replace(['\n', '\r'], " ");
@@ -77,6 +82,7 @@ impl WorldSave {
         let mut damage = Vec::new();
         let mut props = Vec::new();
         let mut heroes = Vec::new();
+        let mut doors = Vec::new();
         for (n, line) in lines.enumerate() {
             let bad = || format!("line {}: {line}", n + 2);
             let mut words = line.split_whitespace();
@@ -109,6 +115,11 @@ impl WorldSave {
                     let fell = rest.get(1).and_then(|v| v.parse().ok()).ok_or_else(bad)?;
                     props.push((i, fell));
                 }
+                "door" => {
+                    let b = rest.first().and_then(|v| v.parse().ok()).ok_or_else(bad)?;
+                    let k = rest.get(1).and_then(|v| v.parse().ok()).ok_or_else(bad)?;
+                    doors.push((b, k));
+                }
                 "hero" => {
                     let v: Vec<f64> = rest.iter().take(3).filter_map(|w| w.parse().ok()).collect();
                     if v.len() != 3 || v.iter().any(|x| !x.is_finite()) || rest.len() < 4 {
@@ -127,6 +138,7 @@ impl WorldSave {
             crates,
             damage,
             props,
+            doors,
             heroes,
         })
     }
@@ -175,6 +187,7 @@ impl Sim {
                 .iter()
                 .map(|(i, b)| (*i, b.fell))
                 .collect(),
+            doors: self.solids().open_doors(),
             heroes: Vec::new(),
         }
     }
@@ -199,6 +212,11 @@ impl Sim {
         }
         self.street.clear();
         self.street.apply(&save.props, self.tick);
+        self.doors.clear();
+        solids.shut_all_doors();
+        for (b, k) in &save.doors {
+            solids.set_door(*b, *k, true);
+        }
         self.wrecks.clear();
         self.alarms.clear();
         Ok(())

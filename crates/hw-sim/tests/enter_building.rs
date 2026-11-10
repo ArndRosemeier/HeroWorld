@@ -24,6 +24,35 @@ impl Walk<'_> {
         step_hero(&mut self.body, input, &self.city.obstacles);
     }
 
+    /// Opens the nearest shut door within reach, as E does.
+    fn open_door(&mut self, what: &str) {
+        let d = self
+            .city
+            .obstacles
+            .doors_near(self.body.pos, hw_sim::doors::REACH)
+            .into_iter()
+            .find(|d| !d.open)
+            .unwrap_or_else(|| panic!("no shut door at {what} ({})", self.body.pos));
+        assert!(self.city.obstacles.set_door(d.building, d.key, true));
+    }
+
+    /// Runs towards a point (building coordinates) for `ticks`; where it
+    /// got to.
+    fn run_at(&mut self, x: f64, z: f64, ticks: u32) -> DVec3 {
+        let target = self.world(x, z);
+        for _ in 0..ticks {
+            let here = DVec2::new(self.body.pos.x, self.body.pos.z);
+            let d = target - here;
+            let dir = d / d.length().max(1.0);
+            self.tick(InputState {
+                move_x: dir.x as f32,
+                move_z: dir.y as f32,
+                ..Default::default()
+            });
+        }
+        self.body.pos
+    }
+
     /// Runs towards a point (building coordinates) until within 0.35 m.
     fn go(&mut self, x: f64, z: f64, what: &str) {
         let target = self.world(x, z);
@@ -92,6 +121,14 @@ fn walk_in_ride_the_lift_and_step_out_upstairs() {
         w.tick(InputState::default());
     }
 
+    // The entrance's glass doors are shut: running at them, the hero
+    // stays outside. Opened (E), the way is free.
+    let stopped = w.run_at(entrance.at.x, 1.5, TICK_HZ * 3);
+    assert!(
+        city.obstacles.inside(stopped).is_none(),
+        "ran through the shut entrance to {stopped}"
+    );
+    w.open_door("the entrance");
     w.go(entrance.at.x, 1.5, "the lobby");
     assert_eq!(
         city.obstacles.inside(w.body.pos),
@@ -105,6 +142,7 @@ fn walk_in_ride_the_lift_and_step_out_upstairs() {
         to_corridor.at.y - 0.8,
         "the lobby's inner door",
     );
+    w.open_door("the lobby's inner door");
     w.go(to_corridor.at.x, corridor_z, "the corridor");
     w.go(core.center().x, corridor_z, "the corridor by the lift");
     w.go(core.center().x, core.center().y, "the lift");

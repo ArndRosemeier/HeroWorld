@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.149 (2026-11-10)
+
+- Doors are real now. Every door is shut until someone opens it, and a shut door is solid: no more walking through. Stand at one and press E to open or shut it.
+- Street doors are painted pairs (panelled with a brass knob on older houses, streamline with a chrome porthole and speed lines on newer ones); shops and lobbies have glass doors with chrome push bars; inside doors match each building's furniture. They swing on their hinges with a latch click and a thud.
+- Villains and other people on foot open doors as they come to them and shut them behind them, so a chase can lead indoors.
+
 ## 0.148 (2026-11-10)
 
 - The sky pirates' airship has a proper galleon for a gondola: planked hull with red topsides and gilded mouldings over a dark wale, copper sheathing below, a row of brass portholes on each side, a keel and stem post, a raised quarterdeck with stern windows and two glowing lanterns, and a planked deck. Its envelope and engines are smoother up close.

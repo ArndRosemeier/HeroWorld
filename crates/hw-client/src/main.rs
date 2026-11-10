@@ -508,6 +508,8 @@ fn main() -> EngineResult<()> {
     let mut sweepers = hw_client::sweeperview::SweeperView::new();
     let mut anims: BTreeMap<hw_core::NetId, HeroAnim> = BTreeMap::new();
     let mut town = TownView::new(generated.world.clone());
+    // Doors near the camera, swinging as the server opens and shuts them.
+    let mut door_view = hw_client::doorview::DoorView::new();
     // The minimap (N) and the town's sounds and music.
     let mut minimap = hw_client::minimap::Minimap::new(generated.world.clone());
     let mut sounds = hw_client::soundscape::Soundscape::new();
@@ -1308,6 +1310,82 @@ fn main() -> EngineResult<()> {
                 "room view: building {i}, floor {level}, room {k} ({:?})",
                 room.kind
             );
+        }
+    } else if view == "door" {
+        // `HW_VIEW=door HW_DOOR=front|glass|inner [HW_DOOR_OPEN=1]
+        // [HW_DOOR_SKIP=n]`: the free camera in front of the nearest door
+        // of that kind (inner ones with their floor cut open).
+        use hw_gen::building::RoomKind as K;
+        use hw_gen::doors::DoorKind;
+        let want = std::env::var("HW_DOOR").unwrap_or_else(|_| "front".into());
+        let (kind, rooms): (DoorKind, &[K]) = match want.as_str() {
+            "glass" => (DoorKind::Glass, &[K::Shop, K::Lobby]),
+            "inner" => (DoorKind::Inner, &[K::Office, K::Apartment, K::Living]),
+            _ => (
+                DoorKind::Front,
+                &[K::Living, K::Apartment, K::Shop, K::Kitchen],
+            ),
+        };
+        let skip = env_num("HW_DOOR_SKIP").unwrap_or(0) as usize;
+        let mut seen = 0;
+        let mut found = None;
+        'look: for &rk in rooms {
+            let mut from = spawn;
+            for _ in 0..12 {
+                let Some((i, ..)) = town.find_room(from, 2500.0, rk) else {
+                    break;
+                };
+                from = town.centre_of(i).unwrap_or(from) + DVec2::new(37.0, 23.0);
+                let Some(plan) = town.plan(i) else { continue };
+                if let Some(d) = plan.door_leaves().into_iter().find(|d| d.kind == kind) {
+                    if seen == skip {
+                        found = Some((i, plan, d));
+                        break 'look;
+                    }
+                    seen += 1;
+                }
+            }
+        }
+        if let Some((i, plan, d)) = found {
+            let base = generated
+                .world
+                .building(hw_gen::urban::quarter::DetailId(i))
+                .map_or(0.0, |b| b.base);
+            let k = plan
+                .floors
+                .iter()
+                .position(|f| f.level == d.level)
+                .unwrap_or(0);
+            let y = base + plan.floors[k].elevation;
+            // From the side the door opens away from (the street, or the
+            // room it does not swing into), a little off centre.
+            let (back, up) = if d.kind == DoorKind::Inner {
+                (3.2, 3.2)
+            } else {
+                (4.2, 1.7)
+            };
+            let eye_b = d.point(0.9, -back);
+            let eye = plan
+                .site
+                .to_city(glam::DVec3::new(eye_b.x, y + up, eye_b.y));
+            let look = plan.site.to_city(glam::DVec3::new(d.at.x, y + 1.3, d.at.y));
+            let dir = look - eye;
+            let yaw = dir.x.atan2(dir.z).to_degrees() as f32;
+            let pitch = (dir.y.atan2(DVec2::new(dir.x, dir.z).length())).to_degrees() as f32;
+            fly = FlyCamera::new((eye.x as f32, eye.y as f32, eye.z as f32), yaw, pitch);
+            flying = true;
+            if d.kind == DoorKind::Inner {
+                town.cut_on = true;
+                let fc = plan.site.to_city(glam::DVec3::new(d.at.x, 0.0, d.at.y));
+                town.cut_focus = DVec2::new(fc.x, fc.z);
+                town.cut_level = d.level;
+            }
+            if std::env::var_os("HW_DOOR_OPEN").is_some() {
+                generated.obstacles.set_door(i, d.key, true);
+            }
+            println!("door view: building {i}, door {} ({:?})", d.key, d.kind);
+        } else {
+            println!("door view: no {want} door near the start");
         }
     } else if view == "inside" {
         // Start in the lobby of the tallest building near the start.
@@ -2894,6 +2972,17 @@ fn main() -> EngineResult<()> {
                     }
                     false
                 }
+                hw_net::ToClient::Doors { doors, live } => {
+                    // A joined client keeps its own copy for collision (in
+                    // single player the server's is shared: no change then).
+                    for &(b, k, open) in doors {
+                        generated.obstacles.set_door(b, k, open);
+                        if *live {
+                            door_view.heard(world, &town, b, k, open, frame.time as f64);
+                        }
+                    }
+                    false
+                }
                 hw_net::ToClient::PropsRepaired { props } => {
                     for &i in props {
                         if let Some(v) = extras.props.as_mut() {
@@ -3766,6 +3855,56 @@ fn main() -> EngineResult<()> {
                     .flatten();
                 radio.hero_at = session.my_position(&heroes).map(|p| p.as_vec3());
                 radio.update(frame.dt, holding);
+                // E at a door opens or shuts it, unless E has a rescue or
+                // a downed teammate to help here (holding E is theirs).
+                if let Some(hero) = session.my_position(&heroes) {
+                    let h = hero.as_vec3();
+                    let rescue = radio
+                        .help(h)
+                        .is_some_and(|x| x != hw_client::radioview::Help::CarryThem);
+                    let me = mine.and_then(|id| heroes.iter().find(|e| e.id == id));
+                    let standing = me
+                        .and_then(|m| m.combat)
+                        .is_none_or(|c| c.status == hw_net::Status::Standing);
+                    let teammate_down = heroes.iter().any(|e| {
+                        Some(e.id) != mine
+                            && e.kind == hw_net::EntityKind::Hero
+                            && e.combat.is_some_and(|c| c.status == hw_net::Status::Down)
+                            && Vec3::from_array(e.pos.map(|v| v as f32)).distance(h)
+                                <= hw_sim::combat::REVIVE_REACH as f32
+                    });
+                    let door = (!rescue && !teammate_down && standing)
+                        .then(|| hw_client::doorview::door_at_hand(&generated.obstacles, hero))
+                        .flatten();
+                    if let Some(d) = door {
+                        if frame.input.pressed(Key::E) && !chat.typing && !on_ui_keys(frame) {
+                            session.use_door(d.building, d.key, !d.open);
+                        }
+                        engine::ui::egui::Area::new(engine::ui::egui::Id::new("door prompt"))
+                            .interactable(false)
+                            .anchor(
+                                engine::ui::egui::Align2::CENTER_BOTTOM,
+                                engine::ui::egui::vec2(0.0, -170.0),
+                            )
+                            .show(frame.ui.ctx(), |ui| {
+                                engine::ui::egui::Frame::new()
+                                    .fill(engine::ui::egui::Color32::from_black_alpha(170))
+                                    .corner_radius(4.0)
+                                    .inner_margin(engine::ui::egui::Margin::symmetric(10, 5))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            engine::ui::egui::RichText::new(
+                                                hw_client::doorview::prompt(d.open, d.kind),
+                                            )
+                                            .color(engine::ui::egui::Color32::from_rgb(
+                                                255, 230, 140,
+                                            ))
+                                            .size(17.0),
+                                        );
+                                    });
+                            });
+                    }
+                }
                 radio.animate(world, frame.dt);
                 radio.rescues(world, frame.dt, &|at, heading| {
                     traffic.street_stretch(at, heading, 9.0, 70.0, 400.0)
@@ -4015,6 +4154,14 @@ fn main() -> EngineResult<()> {
                 DVec2::new(eye.x as f64, eye.z as f64),
                 BUILD_BUDGET_MS,
             );
+            hw_client::hitch::mark("doors");
+            door_view.update(
+                world,
+                &town,
+                &generated.obstacles,
+                frame.dt,
+                frame.time as f64,
+            )?;
             hw_client::hitch::mark("props");
             // Street props, trees and hedges around the camera.
             if let Some(v) = extras.props.as_mut() {

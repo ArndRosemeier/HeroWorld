@@ -232,6 +232,9 @@ impl Host {
                 name: name.to_string(),
             });
             // The damage done so far, so a late joiner sees the same city.
+            for m in crate::doors::Doors::snapshot(&self.sim.solids()) {
+                r.rel_out.push(m);
+            }
             for m in self.sim.damage.snapshot() {
                 r.rel_out.push(m);
             }
@@ -394,6 +397,11 @@ impl Host {
                 }
                 ToServer::Taxi { dest } => self.sim.hail_taxi(player, dest),
                 ToServer::Tube { dest } => self.sim.ride_tube(player, dest),
+                ToServer::Door {
+                    building,
+                    key,
+                    open,
+                } => self.sim.use_door(player, building, key, open),
                 ToServer::Sheet(sheet) => self.sim.set_sheet(player, sheet),
                 ToServer::Buy { power, theme } => {
                     // A refused buy changes nothing; the client checks first.
