@@ -146,6 +146,8 @@ impl Session {
         }
         // `HW_CARRY=1`: that rescue starts with the hurt one in our arms.
         host.sim.incidents.carried_start = std::env::var_os("HW_CARRY").is_some();
+        // `HW_BESIDE=1`: by the next one trapped (`HW_HOLD=1` holds E).
+        host.sim.incidents.beside_start = std::env::var_os("HW_BESIDE").is_some();
         let mut ports = Ports::default();
         if open {
             let addr = host.listen(("0.0.0.0", hw_net::DEFAULT_PORT))?;

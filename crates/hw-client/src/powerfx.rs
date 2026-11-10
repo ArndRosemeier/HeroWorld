@@ -356,7 +356,9 @@ pub fn spiral(world: &mut World, at: Vec3, core: Color, edge: Color, size: f32) 
 /// where it was sent, with the person inside.
 struct Floating {
     sphere: EntityId,
-    person: Option<EntityId>,
+    /// Who is inside, how high over the bubble's foot they are held, and
+    /// whether they walk on once set down (the hurt go to the ambulance).
+    person: Option<(crate::radioview::Shown, f32, bool)>,
     from: Vec3,
     to: Option<Vec3>,
     age: f32,
@@ -371,6 +373,9 @@ struct Floating {
 pub struct Bubbles {
     list: BTreeMap<u32, Floating>,
     next: u32,
+    /// People set down out of bubbles that walk on: who, their feet, and
+    /// which way the bubble carried them.
+    pub landed: Vec<(crate::radioview::Shown, Vec3, Vec3)>,
 }
 
 /// How long a bubble floats (s), and how high it rises on the way (m).
@@ -380,22 +385,22 @@ const FLOAT_HEIGHT: f32 = 4.0;
 const RADIUS: f32 = 1.25;
 
 impl Bubbles {
-    /// A bubble forms round someone at `at` (their feet), sent by `hero`.
-    pub fn start(&mut self, world: &mut World, at: Vec3, person: Mesh, gold: bool, hero: u32) {
+    /// A bubble forms round someone at `at` (their feet), sent by `hero`;
+    /// gives its number (see [`Self::hold`]).
+    pub fn start(&mut self, world: &mut World, at: Vec3, gold: bool, hero: u32) -> Option<u32> {
         let centre = at + Vec3::Y * 1.05;
-        let Ok(sphere) = world.place(
-            bubble_sphere(RADIUS, gold),
-            Place::new(centre.x, centre.y, centre.z),
-        ) else {
-            return;
-        };
-        let person = world.place(person, Place::new(at.x, at.y, at.z)).ok();
+        let sphere = world
+            .place(
+                bubble_sphere(RADIUS, gold),
+                Place::new(centre.x, centre.y, centre.z),
+            )
+            .ok()?;
         self.next = self.next.wrapping_add(1);
         self.list.insert(
             self.next,
             Floating {
                 sphere,
-                person,
+                person: None,
                 from: at,
                 to: None,
                 age: 0.0,
@@ -404,6 +409,23 @@ impl Bubbles {
                 at: centre,
             },
         );
+        Some(self.next)
+    }
+
+    /// Bubble `key` holds `who`, `lift` metres over its foot; `walk_on`:
+    /// set down, they walk off (see [`Self::landed`]).
+    pub fn hold(
+        &mut self,
+        world: &mut World,
+        key: u32,
+        who: crate::radioview::Shown,
+        lift: f32,
+        walk_on: bool,
+    ) {
+        match self.list.get_mut(&key) {
+            Some(f) => f.person = Some((who, lift, walk_on)),
+            None => world.despawn(who.e),
+        }
     }
 
     /// Where the newest of `hero`'s bubbles is going.
@@ -437,10 +459,10 @@ impl Bubbles {
                 f.sphere,
                 Place::new(centre.x, centre.y, centre.z).with_yaw_deg(spin),
             );
-            if let Some(p) = f.person {
+            if let Some((p, lift, _)) = f.person {
                 let _ = world.set_place(
-                    p,
-                    Place::new(feet.x, feet.y, feet.z).with_yaw_deg(spin * 0.5),
+                    p.e,
+                    Place::new(feet.x, feet.y + lift, feet.z).with_yaw_deg(spin * 0.5),
                 );
             }
             if t >= 1.0 {
@@ -454,8 +476,14 @@ impl Bubbles {
             // It pops: a ring of film droplets.
             let at = f.at;
             world.despawn(f.sphere);
-            if let Some(p) = f.person {
-                world.despawn(p);
+            match f.person {
+                Some((p, _, true)) => {
+                    let to = f.to.unwrap_or(f.from);
+                    let _ = world.set_place(p.e, Place::new(to.x, to.y, to.z));
+                    self.landed.push((p, to, to - f.from));
+                }
+                Some((p, _, false)) => world.despawn(p.e),
+                None => {}
             }
             let c = if f.gold {
                 rgb(255, 220, 140)

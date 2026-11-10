@@ -52,6 +52,7 @@ pub fn add_flight_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("neck_01", Vec3::X, -0.55), ("head", Vec3::X, -0.35)],
             lift: 0.0,
             seated: false,
+            lay: None,
         }
     })?;
     let hover = make_clip(model, "hover", 3.2, |t| {
@@ -81,6 +82,7 @@ pub fn add_flight_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.04 * w,
             seated: false,
+            lay: None,
         }
     })?;
     model.clips.retain(|c| c.name != "fly" && c.name != "hover");
@@ -116,6 +118,7 @@ pub fn add_heroic_clip(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: -0.02,
             seated: false,
+            lay: None,
         }
     })?;
     model.clips.retain(|c| c.name != "heroic");
@@ -163,6 +166,7 @@ pub fn add_power_pose_clip(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: -0.02,
             seated: false,
+            lay: None,
         }
     })?;
     model.clips.retain(|c| c.name != "power pose");
@@ -192,6 +196,7 @@ pub fn add_cuffed_clip(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::X, 0.35)],
             lift: 0.0,
             seated: false,
+            lay: None,
         }
     })?;
     model.clips.retain(|c| c.name != "cuffed");
@@ -221,6 +226,7 @@ pub fn add_hands_up_clip(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("spine_03", Vec3::X, -0.12), ("head", Vec3::Y, 0.35)],
             lift: -0.04,
             seated: false,
+            lay: None,
         }
     })?;
     model.clips.retain(|c| c.name != "hands up");
@@ -265,6 +271,7 @@ pub fn add_seated_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::Y, 0.06 * w)],
             lift: 0.0,
             seated: true,
+            lay: None,
         }
     })?;
     let ride = make_clip(model, "ride", 3.0, |t| {
@@ -283,6 +290,7 @@ pub fn add_seated_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::Y, 0.14 * w)],
             lift: 0.0,
             seated: true,
+            lay: None,
         }
     })?;
     model
@@ -291,6 +299,146 @@ pub fn add_seated_clips(model: &mut AnimatedModel) -> Result<(), String> {
     model.clips.push(drive);
     model.clips.push(ride);
     Ok(())
+}
+
+/// The rescue clips for townsfolk: "wave" (trapped, an arm up waving for
+/// help), "beckon" (the medic waving the hero over), "lie" (hurt, on
+/// their back on the ground; the model's origin is the ground under the
+/// hips, the head towards -Z) and "carried" (in a hero's arms: tipped back,
+/// knees over one arm, an arm hanging; the hips at the origin, the legs
+/// towards +Z).
+pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
+    use std::f32::consts::TAU;
+    let wave = make_clip(model, "wave", 1.2, |t| {
+        // Two waves a loop, side to side over the head.
+        let w = (t * TAU * 2.0).sin();
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", -0.35, 0.95, 0.12),
+                aim("lowerarm_r", "hand_r", -0.12 - 0.5 * w, 1.0, 0.08),
+                // The other hand held out, pleading.
+                aim("upperarm_l", "lowerarm_l", 0.45, -0.35, 0.6),
+                aim("lowerarm_l", "hand_l", 0.15, 0.25, 1.0),
+            ],
+            turns: vec![("head", Vec3::X, -0.12), ("head", Vec3::Y, 0.1 * w)],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let beckon = make_clip(model, "beckon", 1.2, |t| {
+        // "Over here!": the forearm swings up and back towards the chest.
+        let k = 0.5 + 0.5 * (t * TAU * 2.0).sin();
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", -0.6, 0.05, 0.8),
+                aim("lowerarm_r", "hand_r", -0.15, 0.8, 0.5 - 0.9 * k),
+            ],
+            turns: vec![("head", Vec3::Y, -0.15)],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let lie = make_clip(model, "lie", 2.0, |t| {
+        let w = (t * TAU).sin();
+        Pose {
+            aims: vec![
+                // Arms along the sides, a little out; one knee drawn up.
+                aim("upperarm_l", "lowerarm_l", 0.3, -1.0, 0.0),
+                aim("lowerarm_l", "hand_l", 0.25, -1.0, 0.12),
+                aim("upperarm_r", "lowerarm_r", -0.3, -1.0, 0.0),
+                aim("lowerarm_r", "hand_r", -0.2, -1.0, 0.2),
+                aim("thigh_l", "calf_l", 0.1, -1.0, 0.0),
+                aim("calf_l", "foot_l", 0.08, -1.0, 0.0),
+                aim("thigh_r", "calf_r", -0.08, -1.0, 0.45),
+                aim("calf_r", "foot_r", -0.05, -1.0, -0.4),
+            ],
+            // On the back (tipped back a quarter turn about the hips), the
+            // head rolled to one side, moving a little.
+            turns: vec![
+                ("pelvis", Vec3::X, -std::f32::consts::FRAC_PI_2),
+                ("head", Vec3::Z, 0.45 + 0.05 * w),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: Some(0.13),
+        }
+    })?;
+    let carried = make_clip(model, "carried", 2.0, |t| {
+        // Swaying with the hero's steps.
+        let w = (t * TAU).sin();
+        // Aimed as if standing, then tipped back 72 degrees about the
+        // hips: the thighs come out level over the hero's arm, the shins
+        // hang, one arm hangs limp and the other lies across the belly.
+        Pose {
+            aims: vec![
+                aim("thigh_l", "calf_l", 0.1, -0.78, 0.63),
+                aim("thigh_r", "calf_r", -0.06, -0.78, 0.63),
+                aim("calf_l", "foot_l", 0.05, -0.46, -0.9 + 0.05 * w),
+                aim("calf_r", "foot_r", -0.03, -0.46, -0.9 - 0.05 * w),
+                aim("upperarm_l", "lowerarm_l", 0.15, -0.22, -0.98),
+                aim("lowerarm_l", "hand_l", 0.05, -0.2 + 0.08 * w, -1.0),
+                aim("upperarm_r", "lowerarm_r", -0.2, -0.87, 0.39),
+                aim("lowerarm_r", "hand_r", 0.9, -0.08, 0.4),
+            ],
+            turns: vec![
+                ("pelvis", Vec3::X, -1.25),
+                ("neck_01", Vec3::X, -0.25),
+                ("head", Vec3::X, -0.3 - 0.05 * w),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: Some(0.0),
+        }
+    })?;
+    let names = ["wave", "beckon", "lie", "carried"];
+    model.clips.retain(|c| !names.contains(&c.name.as_str()));
+    model.clips.extend([wave, beckon, lie, carried]);
+    Ok(())
+}
+
+/// The hero's clips for carrying someone hurt in both arms: "carry idle",
+/// "carry walk", "carry jog" and "carry sprint", each its plain clip with
+/// the arms held forward as a cradle at chest height (see
+/// [`add_rescue_clips`]'s "carried") and the back leaning a little against
+/// the weight.
+pub fn add_carry_clips(model: &mut AnimatedModel) -> Result<(), String> {
+    let mut made = Vec::new();
+    for base in ["idle", "walk", "jog", "sprint"] {
+        if !model.clips.iter().any(|c| c.name == base) {
+            continue;
+        }
+        let name = format!("carry {base}");
+        let clip = make_clip_over(model, base, &name, None, |_| Pose {
+            aims: vec![
+                aim("upperarm_l", "lowerarm_l", 0.35, -0.55, 0.75),
+                aim("lowerarm_l", "hand_l", -0.55, 0.15, 0.82),
+                aim("upperarm_r", "lowerarm_r", -0.35, -0.55, 0.75),
+                aim("lowerarm_r", "hand_r", 0.55, 0.15, 0.82),
+            ],
+            turns: vec![("spine_03", Vec3::X, -0.06)],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        })?;
+        made.push(clip);
+    }
+    let names: Vec<String> = made.iter().map(|c| c.name.clone()).collect();
+    model.clips.retain(|c| !names.contains(&c.name));
+    model.clips.extend(made);
+    Ok(())
+}
+
+/// The clip a hero carrying someone plays for its plain clip `clip`.
+pub fn carry_clip(clip: &str) -> Option<&'static str> {
+    Some(match clip {
+        "idle" => "carry idle",
+        "walk" => "carry walk",
+        "jog" => "carry jog",
+        "sprint" => "carry sprint",
+        _ => return None,
+    })
 }
 
 /// How a sitter leans back (bone, radians about its left-right axis; a
@@ -310,6 +458,9 @@ struct Pose {
     turns: Vec<(&'static str, Vec3, f32)>,
     lift: f32,
     seated: bool,
+    /// Last of all, the hips moved to this height over the model's origin
+    /// (a body laid down: see [`add_rescue_clips`]).
+    lay: Option<f32>,
 }
 
 /// Gives the posed clips' capes their swing (Actors simulates the cloth
@@ -349,11 +500,24 @@ fn make_clip(
     duration: f32,
     pose: impl Fn(f32) -> Pose,
 ) -> Result<AnimationClip, String> {
+    make_clip_over(model, "idle", name, duration, pose)
+}
+
+/// [`make_clip`] over clip `base` (`duration`: `None` for the base's own
+/// length, so a walk still loops on its steps).
+fn make_clip_over(
+    model: &AnimatedModel,
+    base: &str,
+    name: &str,
+    duration: impl Into<Option<f32>>,
+    pose: impl Fn(f32) -> Pose,
+) -> Result<AnimationClip, String> {
     let base = model
         .clips
         .iter()
-        .find(|c| c.name == "idle")
-        .ok_or("the model has no idle clip")?;
+        .find(|c| c.name == base)
+        .ok_or(format!("the model has no {base} clip"))?;
+    let duration = duration.into().unwrap_or(base.duration).max(0.1);
     let sk = &model.skeleton;
     let n = sk.joint_names.len();
     let joint = |name: &str| {
@@ -427,6 +591,15 @@ fn make_clip(
         }
         if let Ok(pelvis) = joint("pelvis") {
             locals[pelvis].0.y += p.lift;
+            if let Some(h) = p.lay {
+                let g = globals(sk, &locals);
+                let parent = match sk.parents[pelvis] {
+                    Some(pp) => g[pp].1,
+                    None => sk.root_transforms[pelvis].to_scale_rotation_translation().1,
+                };
+                let at = g[pelvis].0;
+                locals[pelvis].0 += parent.inverse() * Vec3::new(-at.x, h - at.y, -at.z);
+            }
         }
         times.push(t * duration);
         for j in 0..n {

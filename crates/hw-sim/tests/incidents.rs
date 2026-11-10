@@ -501,3 +501,62 @@ fn a_fight_won_without_wrecking_the_street_earns_a_bonus() {
     assert!(careful_win(0), "careful: a bonus");
     assert!(!careful_win(4), "a wrecked street: none");
 }
+
+#[test]
+fn holding_the_help_key_shows_how_far_along_it_is() {
+    use hw_net::InputState;
+    use hw_sim::incidents::IncidentKind;
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    let me = PlayerId(1);
+    let hero = sim.spawn_hero(me, sim.spawn_point(1));
+    sim.incidents.next_kind = Some(IncidentKind::CarCrash);
+    let mut news = Vec::new();
+    run(&mut sim, incidents::FIRST_SECONDS + 2.0, &mut news);
+    let inc = sim.incidents.open[0].clone();
+    let next = *inc.victims().last().unwrap();
+    sim.set_body(
+        hero,
+        Body {
+            pos: next + DVec3::new(0.0, 0.2, 0.0) + (inc.at - next) * 0.3,
+            vel: DVec3::ZERO,
+            grounded: true,
+        },
+    );
+    // The bar as the radio hears it, step by step.
+    let held = |sim: &mut Sim| -> Vec<u8> {
+        sim.take_news()
+            .into_iter()
+            .filter_map(|m| match m {
+                ToClient::Incident { id, held, .. } if id == inc.id => Some(held),
+                _ => None,
+            })
+            .collect()
+    };
+    sim.set_input(
+        me,
+        InputState {
+            revive: true,
+            ..Default::default()
+        },
+    );
+    let mut heard = Vec::new();
+    let half = IncidentKind::CarCrash.rescue_seconds() * 0.5;
+    for _ in 0..(half * TICK_HZ as f64) as u64 {
+        sim.step();
+        heard.extend(held(&mut sim));
+    }
+    // It fills a sixteenth at a time, about half way by now.
+    assert!(heard.windows(2).all(|w| w[1] == w[0] + 1), "{heard:?}");
+    let last = *heard.last().expect("no word of the bar");
+    assert!((7..=9).contains(&last), "half way shows {last}/16");
+    assert_eq!(sim.incidents.open[0].left, inc.left, "out too soon");
+    // Let go: it drains back to empty.
+    sim.set_input(me, InputState::default());
+    let mut after = Vec::new();
+    for _ in 0..(half * 1.5 * TICK_HZ as f64) as u64 {
+        sim.step();
+        after.extend(held(&mut sim));
+    }
+    assert_eq!(after.last(), Some(&0), "{after:?}");
+}

@@ -13,6 +13,7 @@ use hw_gen::urban::props::CarModel;
 use hw_net::ToClient;
 use hw_sim::incidents::{victims, IncidentKind, MEDIC_REACH, RESCUE_REACH};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// How tall the light over an incident stands (m).
 const BEAM: f64 = 140.0;
@@ -31,6 +32,12 @@ pub struct Call {
     pub age: f32,
     /// A rescue's hurt person, once out.
     pub casualty: Option<Casualty>,
+    /// How far along holding the help key there is, as the server last
+    /// said (sixteenths), and the bar as shown (0-1, eased between).
+    pub held: u8,
+    pub bar: f32,
+    /// A fire put out by a freeze ray.
+    pub doused: bool,
 }
 
 /// A rescue's hurt person and the ambulance waiting for them.
@@ -58,17 +65,211 @@ pub enum Help {
     TalkDown,
 }
 
+/// Someone at a rescue on screen: an Actors townsperson (`real`) or, until
+/// their looks are built (or with no packs), a plain stand-in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shown {
+    pub e: EntityId,
+    pub real: bool,
+}
+
+/// The looks rescues draw their people from: the townsfolk's (by look)
+/// and the ambulance medic's, as the people worker finishes them.
+#[derive(Default, Clone)]
+pub struct Cast {
+    looks: BTreeMap<u32, Arc<AnimatedModel>>,
+    medic: Option<Arc<AnimatedModel>>,
+}
+
+impl Cast {
+    /// A finished character: kept if rescues use it.
+    pub fn add(&mut self, who: &crate::people::Who, model: &Arc<AnimatedModel>) {
+        match who {
+            crate::people::Who::Citizen(l) if *l < hw_sim::citizens::LOOKS => {
+                self.looks.insert(*l, model.clone());
+            }
+            crate::people::Who::Medic => self.medic = Some(model.clone()),
+            _ => {}
+        }
+    }
+
+    fn model(&self, look: Option<u32>) -> Option<&Arc<AnimatedModel>> {
+        match look {
+            Some(l) => self.looks.get(&l),
+            None => self.medic.as_ref(),
+        }
+    }
+
+    /// Whether `look` (`None`: the medic) can be drawn as itself yet.
+    pub fn ready(&self, look: Option<u32>) -> bool {
+        self.model(look).is_some()
+    }
+
+    /// Puts someone at `place` playing `clip` ("wave", "beckon", "lie",
+    /// "carried", "idle", "walk"): look `look` of the townsfolk, or the
+    /// medic for `None`.
+    pub fn spawn(
+        &self,
+        world: &mut World,
+        look: Option<u32>,
+        clip: &str,
+        place: Place,
+    ) -> Option<Shown> {
+        if let Some(m) = self.model(look) {
+            let e = world.spawn_animated_shared(m.clone(), place).ok()?;
+            let _ = world.set_animation_blend(e, 0.25);
+            let _ = world.play_animation(e, clip);
+            return Some(Shown { e, real: true });
+        }
+        let mesh = match (look, clip) {
+            (None, _) => person(MEDIC_LOOK),
+            (Some(l), "lie" | "carried") => lying(l),
+            (Some(l), _) => person(l),
+        };
+        let e = world.place(mesh, place).ok()?;
+        Some(Shown { e, real: false })
+    }
+}
+
+/// The townsfolk look of the `k`th person trapped at incident `id` (the
+/// first, `k` 0, is the last out: the hurt one).
+pub fn rescued_look(id: u32, k: usize) -> u32 {
+    (hw_core::Seed(id as u64).child("rescued").child(k as u64).0 % hw_sim::citizens::LOOKS as u64)
+        as u32
+}
+
+/// The ambulance at a rescue: where it stands (or will), its yaw
+/// (radians), the way it came (while it is still pulling up) and the way
+/// it will leave, both along the street lane.
+struct Van {
+    lod: LodId,
+    at: Vec3,
+    yaw: f32,
+    route: Option<Route>,
+    out: Vec<Vec3>,
+}
+
+/// A drive along a line of points: how far along it is and how fast.
+struct Route {
+    pts: Vec<Vec3>,
+    along: Vec<f32>,
+    s: f32,
+    v: f32,
+}
+
+impl Route {
+    fn new(pts: Vec<Vec3>) -> Self {
+        let mut along = vec![0.0];
+        for w in pts.windows(2) {
+            along.push(along.last().copied().unwrap_or(0.0) + w[0].distance(w[1]));
+        }
+        Self {
+            pts,
+            along,
+            s: 0.0,
+            v: 0.0,
+        }
+    }
+
+    fn len(&self) -> f32 {
+        self.along.last().copied().unwrap_or(0.0)
+    }
+
+    /// The point `s` along, and the way it heads there (looking a few
+    /// metres ahead, so turns are smooth).
+    fn at(&self, s: f32) -> (Vec3, Vec3) {
+        let point = |s: f32| {
+            let s = s.clamp(0.0, self.len());
+            let i = self
+                .along
+                .partition_point(|&a| a <= s)
+                .saturating_sub(1)
+                .min(self.pts.len().saturating_sub(2));
+            let (a, b) = (self.pts[i], self.pts[(i + 1).min(self.pts.len() - 1)]);
+            let l = (self.along[(i + 1).min(self.along.len() - 1)] - self.along[i]).max(1e-4);
+            a.lerp(b, ((s - self.along[i]) / l).clamp(0.0, 1.0))
+        };
+        let p = point(s);
+        let d = point(s + 2.5) - point(s - 2.5);
+        (p, Vec3::new(d.x, 0.0, d.z).normalize_or(Vec3::Z))
+    }
+}
+
+/// An ambulance with its hurt on board, pulling out and driving off along
+/// the street; it goes once out of sight. The medic walks round to the
+/// cab and the hurt one is lifted in first.
+struct Leaving {
+    lod: LodId,
+    route: Route,
+    /// Seconds since the hand-over: it pulls out at [`LOAD_SECONDS`].
+    t: f32,
+    load: f32,
+    medic: Option<(Shown, Vec3, Vec3)>,
+    hurt: Option<(Shown, Vec3, Vec3)>,
+    /// Seconds out of sight.
+    unseen: f32,
+}
+
+/// Someone got out walking off from the scene, gone once out of sight.
+struct Walker {
+    who: Shown,
+    at: Vec3,
+    dir: Vec3,
+    age: f32,
+    unseen: f32,
+}
+
+/// How long the hurt one takes to be lifted in and the medic to get round
+/// to the cab before the ambulance pulls out (s).
+const LOAD_SECONDS: f32 = 2.6;
+/// An ambulance's speed on the street (m/s) and how hard it speeds up
+/// and brakes (m/s²).
+const VAN_SPEED: f32 = 12.0;
+const VAN_ACCEL: f32 = 2.6;
+/// How far back along the street an ambulance comes from (m).
+const VAN_FROM: f64 = 70.0;
+/// How far a freed person walks off before standing (s).
+const WALK_SECONDS: f32 = 7.0;
+
+/// Whether `p` is in the camera's view (roughly: within its cone and not
+/// far off): things leave the scene only out of sight.
+fn in_sight(world: &World, p: Vec3) -> bool {
+    let cam = world.camera();
+    let eye = cam.eye();
+    let d = p + Vec3::Y * 1.0 - eye;
+    let far = d.length();
+    if far > 260.0 {
+        return false;
+    }
+    if far < 4.0 {
+        return true;
+    }
+    let look = (cam.target() - eye).normalize_or(Vec3::Z);
+    // The widest a view gets (a wide screen's corners) and a margin.
+    look.dot(d / far) > 0.3
+}
+
 /// What stands at a rescue: wrecked cars, flames and smoke, the people.
 #[derive(Default)]
 struct Scene {
     cars: Vec<LodId>,
     fire: Vec<EmitterId>,
-    people: Vec<EntityId>,
-    /// The ambulance, and its medic.
-    van: Option<LodId>,
-    ambulance: Vec<EntityId>,
+    /// The people still trapped, in the order of [`victims`], and where
+    /// each stands.
+    people: Vec<(Shown, Place)>,
+    /// The ambulance and its medic.
+    van: Option<Van>,
+    medic: Option<Shown>,
     /// The hurt person, lying or in someone's arms.
-    hurt: Option<EntityId>,
+    hurt: Option<Shown>,
+    /// The hurt one floated off in a rescue bubble (it lands later).
+    bubbled: bool,
+    /// The hurt one was handed over before the ambulance got here: it
+    /// leaves as soon as it is.
+    leave: bool,
+    /// An ambulance to bring: where it parks, its yaw (radians), and
+    /// whether it drives up (news as it happens) or is simply there.
+    van_due: Option<(Vec3, f32, bool)>,
     /// A pirate airship over the raid: where it hangs, its yaw (degrees),
     /// and the rope ladders down from it.
     ship: Option<(LodId, Vec3, f32)>,
@@ -106,6 +307,12 @@ pub struct Radio {
     /// The Doctor's story, shown on the radio and the compass (see
     /// [`crate::storyview`]).
     pub story: Option<StoryMark>,
+    /// Who rescues draw their people from.
+    pub cast: Cast,
+    leaving: Vec<Leaving>,
+    walkers: Vec<Walker>,
+    /// Our hero is holding the help key at a rescue just now.
+    holding: bool,
 }
 
 /// The story's line on the radio: its heading, the goal, and where to go.
@@ -260,6 +467,7 @@ impl Radio {
             state,
             yaw,
             left,
+            held,
         } = m
         else {
             return false;
@@ -270,8 +478,16 @@ impl Radio {
         let at = Vec3::from_array(*at);
         let a = hw_sim::props::byte_to_yaw(*yaw);
         let facing = DVec2::new(a.sin(), a.cos());
-        if *state == 0 {
+        let doused = *state == hw_sim::incidents::DOUSED;
+        if *state == 0 || doused {
             if let Some(c) = self.calls.get_mut(id) {
+                c.held = *held;
+                if doused && !c.doused {
+                    c.doused = true;
+                    self.put_out(world, *id);
+                    return true;
+                }
+                let c = self.calls.get_mut(id).expect("just found");
                 // News of a rescue: one more got out.
                 if *left < c.left && kind == IncidentKind::Surfacing {
                     c.left = *left;
@@ -281,8 +497,9 @@ impl Radio {
                     ));
                 } else if *left < c.left {
                     c.left = *left;
+                    c.bar = 0.0;
                     self.flash = Some(("Got one out! Well done.".into(), 3.0));
-                    self.people(world, *id);
+                    self.got_out(world, *id);
                 }
                 return true;
             }
@@ -296,6 +513,9 @@ impl Radio {
                     left: *left,
                     age: 0.0,
                     casualty: None,
+                    held: *held,
+                    bar: 0.0,
+                    doused,
                 },
             );
             if let Ok(e) = world.place(beacon(kind), Place::new(at.x, at.y, at.z)) {
@@ -303,6 +523,9 @@ impl Radio {
             }
             if kind.trapped() > 0 {
                 self.stage(world, *id);
+                if doused {
+                    self.put_out(world, *id);
+                }
             } else {
                 self.set_piece(world, *id);
             }
@@ -489,6 +712,268 @@ impl Radio {
         }
     }
 
+    /// Ambulances pulling up and driving off, people walking away from a
+    /// rescue, and stand-ins swapped for the townsfolk as their looks come
+    /// in. `lanes` gives a stretch of street lane (see
+    /// [`hw_sim::traffic::Traffic::street_stretch`]) for an ambulance to
+    /// drive.
+    pub fn rescues(
+        &mut self,
+        world: &mut World,
+        dt: f32,
+        lanes: &dyn Fn(DVec2, DVec2) -> Option<Vec<DVec3>>,
+    ) {
+        self.bring_vans(world, lanes);
+        self.pull_up(world, dt);
+        self.drive_off(world, dt);
+        self.walk(world, dt);
+        self.recast(world);
+    }
+
+    /// Ambulances asked for: placed at the kerb, or coming along the street.
+    fn bring_vans(
+        &mut self,
+        world: &mut World,
+        lanes: &dyn Fn(DVec2, DVec2) -> Option<Vec<DVec3>>,
+    ) {
+        let ids: Vec<u32> = (self.scenes.iter())
+            .filter(|(_, s)| s.van_due.is_some())
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let call_at = self.calls.get(&id).map(|c| c.at);
+            let Some(scene) = self.scenes.get_mut(&id) else {
+                continue;
+            };
+            let Some((at, yaw, arrive)) = scene.van_due.take() else {
+                continue;
+            };
+            let f = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+            let stretch = lanes(
+                DVec2::new(at.x as f64, at.z as f64),
+                DVec2::new(f.x as f64, f.z as f64),
+            );
+            let (inn, out): (Vec<Vec3>, Vec<Vec3>) = match stretch {
+                Some(pts) if pts.len() > 50 => {
+                    // The nearest point is VAN_FROM back (2 m apart); the
+                    // van leaves the lane and joins it 12 m either side.
+                    let mid = ((VAN_FROM / 2.0) as usize).min(pts.len());
+                    let pts: Vec<Vec3> = pts.iter().map(|p| p.as_vec3()).collect();
+                    let inn = pts[..mid.saturating_sub(6)]
+                        .iter()
+                        .copied()
+                        .chain([at])
+                        .collect();
+                    let out = std::iter::once(at)
+                        .chain(pts[(mid + 6).min(pts.len())..].iter().copied())
+                        .collect();
+                    (inn, out)
+                }
+                // No lane here: straight along the kerb.
+                _ => (
+                    (0..=10)
+                        .map(|k| at - f * (VAN_FROM as f32 * (1.0 - k as f32 / 10.0)))
+                        .collect(),
+                    (0..=40).map(|k| at + f * (k as f32 * 10.0)).collect(),
+                ),
+            };
+            let route = arrive.then(|| Route::new(inn));
+            let place = match &route {
+                Some(r) => {
+                    let (p, d) = r.at(0.0);
+                    Place::new(p.x, p.y, p.z).with_yaw_deg(d.x.atan2(d.z).to_degrees())
+                }
+                None => Place::new(at.x, at.y, at.z).with_yaw_deg(yaw.to_degrees()),
+            };
+            let Ok(lod) = world.spawn_lod_at(crate::propview::ambulance_levels(), &[place]) else {
+                continue;
+            };
+            let parked = route.is_none();
+            scene.van = Some(Van {
+                lod,
+                at,
+                yaw,
+                route,
+                out,
+            });
+            if parked && scene.medic.is_none() {
+                scene.medic = self
+                    .cast
+                    .spawn(world, None, "beckon", medic_place(at, yaw, call_at));
+            }
+            if scene.leave {
+                scene.leave = false;
+                if let Some(l) = depart(world, scene) {
+                    self.leaving.push(l);
+                }
+            }
+        }
+    }
+
+    /// Ambulances coming up the street brake to a stop at the kerb; the
+    /// medic gets out at the back.
+    fn pull_up(&mut self, world: &mut World, dt: f32) {
+        for (id, scene) in self.scenes.iter_mut() {
+            let call_at = self.calls.get(id).map(|c| c.at);
+            let Some(van) = scene.van.as_mut() else {
+                continue;
+            };
+            let Some(r) = van.route.as_mut() else {
+                continue;
+            };
+            let rest = r.len() - r.s;
+            r.v = VAN_SPEED.min((2.0 * VAN_ACCEL * rest).sqrt()).max(0.8);
+            r.s = (r.s + r.v * dt).min(r.len());
+            let (p, d) = r.at(r.s);
+            let parked = r.s >= r.len() - 0.01;
+            let place = if parked {
+                Place::new(van.at.x, van.at.y, van.at.z).with_yaw_deg(van.yaw.to_degrees())
+            } else {
+                Place::new(p.x, p.y, p.z).with_yaw_deg(d.x.atan2(d.z).to_degrees())
+            };
+            let _ = world.set_lod_places(van.lod, &[place]);
+            if parked {
+                van.route = None;
+                if scene.medic.is_none() {
+                    scene.medic = self.cast.spawn(
+                        world,
+                        None,
+                        "beckon",
+                        medic_place(van.at, van.yaw, call_at),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Ambulances loading up and driving off; gone once out of sight.
+    fn drive_off(&mut self, world: &mut World, dt: f32) {
+        let mut keep = Vec::with_capacity(self.leaving.len());
+        for mut l in std::mem::take(&mut self.leaving) {
+            l.t += dt;
+            let (_, ahead) = l.route.at(0.0);
+            if let Some((m, from, to)) = l.medic {
+                // Round to the cab, and in.
+                let k = l.t / (l.load * 0.85);
+                if k >= 1.0 {
+                    world.despawn(m.e);
+                    l.medic = None;
+                } else {
+                    let p = from.lerp(to, k);
+                    let d = to - from;
+                    let place = Place::new(p.x, p.y, p.z).with_yaw_deg(d.x.atan2(d.z).to_degrees());
+                    let _ = world.set_place(m.e, place);
+                }
+            }
+            if let Some((h, from, to)) = l.hurt {
+                // Lifted in at the back doors.
+                let k = l.t / 0.9;
+                if k >= 1.0 {
+                    world.despawn(h.e);
+                    l.hurt = None;
+                } else {
+                    let e = k * k * (3.0 - 2.0 * k);
+                    let p = from.lerp(to, e);
+                    let yaw = ahead.x.atan2(ahead.z).to_degrees() + 90.0;
+                    let _ = world.set_place(h.e, Place::new(p.x, p.y, p.z).with_yaw_deg(yaw));
+                }
+            }
+            let r = &mut l.route;
+            if l.t >= l.load {
+                // Away under the lights, braking only at the end of the
+                // stretch it knows.
+                r.v = (r.v + VAN_ACCEL * dt).min(VAN_SPEED);
+                let rest = r.len() - r.s;
+                r.v = r.v.min((2.0 * VAN_ACCEL * rest).sqrt());
+                r.s = (r.s + r.v * dt).min(r.len());
+            }
+            let (p, d) = r.at(r.s);
+            let place = Place::new(p.x, p.y, p.z).with_yaw_deg(d.x.atan2(d.z).to_degrees());
+            let _ = world.set_lod_places(l.lod, &[place]);
+            if in_sight(world, p) {
+                l.unseen = 0.0;
+            } else {
+                l.unseen += dt;
+            }
+            if l.t > l.load && l.unseen > 0.6 {
+                world.despawn_lod(l.lod);
+                for (s, _, _) in l.medic.into_iter().chain(l.hurt) {
+                    world.despawn(s.e);
+                }
+                continue;
+            }
+            keep.push(l);
+        }
+        self.leaving = keep;
+    }
+
+    /// People out of a rescue walk away, then stand; gone once out of
+    /// sight.
+    fn walk(&mut self, world: &mut World, dt: f32) {
+        let mut keep = Vec::with_capacity(self.walkers.len());
+        for mut w in std::mem::take(&mut self.walkers) {
+            let was = w.age;
+            w.age += dt;
+            if was < WALK_SECONDS {
+                let next = w.at + w.dir * crate::people::WALK_MPS * dt;
+                let ahead = next + w.dir * 0.4 + Vec3::Y;
+                let blocked = (self.solids.as_ref()).is_some_and(|s| s.solid_at(ahead.as_dvec3()));
+                if blocked {
+                    w.age = WALK_SECONDS;
+                } else {
+                    w.at = next;
+                }
+                if w.age >= WALK_SECONDS && w.who.real {
+                    let _ = world.play_animation(w.who.e, "idle");
+                }
+            }
+            let yaw = w.dir.x.atan2(w.dir.z).to_degrees();
+            let _ = world.set_place(
+                w.who.e,
+                Place::new(w.at.x, w.at.y, w.at.z).with_yaw_deg(yaw),
+            );
+            if in_sight(world, w.at) {
+                w.unseen = 0.0;
+            } else {
+                w.unseen += dt;
+            }
+            if w.unseen > 0.6 && w.age > 1.0 {
+                world.despawn(w.who.e);
+                continue;
+            }
+            keep.push(w);
+        }
+        self.walkers = keep;
+    }
+
+    /// Stand-ins become the townsfolk once their looks are built.
+    fn recast(&mut self, world: &mut World) {
+        for (id, scene) in self.scenes.iter_mut() {
+            for (k, (who, place)) in scene.people.iter_mut().enumerate() {
+                let look = Some(rescued_look(*id, k));
+                if who.real || !self.cast.ready(look) {
+                    continue;
+                }
+                if let Some(n) = self.cast.spawn(world, look, "wave", *place) {
+                    world.despawn(who.e);
+                    *who = n;
+                }
+            }
+            let cas = self.calls.get(id).and_then(|c| c.casualty);
+            if let (Some(h), Some(c)) = (scene.hurt, cas) {
+                let look = Some(rescued_look(*id, 0));
+                if !h.real && self.cast.ready(look) {
+                    let clip = if c.state == 1 { "carried" } else { "lie" };
+                    let place = Place::new(c.at.x, c.at.y, c.at.z);
+                    if let Some(n) = self.cast.spawn(world, look, clip, place) {
+                        world.despawn(h.e);
+                        scene.hurt = Some(n);
+                    }
+                }
+            }
+        }
+    }
+
     /// A rescue's scene: cars or flames, then the people.
     fn stage(&mut self, world: &mut World, id: u32) {
         let Some(c) = self.calls.get(&id).copied() else {
@@ -583,25 +1068,161 @@ impl Radio {
         self.people(world, id);
     }
 
-    /// The people still trapped, waving.
+    /// The people still trapped, waving for help.
     fn people(&mut self, world: &mut World, id: u32) {
         let Some(c) = self.calls.get(&id).copied() else {
             return;
         };
-        let scene = self.scenes.entry(id).or_default();
-        for e in scene.people.drain(..) {
-            world.despawn(e);
-        }
         let yaw = c.facing.x.atan2(c.facing.y).to_degrees() as f32;
+        let mut shown = Vec::new();
         for (k, p) in victims(c.kind, c.at.as_dvec3(), c.facing, c.left)
             .into_iter()
             .enumerate()
         {
             let place = Place::new(p.x as f32, p.y as f32, p.z as f32).with_yaw_deg(yaw);
-            if let Ok(e) = world.place(person(k as u32 + id), place) {
-                scene.people.push(e);
+            if let Some(s) = self
+                .cast
+                .spawn(world, Some(rescued_look(id, k)), "wave", place)
+            {
+                shown.push((s, place));
             }
         }
+        let scene = self.scenes.entry(id).or_default();
+        for (old, _) in std::mem::replace(&mut scene.people, shown) {
+            world.despawn(old.e);
+        }
+    }
+
+    /// One more got out by hand: they walk off out of the way (the last
+    /// one out is the hurt one, whose news follows).
+    fn got_out(&mut self, world: &mut World, id: u32) {
+        let Some(c) = self.calls.get(&id).copied() else {
+            return;
+        };
+        let Some(scene) = self.scenes.get_mut(&id) else {
+            return;
+        };
+        let f = Vec3::new(c.facing.x as f32, 0.0, c.facing.y as f32).normalize_or(Vec3::Z);
+        while scene.people.len() > c.left as usize {
+            let Some((who, place)) = scene.people.pop() else {
+                break;
+            };
+            if c.left == 0 && scene.people.is_empty() {
+                world.despawn(who.e);
+                continue;
+            }
+            let p = place.position;
+            // Down to the street from a window or a door, then off: a
+            // crash's away from the cars, a house's out from its front.
+            let dir = if c.kind == IncidentKind::CarCrash && (p - c.at).dot(f) < 0.0 {
+                -f
+            } else {
+                f
+            };
+            let at = Vec3::new(p.x, c.at.y, p.z);
+            self.walkers.push(Walker {
+                who,
+                at,
+                dir,
+                age: 0.0,
+                unseen: 0.0,
+            });
+            if who.real {
+                let _ = world.play_animation(who.e, "walk");
+            }
+        }
+    }
+
+    /// Someone set down out of a rescue bubble at `feet`: they walk on
+    /// the way it carried them.
+    pub fn walk_off(&mut self, world: &mut World, who: Shown, feet: Vec3, dir: Vec3) {
+        let dir = Vec3::new(dir.x, 0.0, dir.z).normalize_or(Vec3::Z);
+        if who.real {
+            let _ = world.play_animation(who.e, "walk");
+        }
+        self.walkers.push(Walker {
+            who,
+            at: feet,
+            dir,
+            age: 0.0,
+            unseen: 0.0,
+        });
+    }
+
+    /// A rescue bubble forms round the person at `at` (`hurt`: the hurt
+    /// one, or the last out): the one standing there goes into it. Gives
+    /// who, and how high over the bubble's foot to hold them.
+    pub fn into_bubble(&mut self, world: &mut World, at: Vec3, hurt: bool) -> Option<(Shown, f32)> {
+        let near = |p: Vec3| Vec3::new(p.x - at.x, 0.0, p.z - at.z).length() < 1.5;
+        let mut found: Option<(u32, Shown)> = None;
+        for (id, scene) in self.scenes.iter_mut() {
+            if hurt {
+                if let Some(h) = scene.hurt.take() {
+                    scene.bubbled = true;
+                    found = Some((*id, h));
+                    break;
+                }
+            }
+            if scene.people.last().is_some_and(|(_, p)| near(p.position)) {
+                let (who, _) = scene.people.pop().expect("just looked");
+                scene.bubbled |= hurt;
+                found = Some((*id, who));
+                break;
+            }
+        }
+        if found.is_none() && hurt {
+            // Handed over already (the news came first): the one on their
+            // way into the ambulance floats there instead, and it waits.
+            for l in self.leaving.iter_mut().filter(|l| l.t < 0.5) {
+                if let Some((h, from, _)) = l.hurt {
+                    if near(from) {
+                        l.hurt = None;
+                        l.load = crate::powerfx::FLOAT_SECONDS + 0.6;
+                        found = Some((0, h));
+                        break;
+                    }
+                }
+            }
+        }
+        if found.is_none() {
+            // Out already (the news came first): from among those walking off.
+            if let Some(i) = self.walkers.iter().position(|w| w.age < 1.0 && near(w.at)) {
+                let w = self.walkers.remove(i);
+                found = Some((0, w.who));
+            }
+        }
+        let who = match found {
+            Some((_, who)) => who,
+            None => {
+                // Nobody drawn there: the nearest rescue's person.
+                let (id, c) = self
+                    .calls
+                    .iter()
+                    .filter(|(_, c)| c.kind.trapped() > 0)
+                    .min_by(|a, b| a.1.at.distance(at).total_cmp(&b.1.at.distance(at)))?;
+                if c.at.distance(at) > 40.0 {
+                    return None;
+                }
+                let k = if hurt { 0 } else { c.left as usize };
+                let place = Place::new(at.x, at.y, at.z);
+                let clip = if hurt { "carried" } else { "wave" };
+                let who = self
+                    .cast
+                    .spawn(world, Some(rescued_look(*id, k)), clip, place)?;
+                if hurt {
+                    if let Some(s) = self.scenes.get_mut(id) {
+                        s.bubbled = true;
+                    }
+                }
+                who
+            }
+        };
+        if who.real {
+            let _ = world.play_animation(who.e, if hurt { "carried" } else { "idle" });
+        }
+        // The hips at the bubble's middle for the curled-up hurt one.
+        let lift = if hurt && who.real { 1.0 } else { 0.05 };
+        Some((who, lift))
     }
 
     /// News of a rescue's hurt person: the ambulance arrives, they lie
@@ -610,41 +1231,58 @@ impl Radio {
         let Some(call) = self.calls.get_mut(&id) else {
             return;
         };
+        // News as it happens (not a late joiner's snapshot): the
+        // ambulance drives up rather than standing there already.
+        let live = call.age > 1.0;
+        let was = call.casualty.map(|k| k.state);
         call.casualty = Some(c);
         let scene = self.scenes.entry(id).or_default();
-        if scene.van.is_none() {
-            let deg = c.yaw.to_degrees();
-            let place = Place::new(c.medic.x, c.medic.y, c.medic.z).with_yaw_deg(deg);
-            scene.van = world
-                .spawn_lod_at(crate::propview::ambulance_levels(), &[place])
-                .ok();
-            // The medic waits at the back doors, waving them over.
-            let back = c.medic - Vec3::new(c.yaw.sin(), 0.0, c.yaw.cos()) * 3.8;
-            let place = Place::new(back.x, back.y, back.z).with_yaw_deg(deg + 180.0);
-            if let Ok(e) = world.place(person(MEDIC_LOOK), place) {
-                scene.ambulance.push(e);
-            }
+        if scene.van.is_none() && scene.van_due.is_none() && was.is_none() {
+            scene.van_due = Some((c.medic, c.yaw, live && c.state != 2));
         }
         match c.state {
             2 => {
-                if let Some(e) = scene.hurt.take() {
-                    world.despawn(e);
-                }
                 self.flash = Some(("With the medic now. They'll pull through!".into(), 4.0));
+                self.hand_over(world, id);
             }
             _ => {
-                if scene.hurt.is_none() {
-                    if let Ok(e) = world.place(lying(id), Place::new(c.at.x, c.at.y, c.at.z)) {
-                        scene.hurt = Some(e);
+                let clip = if c.state == 1 { "carried" } else { "lie" };
+                let place = Place::new(c.at.x, c.at.y, c.at.z);
+                match scene.hurt {
+                    None => {
+                        scene.hurt = self
+                            .cast
+                            .spawn(world, Some(rescued_look(id, 0)), clip, place);
                     }
+                    Some(h) if h.real && was != Some(c.state) => {
+                        let _ = world.play_animation(h.e, clip);
+                    }
+                    _ => {}
                 }
-                if let (0, Some(e)) = (c.state, scene.hurt) {
-                    let _ = world.set_place(e, Place::new(c.at.x, c.at.y + 0.15, c.at.z));
+                if let (0, Some(h)) = (c.state, scene.hurt) {
+                    let lift = if h.real { 0.0 } else { 0.15 };
+                    let _ = world.set_place(h.e, Place::new(c.at.x, c.at.y + lift, c.at.z));
                 }
                 if c.state == 1 && Some(c.carrier) == self.me {
                     self.flash = Some(("They're hurt: get them to the ambulance!".into(), 5.0));
                 }
             }
+        }
+    }
+
+    /// The hurt one is with the medic: they are lifted in at the back, the
+    /// medic gets in at the front and the ambulance drives off.
+    fn hand_over(&mut self, world: &mut World, id: u32) {
+        let Some(scene) = self.scenes.get_mut(&id) else {
+            return;
+        };
+        if scene.van.is_none() {
+            // Not here yet: it leaves as soon as it is.
+            scene.leave = true;
+            return;
+        }
+        if let Some(l) = depart(world, scene) {
+            self.leaving.push(l);
         }
     }
 
@@ -655,19 +1293,36 @@ impl Radio {
             let Some(cas) = c.casualty.filter(|k| k.state == 1) else {
                 continue;
             };
-            let (Some(e), Some((feet, yaw))) =
+            let (Some(h), Some((feet, yaw))) =
                 (self.scenes.get(id).and_then(|s| s.hurt), hero(cas.carrier))
             else {
                 continue;
             };
             let a = yaw.to_radians();
-            let p = feet + Vec3::new(a.sin(), 0.0, a.cos()) * 0.45 + Vec3::Y * 1.0;
-            let _ = world.set_place(e, Place::new(p.x, p.y, p.z).with_yaw_deg(yaw));
+            let ahead = Vec3::new(a.sin(), 0.0, a.cos());
+            let place = if h.real {
+                // Across the hero's arms (see `poses::add_carry_clips`): the
+                // hips just in front of the chest, legs to the hero's left.
+                let p = feet + ahead * 0.4 + Vec3::Y * 0.98;
+                Place::new(p.x, p.y, p.z).with_yaw_deg(yaw + 90.0)
+            } else {
+                let p = feet + ahead * 0.45 + Vec3::Y * 1.0;
+                Place::new(p.x, p.y, p.z).with_yaw_deg(yaw)
+            };
+            let _ = world.set_place(h.e, place);
         }
     }
 
+    /// Whether hero `id` is carrying someone hurt (their arms are full).
+    pub fn is_carrying(&self, id: u32) -> bool {
+        self.calls
+            .values()
+            .filter_map(|c| c.casualty)
+            .any(|k| k.state == 1 && k.carrier == id)
+    }
+
     fn unstage(&mut self, world: &mut World, id: u32) {
-        if let Some(scene) = self.scenes.remove(&id) {
+        if let Some(mut scene) = self.scenes.remove(&id) {
             // The pirates climb aboard and the airship sails off.
             if let Some((lod, from, yaw)) = scene.ship {
                 self.departing.push(Departing {
@@ -677,14 +1332,15 @@ impl Radio {
                     age: 0.0,
                 });
             }
-            for e in scene.ladders {
+            for e in scene.ladders.drain(..) {
                 world.despawn(e);
             }
-            for e in scene.ambulance.into_iter().chain(scene.hurt) {
-                world.despawn(e);
+            // The ambulance never just vanishes: it drives off.
+            if let Some(l) = depart(world, &mut scene) {
+                self.leaving.push(l);
             }
-            if let Some(l) = scene.van {
-                world.despawn_lod(l);
+            for s in scene.medic.into_iter().chain(scene.hurt) {
+                world.despawn(s.e);
             }
             for l in scene.cars {
                 world.despawn_lod(l);
@@ -693,27 +1349,60 @@ impl Radio {
             for e in scene.fire {
                 let _ = p.stop(e);
             }
-            for e in scene.people {
-                world.despawn(e);
+            for (s, _) in scene.people {
+                world.despawn(s.e);
             }
+        }
+    }
+
+    /// A fire put out with a freeze ray: the flames die, a white steam
+    /// hangs over the house front.
+    fn put_out(&mut self, world: &mut World, id: u32) {
+        let Some(c) = self.calls.get(&id).copied() else {
+            return;
+        };
+        let Some(scene) = self.scenes.get_mut(&id) else {
+            return;
+        };
+        let p = world.particles_mut();
+        for e in scene.fire.drain(..) {
+            let _ = p.stop(e);
+        }
+        let f = Vec3::new(c.facing.x as f32, 0.0, c.facing.y as f32);
+        let steam = ParticleEmitter::smoke(c.at - f * 3.0 + Vec3::Y * 4.0, 2.5)
+            .with_color(Color::rgba(235, 240, 245, 90))
+            .with_secondary_color(Color::rgba(255, 255, 255, 30));
+        if let Ok(e) = p.start(steam) {
+            scene.fire.push(e);
         }
     }
 
     /// What our hero at `hero` can do for a rescue just now, if anything.
     pub fn help(&self, hero: Vec3) -> Option<Help> {
+        self.help_at(hero).map(|h| h.0)
+    }
+
+    /// [`Self::help`], and at which call.
+    fn help_at(&self, hero: Vec3) -> Option<(Help, u32)> {
         let reach = RESCUE_REACH as f32 + 0.5;
-        if self.carrying().is_some() {
-            return Some(Help::CarryThem);
+        if let Some((id, _)) = self.calls.iter().find(|(_, c)| {
+            self.me
+                .is_some_and(|me| c.casualty.is_some_and(|k| k.state == 1 && k.carrier == me))
+        }) {
+            return Some((Help::CarryThem, *id));
         }
-        self.calls.values().find_map(|c| match c.casualty {
-            _ if c.kind == IncidentKind::Surfacing => (c.left > 0
-                && c.at.distance(hero) < hw_sim::incidents::CALM_REACH as f32 + 2.5)
-                .then_some(Help::TalkDown),
-            Some(k) if k.state == 0 && k.at.distance(hero) < reach => Some(Help::LiftThem),
-            _ => victims(c.kind, c.at.as_dvec3(), c.facing, c.left)
-                .last()
-                .is_some_and(|v| v.as_vec3().distance(hero) < reach)
-                .then_some(Help::FreeThem),
+        self.calls.iter().find_map(|(id, c)| {
+            let help = match c.casualty {
+                _ if c.kind == IncidentKind::Surfacing => (c.left > 0
+                    && c.at.distance(hero) < hw_sim::incidents::CALM_REACH as f32 + 2.5)
+                    .then_some(Help::TalkDown),
+                Some(k) if k.state == 0 && k.at.distance(hero) < reach => Some(Help::LiftThem),
+                _ => victims(c.kind, c.at.as_dvec3(), c.facing, c.left)
+                    .last()
+                    .is_some_and(|v| v.as_vec3().distance(hero) < reach)
+                    .then_some(Help::FreeThem),
+            };
+            help.map(|h| (h, *id))
         })
     }
 
@@ -727,9 +1416,31 @@ impl Radio {
             .map(|k| k.medic)
     }
 
-    pub fn update(&mut self, dt: f32) {
-        for c in self.calls.values_mut() {
+    /// Time passes; `holding` is where our hero is while the help key is
+    /// held down (the bar fills between the server's steps).
+    pub fn update(&mut self, dt: f32, holding: Option<Vec3>) {
+        let here = holding
+            .and_then(|h| self.help_at(h))
+            .filter(|h| h.0 != Help::CarryThem);
+        self.holding = here.is_some();
+        for (id, c) in self.calls.iter_mut() {
             c.age += dt;
+            let target = c.held as f32 / 16.0;
+            if here.is_some_and(|h| h.1 == *id) {
+                let need = if c.kind == IncidentKind::Surfacing {
+                    hw_sim::incidents::CALM_SECONDS
+                } else if c.casualty.is_some_and(|k| k.state == 0) {
+                    hw_sim::incidents::LIFT_SECONDS
+                } else if c.doused {
+                    c.kind.rescue_seconds() * hw_sim::incidents::DOUSED_QUICKER
+                } else {
+                    c.kind.rescue_seconds()
+                };
+                // Ahead of the server's word by at most one step.
+                c.bar = (c.bar + dt / need as f32).clamp(target, (target + 1.0 / 16.0).min(1.0));
+            } else {
+                c.bar += (target - c.bar) * (1.0 - (-dt * 8.0).exp());
+            }
         }
         if let Some((_, t)) = self.flash.as_mut() {
             *t -= dt;
@@ -742,10 +1453,14 @@ impl Radio {
     /// The radio on screen, top left: each call with its distance, the way
     /// to go (against where the camera looks) and a con colour.
     pub fn panel(&self, ctx: &egui::Context, eye: Vec3, look: Vec3, mine: u8, hero: Option<Vec3>) {
-        if let Some(help) = hero.and_then(|h| self.help(h)) {
+        if let Some((help, id)) = hero.and_then(|h| self.help_at(h)) {
+            let held = self.holding;
             let text = match help {
+                Help::FreeThem if held => "Getting them out... keep holding E".to_string(),
                 Help::FreeThem => "Hold E to help them out".to_string(),
+                Help::LiftThem if held => "Lifting them... keep holding E".to_string(),
                 Help::LiftThem => "Hold E to lift them".to_string(),
+                Help::TalkDown if held => "Talking them down... keep holding E".to_string(),
                 Help::TalkDown => "Hold E to talk them down (or fight them)".to_string(),
                 Help::CarryThem => {
                     let d = match (hero, self.carrying()) {
@@ -776,6 +1491,21 @@ impl Radio {
                                     .size(17.0)
                                     .strong(),
                             );
+                            // How far along: fills while E is held.
+                            if help != Help::CarryThem {
+                                let bar = self.calls.get(&id).map_or(0.0, |c| c.bar);
+                                let fill = if held {
+                                    egui::Color32::from_rgb(255, 200, 70)
+                                } else {
+                                    egui::Color32::from_rgb(150, 125, 70)
+                                };
+                                ui.add(
+                                    egui::ProgressBar::new(bar)
+                                        .desired_width(280.0)
+                                        .desired_height(12.0)
+                                        .fill(fill),
+                                );
+                            }
                         });
                 });
         }
@@ -867,18 +1597,80 @@ impl Radio {
         for d in std::mem::take(&mut self.departing) {
             world.despawn_lod(d.lod);
         }
+        for l in std::mem::take(&mut self.leaving) {
+            world.despawn_lod(l.lod);
+            for (s, _, _) in l.medic.into_iter().chain(l.hurt) {
+                world.despawn(s.e);
+            }
+        }
+        for w in std::mem::take(&mut self.walkers) {
+            world.despawn(w.who.e);
+        }
         self.calls.clear();
         self.flash = None;
     }
 }
 
+/// Where the medic waits by the back doors of an ambulance at `at` (yaw
+/// in radians), facing the trouble at `call`.
+fn medic_place(at: Vec3, yaw: f32, call: Option<Vec3>) -> Place {
+    let f = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+    let left = Vec3::new(f.z, 0.0, -f.x);
+    let p = at - f * 3.6 + left * 1.1;
+    let to = call.map_or(-f, |c| c - p);
+    Place::new(p.x, p.y, p.z).with_yaw_deg(to.x.atan2(to.z).to_degrees())
+}
+
+/// The ambulance at `scene` drives off, the hurt one lifted in at the
+/// back and the medic walking round to the cab first; none if it has not
+/// come yet.
+fn depart(world: &mut World, scene: &mut Scene) -> Option<Leaving> {
+    let van = scene.van.take()?;
+    let f = Vec3::new(van.yaw.sin(), 0.0, van.yaw.cos());
+    let left = Vec3::new(f.z, 0.0, -f.x);
+    // Still pulling up: on from where it is.
+    let now = van.route.as_ref().map_or(van.at, |r| r.at(r.s).0);
+    let mut pts = vec![now];
+    if now.distance(van.at) > 0.5 {
+        pts.push(van.at);
+    }
+    pts.extend(van.out.iter().skip(1).copied());
+    let medic = scene.medic.take().map(|m| {
+        if m.real {
+            let _ = world.play_animation(m.e, "walk");
+        }
+        (
+            m,
+            van.at - f * 3.6 + left * 1.1,
+            van.at + f * 0.9 + left * 1.15,
+        )
+    });
+    let hurt = scene.hurt.take().map(|h| {
+        let from = world
+            .world_transform(h.e)
+            .map(|m| m.w_axis.truncate())
+            .unwrap_or(van.at);
+        (h, from, van.at - f * 3.2 + Vec3::Y * 0.9)
+    });
+    // A bubble's hurt one is still floating over: wait for them.
+    let load = if scene.bubbled {
+        crate::powerfx::FLOAT_SECONDS + 0.6
+    } else {
+        LOAD_SECONDS
+    };
+    Some(Leaving {
+        lod: van.lod,
+        route: Route::new(pts),
+        t: 0.0,
+        load,
+        medic,
+        hurt,
+        unseen: 0.0,
+    })
+}
+
 /// The medic's look in [`person`]: all in white.
 const MEDIC_LOOK: u32 = 4;
-
-/// Someone hurt, lying on their back (for a rescue bubble).
-pub fn lying_person(look: u32) -> Mesh {
-    lying(look)
-}
 
 /// Someone hurt, lying on their back along x (carried across the arms).
 fn lying(look: u32) -> Mesh {

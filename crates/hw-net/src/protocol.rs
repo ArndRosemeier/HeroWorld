@@ -1139,7 +1139,9 @@ pub enum ToClient {
     /// kind (see `hw_sim::incidents::IncidentKind`), where, the villains'
     /// level, its state (0 open, 1 resolved, 2 timed out: gone), which way
     /// it faces (a yaw byte) and how many people are still trapped (a
-    /// rescue; sent again each time one is got out).
+    /// rescue; sent again each time one is got out), and how far along a
+    /// hero holding the help key there is with the next one (or lifting
+    /// the hurt one, or talking mole folk down), in sixteenths (0-16).
     Incident {
         id: u32,
         kind: u8,
@@ -1148,6 +1150,7 @@ pub enum ToClient {
         state: u8,
         yaw: u8,
         left: u8,
+        held: u8,
     },
     /// The hurt person of a rescue (incident `id`): where the medic waits
     /// (and which way the ambulance faces, a yaw byte), and where the
@@ -1259,7 +1262,7 @@ impl ToClient {
             ToClient::CarsWrecked { cars, .. } => 1 + 1 + 21 * cars.len().min(255),
             ToClient::Traffic { cars, .. } => 8 + 4 + 2 + 1 + 20 * cars.len().min(255),
             ToClient::CarsCleared { cars } => 1 + 8 * cars.len().min(255),
-            ToClient::Incident { .. } => 4 + 1 + 12 + 1 + 1 + 1 + 1,
+            ToClient::Incident { .. } => 4 + 1 + 12 + 1 + 1 + 1 + 1 + 1,
             ToClient::Casualty { .. } => 4 + 12 + 1 + 1 + 4 + 12,
             ToClient::Fx(_) => FX_BYTES,
             ToClient::Sheet(s) => s.wire_size(),
@@ -1362,12 +1365,13 @@ impl ToClient {
                 state,
                 yaw,
                 left,
+                held,
             } => {
                 w.u8(15).u32(*id).u8(*kind);
                 for v in at {
                     w.f32(*v);
                 }
-                w.u8(*level).u8(*state).u8(*yaw).u8(*left);
+                w.u8(*level).u8(*state).u8(*yaw).u8(*left).u8(*held);
             }
             ToClient::Casualty {
                 id,
@@ -1608,6 +1612,7 @@ impl ToClient {
                 state: r.u8()?,
                 yaw: r.u8()?,
                 left: r.u8()?,
+                held: r.u8()?,
             },
             _ => return Err(WireError),
         })
@@ -2194,6 +2199,7 @@ mod tests {
                         state: 1,
                         yaw: 200,
                         left: 2,
+                        held: 5,
                     },
                 ),
                 (

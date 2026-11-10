@@ -522,11 +522,16 @@ them (they stop waiting 12 s after the hero stops closing in).
 factor, for rescues per person freed. The crooks of a crime mind their own business until a
 hero steps within its reach; a mugging's victim walks off once you deal with the muggers.
 
-**Rescues:** stand within 3.5 m of the next trapped person and hold **E**. The last one out
-is hurt: the hero who freed them carries them to the **ambulance** parked at a kerb about
-50 m away (a red cross on the compass, "Carry them to the ambulance, N m"); within 5 m it
-takes them (double Guardian karma). A carrier who is knocked down drops them; anyone lifts
-them again by holding E for a second. A building that heroes or the colossus bring down
+**Rescues:** stand within 3.5 m of the next trapped person and hold **E**; a bar under the
+prompt fills while you hold it (4 s for a crash, 5 s digging out of rubble, 3 s at a fire, 60%
+of that at a fire put out with a freeze ray). Let go and it drains again. Freed people walk off
+out of the way. The last one out is hurt, and an **ambulance** drives up the street and parks
+at a kerb about 50 m away: the hero who freed them carries them there in both arms (a red cross
+on the compass, "Carry them to the ambulance, N m"); within 5 m the medic in white takes them
+(double Guardian karma), they are lifted in at the back and the ambulance drives off down the
+street. A carrier who is knocked down drops them; anyone lifts them again by holding E for a
+second (a bar shows it too). The trapped, the hurt and the medic are townsfolk like the people
+on the street. A building that heroes or the colossus bring down
 starts a collapse rescue at its front (one per pile; it does not count against the radio's
 limit).
 

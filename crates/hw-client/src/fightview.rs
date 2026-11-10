@@ -326,7 +326,11 @@ pub struct FightView {
     /// The ice round each frozen villain.
     ices: BTreeMap<NetId, EntityId>,
     /// Rescue bubbles in the air.
-    bubbles: crate::powerfx::Bubbles,
+    pub bubbles: crate::powerfx::Bubbles,
+    /// Rescue bubbles started this frame: their number, where, and whether
+    /// for the hurt one (the radio puts the person in, see
+    /// `Radio::into_bubble`).
+    pub bubbled: Vec<(u32, Vec3, bool)>,
     /// Grenadiers' bombs in the air.
     lobs: Vec<Lobbed>,
     /// The hint about shields was shown.
@@ -381,6 +385,7 @@ impl FightView {
             clicked: None,
             ices: BTreeMap::new(),
             bubbles: Default::default(),
+            bubbled: Vec::new(),
             lobs: Vec::new(),
             told_shield: false,
             solids: None,
@@ -974,13 +979,10 @@ impl FightView {
                     let (core, edge) = theme_colours(Power::Bubble, e.theme);
                     self.act(e.from, "spell cast", 0.6);
                     beam(world, origin, at + Vec3::Y * 1.0, core, edge);
-                    let who = if e.defeat {
-                        // The hurt one, still lying down.
-                        crate::radioview::lying_person(e.amount as u32)
-                    } else {
-                        crate::radioview::person(e.amount as u32)
-                    };
-                    self.bubbles.start(world, at, who, gold, e.from.0);
+                    // Who goes in is the rescue's (see `Radio::into_bubble`).
+                    if let Some(key) = self.bubbles.start(world, at, gold, e.from.0) {
+                        self.bubbled.push((key, at, e.defeat));
+                    }
                     self.play(world, |s| &s.bubble, at, 1.0, if gold { 0.85 } else { 1.0 });
                     if mine {
                         self.recharging(Power::Bubble);

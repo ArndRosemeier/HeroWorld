@@ -391,6 +391,8 @@ fn main() -> EngineResult<()> {
             for look in 0..hw_sim::citizens::LOOKS + hw_sim::citizens::MOLE_LOOKS {
                 p.request(Who::Citizen(look), generated.world.seed.0);
             }
+            // The ambulance medic at rescues.
+            p.request(Who::Medic, 0);
             Some(p)
         }
         None => {
@@ -424,6 +426,8 @@ fn main() -> EngineResult<()> {
     let mut fight = FightView::new();
     let mut robots = RobotView::new();
     let mut radio = hw_client::radioview::Radio::default();
+    // `HW_HOLD=1` (screenshots): the help key is held down all along.
+    let hold_help = std::env::var_os("HW_HOLD").is_some();
     let mut signal = hw_client::dispatchview::Signal::default();
     let mut story = hw_client::storyview::StoryView::default();
     // The chat window (bottom left): what is said near the hero.
@@ -2476,7 +2480,8 @@ fn main() -> EngineResult<()> {
                     ..f
                 };
                 hero_input.target = f.target;
-                hero_input.revive = f.revive;
+                // `HW_HOLD=1` (screenshots): the help key held down.
+                hero_input.revive = f.revive || hold_help;
                 hero_input.hospital = f.hospital;
                 let down = me_state
                     .and_then(|m| m.combat)
@@ -2721,8 +2726,16 @@ fn main() -> EngineResult<()> {
                     story.hear(m);
                     false
                 }
-                hw_net::ToClient::Incident { id, at, yaw, .. } => {
-                    hw_client::hitch::event(format!("incident {id} at {:.0}, {:.0}", at[0], at[2]));
+                hw_net::ToClient::Incident {
+                    id, at, yaw, state, ..
+                } => {
+                    // New, or over (not each step of a help bar).
+                    if *state != 0 || !radio.calls.contains_key(id) {
+                        hw_client::hitch::event(format!(
+                            "incident {id} at {:.0}, {:.0}",
+                            at[0], at[2]
+                        ));
+                    }
                     radio.hear(world, m);
                     // `HW_VIEW=incident`: the camera goes to the first call.
                     if view == "incident" && radio.calls.len() == 1 && radio.calls.contains_key(id)
@@ -2913,6 +2926,8 @@ fn main() -> EngineResult<()> {
                         crowd.add_look(world, look, &b)?;
                     }
                     hw_client::hitch::count("characters taken in", 1);
+                    // Rescues' people (trapped, hurt, the medic).
+                    radio.cast.add(&b.who, &b.model);
                     models.insert(b.who.clone(), b.model.clone());
                 }
             }
@@ -3235,6 +3250,11 @@ fn main() -> EngineResult<()> {
                 )?;
                 // Fighting clips over walking; a stance while squaring up.
                 let in_fight = h.combat.is_some_and(|c| c.target.is_some()) && slow && villain;
+                // Someone hurt in the arms: carried in a cradle of both.
+                let carry = radio
+                    .is_carrying(h.id.0)
+                    .then(|| hw_client::poses::carry_clip(d.clip))
+                    .flatten();
                 let (clip, once) = match action {
                     Some(a) => (a, a != "cuffed" && a != "hover"),
                     None if in_fight && h.kind.is_ranged() && d.clip == "idle" => {
@@ -3250,7 +3270,10 @@ fn main() -> EngineResult<()> {
                     {
                         ("power pose", true)
                     }
-                    None => (d.clip, d.once),
+                    None => match carry {
+                        Some(c) => (c, false),
+                        None => (d.clip, d.once),
+                    },
                 };
                 if anim.shown != clip {
                     // A clip a character lacks is skipped, not fatal.
@@ -3273,6 +3296,10 @@ fn main() -> EngineResult<()> {
                                 | "jump land"
                                 | "fight stance"
                                 | "pistol idle"
+                                | "carry idle"
+                                | "carry walk"
+                                | "carry jog"
+                                | "carry sprint"
                         )
                         || (clip == "power pose" && h.grounded);
                     let _ = world.set_foot_ik(e, on_ground.then(FootIk::default));
@@ -3297,6 +3324,16 @@ fn main() -> EngineResult<()> {
             }
             fight.muzzles = robots.muzzles(world);
             fight.on_fx(world, &events, now, mine, &hero_entities, &heroes);
+            // Rescue bubbles take the rescue's own people; those set down
+            // in the street walk off.
+            for (key, at, hurt) in std::mem::take(&mut fight.bubbled) {
+                if let Some((who, lift)) = radio.into_bubble(world, at, hurt) {
+                    fight.bubbles.hold(world, key, who, lift, !hurt);
+                }
+            }
+            for (who, feet, dir) in std::mem::take(&mut fight.bubbles.landed) {
+                radio.walk_off(world, who, feet, dir);
+            }
             let muzzles = fight.muzzles.clone();
             robots.on_fx(world, &mut fight, &events, &heroes, &muzzles, mine);
             hw_client::hitch::mark("robots");
@@ -3663,8 +3700,15 @@ fn main() -> EngineResult<()> {
                 let fighting = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
                 hw_client::hitch::mark("radio");
                 radio.me = mine.map(|m| m.0);
-                radio.update(frame.dt);
+                // Holding the help key: the rescue bar fills.
+                let holding = (frame.input.down(Key::E) || hold_help)
+                    .then(|| session.my_position(&heroes).map(|p| p.as_vec3()))
+                    .flatten();
+                radio.update(frame.dt, holding);
                 radio.animate(world, frame.dt);
+                radio.rescues(world, frame.dt, &|at, heading| {
+                    traffic.street_stretch(at, heading, 9.0, 70.0, 400.0)
+                });
                 radio.carry(world, |id| {
                     let h = heroes.iter().find(|h| h.id.0 == id)?;
                     let yaw = anims.get(&h.id).map_or(0.0, |a| a.yaw());

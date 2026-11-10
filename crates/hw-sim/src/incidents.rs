@@ -344,6 +344,8 @@ pub struct Incident {
     /// Each player's collateral tally when it started: what they break
     /// before it is won decides the careful-hero bonus.
     pub collateral_from: BTreeMap<PlayerId, f64>,
+    /// The help bar last sent (see [`Incident::held`]).
+    pub held_sent: u8,
 }
 
 impl Incident {
@@ -379,7 +381,23 @@ impl Incident {
             },
             yaw: crate::props::yaw_to_byte(self.facing.x.atan2(self.facing.y)),
             left: self.left,
+            held: self.held(),
         }
+    }
+
+    /// How far along the help key is held here, in sixteenths: getting the
+    /// next one out, lifting the hurt one, or talking mole folk down.
+    pub fn held(&self) -> u8 {
+        let need = if self.kind == IncidentKind::Surfacing {
+            CALM_SECONDS
+        } else if matches!(self.hurt, Some(Hurt::Lying(_))) {
+            LIFT_SECONDS
+        } else if self.doused {
+            self.kind.rescue_seconds() * DOUSED_QUICKER
+        } else {
+            self.kind.rescue_seconds()
+        };
+        ((self.freeing / need).clamp(0.0, 1.0) * 16.0).floor() as u8
     }
 
     /// The hurt person's news (none for a fight or before anyone is out).
@@ -550,6 +568,9 @@ pub struct Incidents {
     /// Screenshots: the next rescue starts with everyone out and the hurt
     /// one in the arms of the hero it started near, who stands beside it.
     pub carried_start: bool,
+    /// Screenshots: the next rescue starts with the hero nearest it
+    /// standing by the next trapped person, ready to help them out.
+    pub beside_start: bool,
     /// Start one of this kind at the next second, however many are open
     /// and whenever the last one started (the debug menu).
     pub forced: Option<IncidentKind>,
@@ -623,6 +644,14 @@ impl Incidents {
         self.rescue(world);
         self.publish_rescue_points(world);
         self.calm(world, tick);
+        // The help bar: news each time it moves on a sixteenth (or back).
+        for inc in &mut self.open {
+            let held = inc.held();
+            if held != inc.held_sent {
+                inc.held_sent = held;
+                self.news.push(inc.news());
+            }
+        }
         walk_bystanders(world, tick);
         if !tick.is_multiple_of(TICK_HZ as u64) {
             return;
@@ -740,6 +769,7 @@ impl Incidents {
             coming_until: 0,
             doused: false,
             collateral_from: self.collateral.clone(),
+            held_sent: 0,
         }
     }
 
@@ -1397,6 +1427,22 @@ impl Incidents {
                     inc.answered = true;
                     inc.hurt = Some(Hurt::Carried(id));
                 }
+            } else if std::mem::take(&mut self.beside_start) {
+                let id = heroes
+                    .iter()
+                    .min_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)))
+                    .map(|h| h.0);
+                let next = inc.victims().last().copied().unwrap_or(at);
+                // In front of them, on the street.
+                let f = DVec3::new(facing.x, 0.0, facing.y);
+                let out = if (next - at).dot(f) < 0.0 { -f } else { f };
+                let mut q = world.query::<(&Net, &mut Motion)>();
+                for (n, mut m) in q.iter_mut(world) {
+                    if Some(n.0) == id {
+                        m.0.pos = DVec3::new(next.x, at.y, next.z) + out * 1.6 + DVec3::Y * 0.3;
+                        m.0.vel = DVec3::ZERO;
+                    }
+                }
             }
             self.news.push(inc.news());
             self.news.extend(inc.casualty(false));
@@ -1455,6 +1501,7 @@ impl Incidents {
             coming_until: 0,
             doused: false,
             collateral_from: self.collateral.clone(),
+            held_sent: 0,
         };
         if kind == IncidentKind::Colossus {
             self.last_colossus = Some(tick);

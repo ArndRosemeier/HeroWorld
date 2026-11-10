@@ -107,6 +107,8 @@ pub enum Who {
     /// The hero's statue in front of Hero Hall (the Doctor's story done):
     /// their looks (by key) cast in bronze.
     Statue(u64),
+    /// The ambulance medic at rescues: all in white.
+    Medic,
 }
 
 /// Looks per kind of villain.
@@ -941,6 +943,34 @@ pub fn sidekick(builder: &CharacterBuilder, theme: u8) -> CharacterConfig {
     c
 }
 
+/// The ambulance medic: a white tunic suit under a white coat, white
+/// gloves and shoes.
+pub fn medic(builder: &CharacterBuilder) -> actors_generator::CharacterConfig {
+    let seed = name_seed("ambulance medic");
+    let mut c = golden_age(builder.catalog(), seed, false);
+    let catalog = builder.catalog();
+    let keep = |list: &[&str]| -> Vec<String> {
+        list.iter()
+            .filter(|g| catalog.garments.iter().any(|x| x.id == **g))
+            .map(|g| g.to_string())
+            .collect()
+    };
+    c.body.age_years = 38.0;
+    c.body.muscle = 0.45;
+    c.body.weight = 0.45;
+    c.beard = "none".into();
+    c.outfit = keep(&["worksuit", "open-coat", "gloves-short", "black-shoes"]);
+    for (g, hex) in [
+        ("worksuit", "#f4f4f0"),
+        ("open-coat", "#fbfbf8"),
+        ("gloves-short", "#f2f2ee"),
+        ("black-shoes", "#eeeeea"),
+    ] {
+        c.garment_colors.insert(g.to_string(), hex.to_string());
+    }
+    c
+}
+
 pub fn villain(
     builder: &CharacterBuilder,
     kind: VillainKind,
@@ -1435,6 +1465,7 @@ pub fn build_sharing(
         Who::Villain(..) => (false, 0),
         Who::NpcHero(i) => (true, 7_000 + *i as u32),
         Who::Sidekick(theme) => (false, 9_000 + *theme as u32),
+        Who::Medic => (false, 9_500),
     };
     let mut allowed = allow(hero);
     if matches!(who, Who::Sidekick(_)) {
@@ -1451,6 +1482,7 @@ pub fn build_sharing(
         (Who::Villain(kind, look), _) => villain(builder, *kind, *look),
         (Who::NpcHero(i), _) => npc_hero(builder, *i),
         (Who::Sidekick(theme), _) => sidekick(builder, *theme),
+        (Who::Medic, _) => medic(builder),
         (Who::Citizen(look), _) if *look >= hw_sim::citizens::LOOKS => {
             mole_person(builder, *look - hw_sim::citizens::LOOKS)
         }
@@ -1462,7 +1494,7 @@ pub fn build_sharing(
         Who::Hero(_) | Who::Look(_) | Who::NpcHero(_) | Who::Statue(_) => HERO_CLIPS,
         Who::Villain(..) => VILLAIN_CLIPS,
         Who::Sidekick(_) => SIDEKICK_CLIPS,
-        Who::Citizen(_) => CITIZEN_CLIPS,
+        Who::Citizen(_) | Who::Medic => CITIZEN_CLIPS,
     };
     let options = BuildOptions {
         clips: clips.iter().map(|s| s.to_string()).collect(),
@@ -1482,6 +1514,8 @@ pub fn build_sharing(
         poses::add_flight_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::add_heroic_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::add_power_pose_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+        // Carrying someone hurt to the ambulance.
+        poses::add_carry_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::swing_cape(&mut c);
     }
     if matches!(who, Who::Villain(..)) {
@@ -1491,6 +1525,10 @@ pub fn build_sharing(
         poses::add_hands_up_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         // Drivers and passengers (see `riderview`).
         poses::add_seated_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+    }
+    if matches!(who, Who::Citizen(_) | Who::Medic) {
+        // Trapped, hurt and carried at rescues (see `radioview`).
+        poses::add_rescue_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
     if !hero {
         // Citizens and villains are seen from a few metres at the nearest,

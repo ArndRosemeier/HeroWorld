@@ -1387,6 +1387,53 @@ impl Traffic {
         out
     }
 
+    /// The street lane nearest `at` (within `r`) going about `heading`,
+    /// as a stretch of it: points every 2 m from `back` metres before
+    /// the nearest point to `ahead` metres after it, with the road's
+    /// height; the nearest point is at index `back / 2`. For a vehicle
+    /// that joins the traffic for a while (an ambulance pulling out).
+    pub fn street_stretch(
+        &self,
+        at: DVec2,
+        heading: DVec2,
+        r: f64,
+        back: f64,
+        ahead: f64,
+    ) -> Option<Vec<DVec3>> {
+        let (c0, c1) = (cell_of(at - DVec2::splat(r)), cell_of(at + DVec2::splat(r)));
+        let mut best: Option<(f64, u32, f64)> = None;
+        for x in c0.0..=c1.0 {
+            for (_, list) in self.grid.range((x, c0.1)..=(x, c1.1)) {
+                for &(flies, lane, s0, s1) in list {
+                    if flies {
+                        continue;
+                    }
+                    let path = &self.ground[lane as usize].path;
+                    let mut s = s0;
+                    while s <= s1 {
+                        let (p, d) = path.sample(s);
+                        let far = p.distance(at);
+                        if far < r && d.dot(heading) > 0.8 && best.is_none_or(|b| far < b.0) {
+                            best = Some((far, lane, s));
+                        }
+                        s += 1.0;
+                    }
+                }
+            }
+        }
+        let (_, lane, s) = best?;
+        let path = &self.ground[lane as usize].path;
+        let n = ((back + ahead) / 2.0).ceil() as usize;
+        Some(
+            (0..=n)
+                .map(|k| {
+                    let (p, _) = path.sample(s - back + 2.0 * k as f64);
+                    DVec3::new(p.x, self.world.road_height(p), p.y)
+                })
+                .collect(),
+        )
+    }
+
     fn lane(&self, flies: bool, i: u32) -> &Lane {
         if flies {
             &self.sky[i as usize]

@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.138 (2026-11-10)
+
+- Helping people out at a crash, fire or collapse: a bar fills while you hold E, so you can see it working.
+- The people you rescue, the hurt one you carry and the medic are real townsfolk now, not blocks. Your hero carries the hurt one in both arms.
+- The ambulance drives up the street, and after you hand the hurt one over it drives off instead of vanishing. People you got out walk away.
+
 ## 0.137 (2026-11-10)
 
 - Fixed: after pressing Tab to pick a target, your power keys often did nothing until you moved away. Tab also put the keyboard on a button of the screen's menus, which then kept every key from the game. Tab now only picks targets.
