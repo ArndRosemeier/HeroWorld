@@ -22,7 +22,7 @@ use hw_core::Rng;
 use hw_gen::building::{bay_lines, BuildingPlan, Floor, Opening, OpeningKind, RoomKind, Side};
 use hw_gen::geom::Rect;
 use hw_gen::style::{Cornice, Crown, Look, Piers, Rgb, Ridge, Roof, Style, WindowKind};
-use std::f64::consts::PI;
+use std::f64::consts::{PI, TAU};
 
 /// How much to draw.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -501,6 +501,17 @@ pub fn exterior(
     }
     if look.sign && shown >= 3 {
         sign(&mut c);
+    }
+    // The old ways' houses carry the golden age's Aether in brass pipes.
+    if detail == Detail::Near
+        && shown == plan.floors.len()
+        && matches!(
+            look.style,
+            Style::OldTown | Style::Burgher | Style::Haussmann | Style::Rowhouse | Style::Villa
+        )
+        && rng_of(plan, "conduit?").chance(0.4)
+    {
+        aether_conduit(&mut c);
     }
     c.surf(Surf::Plain);
     c.b.tex = None;
@@ -1192,6 +1203,16 @@ fn opening(c: &mut Ctx, w: &Wall, f: &Floor, op: &Opening, t: (f64, f64), y: (f6
             if look.awnings {
                 awning(c, w, (t0 - 0.1, t1 + 0.1), yb + 0.12, op);
             }
+            // A hanging sign at the shop's first window, out over the
+            // pavement so people walking along see it.
+            let first = plan
+                .openings
+                .iter()
+                .filter(|o| o.floor == 0 && o.side == op.side && o.room == op.room)
+                .all(|o| o.along >= op.along);
+            if first && c.detail == Detail::Near {
+                blade_sign(c, w, t0 - 0.3, (yb + 0.35, top), op);
+            }
         }
     }
     if op.kind == OpeningKind::Entrance {
@@ -1206,6 +1227,216 @@ fn sign_color(look: &Look, op: &Opening) -> Color {
         1 => shade(look.accent, 0.6),
         _ => col([250, 236, 200]),
     }
+}
+
+/// A hanging shop sign at `t` on wall `w`: an iron bracket out from the
+/// wall, and on it a round sign in the shop's colour ringed with neon,
+/// its faces along the street. `y` is the room it has above the window.
+fn blade_sign(c: &mut Ctx, w: &Wall, t: f64, y: (f64, f64), op: &Opening) {
+    let (lo, hi) = w.range();
+    if t < lo + 0.5 || t > hi - 0.5 {
+        return;
+    }
+    let r = 0.36;
+    let ring = 0.07;
+    let arm = y.0 + 2.0 * (r + ring) + 0.12;
+    if arm > y.1 + 1.6 {
+        return;
+    }
+    let iron = rgb(34, 36, 38);
+    let out = 0.75;
+    c.surf(Surf::Metal);
+    // The bracket: a wall plate, the arm, a stay under it.
+    wall_box(
+        c,
+        w,
+        (t - 0.07, t + 0.07),
+        (arm - 0.3, arm + 0.12),
+        (0.0, 0.04),
+        iron,
+    );
+    wall_box(
+        c,
+        w,
+        (t - 0.025, t + 0.025),
+        (arm, arm + 0.05),
+        (0.04, out + r + 0.15),
+        iron,
+    );
+    let a = w.along();
+    let stay = [
+        w.at(t - 0.02, arm - 0.26, 0.04),
+        w.at(t + 0.02, arm - 0.26, 0.04),
+        w.at(t + 0.02, arm, out),
+        w.at(t - 0.02, arm, out),
+    ];
+    c.quad(stay, w.out() + DVec3::Y, iron);
+    let stay_back = [
+        w.at(t - 0.02, arm - 0.3, 0.04),
+        w.at(t + 0.02, arm - 0.3, 0.04),
+        w.at(t + 0.02, arm - 0.04, out),
+        w.at(t - 0.02, arm - 0.04, out),
+    ];
+    c.quad(stay_back, -w.out() - DVec3::Y, iron);
+    c.surf(Surf::Plain);
+    // The sign: a disc, two short chains up to the arm.
+    let cy = arm - 0.1 - r - ring;
+    let cd = out;
+    let n = 24;
+    let pt = |k: usize, rad: f64, dt: f64| {
+        let ang = TAU * k as f64 / n as f64;
+        w.at(t + dt, cy + rad * ang.sin(), cd + rad * ang.cos())
+    };
+    let face = col(c.look.accent);
+    let back_c = shade(c.look.accent, 0.8);
+    let th = 0.035;
+    let disc_f: Vec<DVec3> = (0..n).map(|k| pt(k, r, th)).collect();
+    let disc_b: Vec<DVec3> = (0..n).map(|k| pt(k, r, -th)).collect();
+    c.polygon(&disc_f, a, face);
+    c.polygon(&disc_b, -a, back_c);
+    // A neon ring round it, glowing day and night.
+    c.surf(Surf::Glow);
+    let neon = sign_color(c.look, op);
+    for k in 0..n {
+        for (dt, nrm) in [(th, a), (-th, -a)] {
+            c.quad(
+                [
+                    pt(k, r, dt),
+                    pt(k + 1, r, dt),
+                    pt(k + 1, r + ring, dt),
+                    pt(k, r + ring, dt),
+                ],
+                nrm,
+                neon,
+            );
+        }
+        let mid = (pt(k, r + ring, 0.0) + pt(k + 1, r + ring, 0.0)) * 0.5;
+        let centre = w.at(t, cy, cd);
+        c.quad(
+            [
+                pt(k, r + ring, -th),
+                pt(k + 1, r + ring, -th),
+                pt(k + 1, r + ring, th),
+                pt(k, r + ring, th),
+            ],
+            mid - centre,
+            neon,
+        );
+    }
+    c.surf(Surf::Plain);
+    // A bright star in the middle, both sides.
+    let star = |dt: f64| -> Vec<DVec3> {
+        (0..10)
+            .map(|k| {
+                let ang = TAU * k as f64 / 10.0;
+                let rad = if k % 2 == 0 { r * 0.62 } else { r * 0.26 };
+                w.at(t + dt, cy + rad * ang.cos(), cd + rad * ang.sin())
+            })
+            .collect()
+    };
+    let cream = rgb(250, 240, 214);
+    let (sf, sb) = (star(th + 0.006), star(-th - 0.006));
+    for (pts, nrm) in [(sf, a), (sb, -a)] {
+        let centre = w.at(t + if nrm == a { th + 0.006 } else { -th - 0.006 }, cy, cd);
+        for k in 0..10 {
+            c.polygon(&[centre, pts[k], pts[(k + 1) % 10]], nrm, cream);
+        }
+    }
+    for dd in [-0.18, 0.18] {
+        wall_box(
+            c,
+            w,
+            (t - 0.01, t + 0.01),
+            (cy + r + ring - 0.01, arm),
+            (cd + dd - 0.01, cd + dd + 0.01),
+            iron,
+        );
+    }
+}
+
+/// An Aether conduit up a front corner of an old house: a brass pipe from
+/// a junction box at the foot to the eaves, glowing glass sleeves along
+/// it and clamps into the wall. The old town's retro-future plumbing.
+fn aether_conduit(c: &mut Ctx) {
+    let plan = c.plan;
+    let f0 = &plan.floors[0];
+    let o = f0.outline;
+    let top = plan
+        .floors
+        .last()
+        .map(|f| f.elevation + f.height)
+        .unwrap_or(0.0)
+        - 0.15;
+    let w = Wall {
+        side: Side::Front,
+        o,
+    };
+    let (lo, hi) = w.range();
+    let mut rng = rng_of(plan, "conduit");
+    let t = if rng.chance(0.5) { lo + 0.3 } else { hi - 0.3 };
+    // Keep clear of any opening near the corner.
+    if plan
+        .openings
+        .iter()
+        .any(|op| op.side == Side::Front && (op.along - t).abs() < op.width * 0.5 + 0.35)
+    {
+        return;
+    }
+    let brass = rgb(190, 146, 74);
+    let glow = rgb(120, 236, 255);
+    let d = 0.16;
+    let saved = (c.b.tex, c.b.weather);
+    c.b.tex = None;
+    c.tex = None;
+    c.b.weather = None;
+    // The junction box with a glowing window.
+    c.surf(Surf::Metal);
+    wall_box(c, &w, (t - 0.22, t + 0.22), (0.0, 0.75), (0.0, 0.28), brass);
+    c.surf(Surf::Glow);
+    c.quad(w.rect(t - 0.12, t + 0.12, 0.35, 0.6, 0.285), w.out(), glow);
+    // The pipe, in brass with glass sleeves between the clamps.
+    let seg = 12;
+    let mut y = 0.75;
+    let mut k = 0;
+    while y < top - 0.2 {
+        let next = (y + if k % 2 == 0 { 0.9 } else { 0.5 }).min(top);
+        let (a, b) = (c.p(w.at(t, y, d)), c.p(w.at(t, next, d)));
+        let paint = if k % 2 == 0 {
+            Some((Surf::Metal, brass))
+        } else {
+            Some((Surf::Glow, glow))
+        };
+        let r = if k % 2 == 0 { 0.06 } else { 0.075 };
+        crate::carmesh::tube(c.b, &[a, b], (r, r), seg, paint);
+        if k % 2 == 0 {
+            // A clamp into the wall.
+            c.surf(Surf::Metal);
+            wall_box(
+                c,
+                &w,
+                (t - 0.03, t + 0.03),
+                (y + 0.4, y + 0.48),
+                (0.0, d),
+                brass,
+            );
+        }
+        y = next;
+        k += 1;
+    }
+    // Under the eaves it turns into the wall.
+    c.surf(Surf::Metal);
+    wall_box(
+        c,
+        &w,
+        (t - 0.12, t + 0.12),
+        (top - 0.2, top),
+        (0.0, 0.24),
+        brass,
+    );
+    c.surf(Surf::Plain);
+    c.b.tex = saved.0;
+    c.tex = saved.0;
+    c.b.weather = saved.1;
 }
 
 /// A striped awning sloping out from the wall over a shop window.
@@ -1655,6 +1886,18 @@ fn pitched(c: &mut Ctx, o: Rect, y: f64, hip: bool, color: Color, detail: Detail
             }
             c.set_tex(c.fac.wall);
         }
+        // Attic windows, so no gable stands blank.
+        let timber = c.fac.timber.is_some();
+        for k in 0..2 {
+            let side = match (along_x, k) {
+                (true, 0) => Side::Left,
+                (true, _) => Side::Right,
+                (false, 0) => Side::Front,
+                (false, _) => Side::Back,
+            };
+            let w = Wall { side, o };
+            gable_windows(c, &w, (y, h), (tm, half, tm - wt0), timber, detail);
+        }
     }
     c.quad([a, b, cc, d], -DVec3::Y, shade(look.roof_color, 0.7));
     if detail != Detail::Near {
@@ -1718,6 +1961,138 @@ fn pitched(c: &mut Ctx, o: Rect, y: f64, hip: bool, color: Color, detail: Detail
             }
         }
     }
+}
+
+/// Rows of attic windows in a gable end: the attic and the loft above it
+/// have rooms too, so a tall gable gets two or three rows, narrowing to a
+/// single small light under the ridge. With half-timbering they keep
+/// between the posts and clear of the collar beam. Takes the eaves' height
+/// and the roof's rise, then the ridge line, the roof's half width (eaves
+/// included) and the wall's half width.
+fn gable_windows(
+    c: &mut Ctx,
+    w: &Wall,
+    (y, h): (f64, f64),
+    (tm, half, wall_half): (f64, f64, f64),
+    timber: bool,
+    detail: Detail,
+) {
+    const ROW: f64 = 2.7;
+    const MARGIN: f64 = 0.45;
+    if h < 2.4 || wall_half < 1.6 {
+        return;
+    }
+    let roof_at = |t: f64| y + h * (1.0 - (t - tm).abs() / half);
+    // Half-timbering's posts and collar (see `pitched`).
+    let stud = 0.09 + 0.12;
+    let posts = [tm, tm - wall_half * 0.55, tm + wall_half * 0.55];
+    let yc = y + (h * 0.45).max(0.9);
+    let collar = (yc - 0.12, yc + 0.18 + 0.12);
+    let mut row = 0;
+    let mut yb = y + 0.85;
+    let mut lights = 0u64;
+    while row < 3 {
+        let (ww, wh) = match row {
+            0 => (1.0, 1.45),
+            1 => (0.9, 1.25),
+            _ => (0.7, 0.95),
+        };
+        let mut top = yb + wh;
+        // Over the collar, if the row would cross it.
+        if timber && yb < collar.1 && top > collar.0 {
+            yb = collar.1 + 0.2;
+            top = yb + wh;
+        }
+        // Room each side of the ridge line at the window's head.
+        let reach = (half * (1.0 - (top + 0.45 - y) / h) - MARGIN).min(wall_half - MARGIN);
+        if reach < ww * 0.5 {
+            break;
+        }
+        let gap = 1.0;
+        let n = (((2.0 * reach + gap) / (ww + gap)).floor() as usize).clamp(1, 5);
+        let pitch = ww + gap;
+        let start = tm - (n as f64 - 1.0) * pitch * 0.5;
+        for i in 0..n {
+            let t = start + pitch * i as f64;
+            let (t0, t1) = (t - ww * 0.5, t + ww * 0.5);
+            if roof_at(t0) < top + 0.4 || roof_at(t1) < top + 0.4 {
+                continue;
+            }
+            if timber
+                && posts
+                    .iter()
+                    .any(|&p| t1 + 0.08 > p - stud && t0 - 0.08 < p + stud)
+            {
+                continue;
+            }
+            lights += 1;
+            attic_window(c, w, (t0, t1), (yb, top), lights + row as u64 * 8, detail);
+        }
+        row += 1;
+        yb = top + ROW - wh;
+    }
+}
+
+/// One attic window: glass (lit at night now and then), and close up a
+/// frame, a glazing bar and a sill.
+fn attic_window(c: &mut Ctx, w: &Wall, t: (f64, f64), y: (f64, f64), k: u64, detail: Detail) {
+    let look = c.look;
+    let (t0, t1) = t;
+    let (ya, yb) = y;
+    let o = c.plan.site.origin;
+    let mut hsh = (o.x * 5.13).to_bits() ^ (o.y * 9.71).to_bits().rotate_left(23);
+    hsh ^= (k + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (w.side as u64) << 7;
+    hsh ^= hsh >> 31;
+    hsh = hsh.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    hsh ^= hsh >> 29;
+    let surf = if hsh % 100 < 30 {
+        let tone = if hsh >> 40 & 3 == 0 {
+            crate::daylight::Tone::Lamp
+        } else {
+            crate::daylight::Tone::Warm
+        };
+        Surf::Lit(crate::daylight::channel(
+            tone,
+            (hsh >> 44) as usize % crate::daylight::HABITS,
+        ))
+    } else {
+        Surf::Glass
+    };
+    c.surf(surf);
+    c.quad(w.rect(t0, t1, ya, yb, 0.02), w.out(), col(look.glass));
+    c.surf(Surf::Plain);
+    if detail != Detail::Near {
+        return;
+    }
+    let frame = col(look.frame);
+    let f = 0.09;
+    wall_box(c, w, (t0 - f, t0), (ya, yb + f), (0.0, 0.08), frame);
+    wall_box(c, w, (t1, t1 + f), (ya, yb + f), (0.0, 0.08), frame);
+    wall_box(c, w, (t0, t1), (yb, yb + f), (0.0, 0.08), frame);
+    wall_box(
+        c,
+        w,
+        ((t0 + t1) * 0.5 - 0.03, (t0 + t1) * 0.5 + 0.03),
+        (ya, yb),
+        (0.02, 0.06),
+        frame,
+    );
+    wall_box(
+        c,
+        w,
+        (t0, t1),
+        (ya + (yb - ya) * 0.62 - 0.03, ya + (yb - ya) * 0.62 + 0.03),
+        (0.02, 0.055),
+        frame,
+    );
+    wall_box(
+        c,
+        w,
+        (t0 - 0.16, t1 + 0.16),
+        (ya - 0.1, ya),
+        (0.0, 0.14),
+        col(look.trim),
+    );
 }
 
 /// Dormers on all four sides of a mansard of height `h` standing on `o`.

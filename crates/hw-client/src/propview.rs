@@ -452,6 +452,12 @@ pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
         PropKind::AdPillar => three(&pm::ad_pillar, [30.0, 120.0, 250.0]),
         PropKind::Statue(pose) => vec![LodLevel::new(statue_mesh(pose), 500.0)],
         PropKind::Barricade(piece) => crate::edgeview::piece_levels(piece),
+        PropKind::PhoneBooth => three(&pm::phone_booth, [30.0, 120.0, 400.0]),
+        PropKind::PostTube => three(&pm::post_tube, [25.0, 90.0, 250.0]),
+        PropKind::NewsStand => three(&pm::news_stand, [25.0, 90.0, 250.0]),
+        PropKind::BusStop => three(&pm::bus_stop, [35.0, 140.0, 450.0]),
+        PropKind::CafeTable(v) => three(&|l| pm::cafe_table(v, l), [25.0, 80.0, 220.0]),
+        PropKind::Fence(v) => three(&|l| pm::fence(v, l), [20.0, 60.0, 160.0]),
     })
 }
 
@@ -795,6 +801,15 @@ mod tests {
             PropKind::Statue(0),
             PropKind::Statue(1),
             PropKind::Statue(2),
+            PropKind::PhoneBooth,
+            PropKind::PostTube,
+            PropKind::NewsStand,
+            PropKind::BusStop,
+            PropKind::CafeTable(0),
+            PropKind::CafeTable(3),
+            PropKind::Fence(0),
+            PropKind::Fence(1),
+            PropKind::Fence(2),
         ];
         for k in kinds {
             let levels = model_levels(k).unwrap();

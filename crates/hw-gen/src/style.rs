@@ -705,7 +705,7 @@ impl Look {
                 },
                 parapet: 0.0,
                 rooftop_gear: false,
-                awnings: r.chance(0.2),
+                awnings: r.chance(0.65),
                 pitch: r.range(0.8, 1.15),
                 ridge: if r.chance(0.3) {
                     Ridge::Deep
@@ -732,6 +732,7 @@ impl Look {
                 reveal: 0.15,
                 floor_bands: r.chance(0.4),
                 cornice: Cornice::None,
+                awnings: r.chance(0.55),
                 roof: Roof::Gable,
                 parapet: 0.0,
                 rooftop_gear: false,
@@ -765,7 +766,7 @@ impl Look {
                 cornice: Cornice::Stepped,
                 roof: Roof::Mansard,
                 balconies: r.chance(0.8),
-                awnings: r.chance(0.3),
+                awnings: r.chance(0.6),
                 parapet: 0.0,
                 rooftop_gear: false,
                 chimneys: true,

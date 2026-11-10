@@ -116,6 +116,42 @@ impl Weather {
     }
 }
 
+/// Smooth value noise in 0..1 over the ground, one cell per `cell` metres.
+fn ground_noise(x: f64, z: f64, cell: f64, salt: u64) -> f64 {
+    let (gx, gz) = (x / cell, z / cell);
+    let (ix, iz) = (gx.floor(), gz.floor());
+    let (fx, fz) = (gx - ix, gz - iz);
+    let corner = |dx: f64, dz: f64| {
+        let mut h = ((ix + dx) as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ ((iz + dz) as i64 as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+            ^ salt;
+        h ^= h >> 31;
+        h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= h >> 29;
+        (h % 10_000) as f64 / 10_000.0
+    };
+    let s = |t: f64| t * t * (3.0 - 2.0 * t);
+    let (sx, sz) = (s(fx), s(fz));
+    let a = corner(0.0, 0.0) + (corner(1.0, 0.0) - corner(0.0, 0.0)) * sx;
+    let b = corner(0.0, 1.0) + (corner(1.0, 1.0) - corner(0.0, 1.0)) * sx;
+    a + (b - a) * sz
+}
+
+/// `color` at ground point `p`, mottled by `amount`: big patches lighter or
+/// darker, smaller ones warmer (sandy, worn) or cooler (damp, grey).
+pub fn mottle(p: DVec3, color: Color, amount: f32) -> Color {
+    let big = ground_noise(p.x, p.z, 9.0, 0x51) * 0.65 + ground_noise(p.x, p.z, 3.1, 0x52) * 0.35;
+    let warm = ground_noise(p.x, p.z, 5.3, 0x53) - 0.5;
+    let k = 1.0 + (big as f32 - 0.5) * 2.0 * amount;
+    let w = warm as f32 * amount;
+    Color {
+        r: color.r * k * (1.0 + w * 0.5),
+        g: color.g * k * (1.0 + w * 0.15),
+        b: color.b * k * (1.0 - w * 0.6),
+        a: color.a,
+    }
+}
+
 /// A mesh plus helpers for shapes in arbitrary orientation.
 pub struct MeshBuilder {
     pub mesh: Mesh,
@@ -139,6 +175,11 @@ pub struct MeshBuilder {
     pub tex_of: Option<fn(Color) -> Option<Tex>>,
     /// Dirt by height on the faces added next (see [`Weather`]).
     pub weather: Option<Weather>,
+    /// Patches of lighter and darker, warmer and cooler ground on the
+    /// faces added next, this strong (0 to about 0.3): a texture repeats
+    /// every tile, these patches do not. Faces must be small enough for
+    /// vertex colours to show them (see [`mottle`]).
+    pub mottle: f32,
     /// Area (m²) of plain faces drawn without a texture and with one, for
     /// the check that nothing big is left bare.
     pub plain_area: [f64; 2],
@@ -190,6 +231,7 @@ impl MeshBuilder {
             up_tex: None,
             tex_of: None,
             weather: None,
+            mottle: 0.0,
             plain_area: [0.0; 2],
             flat: false,
         }
@@ -394,6 +436,11 @@ impl MeshBuilder {
         let color = match (self.surf, self.weather) {
             (Surf::Plain, Some(w)) => w.apply(p, color),
             _ => color,
+        };
+        let color = if self.surf == Surf::Plain && self.mottle > 0.0 {
+            mottle(p, color, self.mottle)
+        } else {
+            color
         };
         let color = match (self.surf, tex) {
             (Surf::Plain, Some(l)) => {

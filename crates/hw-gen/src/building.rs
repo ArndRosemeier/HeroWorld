@@ -863,6 +863,13 @@ fn partition(
 fn facade(floors: &[Floor], look: &Look) -> Vec<Opening> {
     use crate::style::WindowKind;
     const EPS: f64 = 1e-6;
+    // Stairs get windows too (no wall of a town house stands blank), and
+    // storerooms a high one where they do not face the street.
+    let lit = |kind: RoomKind, side: Side| {
+        kind.wants_daylight()
+            || kind == RoomKind::Core
+            || (kind == RoomKind::Storage && side != Side::Front)
+    };
     let mut out = Vec::new();
     for f in floors {
         let o = f.outline;
@@ -921,7 +928,7 @@ fn facade(floors: &[Floor], look: &Look) -> Vec<Opening> {
             // A room no bay centre falls in (a corridor end, a narrow room)
             // still gets one window in its middle.
             for (ri, r) in f.rooms.iter().enumerate() {
-                if !r.kind.wants_daylight() {
+                if !lit(r.kind, side) {
                     continue;
                 }
                 let rr = r.rect;
@@ -947,7 +954,7 @@ fn facade(floors: &[Floor], look: &Look) -> Vec<Opening> {
                     continue;
                 };
                 let kind = f.rooms[ri].kind;
-                if !kind.wants_daylight() {
+                if !lit(kind, side) {
                     continue;
                 }
                 let street_glass = side == Side::Front
@@ -956,6 +963,22 @@ fn facade(floors: &[Floor], look: &Look) -> Vec<Opening> {
                 let bay = b1 - b0;
                 let (mut width, sill, height) = if street_glass {
                     (bay * 0.86, 0.45, (f.height - 1.5).min(3.8))
+                } else if kind == RoomKind::Core {
+                    // A stair window, half a floor up at the landing.
+                    let sill = f.height * 0.42;
+                    (
+                        (bay * look.window_share * 0.8).max(0.9),
+                        sill,
+                        (f.height - sill - 0.6).clamp(0.8, 1.7),
+                    )
+                } else if kind == RoomKind::Storage {
+                    // A high, small window over the shelves.
+                    let height = 0.9_f64.min(f.height - 2.4);
+                    (
+                        (bay * look.window_share).min(1.4),
+                        f.height - height - 0.7,
+                        height,
+                    )
                 } else {
                     match look.window {
                         WindowKind::Curtain => (bay * look.window_share, 0.15, f.height - 1.0),

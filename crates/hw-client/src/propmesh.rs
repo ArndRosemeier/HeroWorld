@@ -1218,6 +1218,906 @@ fn pillow(b: &mut MeshBuilder, c: DVec3, half: DVec3, lod: Lod, col: Color) {
     crate::carmesh::surface(b, &rows, true, |_, _| plain(col));
 }
 
+/// A round phone booth (door towards +z): a red plinth, cream panels to
+/// waist height, glass all round between chrome ribs, a glowing band and
+/// a flared red dome with an aerial. Inside, the telephone on its post.
+pub fn phone_booth(lod: Lod) -> Mesh {
+    let mut b = MeshBuilder::new();
+    let red = rgb(198, 40, 36);
+    let cream = rgb(240, 230, 206);
+    let chrome = rgb(214, 218, 224);
+    let seg = sides(lod, 40);
+    let r = 0.54;
+    lathe(
+        &mut b,
+        DVec3::ZERO,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.6, 0.0),
+            (0.6, 0.12),
+            (0.57, 0.15),
+            (r, 0.17),
+            (r, 0.9),
+            (r + 0.02, 0.92),
+            (r + 0.02, 0.97),
+            (r, 0.99),
+            (r, 2.12),
+            (r + 0.02, 2.14),
+            (r + 0.02, 2.2),
+            (r + 0.03, 2.22),
+            (r + 0.03, 2.4),
+            (0.62, 2.44),
+            (0.64, 2.48),
+            (0.5, 2.6),
+            (0.28, 2.7),
+            (0.08, 2.74),
+            (0.0, 2.745),
+        ],
+        seg,
+        |k| match k {
+            0..=3 => plain(red),
+            4 => plain(cream),
+            5..=7 => metal(chrome),
+            8 => Some((Surf::Glass, rgb(70, 96, 112))),
+            9..=11 => metal(chrome),
+            12 => glow(rgb(255, 214, 120)),
+            _ => plain(red),
+        },
+    );
+    if lod != Lod::Far {
+        // Ribs between the panes, and the door's edge and handle.
+        let ribs = lod.pick(8, 6, 0);
+        for k in 0..ribs {
+            let a = TAU * k as f64 / ribs as f64 + PI / 2.0 + PI / ribs as f64;
+            let u = DVec3::new(a.cos(), 0.0, a.sin());
+            tube(
+                &mut b,
+                &[
+                    u * (r + 0.01) + DVec3::Y * 0.99,
+                    u * (r + 0.01) + DVec3::Y * 2.12,
+                ],
+                (0.022, 0.022),
+                sides(lod, 8),
+                metal(chrome),
+            );
+        }
+        tube(
+            &mut b,
+            &[
+                DVec3::new(0.2, 1.05, r + 0.06),
+                DVec3::new(0.2, 1.45, r + 0.06),
+            ],
+            (0.016, 0.016),
+            8,
+            metal(chrome),
+        );
+        // The telephone on the back wall.
+        slab(
+            &mut b,
+            DVec3::new(0.0, 1.35, -r + 0.12),
+            [DVec3::X, DVec3::Y],
+            DVec3::new(0.12, 0.17, 0.07),
+            rgb(30, 30, 34),
+        );
+        tube(
+            &mut b,
+            &spline(
+                &[
+                    DVec3::new(-0.08, 1.46, -r + 0.2),
+                    DVec3::new(0.0, 1.5, -r + 0.22),
+                    DVec3::new(0.08, 1.46, -r + 0.2),
+                ],
+                3,
+                false,
+            ),
+            (0.025, 0.025),
+            8,
+            metal(rgb(24, 24, 26)),
+        );
+    }
+    // The aerial with a glowing ball.
+    tube(
+        &mut b,
+        &[DVec3::Y * 2.72, DVec3::Y * 3.05],
+        (0.015, 0.015),
+        sides(lod, 8),
+        metal(chrome),
+    );
+    lathe(
+        &mut b,
+        DVec3::Y * 3.05,
+        DVec3::Y,
+        &(0..=6)
+            .map(|k| {
+                let a = PI * k as f64 / 6.0;
+                (0.06 * a.sin(), 0.06 - 0.06 * a.cos())
+            })
+            .collect::<Vec<_>>(),
+        sides(lod, 12),
+        |_| glow(rgb(255, 120, 90)),
+    );
+    b.finish()
+}
+
+/// A pneumatic post column: a brass drum with a glowing hatch to the
+/// front (+z), a glass tube with a capsule in it rising between three
+/// brass struts, and a domed head with a cyan ring and a gauge.
+pub fn post_tube(lod: Lod) -> Mesh {
+    let mut b = MeshBuilder::new();
+    let brass = rgb(196, 152, 76);
+    let green = rgb(38, 86, 78);
+    let chrome = rgb(214, 218, 222);
+    let cyan = rgb(110, 230, 255);
+    let seg = sides(lod, 32);
+    lathe(
+        &mut b,
+        DVec3::ZERO,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.34, 0.0),
+            (0.34, 0.08),
+            (0.3, 0.12),
+            (0.3, 0.86),
+            (0.33, 0.9),
+            (0.33, 0.96),
+            (0.2, 1.02),
+            (0.14, 1.06),
+            (0.0, 1.07),
+        ],
+        seg,
+        |k| match k {
+            0..=2 => metal(brass),
+            3 => plain(green),
+            _ => metal(brass),
+        },
+    );
+    // The glass tube and the capsule riding in it.
+    lathe(
+        &mut b,
+        DVec3::Y * 1.06,
+        DVec3::Y,
+        &[(0.0, 0.0), (0.11, 0.0), (0.11, 1.24), (0.0, 1.24)],
+        sides(lod, 20),
+        |_| Some((Surf::Glass, rgb(150, 190, 200))),
+    );
+    if lod != Lod::Far {
+        lathe(
+            &mut b,
+            DVec3::Y * 1.5,
+            DVec3::Y,
+            &[
+                (0.0, 0.0),
+                (0.05, 0.01),
+                (0.075, 0.05),
+                (0.075, 0.33),
+                (0.05, 0.37),
+                (0.0, 0.38),
+            ],
+            sides(lod, 14),
+            |k| if k == 2 { metal(chrome) } else { metal(brass) },
+        );
+        for k in 0..3 {
+            let a = TAU * k as f64 / 3.0 + PI / 2.0;
+            let u = DVec3::new(a.cos(), 0.0, a.sin());
+            tube(
+                &mut b,
+                &[u * 0.16 + DVec3::Y * 1.02, u * 0.16 + DVec3::Y * 2.32],
+                (0.02, 0.02),
+                sides(lod, 8),
+                metal(brass),
+            );
+        }
+        // Brass collars round the glass.
+        for y in [1.45, 1.9] {
+            lathe(
+                &mut b,
+                DVec3::Y * y,
+                DVec3::Y,
+                &[(0.112, 0.0), (0.18, 0.0), (0.18, 0.05), (0.112, 0.05)],
+                sides(lod, 20),
+                |_| metal(brass),
+            );
+        }
+        // The hatch: a glowing slot in a brass frame, a handle under it.
+        let z = 0.3;
+        slab(
+            &mut b,
+            DVec3::new(0.0, 0.62, z + 0.01),
+            [DVec3::X, DVec3::Y],
+            DVec3::new(0.15, 0.1, 0.02),
+            brass,
+        );
+        b.surf = Surf::Glow;
+        b.quad(
+            [
+                DVec3::new(-0.11, 0.57, z + 0.032),
+                DVec3::new(0.11, 0.57, z + 0.032),
+                DVec3::new(0.11, 0.67, z + 0.032),
+                DVec3::new(-0.11, 0.67, z + 0.032),
+            ],
+            DVec3::Z,
+            cyan,
+        );
+        b.surf = Surf::Plain;
+        tube(
+            &mut b,
+            &[
+                DVec3::new(-0.07, 0.45, z + 0.04),
+                DVec3::new(0.07, 0.45, z + 0.04),
+            ],
+            (0.014, 0.014),
+            8,
+            metal(chrome),
+        );
+    }
+    // The head: a brass dome over a glowing ring, the gauge to the front.
+    lathe(
+        &mut b,
+        DVec3::Y * 2.28,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.22, 0.0),
+            (0.24, 0.04),
+            (0.24, 0.12),
+            (0.24, 0.18),
+            (0.22, 0.24),
+            (0.16, 0.32),
+            (0.06, 0.36),
+            (0.0, 0.37),
+        ],
+        seg,
+        |k| if k == 3 { glow(cyan) } else { metal(brass) },
+    );
+    tube(
+        &mut b,
+        &[DVec3::Y * 2.64, DVec3::Y * 2.7],
+        (0.03, 0.03),
+        8,
+        metal(brass),
+    );
+    if lod != Lod::Far {
+        lathe(
+            &mut b,
+            DVec3::new(0.0, 2.48, 0.235),
+            DVec3::Z,
+            &[(0.0, 0.0), (0.07, 0.0), (0.07, 0.03), (0.0, 0.032)],
+            sides(lod, 16),
+            |k| {
+                if k == 2 {
+                    plain(rgb(244, 238, 220))
+                } else {
+                    metal(brass)
+                }
+            },
+        );
+    }
+    b.finish()
+}
+
+/// A newspaper stand: a green wooden counter with sloping racks of papers
+/// to the front (+z), corner posts and a striped roof with a glowing sign
+/// along its edge.
+pub fn news_stand(lod: Lod) -> Mesh {
+    let mut b = MeshBuilder::new();
+    let green = rgb(44, 96, 70);
+    let cream = rgb(240, 232, 210);
+    let red = rgb(196, 54, 44);
+    let chrome = rgb(210, 214, 220);
+    let papers = [
+        rgb(238, 234, 222),
+        rgb(232, 210, 120),
+        rgb(220, 120, 100),
+        rgb(150, 190, 220),
+        rgb(240, 236, 228),
+        rgb(200, 220, 160),
+    ];
+    // The counter: a box with a chrome edge.
+    slab(
+        &mut b,
+        DVec3::new(0.0, 0.5, -0.12),
+        [DVec3::X, DVec3::Y],
+        DVec3::new(0.8, 0.5, 0.3),
+        green,
+    );
+    slab(
+        &mut b,
+        DVec3::new(0.0, 1.02, -0.12),
+        [DVec3::X, DVec3::Y],
+        DVec3::new(0.83, 0.02, 0.33),
+        chrome,
+    );
+    // Two sloping racks of papers in front.
+    let per = lod.pick(6, 4, 1);
+    for (row, (y, z)) in [(0.32, 0.26), (0.72, 0.22)].into_iter().enumerate() {
+        let tilt = DVec3::new(0.0, 0.85, -0.5).normalize();
+        slab(
+            &mut b,
+            DVec3::new(0.0, y, z),
+            [DVec3::X, tilt],
+            DVec3::new(0.78, 0.2, 0.015),
+            cream,
+        );
+        if lod == Lod::Far {
+            continue;
+        }
+        let w = 1.5 / per as f64;
+        for k in 0..per {
+            let x = -0.75 + w * (k as f64 + 0.5);
+            let c = papers[(k * 3 + row * 2) % papers.len()];
+            slab(
+                &mut b,
+                DVec3::new(x, y + 0.03, z + 0.035),
+                [DVec3::X, tilt],
+                DVec3::new(w * 0.42, 0.16, 0.01),
+                c,
+            );
+            // The headline and a picture.
+            let up = tilt;
+            let face = DVec3::X.cross(tilt).normalize();
+            let at = DVec3::new(x, y + 0.03, z + 0.035) + face * 0.011;
+            slab(
+                &mut b,
+                at + up * 0.11,
+                [DVec3::X, tilt],
+                DVec3::new(w * 0.36, 0.025, 0.002),
+                rgb(40, 38, 40),
+            );
+            slab(
+                &mut b,
+                at - up * 0.02 - DVec3::X * (w * 0.12),
+                [DVec3::X, tilt],
+                DVec3::new(w * 0.2, 0.07, 0.002),
+                rgb(120, 116, 110),
+            );
+        }
+    }
+    // Corner posts up to the roof.
+    for x in [-0.8, 0.8] {
+        tube(
+            &mut b,
+            &[DVec3::new(x, 1.04, -0.38), DVec3::new(x, 2.2, -0.38)],
+            (0.025, 0.025),
+            sides(lod, 8),
+            metal(chrome),
+        );
+    }
+    // The striped roof, sloping down to the front.
+    let stripes = lod.pick(8, 6, 2);
+    for k in 0..stripes {
+        let x0 = -0.85 + 1.7 * k as f64 / stripes as f64;
+        let x1 = -0.85 + 1.7 * (k + 1) as f64 / stripes as f64;
+        let c = if k % 2 == 0 { red } else { cream };
+        let bottom = [
+            DVec3::new(x0, 2.2, -0.45),
+            DVec3::new(x1, 2.2, -0.45),
+            DVec3::new(x1, 2.0, 0.45),
+            DVec3::new(x0, 2.0, 0.45),
+        ];
+        let top = bottom.map(|p| p + DVec3::Y * 0.05);
+        b.hexa(bottom, top, c);
+    }
+    // The sign along the front edge: a red board with the paper's name in
+    // cream bars, a neon tube under it.
+    slab(
+        &mut b,
+        DVec3::new(0.0, 1.9, 0.44),
+        [DVec3::X, DVec3::Y],
+        DVec3::new(0.8, 0.09, 0.015),
+        red,
+    );
+    if lod != Lod::Far {
+        for (x, w) in [(-0.5, 0.18), (-0.18, 0.1), (0.08, 0.12), (0.4, 0.22)] {
+            slab(
+                &mut b,
+                DVec3::new(x, 1.9, 0.458),
+                [DVec3::X, DVec3::Y],
+                DVec3::new(w, 0.035, 0.004),
+                cream,
+            );
+        }
+    }
+    tube(
+        &mut b,
+        &[DVec3::new(-0.78, 1.79, 0.44), DVec3::new(0.78, 1.79, 0.44)],
+        (0.012, 0.012),
+        6,
+        glow(rgb(255, 214, 120)),
+    );
+    b.finish()
+}
+
+/// A bus stop facing the road (+z): a glass back wall in a chrome frame,
+/// a bench, a turquoise boomerang roof on two raked posts with a light
+/// strip under its edge, and a pylon with the round bus sign.
+pub fn bus_stop(lod: Lod) -> Mesh {
+    use hw_gen::urban::props::BUS_STOP;
+    let mut b = MeshBuilder::new();
+    let (hx, hz, under, top) = BUS_STOP;
+    let chrome = rgb(214, 218, 224);
+    let teal = rgb(64, 168, 160);
+    let white = rgb(244, 242, 234);
+    let red = rgb(204, 50, 44);
+    let zb = -hz + 0.08;
+    // The back wall: glass in a frame.
+    b.surf = Surf::Glass;
+    b.hexa(
+        [
+            DVec3::new(-hx + 0.15, 0.2, zb - 0.01),
+            DVec3::new(hx - 0.15, 0.2, zb - 0.01),
+            DVec3::new(hx - 0.15, 0.2, zb + 0.01),
+            DVec3::new(-hx + 0.15, 0.2, zb + 0.01),
+        ],
+        [
+            DVec3::new(-hx + 0.15, 2.2, zb - 0.01),
+            DVec3::new(hx - 0.15, 2.2, zb - 0.01),
+            DVec3::new(hx - 0.15, 2.2, zb + 0.01),
+            DVec3::new(-hx + 0.15, 2.2, zb + 0.01),
+        ],
+        rgb(120, 160, 176),
+    );
+    b.surf = Surf::Plain;
+    let frame = [
+        DVec3::new(-hx + 0.12, 0.17, zb),
+        DVec3::new(hx - 0.12, 0.17, zb),
+        DVec3::new(hx - 0.12, 2.23, zb),
+        DVec3::new(-hx + 0.12, 2.23, zb),
+        DVec3::new(-hx + 0.12, 0.17, zb),
+    ];
+    tube(&mut b, &frame, (0.03, 0.03), sides(lod, 8), metal(chrome));
+    // Two raked posts carrying the roof.
+    for x in [-hx + 0.12, hx - 0.12] {
+        tube(
+            &mut b,
+            &[
+                DVec3::new(x, 0.0, zb),
+                DVec3::new(x, under + 0.02, zb + 0.1),
+            ],
+            (0.045, 0.045),
+            sides(lod, 12),
+            metal(chrome),
+        );
+    }
+    // The roof: rising to the front, a rounded edge, a light strip under it.
+    let rise = 0.16;
+    let th = top - under - rise;
+    let y_at = |z: f64| under + rise * (z + hz) / (2.0 * hz);
+    let bottom = [
+        DVec3::new(-hx, y_at(-hz), -hz),
+        DVec3::new(hx, y_at(-hz), -hz),
+        DVec3::new(hx, y_at(hz - 0.06), hz - 0.06),
+        DVec3::new(-hx, y_at(hz - 0.06), hz - 0.06),
+    ];
+    let lid = bottom.map(|p| p + DVec3::Y * th);
+    b.hexa(bottom, lid, teal);
+    tube(
+        &mut b,
+        &[
+            DVec3::new(-hx, y_at(hz - 0.06) + th * 0.5, hz - 0.06),
+            DVec3::new(hx, y_at(hz - 0.06) + th * 0.5, hz - 0.06),
+        ],
+        (th * 0.5 + 0.005, th * 0.5 + 0.005),
+        sides(lod, 12),
+        plain(white),
+    );
+    b.surf = Surf::Glow;
+    b.quad(
+        [
+            DVec3::new(-hx + 0.2, y_at(hz - 0.3) - 0.012, hz - 0.36),
+            DVec3::new(hx - 0.2, y_at(hz - 0.3) - 0.012, hz - 0.36),
+            DVec3::new(hx - 0.2, y_at(hz - 0.2) - 0.012, hz - 0.22),
+            DVec3::new(-hx + 0.2, y_at(hz - 0.2) - 0.012, hz - 0.22),
+        ],
+        -DVec3::Y,
+        rgb(255, 236, 190),
+    );
+    b.surf = Surf::Plain;
+    // The bench: slats on two legs, in front of the glass.
+    for x in [-hx + 0.5, hx - 0.5] {
+        tube(
+            &mut b,
+            &[
+                DVec3::new(x, 0.0, zb + 0.28),
+                DVec3::new(x, 0.44, zb + 0.28),
+            ],
+            (0.035, 0.035),
+            sides(lod, 8),
+            metal(chrome),
+        );
+    }
+    for k in 0..3 {
+        slab(
+            &mut b,
+            DVec3::new(0.0, 0.47, zb + 0.14 + 0.13 * k as f64),
+            [DVec3::X, DVec3::Y],
+            DVec3::new(hx - 0.3, 0.025, 0.05),
+            rgb(196, 128, 64),
+        );
+    }
+    // The pylon and its round sign.
+    let px = -hx - 0.35;
+    let pz = hz - 0.2;
+    lathe(
+        &mut b,
+        DVec3::new(px, 0.0, pz),
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.14, 0.0),
+            (0.14, 0.08),
+            (0.06, 0.14),
+            (0.05, 2.6),
+            (0.0, 2.61),
+        ],
+        sides(lod, 14),
+        |_| metal(chrome),
+    );
+    let sign = DVec3::new(px, 2.85, pz);
+    lathe(
+        &mut b,
+        sign - DVec3::X * 0.04,
+        DVec3::X,
+        &[
+            (0.0, 0.0),
+            (0.32, 0.0),
+            (0.34, 0.02),
+            (0.34, 0.06),
+            (0.32, 0.08),
+            (0.0, 0.08),
+        ],
+        sides(lod, 28),
+        |k| match k {
+            1..=3 => glow(rgb(255, 200, 120)),
+            _ => plain(teal),
+        },
+    );
+    if lod != Lod::Far {
+        // A cream band across the disc both sides, and a little rocket on top.
+        for s in [-1.0, 1.0] {
+            slab(
+                &mut b,
+                sign + DVec3::X * (0.045 * s),
+                [DVec3::Z, DVec3::Y],
+                DVec3::new(0.27, 0.06, 0.006),
+                white,
+            );
+        }
+        lathe(
+            &mut b,
+            sign + DVec3::Y * 0.34,
+            DVec3::Y,
+            &[
+                (0.0, 0.0),
+                (0.05, 0.03),
+                (0.05, 0.14),
+                (0.03, 0.22),
+                (0.0, 0.26),
+            ],
+            sides(lod, 12),
+            |k| if k == 3 { plain(red) } else { metal(chrome) },
+        );
+    }
+    b.finish()
+}
+
+/// A cafe table: a marble top on a chrome pedestal, three wire chairs
+/// round it and a striped parasol. `variant` picks the colours.
+pub fn cafe_table(variant: u8, lod: Lod) -> Mesh {
+    let mut b = MeshBuilder::new();
+    let chrome = rgb(214, 218, 224);
+    let marble = rgb(240, 236, 228);
+    let (stripe, seat) = match variant % 4 {
+        0 => (rgb(204, 54, 48), rgb(204, 54, 48)),
+        1 => (rgb(52, 140, 170), rgb(240, 196, 70)),
+        2 => (rgb(236, 170, 40), rgb(56, 120, 90)),
+        _ => (rgb(60, 150, 100), rgb(232, 120, 150)),
+    };
+    let white = rgb(246, 244, 236);
+    let seg = sides(lod, 28);
+    lathe(
+        &mut b,
+        DVec3::ZERO,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.24, 0.0),
+            (0.24, 0.03),
+            (0.05, 0.08),
+            (0.035, 0.7),
+            (0.06, 0.72),
+            (0.4, 0.72),
+            (0.4, 0.76),
+            (0.0, 0.76),
+        ],
+        seg,
+        |k| if k >= 5 { plain(marble) } else { metal(chrome) },
+    );
+    // Chairs: a round seat on four legs and a hoop back, facing the table.
+    for k in 0..3 {
+        let a = TAU * (k as f64 / 3.0) + PI / 6.0;
+        let out = DVec3::new(a.cos(), 0.0, a.sin());
+        let side = DVec3::Y.cross(out).normalize();
+        let c = out * 0.66;
+        lathe(
+            &mut b,
+            c + DVec3::Y * 0.42,
+            DVec3::Y,
+            &[
+                (0.0, 0.0),
+                (0.2, 0.0),
+                (0.21, 0.02),
+                (0.2, 0.05),
+                (0.0, 0.05),
+            ],
+            sides(lod, 16),
+            |_| plain(seat),
+        );
+        if lod == Lod::Far {
+            continue;
+        }
+        for (dx, dz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+            let foot = c + side * (0.18 * dx) + out * (0.18 * dz);
+            let top = c + side * (0.13 * dx) + out * (0.13 * dz) + DVec3::Y * 0.42;
+            tube(&mut b, &[foot, top], (0.012, 0.012), 6, metal(chrome));
+        }
+        let hoop: Vec<DVec3> = (0..=8)
+            .map(|i| {
+                let t = PI * i as f64 / 8.0;
+                c + out * (0.16 + 0.04 * t.sin())
+                    + side * (0.17 * t.cos())
+                    + DVec3::Y * (0.47 + 0.36 * t.sin())
+            })
+            .collect();
+        tube(&mut b, &hoop, (0.014, 0.014), 6, metal(chrome));
+        let bars: Vec<DVec3> = vec![
+            c + out * 0.16 + side * 0.17 + DVec3::Y * 0.47,
+            c + out * 0.16 - side * 0.17 + DVec3::Y * 0.47,
+        ];
+        tube(&mut b, &bars, (0.012, 0.012), 6, metal(chrome));
+    }
+    // The parasol: a pole up through the table, striped canopy, valance.
+    tube(
+        &mut b,
+        &[DVec3::Y * 0.76, DVec3::Y * 2.5],
+        (0.022, 0.022),
+        sides(lod, 8),
+        metal(chrome),
+    );
+    let ribs = lod.pick(16, 12, 8);
+    let rings = [
+        (1.2, 2.06),
+        (0.9, 2.2),
+        (0.55, 2.33),
+        (0.2, 2.43),
+        (0.0, 2.46),
+    ];
+    let rows: Vec<Vec<DVec3>> = rings
+        .iter()
+        .map(|&(r, y)| {
+            (0..ribs)
+                .map(|j| {
+                    let a = TAU * j as f64 / ribs as f64;
+                    DVec3::new(r * a.cos(), y, r * a.sin())
+                })
+                .collect()
+        })
+        .collect();
+    let paint = |_: usize, j: usize| {
+        if j.is_multiple_of(2) {
+            plain(stripe)
+        } else {
+            plain(white)
+        }
+    };
+    crate::carmesh::surface(&mut b, &rows, true, paint);
+    crate::carmesh::inside(|| crate::carmesh::surface(&mut b, &rows, true, paint));
+    if lod != Lod::Far {
+        // The valance: a short skirt hanging from the rim.
+        let rim: Vec<Vec<DVec3>> = [(1.2, 2.06), (1.2, 1.92)]
+            .iter()
+            .map(|&(r, y)| {
+                (0..ribs)
+                    .map(|j| {
+                        let a = TAU * j as f64 / ribs as f64;
+                        DVec3::new(r * a.cos(), y, r * a.sin())
+                    })
+                    .collect()
+            })
+            .collect();
+        crate::carmesh::surface(&mut b, &rim, true, paint);
+        crate::carmesh::inside(|| crate::carmesh::surface(&mut b, &rim, true, paint));
+        lathe(
+            &mut b,
+            DVec3::Y * 2.46,
+            DVec3::Y,
+            &[(0.0, 0.0), (0.04, 0.0), (0.04, 0.06), (0.0, 0.1)],
+            8,
+            |_| metal(chrome),
+        );
+    }
+    b.finish()
+}
+
+/// One piece of front-garden fence, [`FENCE_LEN`] along x, facing +z:
+/// 0 a white picket fence, 1 a black iron railing with gilt spear heads
+/// on a stone kerb, 2 a chrome rail with ball-topped posts. Each piece has
+/// the post at its left end; the next piece's post closes the right.
+pub fn fence(variant: u8, lod: Lod) -> Mesh {
+    use hw_gen::urban::props::{FENCE_HEIGHT, FENCE_LEN};
+    let mut b = MeshBuilder::new();
+    let half = FENCE_LEN * 0.5;
+    match variant % 3 {
+        0 => {
+            let white = rgb(244, 242, 234);
+            // Post and two rails.
+            slab(
+                &mut b,
+                DVec3::new(-half + 0.05, FENCE_HEIGHT * 0.5 + 0.03, 0.0),
+                [DVec3::X, DVec3::Y],
+                DVec3::new(0.05, FENCE_HEIGHT * 0.5 + 0.03, 0.05),
+                white,
+            );
+            for y in [0.25, 0.72] {
+                slab(
+                    &mut b,
+                    DVec3::new(0.05, y, -0.03),
+                    [DVec3::X, DVec3::Y],
+                    DVec3::new(half - 0.05, 0.035, 0.015),
+                    white,
+                );
+            }
+            // Pickets with pointed tops, in front of the rails.
+            let n = lod.pick(11, 11, 0);
+            for k in 0..n {
+                let x = -half + 0.2 + (FENCE_LEN - 0.3) * k as f64 / n as f64;
+                let (w, d) = (0.045, 0.012);
+                let top = FENCE_HEIGHT - 0.12;
+                let z0 = -0.012 + 0.0;
+                let pts = |z: f64| {
+                    vec![
+                        DVec3::new(x - w, 0.05, z),
+                        DVec3::new(x + w, 0.05, z),
+                        DVec3::new(x + w, top, z),
+                        DVec3::new(x, top + 0.1, z),
+                        DVec3::new(x - w, top, z),
+                    ]
+                };
+                let (f, bk) = (pts(z0 + d), pts(z0 - d));
+                b.polygon(&f, DVec3::Z, white);
+                b.polygon(&bk, -DVec3::Z, white);
+                for i in 0..5 {
+                    let j = (i + 1) % 5;
+                    let mid = (f[i] + f[j]) * 0.5;
+                    let out =
+                        (mid - DVec3::new(x, (top + 0.05) * 0.5, z0)) * DVec3::new(1.0, 1.0, 0.0);
+                    b.quad([f[i], f[j], bk[j], bk[i]], out, white);
+                }
+            }
+            if lod == Lod::Far {
+                slab(
+                    &mut b,
+                    DVec3::new(0.05, 0.5, 0.0),
+                    [DVec3::X, DVec3::Y],
+                    DVec3::new(half - 0.05, 0.42, 0.01),
+                    white,
+                );
+            }
+        }
+        1 => {
+            let iron = rgb(30, 32, 34);
+            let stone = rgb(176, 168, 152);
+            let gold = rgb(214, 170, 72);
+            slab(
+                &mut b,
+                DVec3::new(0.0, 0.12, 0.0),
+                [DVec3::X, DVec3::Y],
+                DVec3::new(half, 0.12, 0.13),
+                stone,
+            );
+            // A stone pier at the left end with a cap.
+            slab(
+                &mut b,
+                DVec3::new(-half + 0.14, 0.24 + 0.4, 0.0),
+                [DVec3::X, DVec3::Y],
+                DVec3::new(0.14, 0.4, 0.15),
+                stone,
+            );
+            slab(
+                &mut b,
+                DVec3::new(-half + 0.14, 1.07, 0.0),
+                [DVec3::X, DVec3::Y],
+                DVec3::new(0.17, 0.03, 0.18),
+                stone,
+            );
+            for y in [0.36, 0.86] {
+                tube(
+                    &mut b,
+                    &[DVec3::new(-half + 0.28, y, 0.0), DVec3::new(half, y, 0.0)],
+                    (0.014, 0.014),
+                    6,
+                    metal(iron),
+                );
+            }
+            let n = lod.pick(17, 9, 0);
+            for k in 0..n {
+                let x = -half + 0.36 + (FENCE_LEN - 0.4) * k as f64 / n as f64;
+                tube(
+                    &mut b,
+                    &[DVec3::new(x, 0.24, 0.0), DVec3::new(x, 0.94, 0.0)],
+                    (0.011, 0.011),
+                    lod.pick(6, 4, 4),
+                    metal(iron),
+                );
+                if lod == Lod::Near {
+                    lathe(
+                        &mut b,
+                        DVec3::new(x, 0.94, 0.0),
+                        DVec3::Y,
+                        &[(0.0, 0.0), (0.022, 0.01), (0.0, 0.07)],
+                        6,
+                        |_| metal(gold),
+                    );
+                }
+            }
+            if lod == Lod::Far {
+                slab(
+                    &mut b,
+                    DVec3::new(0.14, 0.6, 0.0),
+                    [DVec3::X, DVec3::Y],
+                    DVec3::new(half - 0.14, 0.36, 0.006),
+                    iron,
+                );
+            }
+        }
+        _ => {
+            let chrome = rgb(214, 218, 224);
+            let teal = rgb(64, 168, 160);
+            let post = |b: &mut MeshBuilder, x: f64| {
+                tube(
+                    b,
+                    &[
+                        DVec3::new(x, 0.0, 0.0),
+                        DVec3::new(x, FENCE_HEIGHT - 0.1, 0.0),
+                    ],
+                    (0.03, 0.03),
+                    sides(lod, 10),
+                    metal(chrome),
+                );
+                lathe(
+                    b,
+                    DVec3::new(x, FENCE_HEIGHT - 0.12, 0.0),
+                    DVec3::Y,
+                    &(0..=6)
+                        .map(|k| {
+                            let a = PI * k as f64 / 6.0;
+                            (0.06 * a.sin(), 0.06 - 0.06 * a.cos())
+                        })
+                        .collect::<Vec<_>>(),
+                    sides(lod, 12),
+                    |_| plain(teal),
+                );
+            };
+            post(&mut b, -half + 0.05);
+            post(&mut b, 0.05);
+            for y in [0.3, 0.55, 0.8] {
+                tube(
+                    &mut b,
+                    &[
+                        DVec3::new(-half + 0.05, y, 0.0),
+                        DVec3::new(half - 0.02, y, 0.0),
+                    ],
+                    (0.018, 0.018),
+                    sides(lod, 8),
+                    metal(chrome),
+                );
+            }
+        }
+    }
+    b.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

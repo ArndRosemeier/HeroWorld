@@ -907,6 +907,7 @@ fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &[(DVec2, D
     let pavement = rgb(165, 160, 150);
     let total = r.half + r.pavement;
     b.tex = Some(GroundLayer::Paving.into());
+    b.mottle = 0.08;
     strip(b, w, run, -total, total, r.pavement_lift(), pavement);
     // Old lanes are cobbled.
     let lane = r.style == Some(hw_gen::urban::streets::StreetStyle::Lanes);
@@ -916,8 +917,53 @@ fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &[(DVec2, D
         GroundLayer::RoadAsphalt.into()
     });
     let asphalt = if lane { rgb(120, 116, 110) } else { asphalt };
-    strip(b, w, run, -r.half, r.half, r.carriage_lift(), asphalt);
+    if lane {
+        // Setts repeat every two metres; patches of worn, sandy and damp
+        // stone over them hide the repeat.
+        b.mottle = 0.22;
+        fine_strip(b, w, run, -r.half, r.half, r.carriage_lift(), asphalt);
+    } else {
+        b.mottle = 0.06;
+        strip(b, w, run, -r.half, r.half, r.carriage_lift(), asphalt);
+    }
+    b.mottle = 0.0;
     b.tex = None;
+}
+
+/// Like [`strip`], cut into cells about 1.5 m on a side so vertex colours
+/// can carry the ground's mottling.
+fn fine_strip(
+    b: &mut MeshBuilder,
+    w: &TownWorld,
+    pts: &[(DVec2, DVec2)],
+    a: f64,
+    bo: f64,
+    lift: f64,
+    c: Color,
+) {
+    const CELL: f64 = 1.5;
+    let across = (((bo - a) / CELL).ceil() as usize).max(1);
+    let at = |p: DVec2| DVec3::new(p.x, w.road_height(p) + lift, p.y);
+    for k in 0..pts.len().saturating_sub(1) {
+        let ((p, n0), (q, n1)) = (pts[k], pts[k + 1]);
+        let along = ((p.distance(q) / CELL).ceil() as usize).clamp(1, 400);
+        let pt = |i: usize, j: usize| {
+            let u = i as f64 / along as f64;
+            let o = a + (bo - a) * j as f64 / across as f64;
+            let base = p.lerp(q, u);
+            let n = n0.lerp(n1, u);
+            at(base + n * o)
+        };
+        for i in 0..along {
+            for j in 0..across {
+                b.quad(
+                    [pt(i, j), pt(i + 1, j), pt(i + 1, j + 1), pt(i, j + 1)],
+                    DVec3::Y,
+                    c,
+                );
+            }
+        }
+    }
 }
 
 /// A ribbon from offset `a` to `b` (left negative) along strip points

@@ -47,6 +47,12 @@ pub fn toughness(kind: PropKind) -> Option<(f32, Breaks)> {
         PropKind::Barricade(BarricadePiece::Sawhorse) => (50.0, Breaks::Smashed),
         PropKind::Barricade(BarricadePiece::Sandbags) => (180.0, Breaks::Smashed),
         PropKind::Barricade(BarricadePiece::Drum) => (60.0, Breaks::Topples),
+        PropKind::PhoneBooth => (220.0, Breaks::Smashed),
+        PropKind::PostTube => (260.0, Breaks::Topples),
+        PropKind::NewsStand => (90.0, Breaks::Smashed),
+        PropKind::BusStop => (300.0, Breaks::Smashed),
+        PropKind::CafeTable(_) => (30.0, Breaks::Smashed),
+        PropKind::Fence(_) => (60.0, Breaks::Smashed),
         PropKind::Fountain => return None,
     })
 }
@@ -67,6 +73,12 @@ pub fn trunk(kind: PropKind) -> (f64, f64) {
         PropKind::Lamp(_) | PropKind::TrafficLight => (0.2, 5.0),
         PropKind::Bin | PropKind::Hydrant | PropKind::Bollard => (0.3, 0.9),
         PropKind::Mailbox => (0.35, 1.4),
+        PropKind::PhoneBooth => (0.6, 2.6),
+        PropKind::PostTube => (0.35, 2.6),
+        PropKind::NewsStand => (0.9, 2.2),
+        PropKind::BusStop => (1.8, 2.7),
+        PropKind::CafeTable(_) => (0.9, 0.9),
+        PropKind::Fence(_) => (1.2, 1.0),
         PropKind::Barricade(p) => {
             let (hx, hz, h) = p.block();
             (hx.max(hz), h)
@@ -80,6 +92,7 @@ fn cost(kind: PropKind) -> f64 {
         PropKind::Car(..) => 12_000.0,
         PropKind::Statue(_) => 20_000.0,
         PropKind::Kiosk => 6_000.0,
+        PropKind::BusStop | PropKind::PhoneBooth => 3_000.0,
         PropKind::Tree(..) => 2_500.0,
         PropKind::TrafficLight | PropKind::Lamp(_) => 1_800.0,
         // The villains' own: nobody minds.

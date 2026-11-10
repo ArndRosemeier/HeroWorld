@@ -99,7 +99,33 @@ pub enum PropKind {
     /// A clipped evergreen hedge, [`HEDGE_LEN`] long along its x (the
     /// number picks the bushes it is grown from).
     Hedge(u8),
+    /// A round glass phone booth under a domed roof.
+    PhoneBooth,
+    /// A pneumatic post column: send a capsule across town.
+    PostTube,
+    /// A newspaper stand with racks of papers under a striped roof.
+    NewsStand,
+    /// A bus stop: a shelter under a boomerang roof, its back to the
+    /// houses (+z faces the road), and a sign on a pylon.
+    BusStop,
+    /// A cafe table with chairs round it and a parasol; the number picks
+    /// the parasol's colours.
+    CafeTable(u8),
+    /// A front garden fence, [`FENCE_LEN`] long along its x: a white
+    /// picket fence, an iron railing or a chrome rail (the number).
+    Fence(u8),
 }
+
+/// Parasol colourings of [`PropKind::CafeTable`].
+pub const CAFE_VARIANTS: u8 = 4;
+/// Kinds of [`PropKind::Fence`]: picket, iron railing, chrome rail.
+pub const FENCE_VARIANTS: u8 = 3;
+/// Length of one piece of fence (m), and its height.
+pub const FENCE_LEN: f64 = 2.4;
+pub const FENCE_HEIGHT: f64 = 1.0;
+/// The bus stop's shelter: half its length, half its depth, its roof's
+/// underside and top (m).
+pub const BUS_STOP: (f64, f64, f64, f64) = (1.75, 0.78, 2.45, 2.72);
 
 impl PropKind {
     /// Every kind of prop a town can plan, so whoever draws them can make
@@ -133,6 +159,14 @@ impl PropKind {
         out.extend((0..STATUE_POSES).map(PropKind::Statue));
         out.extend([Jersey, Sawhorse, Sandbags, Drum].map(PropKind::Barricade));
         out.extend((0..HEDGE_VARIANTS).map(PropKind::Hedge));
+        out.extend([
+            PropKind::PhoneBooth,
+            PropKind::PostTube,
+            PropKind::NewsStand,
+            PropKind::BusStop,
+        ]);
+        out.extend((0..CAFE_VARIANTS).map(PropKind::CafeTable));
+        out.extend((0..FENCE_VARIANTS).map(PropKind::Fence));
         out.sort();
         out
     }
@@ -230,6 +264,41 @@ impl Prop {
             PropKind::Kiosk => vec![disc(1.28, 3.6)],
             PropKind::AdPillar => vec![disc(0.66, 3.5)],
             PropKind::Statue(_) => vec![block(0.98, 0.98, 4.2)],
+            PropKind::PhoneBooth => vec![disc(0.6, 2.75)],
+            PropKind::PostTube => vec![disc(0.36, 2.7)],
+            PropKind::NewsStand => vec![block(0.85, 0.45, 2.35)],
+            PropKind::BusStop => {
+                let (hx, hz, under, top) = BUS_STOP;
+                vec![
+                    // The back wall and the bench in front of it.
+                    Footprint::Box {
+                        at: DVec2::new(0.0, -hz + 0.29),
+                        dir: DVec2::Y,
+                        half: DVec2::new(hx, 0.29),
+                        y0: 0.0,
+                        y1: top,
+                    },
+                    // The roof over the waiting people.
+                    Footprint::Box {
+                        at: DVec2::ZERO,
+                        dir: DVec2::Y,
+                        half: DVec2::new(hx, hz),
+                        y0: under,
+                        y1: top,
+                    },
+                    // The sign's pylon at the kerb end.
+                    Footprint::Disc {
+                        at: DVec2::new(-hx - 0.35, hz - 0.2),
+                        r: 0.14,
+                        y0: 0.0,
+                        y1: 3.3,
+                    },
+                ]
+            }
+            // Table and chairs; people walk round them, not under the
+            // parasol's edge.
+            PropKind::CafeTable(_) => vec![disc(0.95, 1.0)],
+            PropKind::Fence(_) => vec![block(FENCE_LEN * 0.5, 0.08, FENCE_HEIGHT)],
             PropKind::Fountain => {
                 // The basin's rim, too high to step over, and the column.
                 let mut v = ring(3.3, 0.38, 0.66, 20);
@@ -319,6 +388,14 @@ pub(super) fn plan_props(l: &Local, quays: &[QuayWall], steps: &[WaterSteps]) ->
     p.back_gardens(region, seed.child("back-gardens"));
     p.old_town_trees(region, seed.child("old-town-trees"));
     p.open_greens(region, seed.child("open-greens"));
+    // Street life, after everything before so older props keep their
+    // numbers. It keeps clear of every barricade, this unit's or not.
+    for b in barricade_props(w, &l.roads) {
+        p.taken.entry(key(b.pos)).or_default().push((b.pos, 1.0));
+    }
+    p.shop_fronts(seed.child("shop-fronts"));
+    p.street_life(seed.child("street-life"));
+    p.fences(seed.child("fences"));
     p.out
 }
 
@@ -1128,6 +1205,234 @@ impl<'a> Placer<'a> {
         true
     }
 
+    /// The road a building's front faces: the nearest one to the middle
+    /// of its front, and how far that point is from its kerb.
+    fn road_in_front(&self, site: &crate::building::BuildingSite) -> Option<(usize, f64)> {
+        let mid = site.origin + site.along * site.size.x * 0.5 - site.inward * 0.5;
+        self.roads
+            .at(key(mid))
+            .iter()
+            .map(|&(ri, si)| {
+                let r = &self.roads.roads[ri];
+                let d = segment_distance(mid, r.pts[si], r.pts[si + 1]);
+                (ri, d - r.half)
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+    }
+
+    /// In front of shops: cafe tables against the shop windows where the
+    /// pavement is wide enough to walk past, and newspaper stands.
+    fn shop_fronts(&mut self, seed: Seed) {
+        let unit = self.l.owner.unit.0;
+        for i in 0..self.l.buildings.len() {
+            let site = self.building(i).site.clone();
+            if site.usage != BuildingUse::ShopsAndOffices || site.size.x < 7.0 {
+                continue;
+            }
+            let Some((ri, kerb)) = self.road_in_front(&site) else {
+                continue;
+            };
+            let road = self.roads.roads[ri].clone();
+            // The front must stand at the back of the pavement.
+            if kerb > road.pavement + 1.5 {
+                continue;
+            }
+            let mut rng = seed.child(unit).child(i as u32).rng();
+            let out = -site.inward;
+            if rng.chance(0.55) {
+                // A cafe: two to four tables in a row along the front.
+                let v = rng.range_int(0, CAFE_VARIANTS as i64) as u8;
+                let n = rng.range_int(2, 5) as usize;
+                let step = 2.4;
+                let run = step * (n as f64 - 1.0);
+                if run + 2.0 < site.size.x {
+                    let x0 = rng.range(1.0, site.size.x - run - 1.0);
+                    let kind = PropKind::CafeTable(v);
+                    let row: Vec<DVec2> = (0..n)
+                        .map(|k| site.origin + site.along * (x0 + step * k as f64) + out * 1.05)
+                        .collect();
+                    // Walkers step round one thing at a time: a row of
+                    // tables keeps clear of lamps, trees and the like, or
+                    // stepping round one would walk them into the other.
+                    if row.iter().all(|&q| {
+                        self.passable(&road, q, kind, out)
+                            && !self.on_road(q, 1.0, Some(ri), false)
+                            && !self.crowded(q, 3.2)
+                    }) {
+                        for q in row {
+                            self.put(kind, q, out, 1.0, 1.0);
+                        }
+                    }
+                }
+            }
+            if rng.chance(0.2) {
+                let x = rng.range(1.2, site.size.x - 1.2);
+                let q = site.origin + site.along * x + out * 0.62;
+                let kind = PropKind::NewsStand;
+                if self.passable(&road, q, kind, out)
+                    && !self.on_road(q, 0.9, Some(ri), false)
+                    && !self.crowded(q, 2.8)
+                {
+                    self.put(kind, q, out, 1.0, 0.55);
+                }
+            }
+        }
+    }
+
+    /// Phone booths, pneumatic post and bus stops along the streets.
+    fn street_life(&mut self, seed: Seed) {
+        let roads = self.l.roads.clone();
+        for (ri, r) in roads.iter().enumerate() {
+            if !self.near(r) || r.pavement < 1.8 {
+                continue;
+            }
+            if matches!(r.style, Some(StreetStyle::Industrial | StreetStyle::Park)) {
+                continue;
+            }
+            let walk = Walk::new(&r.pts);
+            let len = walk.len();
+            if len < END_CLEAR * 2.0 + 6.0 {
+                continue;
+            }
+            let mut rng = seed.child(r.id.0).rng();
+            // Bus stops on main roads with traffic, both sides, every few
+            // hundred metres.
+            if r.main && r.has_traffic() && r.pavement >= 3.0 {
+                let mut s = END_CLEAR + rng.range(30.0, 120.0);
+                while s < len - END_CLEAR {
+                    let (p, d) = walk.point(s);
+                    let sd = if rng.chance(0.5) { 1.0 } else { -1.0 };
+                    let n = d.perp() * sd;
+                    // Its back to the houses, its front at the kerb.
+                    let q = p + n * (r.half + r.pavement - BUS_STOP.1 - 0.3);
+                    let kind = PropKind::BusStop;
+                    if self.passable(r, q, kind, -n) && !self.on_road(q, 2.0, Some(ri), true) {
+                        self.put(kind, q, -n, 1.0, 2.2);
+                    }
+                    s += rng.range(220.0, 380.0);
+                }
+            }
+            // Phone booths and post tubes at the kerb.
+            let mut s = END_CLEAR + rng.range(15.0, 60.0);
+            while s < len - END_CLEAR {
+                let (p, d) = walk.point(s);
+                let sd = if rng.chance(0.5) { 1.0 } else { -1.0 };
+                let n = d.perp() * sd;
+                let old = self.era_at(p) != Era::Modern;
+                let kind = if rng.chance(if old { 0.55 } else { 0.35 }) {
+                    PropKind::PostTube
+                } else {
+                    PropKind::PhoneBooth
+                };
+                let rad = if kind == PropKind::PhoneBooth {
+                    0.6
+                } else {
+                    0.36
+                };
+                let q = p + n * (r.half + rad + 0.25);
+                if self.passable(r, q, kind, -n) && !self.on_road(q, rad, Some(ri), true) {
+                    self.put(kind, q, -n, 1.0, rad + 0.3);
+                }
+                s += rng.range(60.0, 140.0);
+            }
+        }
+    }
+
+    /// Fences along the front gardens that have no hedge: picket fences
+    /// in the old quarters, iron railings before the terraces, chrome
+    /// rails in the golden-age suburbs.
+    fn fences(&mut self, seed: Seed) {
+        let unit = self.l.owner.unit.0;
+        for i in 0..self.l.buildings.len() {
+            let site = self.building(i).site.clone();
+            if !matches!(site.usage, BuildingUse::House | BuildingUse::Apartments)
+                || site.size.x < FENCE_LEN * 2.0
+            {
+                continue;
+            }
+            let mut rng = seed.child(unit).child(i as u32).rng();
+            if !rng.chance(0.85) {
+                continue;
+            }
+            let mid = site.origin + site.along * site.size.x * 0.5;
+            let mut depth = 0.0;
+            while depth < 12.0 && !self.on_road(mid - site.inward * (depth + 0.5), 0.0, None, true)
+            {
+                depth += 0.5;
+            }
+            if !(2.0..12.0).contains(&depth) {
+                continue;
+            }
+            let line = depth - 0.3;
+            let probe = site.origin + site.along * site.size.x * 0.5 - site.inward * line;
+            // A hedge already there: no fence.
+            if self.crowded(probe, 0.6) {
+                continue;
+            }
+            let v = match self.era_at(mid) {
+                Era::Modern => 2,
+                Era::Extension if site.usage == BuildingUse::Apartments => 1,
+                Era::Old if site.usage == BuildingUse::Apartments => 1,
+                _ => 0,
+            };
+            let n = (site.size.x / FENCE_LEN).floor() as usize;
+            let start = (site.size.x - n as f64 * FENCE_LEN) * 0.5;
+            let gate = n / 2;
+            for k in 0..n {
+                if k == gate {
+                    continue;
+                }
+                let x = start + (k as f64 + 0.5) * FENCE_LEN;
+                let p = site.origin + site.along * x - site.inward * line;
+                self.put_fence(p, site.along, v);
+            }
+            // Flowers inside the fence, either side of the path.
+            for side in [0.25, 0.75] {
+                if rng.chance(0.6) && depth >= 3.0 {
+                    let p =
+                        site.origin + site.along * site.size.x * side - site.inward * (line * 0.5);
+                    let v = rng.range_int(0, SHRUB_VARIANTS as i64) as u8;
+                    self.put(
+                        PropKind::Shrub(v),
+                        p,
+                        -site.inward,
+                        rng.range(0.7, 1.0),
+                        0.8,
+                    );
+                }
+            }
+        }
+    }
+
+    /// One piece of fence along `along`, if it fits (as hedges do).
+    fn put_fence(&mut self, p: DVec2, along: DVec2, v: u8) -> bool {
+        let half = FENCE_LEN * 0.5;
+        let ends = [p - along * half * 0.95, p + along * half * 0.95];
+        if !self.l.owner.owns(p)
+            || !self.dry(p)
+            || ends
+                .iter()
+                .any(|e| self.on_road(*e, 0.1, None, true) || self.in_building(*e, 0.2))
+            || self.w.landmarks.iter().any(|l| l.covers(p, 1.0))
+            || (self.w.ground(ends[0]) - self.w.ground(ends[1])).abs() > 0.6
+            || self.crowded(p, 0.3)
+        {
+            return false;
+        }
+        for e in ends {
+            self.taken.entry(key(e)).or_default().push((e, 0.35));
+        }
+        let dir = DVec2::new(along.y, -along.x);
+        self.out.push(Prop {
+            kind: PropKind::Fence(v),
+            pos: p,
+            y: self.w.ground(p) - 0.03,
+            dir,
+            scale: 1.0,
+        });
+        true
+    }
+
     /// A tree in many back gardens, behind the houses.
     fn back_gardens(&mut self, region: Region, seed: Seed) {
         let unit = self.l.owner.unit.0;
@@ -1309,6 +1614,26 @@ fn car_model(era: Era, rng: &mut Rng) -> CarModel {
 mod tests {
     use super::*;
     use crate::urban::TownParams;
+
+    #[test]
+    fn streets_have_life() {
+        // Shop fronts get cafes, pavements phone booths and post tubes,
+        // main roads bus stops, front gardens fences.
+        let seed = Seed(1);
+        let tw = TownWorld::generate(seed, TownParams::sample(seed, 40_000.0));
+        let w = tw.everything();
+        let count = |f: fn(&PropKind) -> bool| w.props.iter().filter(|x| f(&x.1.kind)).count();
+        let n = [
+            count(|k| matches!(k, PropKind::CafeTable(_))),
+            count(|k| matches!(k, PropKind::NewsStand)),
+            count(|k| matches!(k, PropKind::PhoneBooth)),
+            count(|k| matches!(k, PropKind::PostTube)),
+            count(|k| matches!(k, PropKind::BusStop)),
+            count(|k| matches!(k, PropKind::Fence(_))),
+        ];
+        eprintln!("cafe tables, news stands, phones, post tubes, bus stops, fences: {n:?}");
+        assert!(n[0] > 40 && n[1] > 5 && n[2] > 20 && n[3] > 20 && n[4] > 5 && n[5] > 100);
+    }
 
     #[test]
     fn props_stand_clear_of_buildings_and_water() {

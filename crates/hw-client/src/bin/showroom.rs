@@ -1,7 +1,7 @@
 //! A showroom for vehicles and props: one model (or a row of them) on a
 //! plain floor in daylight, for close-up screenshots while modelling.
 //!
-//! HW_SHOW=cruiser|bubble|hover|taxi|ambulance|wheel|cars|street|lamps|barricades|plaza,
+//! HW_SHOW=cruiser|bubble|hover|taxi|ambulance|wheel|cars|street|lamps|barricades|plaza|life|fences,
 //! or one prop (kiosk, pillar, fountain, jersey, drum, ...; default cars)
 //! HW_LOD=near|mid|far  HW_PAINT=0..7  HW_YAW=degrees  HW_DIST=metres  HW_PITCH=degrees
 //!
@@ -59,6 +59,16 @@ fn prop(name: &str, lod: Lod) -> Mesh {
         "sawhorse" => pm::barricade(BarricadePiece::Sawhorse, lod),
         "sandbags" => pm::barricade(BarricadePiece::Sandbags, lod),
         "drum" => pm::barricade(BarricadePiece::Drum, lod),
+        "phone" => pm::phone_booth(lod),
+        "post" => pm::post_tube(lod),
+        "news" => pm::news_stand(lod),
+        "busstop" => pm::bus_stop(lod),
+        "cafe" => pm::cafe_table(0, lod),
+        "cafe2" => pm::cafe_table(1, lod),
+        "picket" => pm::fence(0, lod),
+        "railing" => pm::fence(1, lod),
+        "rail" => pm::fence(2, lod),
+        "sweeper" => hw_client::sweeperview::sweeper(lod),
         _ => Mesh::new(),
     }
 }
@@ -79,6 +89,10 @@ fn main() -> EngineResult<()> {
         vec!["jersey", "sawhorse", "sandbags", "drum"]
     } else if show == "plaza" {
         vec!["kiosk", "pillar"]
+    } else if show == "life" {
+        vec!["phone", "post", "news", "busstop", "cafe"]
+    } else if show == "fences" {
+        vec!["picket", "railing", "rail", "sweeper"]
     } else if show == "lamps" {
         vec!["lantern", "deco", "atomic", "traffic"]
     } else {
@@ -87,6 +101,8 @@ fn main() -> EngineResult<()> {
     let spacing = match show.as_str() {
         "street" => 1.6f32,
         "barricades" => 2.0,
+        "life" => 3.2,
+        "fences" => 2.7,
         _ => 3.4,
     };
     let width = spacing * (names.len() as f32 - 1.0);

@@ -201,6 +201,14 @@ Not needed for the first playable city, but the design depends on them eventuall
   (decoded a few seconds ahead from the file) would keep that to a few hundred KB. And
   `Input` has no mouse wheel; the camera zoom reads egui's scroll delta instead.
 
+- **Textures that do not repeat** (added 2026-11-10, from the daytime streets pass, 0.123):
+  ground layers tile every 2-4 m (cobbles every 2 m), and from a few metres up the tiles line
+  up into visible bands. HeroWorld now mottles cobbled lanes and pavements with vertex
+  colours in patches (`citymesh::mottle`, cobbles cut into 1.5 m cells for it), which hides
+  the bands but costs faces. Stochastic or hex-tile sampling in the material shader (each
+  tile drawn rotated and offset, blended at the seams), or a second, larger-scale detail
+  layer, would fix it for every textured surface without extra geometry.
+
 ## Done for HeroWorld (2026-11-09, Engine 0.005)
 
 Engine PR #69, merged:

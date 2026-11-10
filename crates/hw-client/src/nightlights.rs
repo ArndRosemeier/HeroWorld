@@ -79,6 +79,8 @@ fn prop_light(town: &TownWorld, id: DetailId, p: &Prop) -> Option<Lamp> {
         }
         PropKind::Kiosk => Lamp::point(at(0.0, 2.4), rgb(255, 210, 120), 4.0, 7.0),
         PropKind::Fountain => Lamp::point(at(0.0, 2.6), rgb(140, 230, 255), 5.0, 9.0),
+        PropKind::PhoneBooth => Lamp::point(at(0.0, 2.25), rgb(255, 214, 140), 3.0, 6.0),
+        PropKind::BusStop => Lamp::point(at(0.5, 2.3), rgb(255, 232, 190), 5.0, 8.0),
         _ => return None,
     };
     Some(if held {

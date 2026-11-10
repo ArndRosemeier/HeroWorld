@@ -1710,9 +1710,14 @@ mod tests {
         let mut solid = 0;
         for (_, p) in &w.everything().props {
             for f in p.footprints() {
+                // Each part at its own height (at most 0.3 m up): a
+                // shelter's roof is solid up there, not on the pavement
+                // under it.
                 let c = f.at();
+                let (y0, y1) = f.span();
+                let y = y0.max(p.y) + (0.5 * (y1 - y0)).min(0.3);
                 assert!(
-                    o.solid_at(DVec3::new(c.x, p.y + 0.3, c.y)),
+                    o.solid_at(DVec3::new(c.x, y, c.y)),
                     "{:?} at {:?} can be walked through",
                     p.kind,
                     c

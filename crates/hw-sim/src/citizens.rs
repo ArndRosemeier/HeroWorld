@@ -31,14 +31,14 @@ pub const LOOKS: u32 = 24;
 /// sends this many to its stretch of pavement at its busiest hour, by what
 /// it is for (and a little more for each floor). Shops draw the most,
 /// houses the fewest; a quiet residential street has a handful of people,
-/// a downtown shopping street one every ten metres or so.
+/// a shopping street one every seven metres or so.
 fn draws(usage: BuildingUse, floors: u32) -> f64 {
     let f = floors as f64;
     match usage {
-        BuildingUse::ShopsAndOffices => 0.22 + 0.03 * f,
-        BuildingUse::Offices => 0.08 + 0.02 * f,
-        BuildingUse::Apartments => 0.04 + 0.012 * f,
-        BuildingUse::House => 0.015,
+        BuildingUse::ShopsAndOffices => 0.9 + 0.12 * f,
+        BuildingUse::Offices => 0.12 + 0.03 * f,
+        BuildingUse::Apartments => 0.06 + 0.018 * f,
+        BuildingUse::House => 0.02,
         BuildingUse::Works => 0.03,
         BuildingUse::Pavilion => 0.45,
         BuildingUse::Lab => 0.01,
@@ -48,8 +48,10 @@ fn draws(usage: BuildingUse, floors: u32) -> f64 {
 /// Passers-by per metre on top (main roads see more of them).
 const THROUGH: f64 = 0.004;
 const THROUGH_MAIN: f64 = 0.008;
+/// The share of the people out on foot that are robot street sweepers.
+const SWEEPERS: f64 = 0.03;
 /// Never more than this many per metre of street (both sides).
-const MOST: f64 = 0.1;
+const MOST: f64 = 0.15;
 /// A building's front is on the street whose pavement is this near.
 const FRONTAGE: f64 = 14.0;
 /// The hour the town is seen at, unless told (see [`Citizens::set_hour`]).
@@ -401,6 +403,13 @@ impl Citizens {
         });
         out.truncate(max);
         out
+    }
+
+    /// Is citizen `id` one of the town's robot street sweepers? They keep
+    /// the citizens' routes and hours (and stand where they would pause),
+    /// and are drawn as robots instead of people.
+    pub fn is_sweeper(&self, id: u64) -> bool {
+        id >> 20 != MOLE_HOME && self.seed.child("sweeper").child(id).unit() < SWEEPERS
     }
 
     /// Citizen `id` at `time`; `None` if there is no such citizen.

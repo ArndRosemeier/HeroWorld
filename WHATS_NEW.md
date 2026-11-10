@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.125 (2026-11-10)
+
+- Daytime streets come alive. Shops put out cafe tables with striped parasols, newspaper stands and striped awnings, and old-town shops hang round neon signs over the pavement.
+- Round glass phone booths, brass pneumatic post columns and bus stops with boomerang roofs line the streets.
+- Little robot street sweepers trundle along the pavements, brushes spinning.
+- Shopping streets are busier, and house front gardens have picket fences, iron railings or chrome rails.
+- No more blank walls: gable ends, stairwells and storerooms have windows. Old houses carry glowing Aether conduits up their corners.
+- Cobbles and paving look less repetitive.
+
 ## 0.124 (2026-11-10)
 
 - New: **the Doctor's story**. Commander Starling at Hero Hall now has a case for you: seven chapters, from a street brawl with the Doctor's technicians to the robot works, the news kiosk, the colossus and the Tesla tower, and at last the Doctor himself in his lab. Each opens at a level (1, 3, 5, 8, 11, 14, 16).

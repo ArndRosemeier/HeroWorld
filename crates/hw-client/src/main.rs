@@ -481,6 +481,7 @@ fn main() -> EngineResult<()> {
     // them when they got up (faded out).
     let mut settle: BTreeMap<hw_core::NetId, (Vec3, bool)> = BTreeMap::new();
     let mut crowd = CrowdView::new();
+    let mut sweepers = hw_client::sweeperview::SweeperView::new();
     let mut anims: BTreeMap<hw_core::NetId, HeroAnim> = BTreeMap::new();
     let mut town = TownView::new(generated.world.clone());
     // The minimap (N) and the town's sounds and music.
@@ -516,6 +517,23 @@ fn main() -> EngineResult<()> {
             let p = spawn - spawn_dir * 8.0;
             let yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, ground(p) as f32 + 6.0, p.y as f32), yaw, 8.0)
+        }
+        "prop" => {
+            // `HW_VIEW=prop HW_PROP=<kind>`: a close-up from in front of the
+            // nearest prop of that kind (`HW_PROP_DIST` metres off).
+            let name = std::env::var("HW_PROP").unwrap_or_else(|_| "Car".into());
+            let dist = env_num("HW_PROP_DIST").unwrap_or(5) as f64;
+            let target = generated
+                .area
+                .props
+                .iter()
+                .filter(|p| format!("{:?}", p.kind).contains(&name))
+                .min_by(|a, b| a.pos.distance(spawn).total_cmp(&b.pos.distance(spawn)));
+            let (c, front) = target.map_or((spawn, spawn_dir), |t| (t.pos, t.dir));
+            let p = c + (front + front.perp() * 0.45).normalize() * dist;
+            let d = c - p;
+            let yaw = d.x.atan2(d.y).to_degrees() as f32;
+            FlyCamera::new((p.x as f32, ground(p) as f32 + 1.9, p.y as f32), yaw, -12.0)
         }
         "props" | "park" | "lawn" => {
             // Close to parked cars (or a park fountain; `lawn`: low over the
@@ -1528,6 +1546,7 @@ fn main() -> EngineResult<()> {
                     story.clear(world);
                     riders.clear(world, &crowd);
                     crowd.clear(world);
+                    sweepers.clear(world);
                     // The new town's extras come in like the first ones.
                     if let Some(l) = extras_load.take() {
                         l.abandon(world);
@@ -2463,6 +2482,7 @@ fn main() -> EngineResult<()> {
                         traffic_view.clear(world);
                         riders.clear(world, &crowd);
                         crowd.clear(world);
+                        sweepers.clear(world);
                         if let Some(s) = extras.signals.as_mut() {
                             s.clear(world);
                         }
@@ -3235,7 +3255,9 @@ fn main() -> EngineResult<()> {
                     })
                     .expect("start the traffic worker");
                 // Citizens around the camera, at the game's time.
-                let crowd_done = crowd.update(world, &citizens, &alarms, eye2, game_time, dt);
+                let crowd_done = crowd
+                    .update(world, &citizens, &alarms, eye2, game_time, dt)
+                    .and_then(|()| sweepers.update(world, &citizens, eye2, game_time, dt));
                 let plan = match job.join() {
                     Ok(p) => p,
                     Err(panic) => std::panic::resume_unwind(panic),

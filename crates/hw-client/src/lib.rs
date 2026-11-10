@@ -55,6 +55,7 @@ pub mod signalview;
 pub mod skins;
 pub mod soundscape;
 pub mod storyview;
+pub mod sweeperview;
 pub mod teslaview;
 pub mod tilestream;
 pub mod title;

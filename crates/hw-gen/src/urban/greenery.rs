@@ -77,6 +77,10 @@ fn clearing(p: &Prop) -> Option<f64> {
         PropKind::Kiosk => 1.7,
         PropKind::Statue(_) => 1.3,
         PropKind::AdPillar => 0.75,
+        PropKind::BusStop => 2.0,
+        PropKind::PhoneBooth => 0.65,
+        PropKind::NewsStand => 0.95,
+        PropKind::CafeTable(_) => 1.0,
         PropKind::Barricade(_) => 0.6,
         _ => return None,
     })

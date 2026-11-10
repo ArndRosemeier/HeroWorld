@@ -173,10 +173,12 @@ impl CrowdView {
         self.refresh -= dt;
         if self.refresh <= 0.0 {
             self.refresh = 0.5;
+            // Robot sweepers are drawn by `sweeperview`.
             self.near = citizens
                 .near(camera, SHOW_RADIUS, time, MAX_SHOWN)
                 .iter()
                 .map(|c| c.id)
+                .filter(|id| !citizens.is_sweeper(*id))
                 .collect();
         }
         let mut seen = BTreeSet::new();

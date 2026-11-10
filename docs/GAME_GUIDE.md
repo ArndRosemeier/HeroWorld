@@ -557,6 +557,26 @@ between them) is designed but not built; the town stands in endless streamed gro
   benches, bins, hydrants, rocket mailboxes, bollards, kiosks, ad pillars, bronze hero
   statues, traffic lights; taxi pads on tall golden-age roofs; neon signs. Real grass on
   lawns, verges and parks, woods out in the country.
+- **Street life** (`hw-gen/src/urban/props.rs`: `shop_fronts`, `street_life`, `fences`):
+  more than half the shops put out two to four cafe tables (marble tops, wire chairs,
+  striped parasols) against their windows where the pavement leaves room to walk past and
+  no lamp, tree or barricade stands in the way (walkers step round one thing at a time), one
+  in five a newspaper stand. Round glass phone booths and brass pneumatic post columns
+  (capsule in a glass tube, cyan ring; more of them in the old quarters) stand at the kerb
+  every 60-140 m; main roads with traffic get bus stops (glass shelter under a boomerang
+  roof, round sign on a pylon) every 220-380 m. Front gardens of houses and flats without a
+  hedge get a fence (white pickets in old quarters, iron railings on a stone kerb before
+  flats, chrome rails in the golden-age suburbs) with a gap for the path and flowers each
+  side. All are solid and breakable. Seed 1 at 40 000 people: about 120 cafe tables, 90
+  news stands, 175 phone booths, 235 post tubes, 19 bus stops, 160 fence pieces.
+- **The old town's dress:** the old core stays a historic town, dressed with the golden
+  age: most shops there have striped awnings, most shops hang a round neon-ringed sign on
+  an iron bracket over the pavement, and two old houses in five carry an Aether conduit up
+  a front corner (a brass pipe with glowing glass sleeves from a junction box to the eaves).
+- **No blank walls:** gable ends have attic windows in rows (two or three in tall gables,
+  kept clear of half-timbering), stairwells have a window at each landing, storerooms a
+  high window where they do not face the street. Cobbled lanes and pavements are mottled
+  in patches (worn, sandy, damp) so their texture does not repeat in bands.
 - **Light:** the game plays at a fixed mid-afternoon (15.5 h) with long shadows; the title
   at golden hour. `HW_HOUR` sets another hour: at night lamps light the streets, a third of
   the windows glow, the Spire bathes its plaza in cyan, and two moons hang in the sky.
@@ -766,7 +786,15 @@ Golden-age townsfolk (suits and fedoras, flapper dresses and cloche hats, work c
 the pavements, wait at corners and chat. How many depends on the place and the hour: busy
 shopping streets at midday, quiet back streets, nearly empty at night. They cross at the
 lights in the walk phase, step round props, and turn back at barricades. They are a pure
-function of seed and time, so every player sees the same crowd.
+function of seed and time, so every player sees the same crowd. Each building sends people to
+the pavement in front of it at the busiest hour: a shop 0.9 plus 0.12 a floor, offices 0.12
+plus 0.03 a floor, flats 0.06 plus 0.018 a floor, a house 0.02; at most 0.15 a metre of
+street, so a shopping street has someone every seven metres or so.
+
+**Robot street sweepers** (`Citizens::is_sweeper`, `hw-client/src/sweeperview.rs`): 3% of
+the people on foot are little golden-age robots (a round cream body, a glass dome with one
+eye, two spinning brushes in front). They keep the walkers' routes and hours; the nearest 48
+within 140 m of the camera are drawn.
 
 They **react to trouble** (`hw_sim::alarms`): near a fight, mugging, robbery, rampage,
 collapse or explosion people run, those further off stop and stare, and they turn to look
