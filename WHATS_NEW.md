@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.176 (2026-11-11)
+
+- Lamp and headlight highlights no longer make broken pixels when a light lines up with the camera, the likely source of the glowing specks (Engine 0.055)
+
 ## 0.175 (2026-11-11)
 
 - Fixed the picture breaking up after walking a while: a few glowing specks near car and lamp lights could spread through the reflections until the whole street went flat dark. Broken pixels now stay one pixel for one frame (Engine 0.054)
