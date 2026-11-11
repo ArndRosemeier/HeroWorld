@@ -305,3 +305,106 @@ fn heroes_punch_through_walls_and_unseen_buildings_repair_themselves() {
     sim.restore(&save).unwrap();
     assert!(sim.solids().is_damaged(i));
 }
+
+/// A site for an office building of halls, `k` giving its size and seed.
+fn halls_site(k: u64) -> hw_gen::building::BuildingSite {
+    let (w, d) = (32.0 + (k % 7) as f64 * 3.5, 38.0 + (k % 5) as f64 * 3.0);
+    hw_gen::building::BuildingSite {
+        id: hw_core::StableId(k),
+        seed: Seed(k),
+        usage: hw_gen::building::BuildingUse::Offices,
+        origin: DVec2::new(10.0, 20.0),
+        along: DVec2::X,
+        inward: if k.is_multiple_of(2) {
+            DVec2::Y
+        } else {
+            -DVec2::Y
+        },
+        size: DVec2::new(w, d),
+        floors: 3,
+        street: 0,
+        district: hw_gen::city::DistrictKind::Commercial,
+        halls: None,
+        vernacular: None,
+    }
+    .into_halls(2 + (k % 9) as u32)
+}
+
+#[test]
+fn buildings_of_halls_break_along_what_stands_in_them() {
+    use engine::building::ElementKind;
+    use hw_gen::layout::solid::Part;
+    for k in 0..10u64 {
+        let site = halls_site(k);
+        let plan = hw_gen::building::BuildingPlan::generate(&site);
+        let parts = plan.solids().expect("a building of halls");
+        let frame = Frame::of(&plan.site, 0.0);
+        let pieces = destruction::pieces(&plan);
+        let bp = Arc::new(destruction::breakable(&plan, &pieces, &frame, |_, _, _| None).unwrap());
+        // Untouched, it stands.
+        let mut b = Building::new(bp.clone());
+        let change = b.apply(&ElementBits::new(bp.len()));
+        assert!(
+            change.dropped.is_empty() && change.collapse.is_none(),
+            "{k}: {} pieces drop from an untouched building",
+            change.dropped.len()
+        );
+        // Every solid part is a piece or several (but the lifts' doors),
+        // and nothing breaks that is not drawn: no columns of its own.
+        let cut = destruction::halls_cut(&plan, &parts);
+        assert_eq!(cut.len(), pieces.len());
+        for p in parts.iter().filter(|p| p.part != Part::LiftDoor) {
+            let at = p.shape.at();
+            let (y0, y1) = p.shape.span();
+            let c = DVec3::new(at.x, (y0 + y1) * 0.5, at.y);
+            assert!(
+                pieces
+                    .iter()
+                    .any(|q| (c - c.clamp(q.min, q.max)).length() < 1e-6),
+                "{k}: no piece where a {:?} stands at {c:?}",
+                p.part
+            );
+        }
+        let count = |part: Part| parts.iter().filter(|p| p.part == part).count();
+        let columns = pieces
+            .iter()
+            .filter(|p| p.kind == ElementKind::Column)
+            .count();
+        assert_eq!(columns, count(Part::Column), "{k}");
+        let steps = cut.iter().filter(|c| c.0.part == Part::Step).count();
+        assert_eq!(steps, count(Part::Step), "{k}: a step is one piece");
+        assert!(steps > 0, "{k}: stairs");
+        // No piece is longer than a wall panel or a floor tile and a half.
+        for (part, p) in &cut {
+            let s = p.max - p.min;
+            if matches!(
+                part.part,
+                Part::Outer | Part::Wall | Part::Floor(_) | Part::Roof
+            ) {
+                assert!(
+                    s.x.max(s.z) <= 4.5 + 1e-6,
+                    "{k}: a {:?} of {s:?}",
+                    part.part
+                );
+            }
+        }
+        // A level 1 hero's punch at a window breaks it and no more than
+        // what is next to it.
+        let glass = pieces
+            .iter()
+            .position(|p| p.kind == ElementKind::Window && p.floor == 0)
+            .expect("a window");
+        let at = (pieces[glass].min + pieces[glass].max) * 0.5;
+        let power = destruction::hero_power(1);
+        let change = b.hit(frame.to_engine(at), power.punch_radius, power.punch);
+        assert!(change.broken.iter().any(|e| e.0 as usize == glass), "{k}");
+        assert!(change.collapse.is_none() && change.broken.len() < 12, "{k}");
+        // The ground floor's outside walls gone: the building comes down.
+        let ring: Vec<_> = (0..pieces.len())
+            .filter(|&i| pieces[i].floor == 0 && pieces[i].outward != DVec2::ZERO)
+            .map(|i| engine::building::ElementId(i as u32))
+            .collect();
+        let change = b.break_elements(&ring);
+        assert!(change.collapse.is_some(), "{k}: it stands on nothing");
+    }
+}

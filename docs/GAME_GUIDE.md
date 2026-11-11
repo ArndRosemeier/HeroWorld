@@ -591,6 +591,7 @@ targeting, ragdolls, nobody dies.
   the storeys has no gallery (one open hall up to the rail), the middle of the front merges
   with a corner now and then, and bridges cross on about half the storeys from the second up.
 - **People in those buildings** (`hw_gen::layout::people`): places to stand on every floor,
+- **Breaking them** (0.217): a building of halls breaks along what stands in it. Outside walls (pieces up to 4 m, cut at every storey) and windows are each storey's load-bearing ring; inner walls, lift shafts and columns hold the floors up; floors and roofs are tiles of about 3 m; stairs, landings, bridges, rails and glass walls break on their own and carry nothing. The ground floor does not break. Furniture stays solid in a damaged building, below where a collapse starts. The broken look is built on a worker thread, so the hole shows a few tenths of a second after the first blow.
   on open floor at least 0.55 m from anything solid, 0.9 m from walls and 2.6 m from a
   doorway's middle; one to every 22 m2 of a hall or boardroom, 16 m2 of a shop, 30 m2 of a
   lobby or atrium floor, 40 m2 of a gallery, arcade or concourse. Who stands there follows the

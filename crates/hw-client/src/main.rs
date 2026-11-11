@@ -68,6 +68,8 @@
 //! hero's origin card.
 //! `HW_VIEW=fight` starts in front of the minions, `HW_AUTOFIGHT=1` (or a list of power codes)
 //! fights them on its own (both for screenshots);
+//! `HW_SMASH=<frames>` blasts the building `HW_SMASH_AT` metres (4) in front
+//! of the camera that many frames in;
 //! `HW_WRECK=<frames>` wrecks the cars near the camera that many frames in;
 //! `HW_VIEW=riders` looks in at the driver of the nearest car
 //! (`HW_RIDER=cruiser|bubble|hover|taxi` picks the kind, `HW_RIDER_CAM=front`
@@ -541,6 +543,9 @@ fn main() -> EngineResult<()> {
     // HW_WRECK=<frames>: that many frames in, the cars near the camera are
     // wrecked (for screenshots).
     let mut wreck_demo = env_num("HW_WRECK");
+    // HW_SMASH=<frames>: that many frames in, a blast `HW_SMASH_AT` metres
+    // (4) in front of the camera breaks what stands there (for screenshots).
+    let mut smash_demo = env_num("HW_SMASH");
     // People from Actors, built on a worker thread from the packs.
     let actors = match people::packs_dir() {
         Some(dir) => {
@@ -2756,6 +2761,18 @@ fn main() -> EngineResult<()> {
                     let eye = world.camera().eye().as_dvec3();
                     eprintln!("wrecked {} cars", session.wreck_cars(eye, 45.0));
                     wreck_demo = None;
+                } else {
+                    *n -= 1;
+                }
+            }
+            if let Some(n) = smash_demo.as_mut() {
+                if *n == 0 {
+                    let cam = world.camera();
+                    let reach = env_num("HW_SMASH_AT").unwrap_or(4) as f32;
+                    let dir = (cam.target() - cam.eye()).normalize_or_zero();
+                    let at = (cam.eye() + dir * reach).as_dvec3();
+                    eprintln!("smashed {} elements", session.smash(at, 3.0, 4000.0));
+                    smash_demo = None;
                 } else {
                     *n -= 1;
                 }

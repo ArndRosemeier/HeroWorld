@@ -33,7 +33,9 @@ use engine::mesh::Mesh;
 use glam::{DVec2, DVec3};
 use hw_gen::building::{bay_lines, BuildingPlan, BuildingSite, Floor};
 use hw_gen::geom::Rect;
+use hw_gen::layout::solid::{self, Part};
 use hw_gen::style::{Material, WindowKind};
+use hw_gen::urban::footprint::Footprint;
 use hw_net::{PlayerId, ToClient};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -121,6 +123,11 @@ pub struct HeroPower {
 /// The breakable pieces of a building, in a fixed order (the order is the
 /// element numbering every machine shares).
 pub fn pieces(plan: &BuildingPlan) -> Vec<Piece> {
+    if let Some(parts) = plan.solids() {
+        let mut out: Vec<Piece> = halls_cut(plan, &parts).into_iter().map(|c| c.1).collect();
+        hang_unheld(&mut out, plan.floors.len());
+        return out;
+    }
     let m = material_factor(plan);
     let mut out = Vec::new();
     let n = plan.floors.len();
@@ -152,6 +159,224 @@ pub fn pieces(plan: &BuildingPlan) -> Vec<Piece> {
     }
     add_columns(&mut out, plan, m);
     out
+}
+
+/// The ground floor of a building of halls does not break: there is
+/// nothing drawn under it.
+const GROUND_STRENGTH: f32 = 1.0e9;
+
+/// The parts of a building of halls ([`BuildingPlan::solids`], or the
+/// same parts as they are drawn) cut into breakable pieces, in a fixed
+/// order: each piece with the part of the building it is, so what breaks
+/// is what stands there and what is drawn. Outside walls and windows are
+/// the storeys' load-bearing ring, inner and shaft walls and columns hold
+/// the floors up, floors and roofs are slab tiles; stairs, decks, rails
+/// and glass carry nothing and fall with nothing but their storey. Long
+/// walls are cut every [`INNER_PIECE`], floors into tiles of about
+/// [`TILE`], and everything where a storey ends. The lifts' landing doors
+/// are left out (they move with their cars).
+pub fn halls_cut(plan: &BuildingPlan, parts: &[solid::Piece]) -> Vec<(solid::Piece, Piece)> {
+    let m = material_factor(plan);
+    let n = plan.floors.len();
+    let size = plan.site.size;
+    let top = plan.floors.last().map_or(0.0, |f| f.elevation + f.height);
+    // The storey a height lies in.
+    let storey = |y: f64| {
+        plan.floors
+            .iter()
+            .rposition(|f| f.elevation <= y + 1e-3)
+            .unwrap_or(0) as u16
+    };
+    // The storey a slab at `y` is the floor of (the roof: one past the top).
+    let level = |y: f64| {
+        if y > top - 1e-3 {
+            n as u16
+        } else {
+            storey(y)
+        }
+    };
+    let slab = ElementKind::Slab.default_strength() * m;
+    let mut out = Vec::new();
+    for p in parts {
+        let (y0, y1) = p.shape.span();
+        let (x0, x1) = p.shape.extent(DVec2::ZERO, DVec2::X);
+        let (z0, z1) = p.shape.extent(DVec2::ZERO, DVec2::Y);
+        let along_x = x1 - x0 >= z1 - z0;
+        // (kind, strength, the longest piece along the part, tiles?, cut
+        // at storeys?, on the facade?)
+        let (kind, strength, len, tiled, storeys, facade) = match p.part {
+            Part::LiftDoor => continue,
+            Part::Outer => {
+                let k = ElementKind::Wall;
+                (k, k.default_strength() * m, INNER_PIECE, false, true, true)
+            }
+            Part::Window => {
+                let k = ElementKind::Window;
+                (
+                    k,
+                    k.default_strength() * m,
+                    f64::INFINITY,
+                    false,
+                    true,
+                    true,
+                )
+            }
+            Part::Floor(_) if y0 < 1e-6 => {
+                (ElementKind::Slab, GROUND_STRENGTH, TILE, true, false, false)
+            }
+            Part::Floor(_) => (ElementKind::Slab, slab, TILE, true, false, false),
+            Part::Roof => {
+                let k = ElementKind::Roof;
+                (k, k.default_strength() * m, TILE, true, false, false)
+            }
+            Part::Wall | Part::Shaft => {
+                let k = ElementKind::Wall;
+                (k, k.default_strength() * m, INNER_PIECE, false, true, false)
+            }
+            Part::Column => {
+                let k = ElementKind::Column;
+                (
+                    k,
+                    k.default_strength() * m,
+                    f64::INFINITY,
+                    false,
+                    false,
+                    false,
+                )
+            }
+            Part::Glass => (
+                ElementKind::Partition,
+                ElementKind::Window.default_strength() * m,
+                INNER_PIECE,
+                false,
+                true,
+                false,
+            ),
+            Part::Rail => {
+                let k = ElementKind::Partition;
+                (
+                    k,
+                    k.default_strength() * m,
+                    INNER_PIECE,
+                    false,
+                    false,
+                    false,
+                )
+            }
+            Part::Deck => (ElementKind::Partition, slab, TILE, true, false, false),
+            Part::Step | Part::Canopy | Part::Fin => (
+                ElementKind::Partition,
+                slab,
+                f64::INFINITY,
+                false,
+                false,
+                false,
+            ),
+        };
+        let outward = if !facade {
+            DVec2::ZERO
+        } else if along_x {
+            DVec2::new(
+                0.0,
+                if (z0 + z1) * 0.5 < size.y * 0.5 {
+                    -1.0
+                } else {
+                    1.0
+                },
+            )
+        } else {
+            DVec2::new(
+                if (x0 + x1) * 0.5 < size.x * 0.5 {
+                    -1.0
+                } else {
+                    1.0
+                },
+                0.0,
+            )
+        };
+        // Only a box standing square to the building can be cut.
+        let square = matches!(p.shape, Footprint::Box { dir, .. } if dir.x.abs() < 1e-9 || dir.y.abs() < 1e-9);
+        let even = |lo: f64, hi: f64, count: usize| -> Vec<(f64, f64)> {
+            let step = (hi - lo) / count as f64;
+            (0..count)
+                .map(|k| (lo + step * k as f64, lo + step * (k + 1) as f64))
+                .collect()
+        };
+        let whole = |lo: f64, hi: f64| vec![(lo, hi)];
+        let by_len =
+            |lo: f64, hi: f64| even(lo, hi, ((hi - lo) / len - 1e-9).ceil().max(1.0) as usize);
+        let by_tile = |lo: f64, hi: f64| even(lo, hi, ((hi - lo) / len).round().max(1.0) as usize);
+        let (xs, zs) = match (square, tiled, along_x) {
+            (false, _, _) => (whole(x0, x1), whole(z0, z1)),
+            (true, true, _) => (by_tile(x0, x1), by_tile(z0, z1)),
+            (true, false, true) => (by_len(x0, x1), whole(z0, z1)),
+            (true, false, false) => (whole(x0, x1), by_len(z0, z1)),
+        };
+        let mut ys = vec![y0];
+        if square && storeys {
+            ys.extend(
+                plan.floors
+                    .iter()
+                    .map(|f| f.elevation)
+                    .filter(|e| *e > y0 + 0.05 && *e < y1 - 0.05),
+            );
+        }
+        ys.push(y1);
+        let one = xs.len() * zs.len() * (ys.len() - 1) == 1;
+        for y in ys.windows(2) {
+            let floor = match p.part {
+                Part::Floor(_) => level(y[1]),
+                Part::Roof => level(y[0]),
+                _ => storey((y[0] + y[1]) * 0.5),
+            };
+            for &(xa, xb) in &xs {
+                for &(za, zb) in &zs {
+                    if xb - xa < 1e-3 || zb - za < 1e-3 || y[1] - y[0] < 1e-3 {
+                        continue;
+                    }
+                    let shape = if one {
+                        p.shape
+                    } else {
+                        Footprint::Box {
+                            at: DVec2::new((xa + xb) * 0.5, (za + zb) * 0.5),
+                            dir: DVec2::Y,
+                            half: DVec2::new((xb - xa) * 0.5, (zb - za) * 0.5),
+                            y0: y[0],
+                            y1: y[1],
+                        }
+                    };
+                    out.push((
+                        solid::Piece {
+                            part: p.part,
+                            shape,
+                        },
+                        Piece {
+                            kind,
+                            floor,
+                            min: DVec3::new(xa, y[0], za),
+                            max: DVec3::new(xb, y[1], zb),
+                            outward,
+                            strength,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Slab and roof tiles that nothing holds up by Engine's rule (the middle
+/// of a wide hall's ceiling, a floor over a room wider than itself) hang
+/// from the frame instead: they carry nothing and never fall on their
+/// own, and break as hard as before. A building of halls gets no columns
+/// that are not drawn.
+fn hang_unheld(out: &mut [Piece], storeys: usize) {
+    for s in 1..=storeys {
+        for k in unheld(out, s) {
+            out[k].kind = ElementKind::Partition;
+        }
+    }
 }
 
 fn tiles(out: &mut Vec<Piece>, r: Rect, y0: f64, y1: f64, kind: ElementKind, floor: u16, m: f32) {
@@ -395,9 +620,10 @@ fn element_box(p: &Piece) -> (DVec3, DVec3) {
     (p.center(), half)
 }
 
-/// Columns wherever a slab tile would have nothing holding it up, so an
-/// undamaged building stands by Engine's rules (big halls, wide lobbies).
-fn add_columns(out: &mut Vec<Piece>, plan: &BuildingPlan, m: f32) {
+/// The slab tiles of storey `s` (`out` indices) that nothing holds up by
+/// Engine's rule: a tile is held within 0.6 m of a wall, window or column
+/// of the storey below, or two tiles from a held tile.
+fn unheld(out: &[Piece], s: usize) -> Vec<usize> {
     let holds = |p: &Piece| {
         matches!(
             p.kind,
@@ -410,50 +636,54 @@ fn add_columns(out: &mut Vec<Piece>, plan: &BuildingPlan, m: f32) {
             (a.0.z - b.0.z).abs() - (a.1.z + b.1.z),
         )
     };
-    // Engine: held within 0.6 m of a holder, or two tiles from a held tile.
     let reach = 0.6;
+    let ids: Vec<usize> = (0..out.len())
+        .filter(|&i| slab_like(out[i].kind) && out[i].floor as usize == s)
+        .collect();
+    let tiles: Vec<(DVec3, DVec3)> = ids.iter().map(|&i| element_box(&out[i])).collect();
+    let holders: Vec<(DVec3, DVec3)> = out
+        .iter()
+        .filter(|p| holds(p) && p.floor as usize + 1 == s)
+        .map(element_box)
+        .collect();
+    let mut dist = vec![u8::MAX; tiles.len()];
+    let mut queue = std::collections::VecDeque::new();
+    for (k, t) in tiles.iter().enumerate() {
+        if holders
+            .iter()
+            .any(|h| gap2(h, t).max(DVec2::ZERO).length() < reach)
+        {
+            dist[k] = 0;
+            queue.push_back(k);
+        }
+    }
+    while let Some(k) = queue.pop_front() {
+        if dist[k] >= 2 {
+            continue;
+        }
+        for m in 0..tiles.len() {
+            if dist[m] == u8::MAX && gap2(&tiles[k], &tiles[m]).max_element() < 0.05 {
+                dist[m] = dist[k] + 1;
+                queue.push_back(m);
+            }
+        }
+    }
+    (0..tiles.len())
+        .filter(|&k| dist[k] == u8::MAX)
+        .map(|k| ids[k])
+        .collect()
+}
+
+/// Columns wherever a slab tile would have nothing holding it up, so an
+/// undamaged building stands by Engine's rules (big halls, wide lobbies).
+fn add_columns(out: &mut Vec<Piece>, plan: &BuildingPlan, m: f32) {
     for s in 1..=plan.floors.len() {
         let below = s - 1;
         let Some(storey) = plan.floors.get(below) else {
             continue;
         };
-        let tiles: Vec<(DVec3, DVec3)> = out
-            .iter()
-            .filter(|p| slab_like(p.kind) && p.floor as usize == s)
-            .map(element_box)
-            .collect();
-        loop {
-            let holders: Vec<(DVec3, DVec3)> = out
-                .iter()
-                .filter(|p| holds(p) && p.floor as usize == below)
-                .map(element_box)
-                .collect();
-            let mut dist = vec![u8::MAX; tiles.len()];
-            let mut queue = std::collections::VecDeque::new();
-            for (k, t) in tiles.iter().enumerate() {
-                if holders
-                    .iter()
-                    .any(|h| gap2(h, t).max(DVec2::ZERO).length() < reach)
-                {
-                    dist[k] = 0;
-                    queue.push_back(k);
-                }
-            }
-            while let Some(k) = queue.pop_front() {
-                if dist[k] >= 2 {
-                    continue;
-                }
-                for m in 0..tiles.len() {
-                    if dist[m] == u8::MAX && gap2(&tiles[k], &tiles[m]).max_element() < 0.05 {
-                        dist[m] = dist[k] + 1;
-                        queue.push_back(m);
-                    }
-                }
-            }
-            let Some(k) = dist.iter().position(|d| *d == u8::MAX) else {
-                break;
-            };
-            let c = tiles[k].0;
+        while let Some(&k) = unheld(out, s).first() {
+            let c = out[k].center();
             let y0 = storey.elevation;
             let y1 = storey.elevation + storey.height - SLAB;
             out.push(Piece {
@@ -569,7 +799,8 @@ pub fn breakable(
 /// [`breakable`] with textures: `textures` are meshes carrying the albedo
 /// and maps (registered on the plan in that order), and `dress` gives each
 /// element its meshes, each with the index of its texture (`None`: vertex
-/// colours only). An element with no meshes is a grey box.
+/// colours only). An element with no meshes is a grey box (in a building
+/// of halls it shows nothing).
 pub fn breakable_textured(
     plan: &BuildingPlan,
     pieces: &[Piece],
@@ -605,7 +836,9 @@ pub fn breakable_textured(
             e = e.with_outward(frame.dir_to_engine(p.outward));
         }
         let mut parts = dress(i, p, &e);
-        if parts.is_empty() {
+        // (A building of halls is drawn from its own parts or not at all:
+        // a piece nothing is drawn of shows nothing.)
+        if parts.is_empty() && plan.layout.is_none() {
             parts.push((Mesh::box_at(e.center, e.half * 2.0, grey)?, None));
         }
         elements.push((e, parts));
@@ -857,6 +1090,33 @@ impl Damage {
                     DVec3::new(m.center.x as f64, y + h * 0.5, m.center.z as f64),
                     DVec3::new(r, h * 0.5, r),
                 ));
+            }
+        }
+        // The furniture of a building of halls stays where it stands (it
+        // is drawn on its own), below where a collapse starts.
+        if let Some((halls, base)) = solids.building(i).filter(|(p, _)| p.layout.is_some()) {
+            let fell_from = d
+                .state
+                .collapse()
+                .map_or(f64::INFINITY, |c| c.base_y as f64);
+            let site = &halls.site;
+            let turn = |v: DVec2| site.along * v.x + site.inward * v.y;
+            for shape in halls.furniture().iter().filter_map(|i| i.footprint()) {
+                if shape.span().0 >= fell_from - 1e-3 {
+                    continue;
+                }
+                out.extend(
+                    crate::collision::solids_of(&shape)
+                        .into_iter()
+                        .map(|s| Solid {
+                            origin: site.origin + turn(s.origin),
+                            along: turn(s.along),
+                            inward: turn(s.inward),
+                            y0: base + s.y0,
+                            y1: base + s.y1,
+                            ..s
+                        }),
+                );
             }
         }
         let lift = d.state.collapse().is_none();

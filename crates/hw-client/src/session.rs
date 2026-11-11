@@ -552,6 +552,18 @@ impl Session {
         }
     }
 
+    /// A blast at the buildings round `at` (for screenshots, `HW_SMASH`):
+    /// how many elements broke and fell.
+    pub fn smash(&mut self, at: DVec3, radius: f32, power: f32) -> usize {
+        let Session::Local { host, .. } = self else {
+            return 0;
+        };
+        host.call(move |host, _| {
+            let hit = host.sim.hit_buildings(at, radius, power, None);
+            hit.broken + hit.fell
+        })
+    }
+
     /// Wrecks the street cars within `r` of `near` (for screenshots).
     pub fn wreck_cars(&mut self, near: DVec3, r: f64) -> usize {
         let Session::Local { host, .. } = self else {

@@ -277,17 +277,31 @@ fn build(b: &mut MeshBuilder, l: &Landmark, near: bool, keep: &dyn Fn(&Part) -> 
 /// faces, the windows and the roof; this draws those walls' plaster, the
 /// floors, walls, stairs, rails, columns, shafts and lamps.
 pub fn halls(b: &mut MeshBuilder, plan: &hw_gen::building::BuildingPlan) {
-    halls_parts(b, plan, &|_| true);
+    halls_parts(b, plan, false, &|_| true);
+}
+
+/// [`halls`] with every part cut into the pieces the building breaks in
+/// (`hw_sim::destruction::halls_cut`): no face is bigger than the piece
+/// that takes it down with it. It looks the same while nothing is broken.
+pub fn halls_in_pieces(b: &mut MeshBuilder, plan: &hw_gen::building::BuildingPlan) {
+    halls_parts(b, plan, true, &|_| true);
 }
 
 fn halls_parts(
     b: &mut MeshBuilder,
     plan: &hw_gen::building::BuildingPlan,
+    cut: bool,
     keep: &dyn Fn(&Part) -> bool,
 ) {
-    let (Some(l), Some(parts)) = (plan.layout.as_ref(), plan.shell_parts(RIM)) else {
+    let (Some(l), Some(mut parts)) = (plan.layout.as_ref(), plan.shell_parts(RIM)) else {
         return;
     };
+    if cut {
+        parts = hw_sim::destruction::halls_cut(plan, &parts)
+            .into_iter()
+            .map(|c| c.0)
+            .collect();
+    }
     let parts: Vec<Piece> = parts
         .into_iter()
         .map(|p| Piece {
@@ -1282,6 +1296,10 @@ mod tests {
         use hw_gen::building::{BuildingPlan, BuildingSite, BuildingUse};
         use hw_gen::city::DistrictKind;
         let mut bad = Vec::new();
+        // (As it stands whole. Cut into the pieces it breaks in, the seams
+        // between two floor tiles are faces inside the floor: they show
+        // only where a tile is broken out, as the hole's edge.)
+        let cut = false;
         for k in 0..8u64 {
             let site = BuildingSite {
                 id: hw_core::StableId(k),
@@ -1330,7 +1348,7 @@ mod tests {
             for kind in &kinds {
                 let mut b = MeshBuilder::new();
                 b.frame = Some(crate::citymesh::halls_frame(&site));
-                halls_parts(&mut b, &plan, &|p| name(p) == *kind);
+                halls_parts(&mut b, &plan, cut, &|p| name(p) == *kind);
                 check = check.with(kind.clone(), &b.finish());
             }
             let report = check.run();

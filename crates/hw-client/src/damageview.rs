@@ -35,9 +35,29 @@ pub struct DamageView {
     broken: BTreeMap<u64, BTreeSet<u32>>,
     /// Buildings drawn breakable, by Engine entity.
     shown: BTreeMap<u64, (EntityId, Arc<Breakable>)>,
+    /// Breakable looks being made on worker threads, by building.
+    making: BTreeMap<u64, Making>,
     /// A joined client's copy of the damage, for collision (None in single
     /// player, where the server's is shared).
     mirror: Option<Damage>,
+}
+
+/// A building's breakable look on its way from a worker thread.
+struct Making {
+    look: std::sync::mpsc::Receiver<Result<Arc<Breakable>, String>>,
+    frame: Frame,
+    /// Play the breaking when it lands (a blow struck meanwhile was live).
+    animate: bool,
+}
+
+/// A building's breakable look: Engine's plan with every element's faces.
+fn look(plan: &BuildingPlan, frame: &Frame) -> EngineResult<Breakable> {
+    let pieces = destruction::pieces(plan);
+    let (textures, mut looks) = element_meshes(plan, &pieces, frame)?;
+    let textures: Vec<&Mesh> = textures.iter().collect();
+    destruction::breakable_textured(plan, &pieces, frame, &textures, |i, _, _| {
+        looks.get_mut(i).map(std::mem::take).unwrap_or_default()
+    })
 }
 
 impl DamageView {
@@ -46,6 +66,7 @@ impl DamageView {
         Self {
             broken: BTreeMap::new(),
             shown: BTreeMap::new(),
+            making: BTreeMap::new(),
             mirror: joined.then(Damage::default),
         }
     }
@@ -63,6 +84,7 @@ impl DamageView {
         solids: &Obstacles,
         news: Vec<ToClient>,
     ) {
+        self.land(world, town);
         for msg in news {
             match msg {
                 ToClient::Damage {
@@ -78,7 +100,7 @@ impl DamageView {
                         m.apply(solids, i, &broken, 0);
                     }
                     self.broken.entry(i).or_default().extend(broken);
-                    if let Err(e) = self.show(world, town, solids, i, live) {
+                    if let Err(e) = self.show(world, solids, i, live) {
                         println!("Could not show the damage of building {i}: {e}");
                     }
                 }
@@ -89,6 +111,7 @@ impl DamageView {
                         m.take_news();
                     }
                     self.broken.remove(&i);
+                    self.making.remove(&i);
                     if let Some((e, _)) = self.shown.remove(&i) {
                         world.despawn(e);
                     }
@@ -114,38 +137,47 @@ impl DamageView {
     }
 
     /// Draws building `i` breakable with its broken bits; `animate`: play
-    /// the breaking.
+    /// the breaking. A building's first blow sends its breakable look to
+    /// be made on a worker thread (cutting a big building's faces up by
+    /// element takes a few tenths of a second); until it lands the town's
+    /// own mesh stays, and [`Self::land`] then shows every bit broken
+    /// since. The bits are the server's, so what is shown in the end does
+    /// not depend on when the look arrives.
     fn show(
         &mut self,
         world: &mut World,
-        town: &mut TownView,
         solids: &Obstacles,
         i: u64,
         animate: bool,
     ) -> EngineResult<()> {
-        if let std::collections::btree_map::Entry::Vacant(slot) = self.shown.entry(i) {
+        let Some((id, bp)) = self.shown.get(&i) else {
+            if let Some(m) = self.making.get_mut(&i) {
+                m.animate |= animate;
+                return Ok(());
+            }
             let Some((plan, base)) = solids.building(i) else {
                 return Ok(());
             };
             let frame = Frame::of(&plan.site, base);
-            let pieces = destruction::pieces(&plan);
-            let (textures, mut looks) = element_meshes(&plan, &pieces, &frame)?;
-            let textures: Vec<&Mesh> = textures.iter().collect();
-            let bp = Arc::new(destruction::breakable_textured(
-                &plan,
-                &pieces,
-                &frame,
-                &textures,
-                |i, _, _| looks.get_mut(i).map(std::mem::take).unwrap_or_default(),
-            )?);
-            let place = Place::new(frame.origin.x as f32, base as f32, frame.origin.y as f32)
-                .with_yaw_deg(frame.yaw().to_degrees() as f32);
-            let id = world.spawn_building(bp.clone(), place)?;
-            world.set_name(id, format!("broken building {i}"));
-            slot.insert((id, bp));
-            town.set_hidden(world, i, true);
-        }
-        let Some((id, bp)) = self.shown.get(&i) else {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let job = std::thread::Builder::new()
+                .name("broken building".into())
+                .spawn(move || {
+                    let made = look(&plan, &frame).map(Arc::new);
+                    let _ = tx.send(made.map_err(|e| e.to_string()));
+                });
+            if let Err(e) = job {
+                println!("Could not start making the damage of building {i}: {e}");
+                return Ok(());
+            }
+            self.making.insert(
+                i,
+                Making {
+                    look: rx,
+                    frame,
+                    animate,
+                },
+            );
             return Ok(());
         };
         let mut bits = ElementBits::new(bp.len());
@@ -158,11 +190,56 @@ impl DamageView {
         Ok(())
     }
 
+    /// Takes the breakable looks the workers have finished: each takes
+    /// its building's place in the town, with all that broke meanwhile.
+    fn land(&mut self, world: &mut World, town: &mut TownView) {
+        use std::sync::mpsc::TryRecvError;
+        let mut landed = Vec::new();
+        self.making.retain(|&i, m| match m.look.try_recv() {
+            Ok(made) => {
+                landed.push((i, made, m.frame, m.animate));
+                false
+            }
+            Err(TryRecvError::Empty) => true,
+            Err(TryRecvError::Disconnected) => {
+                println!("Making the damage of building {i} stopped");
+                false
+            }
+        });
+        for (i, made, frame, animate) in landed {
+            let put = made.map_err(EngineError::InvalidValue).and_then(|bp| {
+                let place = Place::new(
+                    frame.origin.x as f32,
+                    frame.base as f32,
+                    frame.origin.y as f32,
+                )
+                .with_yaw_deg(frame.yaw().to_degrees() as f32);
+                let id = world.spawn_building(bp.clone(), place)?;
+                world.set_name(id, format!("broken building {i}"));
+                self.shown.insert(i, (id, bp));
+                town.set_hidden(world, i, true);
+                // (No obstacles needed: the building is shown now.)
+                let (id, bp) = &self.shown[&i];
+                let mut bits = ElementBits::new(bp.len());
+                for &k in self.broken.get(&i).into_iter().flatten() {
+                    if (k as usize) < bits.len() {
+                        bits.set(k as usize, true);
+                    }
+                }
+                world.apply_building_state(*id, &bits, animate)
+            });
+            if let Err(e) = put {
+                println!("Could not show the damage of building {i}: {e}");
+            }
+        }
+    }
+
     /// Forgets everything (before switching towns).
     pub fn clear(&mut self, world: &mut World) {
         for (_, (e, _)) in std::mem::take(&mut self.shown) {
             world.despawn(e);
         }
+        self.making.clear();
         self.broken.clear();
         if let Some(m) = self.mirror.as_mut() {
             *m = Damage::default();
@@ -195,6 +272,10 @@ fn element_meshes(
 ) -> EngineResult<(Vec<Mesh>, Vec<Parts>)> {
     let mut out: Vec<Parts> = vec![Vec::new(); pieces.len()];
     let textures = facade(plan, pieces, frame, &mut out)?;
+    if plan.layout.is_some() {
+        // A building of halls: all of its inside was drawn piece by piece.
+        return Ok((textures, out));
+    }
     for (i, p) in pieces.iter().enumerate() {
         let c = frame.to_engine((p.min + p.max) * 0.5);
         let h = ((p.max - p.min) * 0.5).as_vec3();
@@ -245,29 +326,51 @@ fn facade(
 ) -> EngineResult<Vec<Mesh>> {
     let mut b = MeshBuilder::new();
     exterior(&mut b, plan, plan.floors.len(), true, Detail::Near);
-    // Outer elements, in a grid for quick lookups.
+    // Outer elements, in a grid for quick lookups. (A building of halls'
+    // roof tiles in the middle of a wide ceiling are not of the roof kind:
+    // see `destruction::pieces`. They lie at its top all the same.)
+    let top = plan.height();
+    let halls = plan.layout.is_some();
     let outer: Vec<usize> = (0..pieces.len())
-        .filter(|&i| pieces[i].outward != DVec2::ZERO || pieces[i].kind == ElementKind::Roof)
+        .filter(|&i| {
+            let p = &pieces[i];
+            p.outward != DVec2::ZERO
+                || p.kind == ElementKind::Roof
+                || (halls && p.min.y > top - 1e-3)
+        })
         .collect();
     if outer.is_empty() {
         return Ok(Vec::new());
     }
-    let mut textures = Vec::new();
-    for part in b.finish_parts() {
-        let tex = match part.albedo() {
-            Some(a) => {
-                // Only the texture travels: the plan keeps one copy of it.
-                let mut t = Mesh::new();
-                t.set_albedo_rgba(a.width, a.height, a.rgba.to_vec())?;
-                if let Some(maps) = part.material_maps() {
-                    t.set_material_maps(maps.clone())?;
+    // The outside goes to the outer elements; the inside of a building of
+    // halls (drawn cut into the pieces it breaks in) to whichever piece
+    // each face lies on.
+    let mut layers = vec![(b, outer)];
+    if halls {
+        let mut b = MeshBuilder::new();
+        b.frame = Some(crate::citymesh::halls_frame(&plan.site));
+        crate::cometmesh::halls_in_pieces(&mut b, plan);
+        b.frame = None;
+        layers.push((b, (0..pieces.len()).collect()));
+    }
+    let mut textures: Vec<Mesh> = Vec::new();
+    for (b, among) in layers {
+        for part in b.finish_parts() {
+            let tex = match part.albedo() {
+                Some(a) => {
+                    // Only the texture travels: the plan keeps one copy of it.
+                    let mut t = Mesh::new();
+                    t.set_albedo_rgba(a.width, a.height, a.rgba.to_vec())?;
+                    if let Some(maps) = part.material_maps() {
+                        t.set_material_maps(maps.clone())?;
+                    }
+                    textures.push(t);
+                    Some(textures.len() - 1)
                 }
-                textures.push(t);
-                Some(textures.len() - 1)
-            }
-            None => None,
-        };
-        cut(&part.build(), tex, pieces, frame, &outer, plan, out)?;
+                None => None,
+            };
+            cut(&part.build(), tex, pieces, frame, &among, plan, out)?;
+        }
     }
     Ok(textures)
 }
@@ -516,4 +619,54 @@ fn impact(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hw_gen::building::{BuildingSite, BuildingUse};
+    use hw_gen::city::DistrictKind;
+
+    /// A broken building of halls is drawn from its own parts: every piece
+    /// it breaks in has its faces (none is a stand-in box).
+    #[test]
+    fn every_piece_of_a_building_of_halls_has_its_look() {
+        for k in 0..4u64 {
+            let site = BuildingSite {
+                id: hw_core::StableId(k),
+                seed: hw_core::Seed(900 + k),
+                usage: BuildingUse::Offices,
+                origin: DVec2::new(40.0, -20.0),
+                along: DVec2::X,
+                inward: if k.is_multiple_of(2) {
+                    DVec2::Y
+                } else {
+                    -DVec2::Y
+                },
+                size: DVec2::new(34.0 + 2.5 * k as f64, 40.0 + 1.5 * k as f64),
+                floors: 3,
+                street: 0,
+                district: DistrictKind::Commercial,
+                halls: None,
+                vernacular: None,
+            }
+            .into_halls(2 + 2 * k as u32);
+            let plan = BuildingPlan::generate(&site);
+            let frame = Frame::of(&plan.site, crate::citymesh::BLOCK_TOP);
+            let pieces = destruction::pieces(&plan);
+            let cut = destruction::halls_cut(&plan, &plan.solids().expect("halls"));
+            let (_, looks) = element_meshes(&plan, &pieces, &frame).expect("meshes");
+            let mut bare = BTreeMap::new();
+            for (i, l) in looks.iter().enumerate() {
+                if l.is_empty() {
+                    *bare.entry(format!("{:?}", cut[i].0.part)).or_insert(0) += 1;
+                }
+            }
+            // (Of two lift shafts side by side, the wall between them is
+            // drawn once.)
+            bare.remove("Shaft");
+            bare.remove("Glass");
+            assert!(bare.is_empty(), "{k}: pieces with no faces: {bare:?}");
+        }
+    }
 }

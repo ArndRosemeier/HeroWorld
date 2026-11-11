@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.217 (2026-11-12)
+
+- The town's new office buildings now break the way they are built: punch a hole in the wall, the floor or the stairs you see, not in an invisible old floor plan. What is left standing is what you can walk on.
+- The first blow at any building no longer makes the game stutter while its broken look is prepared.
+
 ## 0.216 (2026-11-11)
 
 - Every town now buries its dead: a hamlet has its little old burial ground, a city several graveyards, a megalopolis a dozen. The old town keeps a crowded churchyard of leaning slabs and ringed crosses; the 19th-century quarters have walled cemeteries; the newest quarters have golden-age gardens of rest.
