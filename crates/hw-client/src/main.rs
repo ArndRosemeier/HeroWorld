@@ -345,7 +345,23 @@ fn main() -> EngineResult<()> {
     let mut traffic = hw_sim::traffic::Traffic::new(generated.area.clone());
     // The airships a joined player's hero bumps into (the host sets its own).
     let airships = hw_sim::airships::Airships::new(&generated.world);
-    let mut citizens = hw_sim::citizens::Citizens::new(generated.area.clone(), traffic.signals());
+    let mut citizens = std::sync::Arc::new(hw_sim::citizens::Citizens::new(
+        generated.area.clone(),
+        traffic.signals(),
+    ));
+    // Street performers, odd folk and night life round the camera.
+    let mut street = hw_client::streetview::StreetView::new(generated.area.clone());
+    // `HW_VIEW=act`: where the act it looks at plays.
+    let mut act_spot: Option<(Vec3, DVec2)> = None;
+    let mut act_try = 0u64;
+    // `HW_VIEW=act` jumps the street acts' clock on (`HW_ACT_SKIP` seconds,
+    // 150 by default: the middle of a two-hour slot) so acts are set up
+    // in the first frames; play leaves it at 0.
+    let act_skip = if view == "act" {
+        env_num("HW_ACT_SKIP").unwrap_or(150) as f64
+    } else {
+        0.0
+    };
     citizens.set_hour(game_hour() as f64);
     // Taxi stands of the town, the "Where to?" list (G), and where we asked to go.
     let mut stands = hw_sim::taxi::stands(&generated.area);
@@ -396,6 +412,18 @@ fn main() -> EngineResult<()> {
             }
             // The ambulance medic at rescues.
             p.request(Who::Medic, 0);
+            // `HW_VIEW=act`: the street acts' people at once (in play they
+            // are asked for when an act first comes near).
+            if view == "act" {
+                for act in hw_sim::streetlife::Act::ALL {
+                    for k in 0..act.performers() {
+                        p.request(Who::Street(act, k), 0);
+                    }
+                }
+                for k in 0..hw_sim::streetlife::GUEST_LOOKS {
+                    p.request(Who::Guest(k), 0);
+                }
+            }
             Some(p)
         }
         None => {
@@ -551,7 +579,7 @@ fn main() -> EngineResult<()> {
     let mut bench_occlusion = (0u64, 0u64, 0u64);
     let mut hero_cam_yaw = 30.0f32;
     let mut fly = match view.as_str() {
-        "street" | "citizen" | "alpha" | "riders" => {
+        "street" | "citizen" | "alpha" | "riders" | "act" => {
             let p = spawn - spawn_dir * 8.0;
             let yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, ground(p) as f32 + 6.0, p.y as f32), yaw, 8.0)
@@ -1776,8 +1804,12 @@ fn main() -> EngineResult<()> {
                     minimap = hw_client::minimap::Minimap::new(generated.world.clone());
                     sounds.stop(world);
                     traffic = hw_sim::traffic::Traffic::new(generated.area.clone());
-                    citizens =
-                        hw_sim::citizens::Citizens::new(generated.area.clone(), traffic.signals());
+                    citizens = std::sync::Arc::new(hw_sim::citizens::Citizens::new(
+                        generated.area.clone(),
+                        traffic.signals(),
+                    ));
+                    street.clear(world);
+                    street = hw_client::streetview::StreetView::new(generated.area.clone());
                     citizens.set_hour(game_hour() as f64);
                     stands = hw_sim::taxi::stands(&generated.area);
                     area_job = None;
@@ -2787,8 +2819,10 @@ fn main() -> EngineResult<()> {
                         area_job = None;
                         generated.area = area;
                         traffic = next;
-                        citizens = people;
+                        citizens = std::sync::Arc::new(people);
                         citizens.set_hour(game_hour() as f64);
+                        street.clear(world);
+                        street = hw_client::streetview::StreetView::new(generated.area.clone());
                         stands = next_stands;
                         traffic_view.clear(world);
                         riders.clear(world, &crowd);
@@ -3713,6 +3747,54 @@ fn main() -> EngineResult<()> {
                 };
                 crowd_done.map(|()| plan)
             })?;
+            // Street performers, odd folk and the night club round the camera.
+            // (`HW_STREETLIFE=0` turns it off, to measure without it.)
+            if std::env::var("HW_STREETLIFE").map_or(true, |v| v != "0") {
+                let hero_at = session.my_position(&heroes).map(|p| p.as_vec3());
+                street.update(
+                    world,
+                    &citizens,
+                    &alarms,
+                    &models,
+                    actors.as_ref(),
+                    eye2,
+                    eye,
+                    hero_at,
+                    game_time + act_skip,
+                    dt,
+                )?;
+            }
+            // `HW_VIEW=act HW_ACT=<juggler|theremin|statue|prophet|spotter|
+            // newsboy|stargazer|dancers|club>`: the nearest such street act,
+            // from in front and a little to the side (`HW_ACT_FAR=1`: wider).
+            if view == "act" {
+                act_try += 1;
+                if act_spot.is_none() && act_try % 60 == 1 {
+                    let want = std::env::var("HW_ACT").unwrap_or_else(|_| "juggler".into());
+                    let act = hw_sim::streetlife::Act::ALL
+                        .into_iter()
+                        .find(|a| format!("{a:?}").eq_ignore_ascii_case(&want));
+                    act_spot = act.and_then(|a| {
+                        street.find(&citizens, a, spawn, 600.0, game_time + act_skip)
+                    });
+                    println!("act view: {want} at {act_spot:?} (game time {game_time:.0} s)");
+                }
+                if let Some((at, face)) = act_spot {
+                    let far = if std::env::var_os("HW_ACT_FAR").is_some() {
+                        2.0
+                    } else {
+                        1.0
+                    };
+                    let f = Vec3::new(face.x as f32, 0.0, face.y as f32);
+                    let side = Vec3::new(f.z, 0.0, -f.x);
+                    let p = at + f * 4.2 * far + side * 1.6 * far + Vec3::Y * (1.7 + 0.6 * far);
+                    let d = at + Vec3::Y * 1.2 - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
             // `HW_VIEW=citizen`: a close-up of the nearest passer-by.
             if view == "citizen" {
                 if let Some(at) = crowd.nearest(world, eye) {
@@ -4042,6 +4124,11 @@ fn main() -> EngineResult<()> {
                     for s in fight.said.drain(..) {
                         chat.hear(&s, hero_at);
                     }
+                    // What the street acts and their watchers say.
+                    for s in street.said.drain(..) {
+                        fight.say_at(s.at, &s.text, s.voice);
+                        chat.hear(&s, hero_at);
+                    }
                     // Thanks from the people at rescues.
                     for s in radio.said.drain(..) {
                         fight.say_at(s.at, &s.text, s.voice);
@@ -4163,7 +4250,7 @@ fn main() -> EngineResult<()> {
                                 c.pos.y as f32,
                             )
                         }),
-                    boss_music: robots.music_on() || music_fade_at.is_some(),
+                    boss_music: robots.music_on() || music_fade_at.is_some() || street.music_near(),
                     tesla: extras
                         .dystopia
                         .as_mut()

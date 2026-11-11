@@ -1823,7 +1823,7 @@ pub fn music_dir() -> Option<PathBuf> {
 
 /// Keeps a looped sound playing at `want` (where, volume, pitch), or
 /// fades it out when there is none.
-fn keep_loop(
+pub fn keep_loop(
     world: &mut World,
     bank: &mut Bank,
     slot: &mut Option<SoundId>,

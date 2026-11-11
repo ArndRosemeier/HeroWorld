@@ -1100,6 +1100,44 @@ collapse or explosion people run, those further off stop and stare, and they tur
 when a gang shouts someone off its turf. Knocked down, they tumble as ragdolls and get up.
 Heroes cannot target townsfolk.
 
+### Street acts and night life (`hw-sim/src/streetlife.rs`, `hw-client/src/streetview.rs`)
+
+Odd folk and street performers turn up at pitches round town: open ground just off a pavement
+(never in a walker's way, at least 1.1 m clear of the walking line and of every prop, and
+2.2 m clear of doors), and the plazas round fountains, statues, the Aether Spire and Hero Hall.
+Pitches are planned per 96 m patch as the camera comes near; at most 160 patches and 96 acts
+are kept, the oldest dropped. Like the townsfolk they are a pure function of seed and time.
+
+Each pitch gets one act per two game hours (300 s of play), or none: a pitch in a busy
+shopping street or the old town is used far more often than one in a quiet back street; the
+villain quarter has none. An act comes, walks in along the pavement with its things, sets up
+(5 s), plays, packs up (5 s) and walks away; nobody stands about with nothing to do.
+
+| Act | Hours | What happens |
+| --- | --- | --- |
+| Soapbox prophet | 9-20 | on a soapbox in a sandwich board (a flying saucer on it): the saucers are coming |
+| Theremin player | 10-23 | in a dinner jacket, playing an eerie tune (heard up to 45 m) |
+| Living statue | 10-18:30 | a chrome spaceman on a silver crate, still as stone; come within 2.6 m and it jumps (BOO!) |
+| Atom juggler | 11-19 | juggles three glowing atoms |
+| Saucer spotter | 8-23:30 | foil cap, binoculars on the sky; whoever stops looks up too |
+| Newsboy | 6:30-11, 16-19:30 | cries the headlines by a bundle of papers; people buy one |
+| Stargazer | 20-02:30 | a brass telescope; people queue to peer at the stars |
+| Swing dancers | 17-00:30 | a couple dancing to a portable radio |
+| The Orbit Room | 20:30-03 | a night club in a big shop building of the business or civic district: neon atom sign, a doorman, a queue of guests in evening clothes that moves up and goes in, the band muffled through the door |
+
+Up to 2-6 passers-by stop to watch (one or two at a time for the spotter and the newsboy).
+They watch, clap now and then, and those of a busker drop a coin in the case before they go.
+Within 14 m a hero hears the act's patter; within 6 m the act speaks to the hero; now and then
+a watcher cheers. Lines show over heads and in the Local chat. Trouble close by (a fight,
+mugging, robbery, rampage, collapse or explosion within its alarm's reach plus 10 m) breaks the
+act up: they shout, run off along the pavement, and their things are left standing.
+
+The acts within 110 m of the camera are found on a worker thread twice a second; the nearest
+8 are shown, their people within 70 m. Performers and guests are Actors characters with their
+own clips (preach, theremin, statue, startle, juggle, binoculars, holler, peer, point up, carry
+case; watchers clap and look up). Near the theremin, the radio or the club the scenery's music
+keeps quiet.
+
 ### Traffic (`hw-sim/src/traffic.rs`)
 
 - **Cars** (finned two-tone cruisers, bubble cars, ground-hugging hover cars) drive lane
@@ -1316,7 +1354,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default: the profile's city, 40 000 at first; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `menace`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `homes`, `tubemarket`, `workshop`, `shrine`, `burrow`, `exit` (a tube exit from inside), `exitstreet` (its pavilion), `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `menace`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `homes`, `tubemarket`, `workshop`, `shrine`, `burrow`, `exit` (a tube exit from inside), `exitstreet` (its pavilion), `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `act` (a street act: `HW_ACT=prophet|theremin|statue|juggler|spotter|newsboy|stargazer|dancers|club`, `HW_ACT_FAR=1` wider), `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |

@@ -85,6 +85,15 @@ seam.
 | `hypno.ogg` | shot | The sound of a hypnotic theremin wobble, woozy swirling oscillating tone, 1950s science fiction mind control ray |
 | `robot.ogg` | shot | The sound of a small friendly toy robot powering up, servo whirr, a few cheerful electronic beeps and boops |
 
+Street acts (0.171), Lyria `google/lyria-3-clip-preview`, trimmed to 28 s, mono 32 kHz, loudness -18 LUFS,
+faded at the ends so they loop. Raw takes: project files `heroworld/sounds/street/`.
+
+| File | Use | Prompt |
+| --- | --- | --- |
+| `street_theremin.ogg` | loop | 30-second solo theremin street performance, a lone theremin playing a dreamy wavering 1950s science-fiction melody with wide vibrato and swooping glides, no accompaniment, instrumental, no vocals, steady to the end |
+| `street_radio_swing.ogg` | loop | 30-second upbeat 1940s big band swing dance tune as heard from a small portable transistor radio: tinny, mid-range, a little crackle, brass section and swinging drums, lively lindy hop tempo, instrumental, no vocals, steady to the end |
+| `street_club_muffled.ogg` | loop | 30-second hot 1950s jazz club band heard through a closed door from the street outside: muffled, bass-heavy, piano, upright bass, drums and saxophone, crowd murmur, instrumental, no vocals, steady to the end |
+
 ## From Scale
 
 Taken from Scale's library (`public/sounds`, see Scale's `docs/SOUNDS.md`): made locally with

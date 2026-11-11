@@ -35,6 +35,7 @@ pub mod roosts;
 pub mod save;
 pub mod sidekick;
 pub mod story;
+pub mod streetlife;
 pub mod streets;
 pub mod taxi;
 pub mod traffic;

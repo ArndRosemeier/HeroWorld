@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.171 (2026-11-11)
+
+- The streets come alive: street performers and odd folk turn up round town and draw a crowd. A soapbox prophet warns of the saucers, a theremin player plays eerie tunes, a chrome living statue stands perfectly still (get too close!), a juggler throws glowing atoms, a saucer spotter in a foil cap scans the sky, and the newsboy cries the headlines.
+- After dark a stargazer sets up a brass telescope, a couple swing-dance to a portable radio, and the Orbit Room night club opens: neon sign, a doorman, a queue in evening clothes and jazz through the door.
+- Passers-by stop, watch, clap and drop a coin. Walk up and the acts talk to you; trouble nearby sends everyone running.
+
 ## 0.170 (2026-11-11)
 
 - Smoother city: the game no longer redoes the whole scene's bookkeeping every frame when something moves or a street block streams in. On a fast PC the busy street route went from about 40 to about 68 frames per second, and the worst stutters are much shorter.

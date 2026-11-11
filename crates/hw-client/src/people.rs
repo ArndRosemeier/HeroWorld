@@ -76,8 +76,22 @@ pub const VILLAIN_CLIPS: &[&str] = &[
     "hit to chest",
 ];
 /// Citizens walk and stand; a few walk the formal walk. "hands up" (a
-/// mugging's victim) is made here.
-pub const CITIZEN_CLIPS: &[&str] = &["idle", "walk", "walk formal"];
+/// mugging's victim) is made here, and "clap" for watching street acts;
+/// "interact" drops a coin in a busker's hat or buys a paper.
+pub const CITIZEN_CLIPS: &[&str] = &["idle", "walk", "walk formal", "interact"];
+/// The street life's performers and club guests: their acts' clips are
+/// made here (see [`poses::add_street_clips`]) over these.
+pub const STREET_CLIPS: &[&str] = &[
+    "idle",
+    "walk",
+    "talk",
+    "interact",
+    "pick up",
+    "arms folded",
+    "dance",
+    "nod",
+    "jog",
+];
 
 /// How fast each locomotion clip travels, in m/s (measured from the clips
 /// with their travel left in: see the `clip_speeds` test).
@@ -109,6 +123,12 @@ pub enum Who {
     Statue(u64),
     /// The ambulance medic at rescues: all in white.
     Medic,
+    /// One of the street life's performers (see `hw_sim::streetlife`):
+    /// the act and which of its performers (the dancers are two).
+    Street(hw_sim::streetlife::Act, u8),
+    /// A night club guest dressed for the evening, one of
+    /// [`hw_sim::streetlife::GUEST_LOOKS`].
+    Guest(u8),
 }
 
 /// Looks per kind of villain.
@@ -971,6 +991,214 @@ pub fn medic(builder: &CharacterBuilder) -> actors_generator::CharacterConfig {
     c
 }
 
+/// A street performer's looks (see `hw_sim::streetlife::Act`): dressed
+/// for the act from the era's wardrobe, the same in every town.
+pub fn street(
+    builder: &CharacterBuilder,
+    act: hw_sim::streetlife::Act,
+    k: u8,
+    seed: u32,
+) -> actors_generator::CharacterConfig {
+    use hw_sim::streetlife::Act;
+    let mut c = golden_age(builder.catalog(), seed, false);
+    let mut rng = hw_core::Seed(seed as u64).child("street").rng();
+    let catalog = builder.catalog();
+    let has = |id: &str| catalog.garments.iter().any(|g| g.id == id);
+    let dress =
+        |c: &mut actors_generator::CharacterConfig, list: &[&str], colours: &[(&str, &str)]| {
+            let o: Vec<String> = list
+                .iter()
+                .filter(|g| has(g))
+                .map(|g| g.to_string())
+                .collect();
+            // Only a whole outfit: else the era's own clothes stay.
+            if o.len() + 1 >= list.len() {
+                c.outfit = o;
+            }
+            for (g, hex) in colours {
+                c.garment_colors.insert(g.to_string(), hex.to_string());
+            }
+        };
+    let b = &mut c.body;
+    match act {
+        Act::Prophet => {
+            // A wild-bearded old man in a fisherman's sweater.
+            b.gender = 1.0;
+            b.age_years = rng.range(58.0, 70.0);
+            b.weight = 0.3;
+            b.muscle = 0.35;
+            c.beard = "full".into();
+            c.hair_color = Some("#d8d6cf".into());
+            dress(
+                &mut c,
+                &[
+                    "fisherman-sweater",
+                    "wool-pants",
+                    "work-boots",
+                    "round-glasses",
+                ],
+                &[("fisherman-sweater", "#6e6650"), ("wool-pants", "#3c3a34")],
+            );
+        }
+        Act::Theremin => {
+            // A dinner jacket, slicked hair: a concert artist of the ether.
+            b.gender = 1.0;
+            b.age_years = rng.range(34.0, 48.0);
+            b.weight = 0.4;
+            c.beard = "none".into();
+            c.hair_color = Some("#1c1712".into());
+            dress(&mut c, &["suit-dinner", "leather-shoes"], &[]);
+        }
+        Act::Statue => {
+            // A spaceman: flight suit, aviator's cap, gloves, boots (all
+            // painted chrome when built).
+            b.gender = if k == 0 { 1.0 } else { 0.0 };
+            b.age_years = rng.range(24.0, 34.0);
+            b.muscle = 0.6;
+            b.weight = 0.4;
+            c.beard = "none".into();
+            dress(
+                &mut c,
+                &["worksuit", "leather-helmet", "gloves-short", "work-boots"],
+                &[],
+            );
+        }
+        Act::Juggler => {
+            b.gender = 0.0;
+            b.age_years = rng.range(22.0, 30.0);
+            b.weight = 0.3;
+            b.muscle = 0.55;
+            dress(
+                &mut c,
+                &["polo", "cargo-pants", "ballet-flats", "newsboy-cap"],
+                &[
+                    ("polo", "#e8c04a"),
+                    ("cargo-pants", "#2c4a8a"),
+                    ("newsboy-cap", "#c43a30"),
+                    ("ballet-flats", "#c43a30"),
+                ],
+            );
+        }
+        Act::Spotter => {
+            // A jumpy fellow in a denim jacket and glasses (the foil cap and
+            // the binoculars are props).
+            b.gender = 1.0;
+            b.age_years = rng.range(36.0, 52.0);
+            b.weight = 0.25;
+            b.muscle = 0.3;
+            c.beard = "none".into();
+            c.stubble = 0.7;
+            dress(
+                &mut c,
+                &["jacket-jeans", "work-boots", "round-glasses"],
+                &[],
+            );
+        }
+        Act::Newsboy => {
+            b.gender = 1.0;
+            b.age_years = 19.0;
+            b.weight = 0.25;
+            b.muscle = 0.45;
+            c.beard = "none".into();
+            dress(
+                &mut c,
+                &["longsleeve", "wool-pants", "work-boots", "newsboy-cap"],
+                &[
+                    ("longsleeve", "#e9e2cf"),
+                    ("wool-pants", "#5a4630"),
+                    ("newsboy-cap", "#6a5a44"),
+                ],
+            );
+        }
+        Act::Stargazer => {
+            // A grey-haired lady astronomer in a thick sweater.
+            b.gender = 0.0;
+            b.age_years = rng.range(52.0, 64.0);
+            b.weight = 0.45;
+            c.hair_color = Some("#c9c6c0".into());
+            dress(
+                &mut c,
+                &["fisherman-sweater", "skirt", "ankle-boots", "round-glasses"],
+                &[("fisherman-sweater", "#2f3b5a"), ("skirt", "#4a3a2c")],
+            );
+        }
+        Act::Dancers => {
+            b.age_years = rng.range(22.0, 30.0);
+            b.weight = 0.32;
+            b.muscle = 0.55;
+            if k == 0 {
+                b.gender = 1.0;
+                c.beard = "none".into();
+                dress(
+                    &mut c,
+                    &["suit-bowtie", "leather-shoes", "fedora"],
+                    &[("suit-bowtie", "#3a3f6a"), ("fedora", "#2a2622")],
+                );
+            } else {
+                b.gender = 0.0;
+                dress(
+                    &mut c,
+                    &["ruffle-dress", "t-bar-shoes"],
+                    &[("ruffle-dress", "#c8282e"), ("t-bar-shoes", "#c8282e")],
+                );
+            }
+        }
+        Act::Club => {
+            // The doorman: big, in a dinner suit.
+            b.gender = 1.0;
+            b.age_years = rng.range(32.0, 45.0);
+            b.muscle = 0.95;
+            b.weight = 0.7;
+            b.height = 1.0;
+            c.beard = "none".into();
+            c.hair = None;
+            dress(&mut c, &["suit-dinner", "black-shoes"], &[]);
+        }
+    }
+    c
+}
+
+/// A night club guest: two men in dinner suits or double-breasted suits,
+/// two women in an evening gown with long gloves or a flapper dress.
+pub fn guest(builder: &CharacterBuilder, k: u8, seed: u32) -> actors_generator::CharacterConfig {
+    let mut c = golden_age(builder.catalog(), seed, false);
+    let mut rng = hw_core::Seed(seed as u64).child("guest").rng();
+    let catalog = builder.catalog();
+    let has = |id: &str| catalog.garments.iter().any(|g| g.id == id);
+    let (list, colours): (&[&str], &[(&str, &str)]) = match k % 4 {
+        0 => (&["suit-dinner", "leather-shoes"], &[]),
+        1 => (
+            &["suit-double", "leather-shoes", "fedora"],
+            &[("suit-double", "#2a2f44")],
+        ),
+        2 => (
+            &["gown", "gloves-long", "t-bar-shoes"],
+            &[("gown", "#1d6b5c"), ("gloves-long", "#f2efe6")],
+        ),
+        _ => (
+            &["flapper-dress", "t-bar-shoes", "cloche-hat"],
+            &[("flapper-dress", "#d8b048"), ("cloche-hat", "#1b1b1f")],
+        ),
+    };
+    c.body.gender = if k % 4 < 2 { 1.0 } else { 0.0 };
+    c.body.age_years = rng.range(24.0, 42.0);
+    if c.body.gender > 0.5 {
+        c.beard = "none".into();
+    }
+    let o: Vec<String> = list
+        .iter()
+        .filter(|g| has(g))
+        .map(|g| g.to_string())
+        .collect();
+    if o.len() + 1 >= list.len() {
+        c.outfit = o;
+    }
+    for (g, hex) in colours {
+        c.garment_colors.insert(g.to_string(), hex.to_string());
+    }
+    c
+}
+
 pub fn villain(
     builder: &CharacterBuilder,
     kind: VillainKind,
@@ -1466,10 +1694,17 @@ pub fn build_sharing(
         Who::NpcHero(i) => (true, 7_000 + *i as u32),
         Who::Sidekick(theme) => (false, 9_000 + *theme as u32),
         Who::Medic => (false, 9_500),
+        Who::Street(act, k) => (false, name_seed(&format!("street {act:?} {k}"))),
+        Who::Guest(k) => (false, name_seed(&format!("club guest {k}"))),
     };
     let mut allowed = allow(hero);
     if matches!(who, Who::Sidekick(_)) {
         allowed.races = Some(Flags::List(vec!["human".into(), "robot".into()]));
+    }
+    if matches!(who, Who::Street(..) | Who::Guest(_)) {
+        // Costumes (a dinner jacket, an aviator's cap): picked by hand,
+        // all of the era, from the whole wardrobe.
+        allowed.clothing = None;
     }
     if let Who::Villain(kind, _) = who {
         if kind.any_clothes() {
@@ -1483,6 +1718,8 @@ pub fn build_sharing(
         (Who::NpcHero(i), _) => npc_hero(builder, *i),
         (Who::Sidekick(theme), _) => sidekick(builder, *theme),
         (Who::Medic, _) => medic(builder),
+        (Who::Street(act, k), _) => street(builder, *act, *k, rseed),
+        (Who::Guest(k), _) => guest(builder, *k, rseed),
         (Who::Citizen(look), _) if *look >= hw_sim::citizens::LOOKS => {
             mole_person(builder, *look - hw_sim::citizens::LOOKS)
         }
@@ -1495,6 +1732,7 @@ pub fn build_sharing(
         Who::Villain(..) => VILLAIN_CLIPS,
         Who::Sidekick(_) => SIDEKICK_CLIPS,
         Who::Citizen(_) | Who::Medic => CITIZEN_CLIPS,
+        Who::Street(..) | Who::Guest(_) => STREET_CLIPS,
     };
     let options = BuildOptions {
         clips: clips.iter().map(|s| s.to_string()).collect(),
@@ -1528,6 +1766,10 @@ pub fn build_sharing(
         // Drivers and passengers (see `riderview`).
         poses::add_seated_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
+    if matches!(who, Who::Citizen(_) | Who::Street(..) | Who::Guest(_)) {
+        // The street acts and their audiences (see `streetview`).
+        poses::add_street_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+    }
     if matches!(who, Who::Citizen(_) | Who::Medic) {
         // Trapped, hurt and carried at rescues (see `radioview`).
         poses::add_rescue_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
@@ -1556,6 +1798,12 @@ pub fn build_sharing(
             bronze(m);
         }
     }
+    if matches!(who, Who::Street(hw_sim::streetlife::Act::Statue, _)) {
+        // The living statue: a spaceman painted chrome from cap to boots.
+        for m in &mut c.model.meshes {
+            chrome(m);
+        }
+    }
     let sits = matches!(who, Who::Citizen(_)) && crate::riderview::fits_seats(&c.model);
     Ok(Built {
         who: who.clone(),
@@ -1570,12 +1818,24 @@ pub fn build_sharing(
 /// metal all over, a satin polish, no glow.
 pub fn bronze(m: &mut engine::anim::SkinMesh) {
     // sRGB bronze, dark to light.
-    const DARK: [f32; 3] = [58.0, 36.0, 18.0];
-    const LIGHT: [f32; 3] = [214.0, 160.0, 92.0];
+    metal_cast(m, [58.0, 36.0, 18.0], [214.0, 160.0, 92.0], 64);
+}
+
+/// Paints a character's mesh silver all over, like a living statue: its
+/// colours become shades of chrome by their lightness, a high polish.
+pub fn chrome(m: &mut engine::anim::SkinMesh) {
+    metal_cast(m, [70.0, 74.0, 82.0], [236.0, 240.0, 246.0], 30);
+}
+
+/// [`bronze`] and [`chrome`]: colours to shades between `dark` and `light`
+/// (sRGB) by their lightness, full metal, roughness from `rough` (of 255)
+/// up by a quarter of the map's.
+fn metal_cast(m: &mut engine::anim::SkinMesh, dark: [f32; 3], light: [f32; 3], rough: u8) {
+    let (dark_c, light_c) = (dark, light);
     let cast = |r: u8, g: u8, b: u8| -> [u8; 3] {
         let l = (0.3 * r as f32 + 0.59 * g as f32 + 0.11 * b as f32) / 255.0;
         let t = l.powf(0.8);
-        let mix = |k: usize| (DARK[k] + (LIGHT[k] - DARK[k]) * t).round() as u8;
+        let mix = |k: usize| (dark_c[k] + (light_c[k] - dark_c[k]) * t).round() as u8;
         [mix(0), mix(1), mix(2)]
     };
     if let Some(a) = m.albedo.as_mut() {
@@ -1599,8 +1859,8 @@ pub fn bronze(m: &mut engine::anim::SkinMesh) {
     if let Some(orm) = m.maps.orm.as_mut() {
         let mut px: Vec<u8> = orm.rgba.to_vec();
         for p in px.as_chunks_mut::<4>().0 {
-            // Occlusion kept; roughness from 0.25 to 0.55; full metal.
-            p[1] = 64 + p[1] / 4;
+            // Occlusion kept; roughness up from `rough`; full metal.
+            p[1] = rough + p[1] / 4;
             p[2] = 255;
         }
         orm.rgba = px.into();
@@ -1608,7 +1868,7 @@ pub fn bronze(m: &mut engine::anim::SkinMesh) {
     m.maps.emissive = None;
     m.maps.emissive_factor = [0.0; 3];
     m.maps.metallic = 1.0;
-    m.maps.roughness = 0.4;
+    m.maps.roughness = (rough as f32 / 255.0 + 0.15).min(1.0);
 }
 
 #[cfg(test)]

@@ -563,6 +563,280 @@ pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
     Ok(())
 }
 
+/// Clips for watching the street acts (see `streetview`), for everyone
+/// in town: "clap" (hands meeting in front of the chest) and "look up"
+/// (head back, a hand shading the eyes: at the stars, or a saucer).
+pub fn add_audience_clips(model: &mut AnimatedModel) -> Result<(), String> {
+    use std::f32::consts::TAU;
+    let clap = make_clip(model, "clap", 1.2, |t| {
+        // Three claps a loop: the hands swing apart and meet.
+        let k = 0.5 + 0.5 * (t * TAU * 3.0).cos();
+        let open = 0.12 + 0.3 * k;
+        Pose {
+            aims: vec![
+                aim("upperarm_l", "lowerarm_l", 0.3, -0.75, 0.55),
+                aim("lowerarm_l", "hand_l", -0.35 + open, 0.35, 1.0),
+                aim("upperarm_r", "lowerarm_r", -0.3, -0.75, 0.55),
+                aim("lowerarm_r", "hand_r", 0.35 - open, 0.35, 1.0),
+            ],
+            turns: vec![("head", Vec3::X, -0.05)],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let look_up = make_clip(model, "look up", 4.0, |t| {
+        let w = (t * TAU).sin();
+        Pose {
+            aims: vec![
+                // The right hand at the brow, shading the eyes.
+                aim("upperarm_r", "lowerarm_r", -0.55, 0.25, 0.75),
+                aim("lowerarm_r", "hand_r", 0.85, 0.35, 0.2),
+            ],
+            turns: vec![
+                ("spine_03", Vec3::X, -0.1),
+                ("head", Vec3::X, -0.45),
+                ("head", Vec3::Y, 0.25 * w),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let names = ["clap", "look up"];
+    model.clips.retain(|c| !names.contains(&c.name.as_str()));
+    model.clips.extend([clap, look_up]);
+    Ok(())
+}
+
+/// The street acts' clips (see `hw_sim::streetlife`), for the performers:
+/// "preach" (on the soapbox, a finger stabbing at the sky), "theremin"
+/// (hands hovering by the aerials, the right one trembling the vibrato),
+/// "statue" (a spaceman pointing to the stars, perfectly still), "startle"
+/// (the statue lunging at someone who came too close), "juggle" (hands
+/// tossing in turn, eyes up), "binoculars" (both hands at the eyes,
+/// scanning the sky), "holler" (a paper held high, a hand cupped to the
+/// mouth), "peer" (bent to a telescope's eyepiece) and "carry case"
+/// (walking with a case in the right hand). Also the audience's clips.
+pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
+    use std::f32::consts::TAU;
+    add_audience_clips(model)?;
+    if !model.clips.iter().any(|c| c.name == "talk") {
+        // Townsfolk only watch.
+        return Ok(());
+    }
+    let preach = make_clip(model, "preach", 2.4, |t| {
+        // The finger jabs up twice a loop; the other hand flung out.
+        let k = (t * TAU * 2.0).sin().max(0.0);
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", -0.35, 0.85 + 0.1 * k, 0.3),
+                aim("lowerarm_r", "hand_r", -0.1, 1.0, 0.25 - 0.2 * k),
+                aim("upperarm_l", "lowerarm_l", 0.7, -0.15, 0.55),
+                aim("lowerarm_l", "hand_l", 0.45, 0.2, 0.9),
+            ],
+            turns: vec![
+                ("spine_03", Vec3::X, -0.06 - 0.05 * k),
+                ("head", Vec3::X, -0.22),
+                ("head", Vec3::Y, 0.3 * (t * TAU).sin()),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let theremin = make_clip(model, "theremin", 3.0, |t| {
+        // Right hand by the pitch aerial (forward right, upright), fingers
+        // trembling; left hand rising and falling over the loop.
+        let vib = (t * TAU * 6.0).sin() * 0.04;
+        let vol = 0.5 + 0.5 * (t * TAU).sin();
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", -0.3, -0.55, 0.75),
+                aim("lowerarm_r", "hand_r", -0.25 + vib, 0.25, 1.0),
+                aim("upperarm_l", "lowerarm_l", 0.4, -0.6, 0.65),
+                aim("lowerarm_l", "hand_l", 0.35, -0.15 + 0.45 * vol, 1.0),
+            ],
+            turns: vec![
+                ("spine_02", Vec3::Y, 0.06 * (t * TAU).sin()),
+                ("head", Vec3::X, 0.18),
+                ("head", Vec3::Z, 0.1 * (t * TAU * 0.5).sin()),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let statue_pose = |_t: f32| Pose {
+        // The space pioneer: right arm pointing at the stars, left fist on
+        // the hip, one foot forward, chin up.
+        aims: vec![
+            aim("upperarm_r", "lowerarm_r", -0.35, 0.8, 0.5),
+            aim("lowerarm_r", "hand_r", -0.25, 0.75, 0.6),
+            aim("upperarm_l", "lowerarm_l", 0.75, -0.55, -0.1),
+            aim("lowerarm_l", "hand_l", -0.6, -0.1, 0.15),
+            aim("thigh_l", "calf_l", 0.08, -1.0, 0.2),
+            aim("calf_l", "foot_l", 0.05, -1.0, 0.0),
+        ],
+        turns: vec![("head", Vec3::X, -0.25), ("head", Vec3::Y, -0.25)],
+        lift: 0.0,
+        seated: false,
+        lay: None,
+    };
+    let statue = make_clip_from(model, "idle", "statue", Some(2.0), statue_pose, true)?;
+    let startle = make_clip(model, "startle", 1.4, |t| {
+        // Out of the pose in a flash, arms up and out at whoever is there,
+        // then slowly back.
+        let k = if t < 0.12 {
+            t / 0.12
+        } else {
+            (1.0 - (t - 0.12) / 0.88).max(0.0)
+        };
+        let k = k * k * (3.0 - 2.0 * k);
+        let mix = |a: Vec3, b: Vec3| a.lerp(b, k);
+        let ru = mix(Vec3::new(-0.35, 0.8, 0.5), Vec3::new(-0.5, 0.45, 0.75));
+        let rl = mix(Vec3::new(-0.25, 0.75, 0.6), Vec3::new(-0.1, 0.6, 0.8));
+        let lu = mix(Vec3::new(0.75, -0.55, -0.1), Vec3::new(0.5, 0.45, 0.75));
+        let ll = mix(Vec3::new(-0.6, -0.1, 0.15), Vec3::new(0.1, 0.6, 0.8));
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", ru.x, ru.y, ru.z),
+                aim("lowerarm_r", "hand_r", rl.x, rl.y, rl.z),
+                aim("upperarm_l", "lowerarm_l", lu.x, lu.y, lu.z),
+                aim("lowerarm_l", "hand_l", ll.x, ll.y, ll.z),
+            ],
+            turns: vec![
+                ("spine_03", Vec3::X, 0.25 * k),
+                ("head", Vec3::X, -0.25 + 0.2 * k),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let juggle = make_clip(model, "juggle", 1.0, |t| {
+        // A cascade: the hands toss in turn, twice a loop.
+        let l = 0.5 + 0.5 * (t * TAU * 2.0).sin();
+        let r = 0.5 + 0.5 * (t * TAU * 2.0 + std::f32::consts::PI).sin();
+        Pose {
+            aims: vec![
+                aim("upperarm_l", "lowerarm_l", 0.3, -0.85, 0.3),
+                aim("lowerarm_l", "hand_l", 0.25, -0.1 + 0.55 * l, 1.0),
+                aim("upperarm_r", "lowerarm_r", -0.3, -0.85, 0.3),
+                aim("lowerarm_r", "hand_r", -0.25, -0.1 + 0.55 * r, 1.0),
+            ],
+            turns: vec![("head", Vec3::X, -0.3)],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let binoculars = make_clip(model, "binoculars", 6.0, |t| {
+        // Both hands at the eyes; a slow sweep along the sky and back.
+        let sweep = (t * TAU).sin();
+        Pose {
+            aims: vec![
+                aim("upperarm_l", "lowerarm_l", 0.55, -0.3, 0.75),
+                aim("lowerarm_l", "hand_l", -0.45, 0.85, 0.3),
+                aim("upperarm_r", "lowerarm_r", -0.55, -0.3, 0.75),
+                aim("lowerarm_r", "hand_r", 0.45, 0.85, 0.3),
+            ],
+            turns: vec![
+                ("spine_03", Vec3::X, -0.15),
+                ("spine_02", Vec3::Y, 0.35 * sweep),
+                ("head", Vec3::X, -0.4),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let holler = make_clip(model, "holler", 1.6, |t| {
+        // The paper waved up high; the other hand cupped at the mouth.
+        let k = (t * TAU * 2.0).sin();
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", -0.4, 0.85, 0.2),
+                aim("lowerarm_r", "hand_r", -0.15 + 0.2 * k, 1.0, 0.1),
+                aim("upperarm_l", "lowerarm_l", 0.5, -0.4, 0.75),
+                aim("lowerarm_l", "hand_l", -0.6, 0.75, 0.25),
+            ],
+            turns: vec![
+                ("head", Vec3::X, -0.15),
+                ("head", Vec3::Y, 0.4 * (t * TAU * 0.5).sin()),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let peer = make_clip(model, "peer", 4.0, |t| {
+        // Bent to the eyepiece, a hand on the tube, the other turning the
+        // focus now and then.
+        let f = (t * TAU * 2.0).sin().max(0.0);
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", -0.25, -0.55, 0.8),
+                aim("lowerarm_r", "hand_r", 0.2, 0.15, 1.0),
+                aim("upperarm_l", "lowerarm_l", 0.3, -0.6, 0.75),
+                aim("lowerarm_l", "hand_l", -0.1, 0.05 + 0.15 * f, 1.0),
+                aim("thigh_l", "calf_l", 0.08, -1.0, 0.12),
+                aim("thigh_r", "calf_r", -0.08, -1.0, -0.12),
+            ],
+            turns: vec![
+                ("spine_01", Vec3::X, 0.3),
+                ("spine_03", Vec3::X, 0.15),
+                ("head", Vec3::X, 0.15),
+            ],
+            lift: -0.03,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let point_up = make_clip(model, "point up", 3.0, |t| {
+        // "There! Saturn!": an arm up at the sky, the head following.
+        let w = (t * TAU).sin();
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", -0.3, 0.75, 0.55),
+                aim("lowerarm_r", "hand_r", -0.2, 0.85, 0.5 + 0.05 * w),
+            ],
+            turns: vec![("head", Vec3::X, -0.4), ("head", Vec3::Y, 0.15 * w)],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let carry = make_clip_over(model, "walk", "carry case", None, |_| Pose {
+        // The case at the end of a straight right arm, a little out.
+        aims: vec![
+            aim("upperarm_r", "lowerarm_r", -0.22, -1.0, 0.0),
+            aim("lowerarm_r", "hand_r", -0.12, -1.0, 0.05),
+        ],
+        turns: vec![("spine_03", Vec3::Z, -0.05)],
+        lift: 0.0,
+        seated: false,
+        lay: None,
+    })?;
+    let names = [
+        "preach",
+        "theremin",
+        "statue",
+        "startle",
+        "juggle",
+        "binoculars",
+        "holler",
+        "peer",
+        "point up",
+        "carry case",
+    ];
+    model.clips.retain(|c| !names.contains(&c.name.as_str()));
+    model.clips.extend([
+        preach, theremin, statue, startle, juggle, binoculars, holler, peer, point_up, carry,
+    ]);
+    Ok(())
+}
+
 /// The hero's clips for carrying someone hurt in both arms: "carry idle",
 /// "carry walk", "carry jog" and "carry sprint", each its plain clip with
 /// the forearms held out level at the waist as a cradle (see
@@ -679,12 +953,25 @@ fn make_clip_over(
     duration: impl Into<Option<f32>>,
     pose: impl Fn(f32) -> Pose,
 ) -> Result<AnimationClip, String> {
+    make_clip_from(model, base, name, duration.into(), pose, false)
+}
+
+/// [`make_clip_over`]; `frozen` holds the base at its first frame (a
+/// living statue: not even breathing).
+fn make_clip_from(
+    model: &AnimatedModel,
+    base: &str,
+    name: &str,
+    duration: Option<f32>,
+    pose: impl Fn(f32) -> Pose,
+    frozen: bool,
+) -> Result<AnimationClip, String> {
     let base = model
         .clips
         .iter()
         .find(|c| c.name == base)
         .ok_or(format!("the model has no {base} clip"))?;
-    let duration = duration.into().unwrap_or(base.duration).max(0.1);
+    let duration = duration.unwrap_or(base.duration).max(0.1);
     let sk = &model.skeleton;
     let n = sk.joint_names.len();
     let joint = |name: &str| {
@@ -700,7 +987,11 @@ fn make_clip_over(
     for f in 0..=frames {
         let t = f as f32 / frames as f32;
         // The idle loops at its own length; sample it over ours.
-        let bt = (t * duration).rem_euclid(base.duration.max(1e-3));
+        let bt = if frozen {
+            0.0
+        } else {
+            (t * duration).rem_euclid(base.duration.max(1e-3))
+        };
         let mut locals: Vec<(Vec3, Quat)> = (0..n)
             .map(|j| {
                 let (bp, br, _) = model.bind_local[j];

@@ -280,8 +280,9 @@ pub struct Citizens {
     world: Arc<Area>,
     /// Molehaven's people: its floor, its middle, and each one's way.
     moles: (f64, DVec2, Vec<MoleWay>),
-    /// The hour of day (0 to 24): who is out.
-    hour: f64,
+    /// The hour of day (0 to 24): who is out (f64 bits, so the citizens
+    /// can be shared with a worker thread and still follow the clock).
+    hour: std::sync::atomic::AtomicU64,
 }
 
 impl Citizens {
@@ -331,7 +332,7 @@ impl Citizens {
             signals,
             world,
             moles,
-            hour: DEFAULT_HOUR,
+            hour: std::sync::atomic::AtomicU64::new(DEFAULT_HOUR.to_bits()),
         }
     }
 
@@ -348,13 +349,21 @@ impl Citizens {
     /// The hour of day (0 to 24) the town is seen at: by night the
     /// streets are nearly empty, the shopping streets fill by day and the
     /// homes' streets in the morning and evening.
-    pub fn set_hour(&mut self, hour: f64) {
-        self.hour = hour.rem_euclid(24.0);
+    pub fn set_hour(&self, hour: f64) {
+        self.hour.store(
+            hour.rem_euclid(24.0).to_bits(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+    /// The hour of day the town is seen at.
+    pub fn hour(&self) -> f64 {
+        f64::from_bits(self.hour.load(std::sync::atomic::Ordering::Relaxed))
     }
 
     /// The share of a street's people out at this hour.
     fn share_out(&self, w: &Walk) -> f64 {
-        let (shops, homes) = busy_at(self.hour);
+        let (shops, homes) = busy_at(self.hour());
         w.commerce * shops + (1.0 - w.commerce) * homes
     }
 
@@ -1372,7 +1381,7 @@ impl Citizens {
         let off = s.child("off").unit() * STAY;
         let visit = ((time + off) / STAY).floor() as i64;
         let v = s.child(visit as u64);
-        if v.child("here").unit() >= indoor_share(room, self.hour) {
+        if v.child("here").unit() >= indoor_share(room, self.hour()) {
             return None;
         }
         let home = matches!(
@@ -1637,7 +1646,7 @@ mod tests {
     #[test]
     #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn people_indoors_keep_hours() {
-        let mut c = town();
+        let c = town();
         let place =
             |c: &Citizens, room, n: u32, t: f64| c.indoors(7, 1, n, room, DVec3::ZERO, DVec2::Y, t);
         let count = |c: &Citizens, room| {
