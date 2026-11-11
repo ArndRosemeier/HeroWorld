@@ -178,6 +178,8 @@ pub struct TownView {
     /// Where the camera was at the last update (none yet: blocks show full
     /// detail, for checks and tools that build a piece of the town).
     eyes: Vec<DVec2>,
+    /// Every building past the built cells, out to the edge of the view.
+    pub skyline: crate::skyline::SkylineView,
 }
 
 /// One block of a full-detail cell in the world: both drawings, one of
@@ -584,6 +586,7 @@ impl TownView {
     pub fn new(world: Arc<TownWorld>) -> Self {
         let green = Arc::new(Greenery::new(&world));
         let mut v = Self {
+            skyline: crate::skyline::SkylineView::new(world.clone()),
             world,
             buildings: BTreeMap::new(),
             plans: BTreeMap::new(),
@@ -985,6 +988,25 @@ impl TownView {
             self.world.prefetch(&later, CELL * 0.5 + BUILDING_MARGIN);
         }
         self.workers = Some(workers);
+        self.update_skyline(world, eyes);
+    }
+
+    /// The skyline past the built cells (see [`crate::skyline`]).
+    pub fn update_skyline(&mut self, world: &mut World, eyes: &[DVec2]) {
+        // `HW_SKYLINE=0` leaves it out (to compare).
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *OFF.get_or_init(|| std::env::var("HW_SKYLINE").is_ok_and(|v| v == "0")) {
+            return;
+        }
+        let built = &self.built;
+        if let Err(e) = self.skyline.update(world, eyes, |c| built.contains_key(&c)) {
+            crate::hitch::event(format!("skyline: {e}"));
+        }
+    }
+
+    /// Lights the skyline's windows for `hour`.
+    pub fn set_hour(&mut self, world: &mut World, hour: f32) {
+        let _ = self.skyline.set_hour(world, hour);
     }
 
     /// Stops the worker threads (cells still being drawn are forgotten).
@@ -1074,6 +1096,7 @@ impl TownView {
     /// Takes every built cell out of the world (before switching towns).
     pub fn clear(&mut self, world: &mut World) {
         self.workers = None;
+        self.skyline.clear(world);
         let keys: Vec<CellKey> = self.built.keys().copied().collect();
         for k in keys {
             self.drop_cell(world, k);

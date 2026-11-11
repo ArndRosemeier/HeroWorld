@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.194 (2026-11-11)
+
+- The whole town now stands on the horizon. Fly up and you see every building out to 6 km, with its streets, roofs and tower spires, instead of houses popping out of nothing as you fly towards them.
+- At night the distant town twinkles: its windows light up and go dark with the same evening habits as the houses close by.
+
 ## 0.193 (2026-11-11)
 
 - The night clubs' bandstand no longer flickers: its chrome band sat flush with the red stage top.

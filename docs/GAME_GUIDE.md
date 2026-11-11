@@ -886,6 +886,15 @@ between them) is designed but not built; the town stands in endless streamed gro
   Newer quarters are pure golden-age: Googie and streamline houses, deco and streamline
   flats; 19th-century extensions mix the two.
 - **Buildings** are planned inside out: floors and rooms first, the facade from the rooms.
+- **Seen from afar** (`hw-client/src/skyline.rs`, 0.194): the town's cells of full buildings
+  reach 1.3 km round the camera; past them, out to the 6 km view distance, every building
+  stands as its plain mass (the plan's storeys and setbacks, pitched and mansard roofs,
+  stepped crowns and spires, a little inside the real walls) with its streets, in 768 m tiles
+  made on two worker threads, nearest first (`TownWorld::skyline_with_roads` plans them
+  without filling the town's caches). Windows are a shader grid, lit after dark by the
+  same household habits as the real ones. A tile draws everything to 2.6 km and only
+  buildings of 12 m and more and main roads beyond (dithered cross-fade, Engine LOD set),
+  fading out at 6 km; it hides once all its cells are built. `HW_SKYLINE=0` leaves it out.
   Uses: offices, shops and offices, apartments, houses, works, pavilions, labs, tenements.
   Every building has a furnished interior (lobbies, offices, flats, shops, labs) and a
   glowing **Aether lift** in its core (Space rises, Ctrl sinks). Interiors follow the
@@ -1554,6 +1563,7 @@ run, or put them in a `.bat`.
 | `HW_SEED=n` | World seed (which town). |
 | `HW_POP=n` | Town population (default: the profile's city, 40 000 at first; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
+| `HW_SKYLINE=0` | No distant skyline past the built cells (to compare). |
 | `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `menace`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `homes`, `tubemarket`, `workshop`, `shrine`, `burrow`, `exit` (a tube exit from inside), `exitstreet` (its pavilion), `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `act` (a street act: `HW_ACT=prophet|theremin|statue|juggler|spotter|newsboy|stargazer|dancers|club`, `HW_ACT_FAR=1` wider), `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |

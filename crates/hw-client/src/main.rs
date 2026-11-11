@@ -2455,6 +2455,7 @@ fn main() -> EngineResult<()> {
                 hw_client::lighting::set_sky(world, hour);
             }
             citizens.set_hour(hour as f64);
+            town.set_hour(world, hour);
             if let (Some(lights), Some(props)) = (extras.lights.as_mut(), extras.props.as_ref()) {
                 let dark = swoop.is_none() && hw_client::nightlights::dark_at(hour);
                 let eye = world.camera().eye();

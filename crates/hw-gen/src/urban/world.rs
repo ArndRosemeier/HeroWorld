@@ -172,6 +172,9 @@ pub struct TownWorld {
     pending: Mutex<std::collections::BTreeSet<Unit>>,
 }
 
+/// Side streets planned for one look from afar (see [`TownWorld::skyline`]).
+type StreetsMemo = BTreeMap<Unit, Option<Arc<Streets>>>;
+
 fn cell_of(p: DVec2) -> (i64, i64) {
     (
         (p.x / INDEX_CELL).floor() as i64,
@@ -376,19 +379,100 @@ impl TownWorld {
         };
         let split = self.split(piece);
         let d = split.districts.get(district)?;
-        Some(self.streets.get(unit, || {
-            plan_streets(self.seed, &self.town, unit, d, |lines, plan| {
-                let reach = side_reach(plan.style);
-                let roads: Vec<WorldRoad> = lines
-                    .into_iter()
-                    .filter(|s| s.len() >= 2)
-                    .enumerate()
-                    .map(|(n, s)| road(DetailId::new(unit, n), s, reach, None, Some(plan.style)))
-                    .collect();
-                let bridges = self.bridges_of(&roads);
-                (roads, bridges)
-            })
-        }))
+        Some(self.streets.get(unit, || self.plan_streets_of(unit, d)))
+    }
+
+    /// A district's side streets, planned now (not cached).
+    fn plan_streets_of(&self, unit: Unit, d: &super::Piece) -> Streets {
+        plan_streets(self.seed, &self.town, unit, d, |lines, plan| {
+            let reach = side_reach(plan.style);
+            let roads: Vec<WorldRoad> = lines
+                .into_iter()
+                .filter(|s| s.len() >= 2)
+                .enumerate()
+                .map(|(n, s)| road(DetailId::new(unit, n), s, reach, None, Some(plan.style)))
+                .collect();
+            let bridges = self.bridges_of(&roads);
+            (roads, bridges)
+        })
+    }
+
+    /// [`Self::streets`] for a look from afar: what the cache holds, else
+    /// planned now and kept only in `memo` (the cache stays as it was, so
+    /// the streets the heroes walk are never pushed out by a distant view).
+    fn streets_for_a_look(&self, unit: Unit, memo: &mut StreetsMemo) -> Option<Arc<Streets>> {
+        if let Some(s) = memo.get(&unit) {
+            return s.clone();
+        }
+        let s = match unit.kind() {
+            UnitKind::District { piece, district } => self.streets.peek(unit).or_else(|| {
+                let split = self.split(piece);
+                let d = split.districts.get(district)?;
+                Some(Arc::new(self.plan_streets_of(unit, d)))
+            }),
+            _ => None,
+        };
+        memo.insert(unit, s.clone());
+        s
+    }
+
+    /// The buildings whose centres lie in the box `lo`..`hi`, with their
+    /// ids: exactly what the quarters there hold, for drawing the town from
+    /// afar. Quarters planned already are read; the rest are planned here
+    /// as far as their buildings and forgotten again, so neither the
+    /// quarter nor the street cache changes (a skyline kilometres wide must
+    /// not push out the detail round the heroes). Thread-safe; slow (a few
+    /// milliseconds per district): call it on a worker.
+    pub fn skyline(&self, lo: DVec2, hi: DVec2) -> Vec<(DetailId, WorldBuilding)> {
+        self.skyline_with_roads(lo, hi).0
+    }
+
+    /// [`Self::skyline`], and every road that comes into the box (main
+    /// roads, district roads and side streets), planned the same way.
+    pub fn skyline_with_roads(
+        &self,
+        lo: DVec2,
+        hi: DVec2,
+    ) -> (Vec<(DetailId, WorldBuilding)>, Vec<WorldRoad>) {
+        let mut memo = StreetsMemo::new();
+        let mut out = Vec::new();
+        let inside = |b: &WorldBuilding| {
+            let c = b.site.origin
+                + (b.site.along * b.site.size.x + b.site.inward * b.site.size.y) * 0.5;
+            c.x >= lo.x && c.y >= lo.y && c.x < hi.x && c.y < hi.y
+        };
+        for unit in self.units_in(lo, hi) {
+            if !matches!(unit.kind(), UnitKind::District { .. }) {
+                continue;
+            }
+            if let Some(q) = self.quarters.peek(unit) {
+                out.extend(
+                    q.buildings_with_ids()
+                        .filter(|(_, b)| inside(b))
+                        .map(|(i, b)| (i, b.clone())),
+                );
+                continue;
+            }
+            let Some(streets) = self.streets_for_a_look(unit, &mut memo) else {
+                continue;
+            };
+            let m = DVec2::splat(NEAR_ROADS);
+            let roads = self.roads_in_with(streets.lo - m, streets.hi + m, &mut |u| {
+                self.streets_for_a_look(u, &mut memo)
+            });
+            for (i, b) in self
+                .buildings_on(unit, Some(&streets), &roads)
+                .into_iter()
+                .enumerate()
+            {
+                if inside(&b) {
+                    out.push((DetailId::new(unit, i), b));
+                }
+            }
+        }
+        out.sort_by_key(|(id, _)| *id);
+        let roads = self.roads_in_with(lo, hi, &mut |u| self.streets_for_a_look(u, &mut memo));
+        (out, roads)
     }
 
     /// The units whose ground comes within the box `lo`..`hi`: districts,
@@ -456,6 +540,16 @@ impl TownWorld {
     /// Every road reaching into the box: main roads, district roads and
     /// side streets (a road appears whole).
     pub fn roads_in(&self, lo: DVec2, hi: DVec2) -> Vec<WorldRoad> {
+        self.roads_in_with(lo, hi, &mut |u| self.streets(u))
+    }
+
+    /// [`Self::roads_in`] with the side streets from `streets`.
+    fn roads_in_with(
+        &self,
+        lo: DVec2,
+        hi: DVec2,
+        streets: &mut dyn FnMut(Unit) -> Option<Arc<Streets>>,
+    ) -> Vec<WorldRoad> {
         let mut out: Vec<WorldRoad> = self
             .main_in(lo, hi)
             .into_iter()
@@ -474,7 +568,7 @@ impl TownWorld {
                 if !overlap(*b, (lo, hi), NEAR_ROADS) {
                     continue;
                 }
-                if let Some(s) = self.streets(Unit::district(p, d)) {
+                if let Some(s) = streets(Unit::district(p, d)) {
                     out.extend(s.roads.iter().filter(|r| road_touches(r, lo, hi)).cloned());
                 }
             }
@@ -738,9 +832,40 @@ impl TownWorld {
             lo,
             hi,
         };
+        let buildings = self.buildings_on(unit, streets.as_deref(), &roads);
+        let local = Local {
+            world: self,
+            roads,
+            bridges,
+            owner,
+            streets: streets.clone(),
+            buildings,
+        };
+        let (quays, water_steps) = plan_waterfront(&local);
+        let props = plan_props(&local, &quays, &water_steps);
+        Quarter {
+            unit,
+            lo,
+            hi,
+            streets,
+            buildings: local.buildings,
+            props,
+            quays,
+            water_steps,
+        }
+    }
+
+    /// A district's buildings, given its streets and the roads near it
+    /// (none on a verge tile).
+    fn buildings_on(
+        &self,
+        unit: Unit,
+        streets: Option<&Streets>,
+        roads: &[WorldRoad],
+    ) -> Vec<WorldBuilding> {
         let mut buildings = Vec::new();
-        if let (Some(s), UnitKind::District { piece, .. }) = (&streets, unit.kind()) {
-            let grid = RoadGrid::new(&roads, 0.0);
+        if let (Some(s), UnitKind::District { piece, .. }) = (streets, unit.kind()) {
+            let grid = RoadGrid::new(roads, 0.0);
             for site in plan_buildings(self.seed, &self.town, piece, &s.piece, &s.plan) {
                 // Never on a street, not even a neighbouring district's (a
                 // metre's grace on its pavement, as round a bend).
@@ -766,26 +891,7 @@ impl TownWorld {
                 });
             }
         }
-        let local = Local {
-            world: self,
-            roads,
-            bridges,
-            owner,
-            streets: streets.clone(),
-            buildings,
-        };
-        let (quays, water_steps) = plan_waterfront(&local);
-        let props = plan_props(&local, &quays, &water_steps);
-        Quarter {
-            unit,
-            lo,
-            hi,
-            streets,
-            buildings: local.buildings,
-            props,
-            quays,
-            water_steps,
-        }
+        buildings
     }
 
     /// Every stretch of road over water is a bridge.
@@ -943,6 +1049,41 @@ mod tests {
         }
         let (p, _) = tw.spawn_line();
         assert!(tw.ground(p) > WATER_LEVEL);
+    }
+
+    /// The skyline shows the very buildings the quarters hold, ids and all,
+    /// and planning it keeps nothing: no quarter, no streets.
+    #[test]
+    fn skyline_is_the_quarters_buildings_and_keeps_nothing() {
+        let tw = TownWorld::generate(Seed(2), TownParams::sample(Seed(2), 20_000.0));
+        let core = tw.core();
+        let (lo, hi) = (core - DVec2::splat(300.0), core + DVec2::splat(300.0));
+        let (quarters, streets) = (tw.quarters.len(), tw.streets.len());
+        let far = tw.skyline(lo, hi);
+        assert_eq!(tw.quarters.len(), quarters, "the skyline kept quarters");
+        assert_eq!(tw.streets.len(), streets, "the skyline kept streets");
+        assert!(far.len() > 50, "only {} buildings", far.len());
+        let m = DVec2::splat(80.0);
+        let mut near: Vec<(DetailId, WorldBuilding)> = tw
+            .quarters_in(lo - m, hi + m)
+            .iter()
+            .flat_map(|q| {
+                q.buildings_with_ids()
+                    .map(|(i, b)| (i, b.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|(_, b)| {
+                let c = b.site.origin
+                    + (b.site.along * b.site.size.x + b.site.inward * b.site.size.y) * 0.5;
+                c.x >= lo.x && c.y >= lo.y && c.x < hi.x && c.y < hi.y
+            })
+            .collect();
+        near.sort_by_key(|(i, _)| *i);
+        assert_eq!(far, near);
+        // Read from the planned quarters, the same again; the roads too.
+        let (again, roads) = tw.skyline_with_roads(lo, hi);
+        assert_eq!(again, near);
+        assert_eq!(roads, tw.roads_in(lo, hi));
     }
 
     /// A unit comes out the same whichever units were planned before it,

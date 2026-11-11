@@ -229,6 +229,16 @@ impl<K: Ord + Copy, V> Cache<K, V> {
         v
     }
 
+    /// The value for `k` if it is here, without making it or marking it
+    /// as used (so a look does not keep it from being forgotten).
+    pub(super) fn peek(&self, k: K) -> Option<Arc<V>> {
+        self.map
+            .lock()
+            .expect("cache lock")
+            .get(&k)
+            .map(|e| e.0.clone())
+    }
+
     /// Is `k` here now?
     pub(super) fn contains(&self, k: K) -> bool {
         self.map.lock().expect("cache lock").contains_key(&k)

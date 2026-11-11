@@ -67,7 +67,7 @@ impl BuildingUse {
         matches!(self, Self::Works | Self::Pavilion)
     }
 
-    fn ground_height(self) -> f64 {
+    pub fn ground_height(self) -> f64 {
         if self.hall_ground() {
             HALL_HEIGHT
         } else {
@@ -308,6 +308,54 @@ impl BuildingSite {
         };
         // A corner tower's drum stands 2.6 m over the roof deck.
         self.height() + roof.max(3.0)
+    }
+}
+
+/// One tier of a building's mass: floors that share an outline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tier {
+    /// The floors' outline, in building (x, z).
+    pub outline: Rect,
+    /// Its floors, as [`Floor::level`]s: `first..end`.
+    pub first: u32,
+    pub end: u32,
+    /// Bottom and top above the building's ground.
+    pub bottom: f64,
+    pub top: f64,
+}
+
+impl BuildingSite {
+    /// The building's mass as tiers of floors, upper ones stepped back as
+    /// in its plan (same outlines and floor heights as
+    /// [`BuildingPlan::generate`], at a small part of the cost: no rooms).
+    /// For drawing it from afar.
+    pub fn massing(&self) -> Vec<Tier> {
+        let full = Rect::from_xz(0.0, 0.0, self.size.x, self.size.y);
+        let mut out: Vec<Tier> = Vec::new();
+        let mut elevation = 0.0;
+        for (level, outline) in Planner::new(self).outlines(full).into_iter().enumerate() {
+            let level = level as u32;
+            let height = if level == 0 {
+                self.usage.ground_height()
+            } else {
+                FLOOR_HEIGHT
+            };
+            match out.last_mut() {
+                Some(t) if t.outline == outline => {
+                    t.end = level + 1;
+                    t.top = elevation + height;
+                }
+                _ => out.push(Tier {
+                    outline,
+                    first: level,
+                    end: level + 1,
+                    bottom: elevation,
+                    top: elevation + height,
+                }),
+            }
+            elevation += height;
+        }
+        out
     }
 }
 
@@ -1278,6 +1326,28 @@ pub(crate) mod tests {
     fn same_site_same_plan() {
         for s in all_sites() {
             assert_eq!(BuildingPlan::generate(&s), BuildingPlan::generate(&s));
+        }
+    }
+
+    /// The mass drawn from afar is the plan's floors, stacked in tiers.
+    #[test]
+    fn massing_follows_the_plan() {
+        for s in [
+            site(BuildingUse::Offices, 50.0, 34.0, 30, 3),
+            site(BuildingUse::House, 10.0, 9.0, 2, 4),
+        ] {
+            let p = BuildingPlan::generate(&s);
+            let tiers = s.massing();
+            assert_eq!(tiers.last().unwrap().end as usize, p.floors.len());
+            assert!((tiers.last().unwrap().top - p.height()).abs() < 1e-9);
+            for f in &p.floors {
+                let t = tiers
+                    .iter()
+                    .find(|t| (t.first..t.end).contains(&f.level))
+                    .unwrap();
+                assert_eq!(t.outline, f.outline);
+                assert!(f.elevation >= t.bottom - 1e-9 && f.elevation + f.height <= t.top + 1e-9);
+            }
         }
     }
 

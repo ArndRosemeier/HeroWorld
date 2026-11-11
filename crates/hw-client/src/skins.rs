@@ -159,6 +159,37 @@ pub fn texture(t: Tex) -> Arc<TextureLayer> {
     }
 }
 
+/// The average colour of texture `t` (linear), what it looks like from so
+/// far that its pattern is gone: for drawing a surface without the
+/// texture (the town's skyline). Worked out once per process.
+pub fn average(t: Tex) -> engine::prelude::Color {
+    use engine::prelude::Color;
+    static CACHE: OnceLock<Mutex<HashMap<Tex, Color>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(c) = cache.lock().expect("averages").get(&t) {
+        return *c;
+    }
+    let tex = texture(t);
+    let mut sum = [0.0f64; 3];
+    let mut n = 0.0f64;
+    // Every 7th pixel is plenty for an average.
+    for px in tex.albedo.as_chunks::<4>().0.iter().step_by(7) {
+        for (k, v) in sum.iter_mut().enumerate() {
+            *v += Color::rgb(px[k], 0, 0).r as f64;
+        }
+        n += 1.0;
+    }
+    let n = n.max(1.0);
+    let c = Color {
+        r: (sum[0] / n) as f32,
+        g: (sum[1] / n) as f32,
+        b: (sum[2] / n) as f32,
+        a: 1.0,
+    };
+    cache.lock().expect("averages").insert(t, c);
+    c
+}
+
 fn skin(s: Skin) -> Arc<TextureLayer> {
     static CACHE: OnceLock<Mutex<HashMap<Skin, Arc<TextureLayer>>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));

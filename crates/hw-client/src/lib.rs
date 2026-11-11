@@ -63,6 +63,7 @@ pub mod rocketview;
 pub mod settings;
 pub mod signalview;
 pub mod skins;
+pub mod skyline;
 pub mod soundscape;
 pub mod speech;
 pub mod startflight;
