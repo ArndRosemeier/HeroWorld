@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.196 (2026-11-11)
+
+- The cloud over the weather tower no longer flickers. Its puffs (and smoke and dust everywhere) are now drawn from the farthest to the nearest every frame, so they blend the same way from one frame to the next (Engine 0.057).
+
 ## 0.195 (2026-11-11)
 
 - Capes no longer slip through your arms while you stand, or through your back in flight. The
