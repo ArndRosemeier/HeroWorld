@@ -1027,7 +1027,18 @@ fn view_of(
             let run = runs.first()?;
             let (_, d) = run.doors.iter().find(|d| d.0 == 0)?;
             let out = (d.at() - run.car.at()).normalize_or_zero();
+            // Inside the room the doors open to.
+            let before = d.at() + out * 1.0;
+            let room = plan
+                .spaces
+                .iter()
+                .filter(|s| {
+                    s.kind != SpaceKind::Shaft && before.clamp(s.rect.min, s.rect.max) == before
+                })
+                .min_by(|a, b| a.y.abs().total_cmp(&b.y.abs()))
+                .map(|s| s.rect.inset(0.7));
             let eye = d.at() + out * 5.5 + out.perp() * 1.6;
+            let eye = room.map_or(eye, |r| eye.clamp(r.min, r.max));
             (
                 town(eye, run.stops[0] + 1.8),
                 town(d.at(), run.stops[0] + 1.6),
@@ -1070,18 +1081,22 @@ fn view_of(
 /// server makes them solid from the same timetable: `hw_sim::lifts`).
 pub struct LiftView {
     lifts: hw_sim::lifts::Lifts,
-    /// Per lift: its car, and per door its two leaves.
-    spawned: Vec<Option<(EntityId, Vec<[EntityId; 2]>)>>,
+    /// Per lift drawn (by where its car is in plan): its car, and per
+    /// door its two leaves.
+    spawned: std::collections::BTreeMap<(u64, u64), LiftParts>,
 }
+
+type LiftParts = (EntityId, Vec<[EntityId; 2]>);
 
 /// Lifts are drawn within this of the eye (m).
 const LIFT_REACH: f64 = 160.0;
 
 impl LiftView {
-    pub fn new(town: &hw_gen::urban::world::TownWorld) -> Self {
-        let lifts = hw_sim::lifts::Lifts::new(town);
-        let spawned = vec![None; lifts.runs.len()];
-        Self { lifts, spawned }
+    pub fn new(town: &std::sync::Arc<hw_gen::urban::world::TownWorld>) -> Self {
+        Self {
+            lifts: hw_sim::lifts::Lifts::new(town),
+            spawned: Default::default(),
+        }
     }
 
     /// The lifts as solids, for a joined player's own hero.
@@ -1092,21 +1107,32 @@ impl LiftView {
     pub fn update(&mut self, world: &mut World, eye: Vec3, now: f64) -> EngineResult<()> {
         use hw_gen::layout::lifts::{CAR_FLOOR, CAR_LIP, CAR_ROOM};
         use hw_gen::layout::solid::LIFT_DOOR_H;
-        let eye2 = DVec2::new(eye.x as f64, eye.z as f64);
         let brass = pieces::brass();
-        for (run, slot) in self.lifts.runs.iter().zip(&mut self.spawned) {
+        let runs = self.lifts.runs_near(&[eye.as_dvec3()], LIFT_REACH);
+        let key = |run: &hw_gen::layout::lifts::LiftRun| {
+            let c = run.car.at();
+            (c.x.to_bits(), c.y.to_bits())
+        };
+        let shown: std::collections::BTreeSet<_> = runs.iter().map(|r| key(r)).collect();
+        let gone: Vec<_> = self
+            .spawned
+            .keys()
+            .filter(|k| !shown.contains(k))
+            .copied()
+            .collect();
+        for k in gone {
+            if let Some((car, doors)) = self.spawned.remove(&k) {
+                world.despawn(car);
+                for d in doors.into_iter().flatten() {
+                    world.despawn(d);
+                }
+            }
+        }
+        for run in &runs {
             let Footprint::Box { at, dir, half, .. } = run.car else {
                 continue;
             };
-            if at.distance(eye2) > LIFT_REACH {
-                if let Some((car, doors)) = slot.take() {
-                    world.despawn(car);
-                    for d in doors.into_iter().flatten() {
-                        world.despawn(d);
-                    }
-                }
-                continue;
-            }
+            let mut slot: Option<LiftParts> = self.spawned.remove(&key(run));
             // A door's long way in plan, its width and its middle.
             let door = |f: &Footprint| {
                 let Footprint::Box { at, dir, half, .. } = *f else {
@@ -1171,11 +1197,11 @@ impl LiftView {
                     let mesh = leaf.finish();
                     doors.push([world.spawn(mesh.clone()), world.spawn(mesh)]);
                 }
-                *slot = Some((car, doors));
+                slot = Some((car, doors));
             }
             let Some((car, doors)) = slot else { continue };
             let state = run.at(now);
-            world.set_place(*car, Place::new(at.x as f32, state.y as f32, at.y as f32))?;
+            world.set_place(car, Place::new(at.x as f32, state.y as f32, at.y as f32))?;
             for ((k, d), leaves) in run.doors.iter().zip(doors.iter()) {
                 let (a, w, mid) = door(d);
                 let open = state.open.filter(|(s, _)| s == k).map_or(0.0, |(_, o)| o);
@@ -1188,6 +1214,7 @@ impl LiftView {
                     world.set_place(*leaf, Place::new(p.x as f32, y as f32, p.y as f32))?;
                 }
             }
+            self.spawned.insert(key(run), (car, doors));
         }
         Ok(())
     }

@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.207 (2026-11-11)
+
+- The lifts in the town's new office buildings run now: step into a waiting car and it takes you up, floor by floor, like in the Comet buildings.
+
 ## 0.206 (2026-11-11)
 
 - Streets no longer flicker where they meet: roads that cross or join each lie at their own height, and where one still overlaps another the hidden part is left out.

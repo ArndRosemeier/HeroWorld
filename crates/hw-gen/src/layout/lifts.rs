@@ -114,6 +114,40 @@ impl LiftRun {
             phase: self.phase,
         }
     }
+
+    /// The same lift in a frame given by its two axes (a building site's
+    /// `origin`, `along` and `inward`, which may be a mirrored frame), its
+    /// heights lifted by `y`.
+    pub fn in_frame(&self, origin: DVec2, along: DVec2, inward: DVec2, y: f64) -> LiftRun {
+        let to = |f: &Footprint| match *f {
+            Footprint::Disc { at, r, y0, y1 } => Footprint::Disc {
+                at: origin + along * at.x + inward * at.y,
+                r,
+                y0: y + y0,
+                y1: y + y1,
+            },
+            Footprint::Box {
+                at,
+                dir,
+                half,
+                y0,
+                y1,
+            } => Footprint::Box {
+                at: origin + along * at.x + inward * at.y,
+                dir: (along * dir.x + inward * dir.y).normalize_or(inward),
+                half,
+                y0: y + y0,
+                y1: y + y1,
+            },
+        };
+        LiftRun {
+            kind: self.kind,
+            car: to(&self.car),
+            stops: self.stops.iter().map(|s| s + y).collect(),
+            doors: self.doors.iter().map(|(k, d)| (*k, to(d))).collect(),
+            phase: self.phase,
+        }
+    }
 }
 
 fn thin(r: Rect, y0: f64, y1: f64) -> Footprint {

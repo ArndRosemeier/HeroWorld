@@ -577,7 +577,9 @@ targeting, ragdolls, nobody dies.
   an atrium or a grand hall with level floors. Their facades are the town's own; inside are the
   lobby, galleries, open stairs, office halls, lamps and furniture, all solid, with ceilings (no
   cut-open view there). Where such a plot does not fit, the quarter's other use is built. Their
-  lift doors stay shut for now. Small towns (under about 10 000 people) have none yet.
+  lifts run like the Comet buildings' (worked out for the buildings within about 70 m of a
+  hero). Their windows sit at most 7.5 cm deep in the wall. Some towns have none yet: small
+  ones (under about 10 000 people), and bigger ones that are all old lanes.
 - **Furniture** in those buildings (`hw_gen::layout::furnish`): 850 to 1 400 pieces a
   building, every one solid (rugs excepted). Office halls have desks in blocks of two rows,
   runs of four with 2.6 m gaps and 3.4 m aisles; other halls are archives (rows of shelves)

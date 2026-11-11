@@ -1578,7 +1578,7 @@ fn hi_of(c: &[DVec2]) -> DVec2 {
 }
 
 /// The solids of one building, from its plan.
-fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
+pub(crate) fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
     let site = &plan.site;
     let mut out = Vec::new();
     let mut push = |r: Rect, y0: f64, y1: f64| {
@@ -1597,10 +1597,12 @@ fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
     // A building of halls: the very parts it is drawn from (floors, walls
     // round their doorways, stairs step by step, rails, columns, shafts).
     if let Some(parts) = plan.solids() {
-        // The lifts' landing doors stay shut for now (the cars come next).
+        // But the lifts' landing doors, which open and shut with their
+        // cars (`crate::lifts`).
         let furniture = plan.furniture();
         let shapes = parts
             .iter()
+            .filter(|p| p.part != hw_gen::layout::solid::Part::LiftDoor)
             .map(|p| p.shape)
             .chain(furniture.iter().filter_map(|i| i.footprint()));
         for shape in shapes {

@@ -911,7 +911,7 @@ fn main() -> EngineResult<()> {
                 None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
             }
         }
-        "halls" | "hallslobby" | "hallsgallery" | "hallsstairs" | "hallshall" => {
+        "halls" | "hallslobby" | "hallsgallery" | "hallsstairs" | "hallshall" | "hallslift" => {
             // A town office building of halls, the `HW_HALLS`-th nearest
             // the start (0 by default): the same views as a Comet building.
             let nth: usize = std::env::var("HW_HALLS")
