@@ -1594,6 +1594,30 @@ fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
             });
         }
     };
+    // A building of halls: the very parts it is drawn from (floors, walls
+    // round their doorways, stairs step by step, rails, columns, shafts).
+    if let Some(parts) = plan.solids() {
+        // The lifts' landing doors stay shut for now (the cars come next).
+        let furniture = plan.furniture();
+        let shapes = parts
+            .iter()
+            .map(|p| p.shape)
+            .chain(furniture.iter().filter_map(|i| i.footprint()));
+        for shape in shapes {
+            // From building (x, z) into the town's frame; spiral steps
+            // stand at their own angles.
+            let turn = |v: DVec2| site.along * v.x + site.inward * v.y;
+            out.extend(solids_of(&shape).into_iter().map(|s| Solid {
+                origin: site.origin + turn(s.origin),
+                along: turn(s.along),
+                inward: turn(s.inward),
+                y0: base + s.y0,
+                y1: base + s.y1,
+                ..s
+            }));
+        }
+        return out;
+    }
     let n = plan.floors.len();
     for (k, f) in plan.floors.iter().enumerate() {
         let y = base + f.elevation;

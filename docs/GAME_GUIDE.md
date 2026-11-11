@@ -570,6 +570,13 @@ targeting, ragdolls, nobody dies.
   the game both draws and collides with (`hw_gen::layout::solid`). Villains find their way
   between rooms and floors by a route map of each plan (see Villain AI). Views:
   `HW_VIEW=comet|cometlobby|cometgallery|cometstairs|comethall|cometlift`, `HW_COMET=0|1|2`.
+- **Office buildings in town** (uses Offices and Shops with offices, outside the old town's
+  lanes) are buildings of halls too: their plots are 34-50 m wide and 40-52 m deep, their
+  storeys about 6 m high (a building as tall as before has fewer of them, 2 to 16), planned as
+  an atrium or a grand hall with level floors. Their facades are the town's own; inside are the
+  lobby, galleries, open stairs, office halls, lamps and furniture, all solid, with ceilings (no
+  cut-open view there). Where such a plot does not fit, the quarter's other use is built. Their
+  lift doors stay shut for now. Small towns (under about 10 000 people) have none yet.
 - **Furniture** in those buildings (`hw_gen::layout::furnish`): 850 to 1 400 pieces a
   building, every one solid (rugs excepted). Office halls have desks in blocks of two rows,
   runs of four with 2.6 m gaps and 3.4 m aisles; other halls are archives (rows of shelves)

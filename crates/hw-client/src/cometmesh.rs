@@ -125,9 +125,9 @@ pub fn building(b: &mut MeshBuilder, l: &Landmark, near: bool) {
 
 /// A look of a kind of furniture: the kind, its width in centimetres and
 /// which of the house's three colour sets it wears.
-type Look = (hw_gen::layout::furnish::ItemKind, u32, u8);
+pub(crate) type Look = (hw_gen::layout::furnish::ItemKind, u32, u8);
 
-fn look(it: &hw_gen::layout::furnish::Item) -> Look {
+pub(crate) fn look(it: &hw_gen::layout::furnish::Item) -> Look {
     // One colour set per room, so a room's seats and desks match.
     let room = (it.space as u64).wrapping_mul(0x9E37_79B9) >> 7;
     (it.kind, (it.w * 100.0).round() as u32, (room % 3) as u8)
@@ -195,11 +195,11 @@ fn piece(m: &mut crate::interior::pieces::Maker, scheme: Scheme, (kind, w, c): L
 
 /// The furniture's levels of detail: sides of round parts, and how far
 /// from the eye each level is drawn (m).
-const FURNITURE_SEGS: [usize; 3] = [24, 10, 6];
-const FURNITURE_REACH: [f32; 3] = [12.0, 32.0, 90.0];
+pub(crate) const FURNITURE_SEGS: [usize; 3] = [24, 10, 6];
+pub(crate) const FURNITURE_REACH: [f32; 3] = [12.0, 32.0, 90.0];
 
 /// A look's mesh with round parts of `seg` sides.
-fn piece_mesh(scheme: Scheme, look: Look, seg: usize) -> Mesh {
+pub(crate) fn piece_mesh(scheme: Scheme, look: Look, seg: usize) -> Mesh {
     // The display case's chrome frame only clears its glass top when its
     // round parts are fine; it is a few hundred triangles either way.
     let seg = if look.0 == hw_gen::layout::furnish::ItemKind::Case {
@@ -268,7 +268,50 @@ pub fn furniture_models(
 /// the z-fighting check takes them kind by kind to name what clashes).
 fn build(b: &mut MeshBuilder, l: &Landmark, near: bool, keep: &dyn Fn(&Part) -> bool) {
     let Some(plan) = comet::layout(l) else { return };
-    let parts = comet::parts(l);
+    build_parts(b, &plan, &comet::parts(l), near, false, keep);
+}
+
+/// The inside of a town building of halls (`BuildingPlan::layout`), in the
+/// frame of [`build`] (the middle of the building, +z out of its front):
+/// everything behind its facade. The facade draws the outside walls'
+/// faces, the windows and the roof; this draws those walls' plaster, the
+/// floors, walls, stairs, rails, columns, shafts and lamps.
+pub fn halls(b: &mut MeshBuilder, plan: &hw_gen::building::BuildingPlan) {
+    halls_parts(b, plan, &|_| true);
+}
+
+fn halls_parts(
+    b: &mut MeshBuilder,
+    plan: &hw_gen::building::BuildingPlan,
+    keep: &dyn Fn(&Part) -> bool,
+) {
+    let (Some(l), Some(parts)) = (plan.layout.as_ref(), plan.solids()) else {
+        return;
+    };
+    let parts: Vec<Piece> = parts
+        .into_iter()
+        .map(|p| Piece {
+            part: p.part,
+            shape: comet::to_local(l.size, p.shape),
+        })
+        .collect();
+    build_parts(b, l, &parts, true, true, keep);
+}
+
+/// How far behind the facade's plane an outside wall's plaster starts in
+/// a town building (m).
+const BEHIND_FACADE: f64 = 0.02;
+
+/// `parts` of the layout `plan`, in the landmark frame. `shell`: inside a
+/// facade drawn by someone else.
+fn build_parts(
+    b: &mut MeshBuilder,
+    plan: &Layout,
+    parts: &[Piece],
+    near: bool,
+    shell: bool,
+    keep: &dyn Fn(&Part) -> bool,
+) {
     let (clad, band, accent) = livery(plan.scheme);
     let plaster = rgb(238, 232, 218);
     let ceiling = rgb(244, 242, 234);
@@ -322,7 +365,7 @@ fn build(b: &mut MeshBuilder, l: &Landmark, near: bool, keep: &dyn Fn(&Part) -> 
         })
         .collect();
 
-    for Piece { part, shape } in &parts {
+    for Piece { part, shape } in parts {
         let (mut y0, mut y1) = shape.span();
         // No two kinds of part end in one plane: each sinks into the floors
         // it touches by its own depth and is trimmed or stretched in plan
@@ -419,7 +462,7 @@ fn build(b: &mut MeshBuilder, l: &Landmark, near: bool, keep: &dyn Fn(&Part) -> 
             continue;
         }
         // What is indoors stops at the outside walls' inner faces.
-        let indoors = !matches!(part, Part::Window | Part::Canopy | Part::Fin);
+        let indoors = shell || !matches!(part, Part::Window | Part::Canopy | Part::Fin);
         // Each kind reaches its own little way into the plaster, so no
         // two kinds end in one plane there.
         let reach = match part {
@@ -437,6 +480,32 @@ fn build(b: &mut MeshBuilder, l: &Landmark, near: bool, keep: &dyn Fn(&Part) -> 
             }
         };
         match *part {
+            Part::Outer if shell => {
+                // Only the plaster: from the wall's inner face to just
+                // behind the facade, and no parapet.
+                let half = plan.size * 0.5 - DVec2::splat(BEHIND_FACADE);
+                skin(b, near, Base::CastStone);
+                put_within(
+                    b,
+                    shape,
+                    (y0 - 0.015, y1.min(top) - 0.015),
+                    0.0,
+                    plaster,
+                    half,
+                );
+            }
+            Part::Roof if shell => {
+                // The top floor's ceiling, under the facade's roof.
+                plain(b, Surf::Plain);
+                put(b, shape, (top - 0.3, top - 0.04), 0.0, ceiling);
+            }
+            Part::Window if shell => {
+                // The pane seen from indoors: a centimetre of glass just
+                // behind the facade (whose own pane faces the street).
+                let half = plan.size * 0.5 - DVec2::splat(0.03);
+                plain(b, Surf::Glass);
+                put_within(b, shape, (y0, y1), 0.0, glass, half);
+            }
             Part::Outer => outer(b, shape, near, (clad, band, plaster), top, (y0, y1)),
             Part::Wall => {
                 skin(b, near, Base::CastStone);
@@ -542,7 +611,7 @@ fn build(b: &mut MeshBuilder, l: &Landmark, near: bool, keep: &dyn Fn(&Part) -> 
     }
     plain(b, Surf::Plain);
     if near {
-        lamps(b, &plan, brass);
+        lamps(b, plan, brass, if shell { 20 } else { 24 });
     }
     let _ = RAIL;
 }
@@ -656,8 +725,8 @@ fn column(
 }
 
 /// Where the ceiling lamps hang, in the landmark's frame: (the saucer's
-/// middle, its radius, the length of its rod).
-fn lamp_spots(plan: &Layout) -> Vec<(DVec3, f64, f64)> {
+/// middle, its radius, the length of its rod, its height over the floor).
+fn lamp_spots(plan: &Layout) -> Vec<(DVec3, f64, f64, f64)> {
     let mut out = Vec::new();
     for s in plan
         .spaces
@@ -682,7 +751,12 @@ fn lamp_spots(plan: &Layout) -> Vec<(DVec3, f64, f64)> {
                 let p = s.rect.min
                     + size * DVec2::new((i as f64 + 0.5) / nx as f64, (j as f64 + 0.5) / nz as f64);
                 let q = comet::point_to_local(plan.size, p);
-                out.push((DVec3::new(q.x, ceil - drop, q.y), r, drop));
+                out.push((
+                    DVec3::new(q.x, ceil - drop, q.y),
+                    r,
+                    drop,
+                    ceil - drop - s.y,
+                ));
             }
         }
     }
@@ -690,10 +764,10 @@ fn lamp_spots(plan: &Layout) -> Vec<(DVec3, f64, f64)> {
 }
 
 /// Saucer lamps hanging from every ceiling, big ones in the tall rooms.
-fn lamps(b: &mut MeshBuilder, plan: &Layout, brass: Color) {
+fn lamps(b: &mut MeshBuilder, plan: &Layout, brass: Color, seg: usize) {
     use crate::carmesh::lathe;
     let warm = rgb(255, 236, 190);
-    for (hang, r, drop) in lamp_spots(plan) {
+    for (hang, r, drop, _) in lamp_spots(plan) {
         b.surf = Surf::Metal;
         b.cylinder(hang, (0.03, 0.03), drop, 6, false, brass);
         lathe(
@@ -701,7 +775,7 @@ fn lamps(b: &mut MeshBuilder, plan: &Layout, brass: Color) {
             hang,
             DVec3::Y,
             &[(0.05, 0.22), (r * 0.5, 0.16), (r, 0.0)],
-            24,
+            seg,
             |_| Some((Surf::Metal, brass)),
         );
         lathe(
@@ -709,7 +783,7 @@ fn lamps(b: &mut MeshBuilder, plan: &Layout, brass: Color) {
             hang,
             DVec3::Y,
             &[(r * 0.96, -0.01), (r * 0.6, -0.1), (0.0, -0.14)],
-            24,
+            seg,
             |_| Some((Surf::Glow, warm)),
         );
         b.surf = Surf::Plain;
@@ -721,8 +795,30 @@ fn lamps(b: &mut MeshBuilder, plan: &Layout, brass: Color) {
 pub struct CometLights {
     /// Every lamp of every building, in the town's frame.
     spots: Vec<Lamp>,
+    /// The lamps of the town's buildings of halls near the eye, and where
+    /// the eye was when they were gathered.
+    halls: Vec<Lamp>,
+    halls_at: Option<Vec3>,
     lit: Vec<LampId>,
     at: Option<Vec3>,
+}
+
+/// Lamps of town buildings are gathered within this of the eye (m), again
+/// when it has moved this far.
+const HALLS_REACH: f64 = 140.0;
+const HALLS_STEP: f32 = 30.0;
+
+/// A ceiling lamp's light. `over`: its height over the floor; a lamp high
+/// up in a tall hall shines as much brighter as it takes to light the
+/// floor like a low one does.
+fn lamp_light(at: DVec3, over: f64) -> Lamp {
+    let k = (over / 4.6).max(1.0);
+    Lamp::point(
+        Vec3::new(at.x as f32, (at.y - 0.4) as f32, at.z as f32),
+        rgb(255, 232, 196),
+        (5.0 * k * k).min(60.0) as f32,
+        (13.0 * k).min(48.0) as f32,
+    )
 }
 
 /// How many lamps shine at once, how near the eye they must be (m), and
@@ -738,25 +834,60 @@ impl CometLights {
             let Some(plan) = comet::layout(l) else {
                 continue;
             };
-            for (hang, r, _) in lamp_spots(&plan) {
+            for (hang, _, _, over) in lamp_spots(&plan) {
                 let p = l.to_plan(DVec2::new(hang.x, hang.z));
-                let big = r > 1.0;
-                spots.push(Lamp::point(
-                    Vec3::new(p.x as f32, (l.base + hang.y - 0.4) as f32, p.y as f32),
-                    rgb(255, 232, 196),
-                    if big { 9.0 } else { 5.0 },
-                    if big { 22.0 } else { 13.0 },
-                ));
+                spots.push(lamp_light(DVec3::new(p.x, l.base + hang.y, p.y), over));
             }
         }
         Self {
             spots,
+            halls: Vec::new(),
+            halls_at: None,
             lit: Vec::new(),
             at: None,
         }
     }
 
-    pub fn update(&mut self, world: &mut World, eye: Vec3) -> EngineResult<()> {
+    /// The lamps of the buildings of halls round `eye`. On the main
+    /// thread: a handful of buildings whose quarters are planned already
+    /// (they are drawn), a fraction of a millisecond each, once per
+    /// [`HALLS_STEP`] walked.
+    fn gather(&mut self, town: &hw_gen::urban::world::TownWorld, eye: Vec3) {
+        let c = DVec2::new(eye.x as f64, eye.z as f64);
+        let m = DVec2::splat(HALLS_REACH);
+        if !town.quarters_ready(c - m, c + m) {
+            return;
+        }
+        self.halls_at = Some(eye);
+        self.halls.clear();
+        for q in town.quarters_in(c - m, c + m) {
+            for b in &q.buildings {
+                let s = &b.site;
+                let mid = s.origin + (s.along * s.size.x + s.inward * s.size.y) * 0.5;
+                if mid.distance(c) > HALLS_REACH {
+                    continue;
+                }
+                let Some(plan) = s.layout() else { continue };
+                for (hang, _, _, over) in lamp_spots(&plan) {
+                    // Back from the landmark frame to the layout's.
+                    let p = comet::point_to_local(plan.size, DVec2::new(hang.x, hang.z));
+                    let at = s.to_city(DVec3::new(p.x, b.base + hang.y, p.y));
+                    self.halls.push(lamp_light(at, over));
+                }
+            }
+        }
+        self.at = None;
+    }
+
+    pub fn update(
+        &mut self,
+        world: &mut World,
+        town: &hw_gen::urban::world::TownWorld,
+        eye: Vec3,
+    ) -> EngineResult<()> {
+        if self.halls_at.is_none_or(|a| a.distance(eye) > HALLS_STEP) {
+            self.gather(town, eye);
+        }
         if self.at.is_some_and(|a| a.distance(eye) < LIT_STEP) {
             return Ok(());
         }
@@ -764,8 +895,12 @@ impl CometLights {
         let mut near: Vec<(f32, Lamp)> = self
             .spots
             .iter()
+            .chain(&self.halls)
             .map(|l| (l.position.distance(eye), *l))
             .filter(|(d, _)| *d < LIT_REACH)
+            // A big lamp high in a tall hall counts as near as a small
+            // one close by: by how much of its light reaches the eye.
+            .map(|(d, l)| (d / l.range.max(1.0), l))
             .collect();
         near.sort_by(|a, b| a.0.total_cmp(&b.0));
         near.truncate(LIT);
@@ -788,12 +923,32 @@ impl CometLights {
 /// of the grand stair), `hall` (in the biggest office hall), anything else
 /// from across the plaza.
 pub fn view(l: &Landmark, which: &str) -> Option<(DVec3, DVec3)> {
-    use hw_gen::layout::{Flight, LinkKind};
     let plan = comet::layout(l)?;
     let town = |p: DVec2, y: f64| {
         let q = l.to_plan(comet::point_to_local(plan.size, p));
         DVec3::new(q.x, l.base + y, q.y)
     };
+    let across = l.plaza + 22.0;
+    view_of(&plan, &town, which, across)
+}
+
+/// The same views of a town building of halls.
+pub fn halls_view(b: &hw_gen::urban::world::WorldBuilding, which: &str) -> Option<(DVec3, DVec3)> {
+    let plan = b.site.layout()?;
+    let town = |p: DVec2, y: f64| b.site.to_city(DVec3::new(p.x, b.base + y, p.y));
+    view_of(&plan, &town, which, 26.0)
+}
+
+/// `town`: from the layout's (x, z) and a height over its ground to the
+/// town's frame. `across`: how far in front of the building the outside
+/// view stands.
+fn view_of(
+    plan: &Layout,
+    town: &dyn Fn(DVec2, f64) -> DVec3,
+    which: &str,
+    across: f64,
+) -> Option<(DVec3, DVec3)> {
+    use hw_gen::layout::{Flight, LinkKind};
     let tall = plan
         .spaces
         .iter()
@@ -835,7 +990,7 @@ pub fn view(l: &Landmark, which: &str) -> Option<(DVec3, DVec3)> {
         "lift" => {
             // In front of the first lift's ground-floor doors, a little
             // to one side.
-            let runs = hw_gen::layout::lifts::runs(&plan);
+            let runs = hw_gen::layout::lifts::runs(plan);
             let run = runs.first()?;
             let (_, d) = run.doors.iter().find(|d| d.0 == 0)?;
             let out = (d.at() - run.car.at()).normalize_or_zero();
@@ -868,10 +1023,11 @@ pub fn view(l: &Landmark, which: &str) -> Option<(DVec3, DVec3)> {
             (town(eye, h.y + 2.0), town(h.rect.center(), h.y + 2.0))
         }
         _ => {
-            let from = l.to_plan(DVec2::new(l.plaza * 0.7, l.plaza + 22.0));
+            // The layout's front is z = 0, the street before it.
+            let from = DVec2::new(plan.size.x * 0.5 - across * 0.4, -across);
             (
-                DVec3::new(from.x, l.base + 13.0, from.y),
-                DVec3::new(l.pos.x, l.base + plan.height() * 0.45, l.pos.y),
+                town(from, 13.0),
+                town(plan.size * 0.5, plan.height() * 0.45),
             )
         }
     })

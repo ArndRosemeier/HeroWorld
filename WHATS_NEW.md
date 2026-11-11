@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.202 (2026-11-11)
+
+- Office buildings in town are now roomy inside, like the Daily Comet building: a tall lobby with sweeping stairs, galleries, wide office halls with columns, lamps and furniture. Walk in through the front doors; there are ceilings now, and no cut-open view in these buildings.
+- They stand on bigger plots (about 40 by 45 m), so business streets have fewer, larger houses. Storeys are about 6 m high.
+- Their lift doors stay shut for now; the stairs take you everywhere. Small towns do not have such buildings yet, and homes come later.
+- Towns are laid out anew, so old saved worlds start fresh.
+
 ## 0.201 (2026-11-11)
 
 - Cases: Atomic Annie at Hero Hall now hands out building cases. A gang has taken over the Daily Comet, Atlas Assurance or Zenith Radio: clear it room by room and beat their boss on the top floor, or search the floors for three clues.

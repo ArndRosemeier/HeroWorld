@@ -13,6 +13,7 @@
 
 use crate::city::DistrictKind;
 use crate::geom::Rect;
+use crate::layout::{office, solid, Layout};
 use crate::style::{Crown, Look, Roof, Vernacular};
 use glam::{DVec2, DVec3};
 use hw_core::{Seed, StableId};
@@ -225,6 +226,10 @@ pub struct BuildingSite {
     pub street: u32,
     /// The district it stands in (it decides the style).
     pub district: DistrictKind,
+    /// Set on a building planned at game scale by [`crate::layout`] (halls,
+    /// galleries, open stairs and lifts): the height of its roof. `floors`
+    /// then counts its tall storeys.
+    pub halls: Option<f64>,
     /// Builds in its region's old ways (towns); `None` for the
     /// golden-age styles alone.
     pub vernacular: Option<Vernacular>,
@@ -268,6 +273,9 @@ impl BuildingSite {
 
     /// Total height to the roof.
     pub fn height(&self) -> f64 {
+        if let Some(h) = self.halls {
+            return h;
+        }
         self.usage.ground_height() + FLOOR_HEIGHT * self.floors.saturating_sub(1) as f64
     }
 
@@ -325,12 +333,37 @@ pub struct Tier {
 }
 
 impl BuildingSite {
+    /// Makes this an office building of halls with `storeys` tall storeys
+    /// (its plot must be at least [`office::MIN_SIZE`]).
+    pub fn into_halls(mut self, storeys: u32) -> Self {
+        self.floors = storeys.max(2);
+        self.halls =
+            Some(office::plan_town(self.seed.child("layout"), self.size, self.floors).height());
+        self
+    }
+
+    /// The floor plan of a building of halls ([`Self::halls`]), in building
+    /// (x, z): the same for everyone who asks.
+    pub fn layout(&self) -> Option<Layout> {
+        self.halls
+            .map(|_| office::plan_town(self.seed.child("layout"), self.size, self.floors))
+    }
+
     /// The building's mass as tiers of floors, upper ones stepped back as
     /// in its plan (same outlines and floor heights as
     /// [`BuildingPlan::generate`], at a small part of the cost: no rooms).
     /// For drawing it from afar.
     pub fn massing(&self) -> Vec<Tier> {
         let full = Rect::from_xz(0.0, 0.0, self.size.x, self.size.y);
+        if let Some(top) = self.halls {
+            return vec![Tier {
+                outline: full,
+                first: 0,
+                end: self.floors,
+                bottom: 0.0,
+                top,
+            }];
+        }
         let mut out: Vec<Tier> = Vec::new();
         let mut elevation = 0.0;
         for (level, outline) in Planner::new(self).outlines(full).into_iter().enumerate() {
@@ -368,6 +401,10 @@ pub struct BuildingPlan {
     pub core: Option<Rect>,
     pub floors: Vec<Floor>,
     pub openings: Vec<Opening>,
+    /// The floor plan of a building of halls: its walls, stairs, lifts and
+    /// furniture come from this, and `floors` is its outline level by
+    /// level (for the facade and for whoever asks what room a point is in).
+    pub layout: Option<Layout>,
     /// Style, materials, roof and ornament.
     pub look: Look,
 }
@@ -375,6 +412,44 @@ pub struct BuildingPlan {
 impl BuildingPlan {
     pub fn generate(site: &BuildingSite) -> BuildingPlan {
         Planner::new(site).plan()
+    }
+
+    /// The solid parts of a building of halls, in building coordinates:
+    /// its layout's floors, walls, stairs and shafts, the outside walls cut
+    /// where the facade has its windows and doors.
+    pub fn solids(&self) -> Option<Vec<solid::Piece>> {
+        let l = self.layout.as_ref()?;
+        let holes: Vec<solid::ShellHole> = self
+            .openings
+            .iter()
+            .map(|o| {
+                let f = &self.floors[o.floor as usize];
+                let (along_x, w) = match o.side {
+                    Side::Front => (true, f.outline.min.y),
+                    Side::Back => (true, f.outline.max.y),
+                    Side::Left => (false, f.outline.min.x),
+                    Side::Right => (false, f.outline.max.x),
+                };
+                let v0 = f.elevation + o.sill;
+                solid::ShellHole {
+                    along_x,
+                    w,
+                    u: (o.along - o.width * 0.5, o.along + o.width * 0.5),
+                    v: (v0, v0 + o.height),
+                    glass: o.kind == OpeningKind::Window,
+                }
+            })
+            .collect();
+        Some(solid::pieces_in_shell(l, &holes))
+    }
+
+    /// The furniture of a building of halls, in building coordinates
+    /// (solid, and drawn where it is solid).
+    pub fn furniture(&self) -> Vec<crate::layout::furnish::Item> {
+        self.layout
+            .as_ref()
+            .map(crate::layout::furnish::items)
+            .unwrap_or_default()
     }
 
     pub fn height(&self) -> f64 {
@@ -413,8 +488,80 @@ impl<'a> Planner<'a> {
         bay_lines(o.min.x, o.max.x, self.look.bay)
     }
 
+    /// A building of halls: one [`Floor`] per storey of its layout, every
+    /// space that stands or rises through that storey a room of it, and
+    /// the way in from the street its only door (inside, the layout's
+    /// openings are wide and have no leaves).
+    fn hall_plan(&self, l: Layout) -> BuildingPlan {
+        let s = self.site;
+        let full = Rect::from_xz(0.0, 0.0, s.size.x, s.size.y);
+        let mut ys = l.levels();
+        ys.push(l.height());
+        let mut floors = Vec::new();
+        for (level, w) in ys.windows(2).enumerate() {
+            let (e, top) = (w[0], w[1]);
+            let seed = s.seed.child("floor").child(level as u32);
+            // Space index -> room index on this floor.
+            let mut index = vec![None; l.spaces.len()];
+            let mut rooms = Vec::new();
+            for (i, sp) in l.spaces.iter().enumerate() {
+                if sp.within.is_none() && sp.y <= e + 1e-3 && sp.top() > e + 1e-3 {
+                    use crate::layout::SpaceKind as K;
+                    let kind = match sp.kind {
+                        K::Vestibule | K::Lobby => RoomKind::Lobby,
+                        K::Atrium | K::Canyon => RoomKind::Hall,
+                        K::Gallery | K::Arcade | K::Concourse | K::Bridge | K::Landing => {
+                            RoomKind::Corridor
+                        }
+                        K::Hall | K::Boardroom => RoomKind::Office,
+                        K::Shop => RoomKind::Shop,
+                        K::StairHall | K::Shaft => RoomKind::Core,
+                        K::Service => RoomKind::Storage,
+                    };
+                    index[i] = Some(rooms.len());
+                    rooms.push(room(seed, rooms.len() as u32, kind, sp.rect));
+                }
+            }
+            let doors = l
+                .links
+                .iter()
+                .filter(|k| k.b.is_none() && (k.y - e).abs() < 1e-3)
+                .filter_map(|k| {
+                    let a = index[l.spaces[k.a].within.unwrap_or(k.a)]?;
+                    Some(Door {
+                        a,
+                        b: None,
+                        at: k.at,
+                        along_x: k.along_x,
+                        size: DVec2::new(k.width, crate::layout::solid::ENTRANCE_H),
+                    })
+                })
+                .collect();
+            floors.push(Floor {
+                level: level as u32,
+                elevation: e,
+                height: top - e,
+                outline: full,
+                rooms,
+                doors,
+            });
+        }
+        let openings = facade(&floors, &self.look, true);
+        BuildingPlan {
+            site: s.clone(),
+            core: None,
+            floors,
+            openings,
+            layout: Some(l),
+            look: self.look.clone(),
+        }
+    }
+
     fn plan(&self) -> BuildingPlan {
         let s = self.site;
+        if let Some(l) = s.layout() {
+            return self.hall_plan(l);
+        }
         let full = Rect::from_xz(0.0, 0.0, s.size.x, s.size.y);
         let outlines = self.outlines(full);
         let double_loaded = s.size.y >= 2.0 * MIN_STRIP_DEPTH + CORRIDOR_WIDTH;
@@ -486,12 +633,13 @@ impl<'a> Planner<'a> {
             floors.push(floor);
             elevation += height;
         }
-        let openings = facade(&floors, &self.look);
+        let openings = facade(&floors, &self.look, false);
         BuildingPlan {
             site: s.clone(),
             core,
             floors,
             openings,
+            layout: None,
             look: self.look.clone(),
         }
     }
@@ -502,6 +650,7 @@ impl<'a> Planner<'a> {
         let s = self.site;
         let mut rng = s.seed.child("setbacks").rng();
         let tower = s.floors >= 8
+            && s.halls.is_none()
             && matches!(s.usage, BuildingUse::Offices | BuildingUse::Apartments)
             && s.size.y >= 2.0 * MIN_STRIP_DEPTH + CORRIDOR_WIDTH;
         let mut out = Vec::with_capacity(s.floors as usize);
@@ -961,7 +1110,8 @@ fn partition(
 /// window in every facade bay where a room that wants daylight lies behind
 /// (shaped by the style: punched, ribbon, curtain glass, portholes; shop
 /// fronts and lobbies get big glass on the street).
-fn facade(floors: &[Floor], look: &Look) -> Vec<Opening> {
+/// `tall`: a building of halls, whose windows grow with its storeys.
+fn facade(floors: &[Floor], look: &Look, tall: bool) -> Vec<Opening> {
     use crate::style::WindowKind;
     const EPS: f64 = 1e-6;
     // Stairs get windows too (no wall of a town house stands blank), and
@@ -1086,7 +1236,7 @@ fn facade(floors: &[Floor], look: &Look) -> Vec<Opening> {
                         WindowKind::Ribbon => (
                             bay * look.window_share,
                             0.95,
-                            (f.height - 2.2).clamp(1.6, 2.6),
+                            (f.height - 2.2).clamp(1.6, if tall { f.height * 0.5 } else { 2.6 }),
                         ),
                         WindowKind::Porthole => {
                             let d = (bay * look.window_share).clamp(1.0, 1.8);
@@ -1095,7 +1245,7 @@ fn facade(floors: &[Floor], look: &Look) -> Vec<Opening> {
                         WindowKind::Punched | WindowKind::Arched => (
                             bay * look.window_share,
                             0.9,
-                            (f.height - 1.9).clamp(1.8, 3.2),
+                            (f.height - 1.9).clamp(1.8, if tall { f.height * 0.6 } else { 3.2 }),
                         ),
                     }
                 };
@@ -1143,7 +1293,47 @@ pub(crate) mod tests {
             floors,
             street: 0,
             district: DistrictKind::Commercial,
+            halls: None,
             vernacular: None,
+        }
+    }
+
+    #[test]
+    fn buildings_of_halls_are_planned_level_by_level() {
+        for k in 0..40u64 {
+            let (w, d) = (32.0 + (k % 7) as f64 * 3.5, 38.0 + (k % 5) as f64 * 3.0);
+            let n = 2 + (k % 11) as u32;
+            let usage = if k % 2 == 0 {
+                BuildingUse::Offices
+            } else {
+                BuildingUse::ShopsAndOffices
+            };
+            let s = site(usage, w, d, 3, k).into_halls(n);
+            let plan = BuildingPlan::generate(&s);
+            let l = plan.layout.as_ref().expect("a layout");
+            assert!(l.problems().is_empty(), "{k}: {:?}", l.problems());
+            assert_eq!(plan.floors.len() as u32, s.floors, "{k}: {:?}", l.scheme);
+            assert!((plan.height() - s.height()).abs() < 1e-9);
+            assert_eq!(s.massing().len(), 1);
+            for f in &plan.floors {
+                // Rooms tile every storey, so every point is in a room.
+                let area: f64 = f
+                    .rooms
+                    .iter()
+                    .map(|r| r.rect.size().x * r.rect.size().y)
+                    .sum();
+                assert!((area - w * d).abs() < 1e-6, "{k} level {}", f.level);
+                assert!(f.height >= 5.5 - 1e-9);
+            }
+            // One way in from the street, and windows on every storey.
+            assert!(plan.floors[0].doors.iter().any(|d| d.b.is_none()));
+            for f in &plan.floors {
+                assert!(plan
+                    .openings
+                    .iter()
+                    .any(|o| o.floor == f.level && o.kind == OpeningKind::Window));
+            }
+            assert_eq!(plan, BuildingPlan::generate(&s));
         }
     }
 

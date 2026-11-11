@@ -186,8 +186,32 @@ pub const PARAPET: f64 = 1.1;
 pub const CANOPY: (f64, f64) = (3.6, 2.0);
 pub const FIN: (f64, f64, f64) = (2.6, 0.7, 5.0);
 
+/// An opening in an outside wall that someone else decided (a town
+/// building's facade): on the wall line `w` (z if `along_x`, else x), from
+/// `u0` to `u1` along it and `v0` up to `v1`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShellHole {
+    pub along_x: bool,
+    pub w: f64,
+    pub u: (f64, f64),
+    pub v: (f64, f64),
+    /// A window: glass stands in it.
+    pub glass: bool,
+}
+
 /// Every solid part of the layout.
 pub fn pieces(l: &Layout) -> Vec<Piece> {
+    build(l, None)
+}
+
+/// Every solid part of the layout inside a shell that has its own windows
+/// and its own entrance: the outside walls are cut by `holes` instead of a
+/// window per bay, and nothing is hung on the front.
+pub fn pieces_in_shell(l: &Layout, holes: &[ShellHole]) -> Vec<Piece> {
+    build(l, Some(holes))
+}
+
+fn build(l: &Layout, shell: Option<&[ShellHole]>) -> Vec<Piece> {
     let mut out = Vec::new();
     let top: Vec<(usize, &Space)> = l
         .spaces
@@ -345,7 +369,31 @@ pub fn pieces(l: &Layout) -> Vec<Piece> {
             let glazed = !matches!(s.kind, SpaceKind::Service | SpaceKind::Shaft);
             let n = ((hi - lo) / BAY).floor() as i32;
             let (sill, head) = (s.y + SILL, s.top() - HEAD);
-            if glazed && n > 0 && head - sill > 1.0 {
+            for h in shell.unwrap_or(&[]).iter().filter(|h| {
+                h.along_x == along_x
+                    && (h.w - w).abs() < 1e-3
+                    && h.u.0 < hi
+                    && lo < h.u.1
+                    && h.v.0 < s.top()
+                    && s.y < h.v.1
+            }) {
+                let (u0, u1) = (h.u.0.max(lo), h.u.1.min(hi));
+                let (v0, v1) = (h.v.0.max(s.y), h.v.1.min(s.top()));
+                holes.push(Hole { u0, u1, v0, v1 });
+                if h.glass {
+                    wall(
+                        &mut out,
+                        Part::Window,
+                        0.08,
+                        along_x,
+                        w,
+                        (u0, u1),
+                        (v0, v1),
+                        &[],
+                    );
+                }
+            }
+            if shell.is_none() && glazed && n > 0 && head - sill > 1.0 {
                 let bay = (hi - lo) / n as f64;
                 for i in 0..n {
                     let c = lo + (i as f64 + 0.5) * bay;
@@ -422,7 +470,11 @@ pub fn pieces(l: &Layout) -> Vec<Piece> {
             (a.at.x - mid).abs().total_cmp(&(b.at.x - mid).abs())
         })
         .map(|k| k.at);
-    for k in l.links.iter().filter(|k| k.kind == LinkKind::Entrance) {
+    for k in l
+        .links
+        .iter()
+        .filter(|k| k.kind == LinkKind::Entrance && shell.is_none())
+    {
         let (u0, u1) = span(k);
         let (reach, side) = CANOPY;
         let y = k.y + ENTRANCE_H + 0.5;

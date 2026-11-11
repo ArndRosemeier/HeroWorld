@@ -33,6 +33,7 @@ pub mod factionview;
 pub mod fightview;
 pub mod gateview;
 pub mod grassview;
+pub mod hallfurniture;
 pub mod heroview;
 pub mod hitch;
 pub mod hospitalmesh;

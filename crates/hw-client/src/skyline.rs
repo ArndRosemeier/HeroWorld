@@ -980,6 +980,7 @@ fn paints(site: &hw_gen::building::BuildingSite, look: &hw_gen::style::Look) -> 
         core: None,
         floors: Vec::new(),
         openings: Vec::new(),
+        layout: None,
         look: look.clone(),
     };
     let f = crate::facades::facade(&plan);

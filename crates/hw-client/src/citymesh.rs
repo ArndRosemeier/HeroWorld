@@ -186,6 +186,10 @@ pub struct MeshBuilder {
     /// No textures at all: faces keep their own colours (for meshes that
     /// cannot carry a texture, like a breakable building's).
     pub flat: bool,
+    /// Where the faces added next go: a frame's origin and its x and z
+    /// axes (y stays up). For a part made in its own frame, like the
+    /// inside of a building of halls.
+    pub frame: Option<(DVec3, DVec3, DVec3)>,
     /// Places to stand on the floor drawn open, clear of its furniture
     /// (see `interior::furnish`): where people indoors are shown.
     pub spots: Vec<Spot>,
@@ -246,6 +250,7 @@ impl MeshBuilder {
             plain_area: [0.0; 2],
             flat: false,
             spots: Vec::new(),
+            frame: None,
         }
     }
 
@@ -445,6 +450,13 @@ impl MeshBuilder {
     /// 6) and shading stays flat: points are never shared between faces
     /// that face different ways.
     fn point(&mut self, p: DVec3, n: DVec3, color: Color, tex: Option<Tex>) -> PointId {
+        let (p, n) = match self.frame {
+            Some((o, x, z)) => (
+                o + x * p.x + DVec3::Y * p.y + z * p.z,
+                x * n.x + DVec3::Y * n.y + z * n.z,
+            ),
+            None => (p, n),
+        };
         let color = match (self.surf, self.weather) {
             (Surf::Plain, Some(w)) => w.apply(p, color),
             _ => color,
@@ -1143,6 +1155,23 @@ pub fn add_building(
         Look::Shell => plan.floors.len(),
         Look::Cut { level } => (level as usize).min(plan.floors.len() - 1),
     };
+    if plan.layout.is_some() {
+        // A building of halls is never cut open: its rooms are tall
+        // enough for the camera, and all of it is there up close.
+        let n = plan.floors.len();
+        crate::buildingmesh::exterior(b, plan, n, true, detail);
+        if detail == crate::buildingmesh::Detail::Near {
+            let mid = site.size * 0.5;
+            b.frame = Some((
+                to_city(mid.x, base, mid.y),
+                -u,
+                -DVec3::new(site.inward.x, 0.0, site.inward.y),
+            ));
+            crate::cometmesh::halls(b, plan);
+            b.frame = None;
+        }
+        return;
+    }
     crate::buildingmesh::exterior(b, plan, shown_floors, look == Look::Shell, detail);
 
     if let Look::Cut { .. } = look {

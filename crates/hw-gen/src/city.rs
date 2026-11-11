@@ -1177,6 +1177,7 @@ impl CityPlan {
             floors,
             street: lot.street,
             district: district.kind,
+            halls: None,
             vernacular: None,
         })
     }

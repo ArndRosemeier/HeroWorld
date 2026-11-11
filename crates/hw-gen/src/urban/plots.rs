@@ -19,6 +19,7 @@ use super::streets::{piece_seed, PieceStreets, StreetStyle};
 use super::{inner_point, Piece, Town, OUTLINE};
 use crate::building::{BuildingSite, BuildingUse, CORE_SIZE, CORRIDOR_WIDTH};
 use crate::city::{DistrictKind, BUILDING_GAP};
+use crate::layout::office;
 use crate::style::{Quarter, Region, Vernacular};
 use crate::water::segment_distance;
 use glam::DVec2;
@@ -29,10 +30,22 @@ pub const MIN_WIDTH: f64 = 10.0;
 /// The shallowest building it accepts (m).
 pub const MIN_DEPTH: f64 = CORE_SIZE.y + CORRIDOR_WIDTH;
 
+/// The plots of office buildings (width, depth): big enough for the halls,
+/// galleries and open stairs of `layout::office`, whatever the quarter.
+const GRAND: ((f64, f64), (f64, f64)) = ((34.0, 50.0), (40.0, 52.0));
+
+/// Does this use get an office building's big plot here? Not in the old
+/// town's lanes, where a shop is a narrow house with rooms above.
+fn grand(prog: &Programme, usage: BuildingUse) -> bool {
+    matches!(usage, BuildingUse::Offices | BuildingUse::ShopsAndOffices) && !prog.lanes
+}
+
 /// How a kind of quarter builds.
 #[derive(Clone, Copy, Debug)]
 struct Programme {
     district: DistrictKind,
+    /// Narrow burgage plots: no big office plots here.
+    lanes: bool,
     /// Uses, with weights.
     uses: [(BuildingUse, f64); 2],
     width: (f64, f64),
@@ -267,6 +280,7 @@ fn programme(
     let tall = |lo: f64, hi: f64| ((lo * (0.5 + big)) as u32, (hi * (0.4 + big)) as u32);
     let pr = |district, uses, width, depth, floors: (u32, u32), setback, gap| Programme {
         district,
+        lanes: style == StreetStyle::Lanes,
         uses,
         width,
         depth,
@@ -486,62 +500,98 @@ fn fill_block(
         let mut t = 0.0;
         let mut setback = rng.range(prog.setback.0, prog.setback.1);
         while t + 2.0 <= len {
-            let w = rng.range(prog.width.0, prog.width.1);
-            let mut depth = rng.range(prog.depth.0, prog.depth.1);
+            let use_w: Vec<f64> = prog.uses.iter().map(|u| u.1).collect();
+            let wanted = prog.uses[rng.weighted(&use_w)].0;
             let mut placed = false;
-            // Shrink a building that does not fit before giving up the spot.
-            for _ in 0..3 {
-                let width = w.max(MIN_WIDTH);
-                let p0 = point_at(&line, t);
-                let along = (point_at(&line, t + width) - p0).normalize_or_zero();
-                if along == DVec2::ZERO {
-                    break;
-                }
-                let inward = along.perp();
-                let origin = p0 + inward * (reach + setback);
-                let corners = [
-                    origin,
-                    origin + along * width,
-                    origin + along * width + inward * depth,
-                    origin + inward * depth,
-                ];
-                if fits(&ring, &sides, &front, &corners)
-                    && clear_of_streets(room.streets, &corners)
-                    && out[first..]
-                        .iter()
-                        .all(|o| apart(o, &corners, along, inward))
-                {
-                    let id_seed = seed.child("b").child(out.len() as u32 - first as u32);
-                    let use_w: Vec<f64> = prog.uses.iter().map(|u| u.1).collect();
-                    let usage = prog.uses[rng.weighted(&use_w)].0;
-                    let mut floors =
-                        rng.range_int(prog.floors.0 as i64, prog.floors.1 as i64 + 1) as u32;
-                    if usage == BuildingUse::House {
-                        floors = floors.min(2);
+            // An office building needs a plot its halls fit on; where the
+            // block has no such room, the quarter's other use goes there.
+            let other = prog.uses.iter().map(|u| u.0).find(|u| !grand(prog, *u));
+            let tries = [Some(wanted), other.filter(|_| grand(prog, wanted))];
+            for usage in tries.into_iter().flatten() {
+                let big = grand(prog, usage);
+                let (wr, dr) = if big {
+                    (
+                        (prog.width.0.max(GRAND.0 .0), prog.width.1.max(GRAND.0 .1)),
+                        (prog.depth.0.max(GRAND.1 .0), prog.depth.1.max(GRAND.1 .1)),
+                    )
+                } else {
+                    (prog.width, prog.depth)
+                };
+                let (least_w, least_d) = if big {
+                    (office::MIN_SIZE.x, office::MIN_SIZE.y)
+                } else {
+                    (MIN_WIDTH, MIN_DEPTH)
+                };
+                // Halls are planned on a half-metre grid.
+                let snap = |v: f64| if big { (v * 2.0).floor() * 0.5 } else { v };
+                let mut width = snap(rng.range(wr.0, wr.1).max(least_w));
+                let mut depth = snap(rng.range(dr.0, dr.1));
+                // Shrink a building that does not fit before giving up the spot.
+                for _ in 0..3 {
+                    let p0 = point_at(&line, t);
+                    let along = (point_at(&line, t + width) - p0).normalize_or_zero();
+                    if along == DVec2::ZERO {
+                        break;
                     }
-                    // Narrow buildings stay low.
-                    if width < 16.0 || depth < 16.0 {
-                        floors = floors.min(6);
-                    }
-                    out.push(BuildingSite {
-                        id: StableId::from_seed(id_seed),
-                        seed: id_seed,
-                        usage,
+                    let inward = along.perp();
+                    let origin = p0 + inward * (reach + setback);
+                    let corners = [
                         origin,
-                        along,
-                        inward,
-                        size: DVec2::new(width, depth),
-                        floors,
-                        street: 0,
-                        district: prog.district,
-                        vernacular,
-                    });
-                    t += width + rng.range(prog.gap.0, prog.gap.1);
-                    placed = true;
+                        origin + along * width,
+                        origin + along * width + inward * depth,
+                        origin + inward * depth,
+                    ];
+                    if fits(&ring, &sides, &front, &corners)
+                        && clear_of_streets(room.streets, &corners)
+                        && out[first..]
+                            .iter()
+                            .all(|o| apart(o, &corners, along, inward))
+                    {
+                        let id_seed = seed.child("b").child(out.len() as u32 - first as u32);
+                        let mut floors =
+                            rng.range_int(prog.floors.0 as i64, prog.floors.1 as i64 + 1) as u32;
+                        if usage == BuildingUse::House {
+                            floors = floors.min(2);
+                        }
+                        // Narrow buildings stay low.
+                        if width < 16.0 || depth < 16.0 {
+                            floors = floors.min(6);
+                        }
+                        let site = BuildingSite {
+                            id: StableId::from_seed(id_seed),
+                            seed: id_seed,
+                            usage,
+                            origin,
+                            along,
+                            inward,
+                            size: DVec2::new(width, depth),
+                            floors,
+                            street: 0,
+                            district: prog.district,
+                            halls: None,
+                            vernacular,
+                        };
+                        // Halls stand some 6 m high: as tall a building has
+                        // fewer storeys than it had floors.
+                        out.push(if big {
+                            let storeys = (site.height() / 6.3).round() as u32;
+                            site.into_halls(storeys.clamp(2, 16))
+                        } else {
+                            site
+                        });
+                        t += width + rng.range(prog.gap.0, prog.gap.1);
+                        placed = true;
+                        break;
+                    }
+                    depth = snap(depth * 0.75).max(least_d);
+                    if big {
+                        width = snap(width * 0.85).max(least_w);
+                    }
+                    setback *= 0.5;
+                }
+                if placed {
                     break;
                 }
-                depth = (depth * 0.75).max(MIN_DEPTH);
-                setback *= 0.5;
             }
             if !placed {
                 t += 1.5;

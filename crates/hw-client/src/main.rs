@@ -900,6 +900,61 @@ fn main() -> EngineResult<()> {
                 None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
             }
         }
+        "halls" | "hallslobby" | "hallsgallery" | "hallsstairs" | "hallshall" => {
+            // A town office building of halls, the `HW_HALLS`-th nearest
+            // the start (0 by default): the same views as a Comet building.
+            let nth: usize = std::env::var("HW_HALLS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let m = DVec2::splat(4000.0);
+            let mut near: Vec<(f64, hw_gen::urban::world::WorldBuilding)> = generated
+                .world
+                .quarters_in(spawn - m, spawn + m)
+                .iter()
+                .flat_map(|q| q.buildings.clone())
+                .filter(|b| b.site.halls.is_some())
+                .map(|b| (b.site.origin.distance(spawn), b))
+                .collect();
+            near.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let which = view.trim_start_matches("halls");
+            if let Some((_, b)) = near.get(nth.min(near.len().saturating_sub(1))) {
+                let l = b.site.layout();
+                eprintln!(
+                    "halls view: {:?} {} x {} storeys, origin {:.1} along {:.2} base {:.1}, {:?}",
+                    b.site.usage,
+                    b.site.size,
+                    b.site.floors,
+                    b.site.origin,
+                    b.site.along,
+                    b.base,
+                    l.as_ref().map(|l| l.scheme)
+                );
+            }
+            // `HW_HALLS_EYE=x,y,z,x,y,z`: the eye and what it looks at, in
+            // the building's own (x, z) and height over its ground.
+            let own: Option<Vec<f64>> = std::env::var("HW_HALLS_EYE")
+                .ok()
+                .map(|v| v.split(',').filter_map(|t| t.trim().parse().ok()).collect());
+            let chosen = near.get(nth.min(near.len().saturating_sub(1)));
+            let pair = match (chosen, own.as_deref()) {
+                (Some((_, b)), Some(&[x, y, z, tx, ty, tz])) => {
+                    let p = |x, y, z| b.site.to_city(DVec3::new(x, b.base + y, z));
+                    Some((p(x, y, z), p(tx, ty, tz)))
+                }
+                (Some((_, b)), _) => hw_client::cometmesh::halls_view(b, which),
+                _ => None,
+            };
+            match pair {
+                Some((eye, at)) => {
+                    let d = at - eye;
+                    let yaw = d.x.atan2(d.z).to_degrees() as f32;
+                    let pitch = (d.y / d.x.hypot(d.z)).atan().to_degrees() as f32;
+                    FlyCamera::new((eye.x as f32, eye.y as f32, eye.z as f32), yaw, pitch)
+                }
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
         "hospital" | "ward" | "pods" | "hospitaldoor" => {
             // The hospital nearest the start: from across its plaza, inside
             // its Recovery Hall (`ward` from the door end, `pods` close at
@@ -2488,7 +2543,12 @@ fn main() -> EngineResult<()> {
                 lights.update(world, eye, dark, props, rooms)?;
             }
             if let Some(lights) = extras.comet_lights.as_mut() {
-                lights.update(world, world.camera().eye())?;
+                let eye = world.camera().eye();
+                lights.update(world, &town.world, eye)?;
+            }
+            {
+                let eye = world.camera().eye();
+                extras.hall_furniture.update(world, &town.world, eye)?;
             }
             if let Some(lifts) = extras.lifts.as_mut() {
                 let now = session.time(tick_clock.frac());

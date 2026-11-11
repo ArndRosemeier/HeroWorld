@@ -2640,6 +2640,7 @@ mod tests {
             floors,
             street: 0,
             district: DistrictKind::Commercial,
+            halls: None,
             vernacular: None,
         };
         BuildingPlan::generate(&site)

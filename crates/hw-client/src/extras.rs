@@ -48,6 +48,8 @@ pub struct TownExtras {
     pub lights: Option<crate::nightlights::NightLights>,
     /// The Comet buildings' ceiling lamps (on all day: no sun in there).
     pub comet_lights: Option<crate::cometmesh::CometLights>,
+    /// The furniture of the town's buildings of halls, round the eye.
+    pub hall_furniture: crate::hallfurniture::HallFurniture,
     /// Their lifts: cars and sliding doors.
     pub lifts: Option<crate::cometmesh::LiftView>,
     pub signals: Option<crate::signalview::SignalView>,
@@ -72,6 +74,7 @@ impl TownExtras {
     pub fn despawn(&mut self, world: &mut World) {
         // The streamed woods copy tree sets below: out with them first.
         let _ = world.set_stream(None);
+        self.hall_furniture.clear(world);
         for id in self.lods.drain(..) {
             world.despawn_lod(id);
         }
@@ -405,6 +408,7 @@ fn assemble(
         waterfront: Some(crate::waterfrontview::WaterfrontView::new(town.clone())),
         lights: Some(crate::nightlights::NightLights::new(town.clone())),
         comet_lights: Some(crate::cometmesh::CometLights::new(town)),
+        hall_furniture: Default::default(),
         lifts: Some(crate::cometmesh::LiftView::new(town)),
         signals: Some(crate::signalview::SignalView::new()),
         props: Some(props),

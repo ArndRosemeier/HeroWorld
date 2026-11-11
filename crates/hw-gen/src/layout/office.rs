@@ -30,6 +30,18 @@ pub fn plan(seed: Seed, size: DVec2, storeys: u32) -> Layout {
         .expect("a grand hall fits every plot of at least MIN_SIZE")
 }
 
+/// Plans an office building for a town plot: one whose floors run level
+/// through the whole building, so the facade's rows of windows fit it.
+pub fn plan_town(seed: Seed, size: DVec2, storeys: u32) -> Layout {
+    let mut order = [Scheme::Atrium, Scheme::GrandHall];
+    seed.child("scheme").rng().shuffle(&mut order);
+    order
+        .iter()
+        .find_map(|s| plan_scheme(seed, size, storeys, *s))
+        .or_else(|| grand_hall(seed, size.max(MIN_SIZE), storeys.max(2)))
+        .expect("a grand hall fits every plot of at least MIN_SIZE")
+}
+
 /// Plans an office building in one scheme, if it fits.
 pub fn plan_scheme(seed: Seed, size: DVec2, storeys: u32, scheme: Scheme) -> Option<Layout> {
     if size.x < MIN_SIZE.x || size.y < MIN_SIZE.y || storeys < 2 {
