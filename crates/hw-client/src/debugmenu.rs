@@ -647,6 +647,22 @@ pub fn places(world: &Area, solids: &Obstacles) -> Vec<Place> {
             );
         }
     }
+    // The Comet buildings (the new game-scale interiors): in their lobbies.
+    for l in world
+        .landmarks
+        .iter()
+        .filter(|l| l.kind == LandmarkKind::CometBuilding)
+    {
+        if let Some((eye, at)) = crate::cometmesh::view(l, "lobby") {
+            add(
+                &mut out,
+                "Town",
+                format!("{}, in the lobby", hw_gen::urban::comet::name(l)),
+                Some(DVec3::new(eye.x, l.base + 0.1, eye.z)),
+                DVec2::new(at.x, at.z),
+            );
+        }
+    }
     // A park: beside the fountain nearest the start.
     use hw_gen::urban::props::PropKind;
     if let Some(f) = world

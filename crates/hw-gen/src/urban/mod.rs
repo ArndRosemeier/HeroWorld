@@ -21,6 +21,7 @@
 pub mod airspace;
 pub mod area;
 pub mod atomic;
+pub mod comet;
 pub mod deep;
 pub mod drillrig;
 pub mod dystopia;

@@ -234,6 +234,43 @@ impl NightLights {
                 // Their lights pulse with what they do: see `teslaview`
                 // and `worksview`.
                 LandmarkKind::TeslaTower | LandmarkKind::RobotWorks => {}
+                LandmarkKind::CometBuilding => {
+                    // Its tall room (the lobby, the atrium, the canyon)
+                    // and the entrance, glowing through the glass.
+                    use hw_gen::layout::SpaceKind;
+                    use hw_gen::urban::comet;
+                    let Some(plan) = comet::layout(l) else {
+                        continue;
+                    };
+                    let tall = plan
+                        .spaces
+                        .iter()
+                        .filter(|s| {
+                            matches!(
+                                s.kind,
+                                SpaceKind::Lobby | SpaceKind::Atrium | SpaceKind::Canyon
+                            )
+                        })
+                        .max_by(|a, b| a.h.total_cmp(&b.h));
+                    if let Some(s) = tall {
+                        let p = l.to_plan(comet::point_to_local(plan.size, s.rect.center()));
+                        let reach = (s.rect.size().max_element() * 0.8) as f32;
+                        for up in [0.3, 0.75] {
+                            sources.push(Source {
+                                lamp: Lamp::point(
+                                    Vec3::new(
+                                        p.x as f32,
+                                        (l.base + s.y + s.h * up) as f32,
+                                        p.y as f32,
+                                    ),
+                                    rgb(255, 232, 190),
+                                    reach,
+                                    reach,
+                                ),
+                            });
+                        }
+                    }
+                }
             }
         }
         Self {

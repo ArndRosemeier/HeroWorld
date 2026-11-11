@@ -482,6 +482,7 @@ pub fn stands(world: &Area) -> Vec<Stand> {
             LandmarkKind::MoleDrill => "The mole drill",
             LandmarkKind::WeatherTower => "The weather tower",
             LandmarkKind::Hospital => "Aether Mercy Hospital",
+            LandmarkKind::CometBuilding => hw_gen::urban::comet::name(l),
             // No taxi will take you there.
             LandmarkKind::TeslaTower | LandmarkKind::RobotWorks => continue,
         };

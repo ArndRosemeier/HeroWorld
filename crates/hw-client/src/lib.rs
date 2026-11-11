@@ -11,6 +11,7 @@ pub mod carmesh;
 pub mod chat;
 pub mod citybuild;
 pub mod citymesh;
+pub mod cometmesh;
 pub mod crash;
 pub mod creator;
 pub mod crimeview;

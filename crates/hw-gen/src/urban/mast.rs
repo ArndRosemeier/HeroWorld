@@ -282,6 +282,7 @@ pub fn plan_mast(w: &TownWorld, others: &[Landmark]) -> Option<Landmark> {
         height: MAST_H,
         dir: d,
         stairs: Vec::new(),
+        variant: 0,
     })
 }
 

@@ -1642,6 +1642,7 @@ mod tests {
             height: rig::HEIGHT,
             dir: DVec2::Y,
             stairs: Vec::new(),
+            variant: 0,
         }
     }
 

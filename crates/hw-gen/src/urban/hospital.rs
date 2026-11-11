@@ -426,6 +426,7 @@ mod tests {
             height: PYLON_TOP,
             dir: DVec2::new(0.6, 0.8),
             stairs: Vec::new(),
+            variant: 0,
         };
         let fps = l.footprints();
         let blocked = |p: DVec2, y: f64| {

@@ -557,6 +557,7 @@ mod tests {
                 height: TOWER_H,
                 dir: DVec2::Y,
                 stairs: Vec::new(),
+                variant: 0,
             },
             schedule: Schedule::new(hw_core::Seed(4)),
         };

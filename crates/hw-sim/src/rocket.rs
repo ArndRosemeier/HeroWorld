@@ -482,6 +482,7 @@ mod tests {
             height: 40.0,
             dir: DVec2::new(0.6, 0.8),
             stairs: Vec::new(),
+            variant: 0,
         };
         let pad = Pad {
             landmark: l.clone(),

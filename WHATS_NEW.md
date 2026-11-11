@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.187 (2026-11-11)
+
+- The first buildings with the new, roomy interiors stand in town: the Daily Comet building, the Atlas Assurance hall and the Zenith Radio house (on the map, in the taxi list, and in the debug menu's places). Walk in at the front doors: halls ten metres and more across under ceilings six to eight metres up, a lobby or atrium several storeys high, galleries and bridges, and grand stairs you can run and fight on.
+- Everything in them is solid and real: floors at every height, every step, rails, columns, glass. No magic lift: you climb the stairs. The lifts have their shafts and doors but do not run yet.
+- They are bare for now (no furniture, plain walls). The other buildings in town still have their old interiors.
+
 ## 0.186 (2026-11-11)
 
 - Super Jump is super now. A held jump goes about 14 m up at level 1 (over a three storey house) and grows with every level to 45 m at level 20 (over a ten storey block). Tap Space for a shorter hop, handy indoors.

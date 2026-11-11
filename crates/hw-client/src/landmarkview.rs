@@ -79,6 +79,7 @@ pub fn model(l: &Landmark, near: bool) -> Vec<Mesh> {
         LandmarkKind::WeatherTower => crate::weathermodel::tower(&mut b, l, near),
         LandmarkKind::RobotWorks => crate::worksview::model_into(&mut b, near),
         LandmarkKind::Hospital => crate::hospitalmesh::hospital(&mut b, near),
+        LandmarkKind::CometBuilding => crate::cometmesh::building(&mut b, l, near),
     }
     stairs(&mut b, l, near);
     b.finish_parts()
@@ -1181,6 +1182,7 @@ mod tests {
                 height: 60.0,
                 dir: DVec2::Y,
                 stairs: Vec::new(),
+                variant: 0,
             };
             for near in [true, false] {
                 let parts = model(&l, near);

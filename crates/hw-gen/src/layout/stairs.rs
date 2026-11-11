@@ -199,6 +199,24 @@ pub(crate) fn grand(
                 rect: Rect::from_xz(cx - half, a.min(b), cx + half, a.max(b)),
                 y: y1,
             });
+            // Between each arc's top edge (a radius) and that landing a
+            // wedge is left: strips of landing fill it, each reaching down
+            // to where the radius crosses its inner side (their corners lie
+            // over the corner of the top tread or two).
+            let wide = r_out * gap.sin();
+            let strips = 4;
+            for side in [1.0, -1.0] {
+                for i in 0..strips {
+                    let x0 = half + (wide - half) * i as f64 / strips as f64;
+                    let x1 = half + (wide - half) * (i + 1) as f64 / strips as f64;
+                    let (a, b) = (z(0.0), z(r_out - x0 / gap.tan()));
+                    let (p, q) = (cx + side * x0, cx + side * x1);
+                    landings.push(Landing {
+                        rect: Rect::from_xz(p.min(q), a.min(b), p.max(q), a.max(b)),
+                        y: y1,
+                    });
+                }
+            }
             arrivals.push((cx - half, cx + half));
         }
         _ => return None,

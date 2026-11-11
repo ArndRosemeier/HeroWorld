@@ -27,6 +27,7 @@ fn main() -> EngineResult<()> {
             height: 60.0,
             dir: DVec2::Y,
             stairs: Vec::new(),
+            variant: 0,
         })
     });
     let settings = Settings::default().window(1280, 720).vsync(false);

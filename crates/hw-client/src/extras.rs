@@ -46,6 +46,8 @@ pub struct TownExtras {
     pub lods: Vec<LodId>,
     pub entities: Vec<EntityId>,
     pub lights: Option<crate::nightlights::NightLights>,
+    /// The Comet buildings' ceiling lamps (on all day: no sun in there).
+    pub comet_lights: Option<crate::cometmesh::CometLights>,
     pub signals: Option<crate::signalview::SignalView>,
     pub props: Option<PropView>,
     pub under: Option<UndergroundView>,
@@ -386,6 +388,7 @@ fn assemble(
         entities,
         waterfront: Some(crate::waterfrontview::WaterfrontView::new(town.clone())),
         lights: Some(crate::nightlights::NightLights::new(town.clone())),
+        comet_lights: Some(crate::cometmesh::CometLights::new(town)),
         signals: Some(crate::signalview::SignalView::new()),
         props: Some(props),
         // The underground's tiles stream on their own workers from the

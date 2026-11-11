@@ -532,6 +532,14 @@ targeting, ragdolls, nobody dies.
   villains' quarter; a city has one more per 300 000 people (at most 4, 1.2 km apart, at its
   business districts and old villages). The hall's ground floor is open: desk, pods, healing
   core, waiting corner, couches. Taxi stand "Aether Mercy Hospital".
+- **Comet buildings** (the new game-scale interiors, `hw_gen::layout`): up to three near the
+  core, one per scheme: the Daily Comet building (atrium, 56 x 52 m, 5 storeys), the Atlas
+  Assurance hall (grand hall) and the Zenith Radio house (split levels); a tight town gets
+  fewer or smaller ones. Storeys 5.5-8 m high, halls at least 10 m across, steps 0.2 m high
+  and 0.35 m deep, rails 1.1 m. Every wall, floor, step, rail and column is one solid box
+  the game both draws and collides with (`hw_gen::layout::solid`). Lift shafts and doors
+  stand but the lifts do not run yet; villains cannot path between floors yet. Views:
+  `HW_VIEW=comet|cometlobby|cometgallery|cometstairs|comethall`, `HW_COMET=0|1|2`.
 - **Villain AI:** villains notice heroes within their aggro range, walk round walls and
   houses on a grid A* path (`hw-sim/src/nav.rs`), and go home when the fight moves away.
   Ranged ones keep their distance.

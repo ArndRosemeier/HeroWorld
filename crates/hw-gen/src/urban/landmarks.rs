@@ -52,6 +52,10 @@ pub enum LandmarkKind {
     /// The Aether Mercy Hospital, where the medical drone flies beaten
     /// heroes to be healed (see [`super::hospital`]).
     Hospital,
+    /// The Daily Comet's offices: the first building with a game-scale
+    /// interior, halls, galleries, grand stairs and lifts (see
+    /// [`super::comet`]).
+    CometBuilding,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -71,6 +75,9 @@ pub struct Landmark {
     /// Flights of steps: up the plinth where its side stands higher than a
     /// kerb, and up the spire's base to its doors.
     pub stairs: Vec<Stair>,
+    /// Which of its kind it is (a Comet building's scheme and plot; 0
+    /// for the others).
+    pub variant: u8,
 }
 
 /// A straight flight of steps, as solid stone under every tread.
@@ -287,6 +294,7 @@ impl Landmark {
             LandmarkKind::AtomicPlant => super::atomic::footprints(),
             LandmarkKind::WeatherTower => super::weather_tower::footprints(self),
             LandmarkKind::Hospital => super::hospital::footprints(),
+            LandmarkKind::CometBuilding => super::comet::footprints(self),
         };
         local
             .into_iter()
@@ -601,6 +609,13 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
     if let Some(g) = super::gantry::plan_gantry(w, &out) {
         out.push(g);
     }
+    // The Comet buildings go in last, into the room the others left: no
+    // older landmark moves for them.
+    let mut comets = super::comet::plan(w, core, &out);
+    for l in &mut comets {
+        l.stairs = plan_stairs(w, &roads, l);
+    }
+    out.extend(comets);
     out
 }
 
@@ -663,6 +678,7 @@ pub(super) fn landmark_at(w: &TownWorld, p: DVec2, plaza: f64) -> Landmark {
         height: 0.0,
         dir: DVec2::Y,
         stairs: Vec::new(),
+        variant: 0,
     }
 }
 

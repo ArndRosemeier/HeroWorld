@@ -738,6 +738,21 @@ impl Obstacles {
             out.plinths.push(l.clone());
             let mut parts = l.footprints();
             parts.extend(l.stairs.iter().flat_map(|s| s.treads()));
+            if l.kind == hw_gen::urban::landmarks::LandmarkKind::CometBuilding {
+                // A whole building's walls, floors and steps: thousands of
+                // boxes. In one collider every body near it would test them
+                // all, so they go in by where they stand.
+                let mut cells: BTreeMap<(i64, i64), Vec<Solid>> = BTreeMap::new();
+                for f in &parts {
+                    let c = f.at();
+                    let key = ((c.x / 12.0).floor() as i64, (c.y / 12.0).floor() as i64);
+                    cells.entry(key).or_default().extend(solids_of(f));
+                }
+                for (_, solids) in cells {
+                    out.add_all(solids);
+                }
+                continue;
+            }
             out.add_all(parts.iter().flat_map(solids_of).collect());
         }
         out.town = Some(TownSolids {
@@ -2005,6 +2020,121 @@ mod tests {
         };
         o.move_body(&mut b, 1.0 / 30.0);
         assert!(b.pos.x < 0.0, "tunnelled to {}", b.pos);
+    }
+
+    /// The new interiors hold a body: in at the entrance, and up every
+    /// flight of every stair onto the floor it leads to.
+    #[test]
+    fn a_body_walks_into_an_office_and_up_its_stairs() {
+        use hw_core::Seed;
+        use hw_gen::layout::office::plan_scheme;
+        use hw_gen::layout::solid::pieces;
+        use hw_gen::layout::{Flight, LinkKind, Scheme};
+        fn walk(o: &Obstacles, b: &mut Body, to: DVec2, secs: f64) {
+            for _ in 0..(secs * 30.0) as usize {
+                let d = to - DVec2::new(b.pos.x, b.pos.z);
+                if d.length() < 0.15 {
+                    break;
+                }
+                let v = d.normalize() * 4.0;
+                let fall = if b.grounded {
+                    0.0
+                } else {
+                    b.vel.y - 9.8 / 30.0
+                };
+                b.vel = DVec3::new(v.x, fall, v.y);
+                o.move_body(b, 1.0 / 30.0);
+            }
+        }
+        let mut flights = 0;
+        for (k, scheme) in [Scheme::Atrium, Scheme::GrandHall, Scheme::SplitLevel]
+            .into_iter()
+            .enumerate()
+        {
+            for seed in 0..4u64 {
+                let Some(l) =
+                    plan_scheme(Seed(seed * 7 + k as u64), DVec2::new(56.0, 52.0), 5, scheme)
+                else {
+                    continue;
+                };
+                let mut o = Obstacles::flat(0.0);
+                o.add_all(
+                    pieces(&l)
+                        .iter()
+                        .flat_map(|p| solids_of(&p.shape))
+                        .collect(),
+                );
+                // In at the front door.
+                let door = l
+                    .links
+                    .iter()
+                    .find(|k| k.kind == LinkKind::Entrance)
+                    .expect("an entrance");
+                let mut b = Body {
+                    pos: DVec3::new(door.at.x, 0.0, door.at.y - 3.0),
+                    grounded: true,
+                    ..Body::default()
+                };
+                walk(&o, &mut b, door.at + DVec2::Y * 3.0, 3.0);
+                assert!(b.pos.z > door.at.y + 2.5, "{scheme:?}: stopped at the door");
+                assert!(
+                    b.pos.y.abs() < 0.1,
+                    "{scheme:?}: the lobby floor is at {}",
+                    b.pos.y
+                );
+                for st in &l.stairs {
+                    for f in &st.flights {
+                        // Points up the middle of the flight, from a step
+                        // before its foot to a step past its head.
+                        let path: Vec<DVec2> = match *f {
+                            Flight::Straight {
+                                from, dir, risers, ..
+                            } => {
+                                let a = DVec2::new(from.x, from.z);
+                                vec![a - dir * 0.7, a + dir * (Flight::run(risers) + 0.7)]
+                            }
+                            Flight::Arc {
+                                centre,
+                                r_in,
+                                r_out,
+                                a0,
+                                sweep,
+                                ..
+                            } => {
+                                let r = (r_in + r_out) * 0.5;
+                                let over = 0.7 / r * sweep.signum();
+                                (0..=24)
+                                    .map(|i| {
+                                        let a = a0 - over + (sweep + 2.0 * over) * i as f64 / 24.0;
+                                        centre + hw_core::det::dir2(a) * r
+                                    })
+                                    .collect()
+                            }
+                        };
+                        let mut b = Body {
+                            pos: DVec3::new(path[0].x, f.y0(), path[0].y),
+                            grounded: true,
+                            ..Body::default()
+                        };
+                        for p in &path[1..] {
+                            walk(&o, &mut b, *p, 20.0);
+                        }
+                        let end = *path.last().expect("a path");
+                        assert!(
+                            DVec2::new(b.pos.x, b.pos.z).distance(end) < 0.3
+                                && (b.pos.y - f.y1()).abs() < 0.05,
+                            "{scheme:?} {:?}: a flight from {:.1} to {:.1} left the body at {:?}, wanted {end:?}, flight {f:?}",
+                            st.kind,
+                            f.y0(),
+                            f.y1(),
+                            b.pos
+                        );
+                        flights += 1;
+                    }
+                }
+            }
+        }
+        assert!(flights > 40, "{flights} flights climbed");
     }
 
     /// What the town draws is what stops a body: every prop's solid parts,

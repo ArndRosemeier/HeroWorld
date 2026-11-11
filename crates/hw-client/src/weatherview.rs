@@ -889,6 +889,7 @@ mod tests {
             height: 52.0,
             dir: DVec2::Y,
             stairs: Vec::new(),
+            variant: 0,
         }
     }
 

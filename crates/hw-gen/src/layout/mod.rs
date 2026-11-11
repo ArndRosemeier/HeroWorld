@@ -22,6 +22,7 @@
 //! seed, like every plan.
 
 pub mod office;
+pub mod solid;
 mod stairs;
 #[cfg(test)]
 mod tests;
