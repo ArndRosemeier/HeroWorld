@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.175 (2026-11-11)
+
+- Fixed the picture breaking up after walking a while: a few glowing specks near car and lamp lights could spread through the reflections until the whole street went flat dark. Broken pixels now stay one pixel for one frame (Engine 0.054)
+
 ## 0.174 (2026-11-11)
 
 - Smoother busy streets: repeated props cut down to what you can see are drawn in a few combined calls, and the graphics library no longer rechecks thousands of textures every time it switches materials (Engine 0.053)
