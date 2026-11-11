@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.211 (2026-11-11)
+
+- Portals boil at the edge now, like a torn rift: the rim wanders in and out all the time, the view fades to violet toward it, and sparks drift through.
+- Standing near an open portal no longer drags the frame rate down: only the nearest portal shows its view, and only what fits through the opening is drawn.
+
 ## 0.210 (2026-11-11)
 
 - The screens go full Googie: windows are slanted panels with a gold rim, a turquoise pinstripe and a faint 1950s boomerang pattern, their names on a red diner-sign plate with chrome speed lines.

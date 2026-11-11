@@ -251,6 +251,12 @@ impl HeroCamera {
 /// (just out at home), then quits.
 #[derive(Default)]
 struct PortalScript {
+    /// Frame times (s, count) standing before the portal opens and
+    /// standing looking at it open: printed at the end.
+    before: (f32, u32),
+    open: (f32, u32),
+    told: bool,
+    last: Option<std::time::Instant>,
     /// Aim behind the hero this frame (marking home).
     back: bool,
     clock: f32,
@@ -320,8 +326,37 @@ impl PortalScript {
         Some(dir.join(name))
     }
 
+    /// Counts a frame's time in the window it falls in (printed once both
+    /// are over).
+    fn time_frame(&mut self, _dt: f32) {
+        // Wall-clock time: the frame's dt is capped (slow software GPUs).
+        let now = std::time::Instant::now();
+        let dt = self.last.map_or(0.0, |l| (now - l).as_secs_f32());
+        self.last = Some(now);
+        let w = Self::walk_secs();
+        let c = self.clock;
+        if !self.told && c >= w + 5.9 {
+            self.told = true;
+            let ms = |s: (f32, u32)| s.0 * 1000.0 / s.1.max(1) as f32;
+            println!(
+                "portal frame time: {:.1} ms before it opens, {:.1} ms with it open",
+                ms(self.before),
+                ms(self.open)
+            );
+        }
+        let slot = if (w + 1.0..w + 1.8).contains(&c) {
+            &mut self.before
+        } else if (w + 3.7..w + 5.9).contains(&c) {
+            &mut self.open
+        } else {
+            return;
+        };
+        slot.0 += dt;
+        slot.1 += 1;
+    }
+
     fn done(&self) -> bool {
-        self.shots >= 4 && self.clock > Self::walk_secs() + 10.5
+        self.clock > Self::walk_secs() + 10.5
     }
 }
 
@@ -2861,6 +2896,7 @@ fn main() -> EngineResult<()> {
                 if let Some(s) = portal_script.as_mut() {
                     if session.my_hero().is_some() {
                         s.clock += frame.dt;
+                        s.time_frame(frame.dt);
                     }
                     if s.walking() {
                         dir = Camera::facing_xz(hero_cam.yaw);

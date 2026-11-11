@@ -271,14 +271,16 @@ does, what it needs, and Buy or Give up.
   through the portal for a moment, so the step never cuts. Portals close when their hero
   leaves (16 open at most in a world).
 - How it looks: each pair is two Engine portals (front to front, back to back), the other
-  place seen through either face (drawn while the camera is within 160 m), opening from its
-  middle over 1.8 s. The edge of the view is alive: it wanders in and out round the opening
-  (between 82% and 99% of its size), with a bright flickering line on it, a violet membrane
-  outside it, and a ragged rim of violet and sea green beyond with crawling tendrils (custom
-  material `portal rim`); wisps and rune motes crawl round it, and a lamp in its colour (home
-  green, far side blue) glows on the street. Too far off for the view it is a swirling disc
-  (`portal haze`). Engine 0.058 fixed a ghost of the view flickering over it while the camera
-  moved. Marking home sends a beam down to glowing rings on the
+  place seen through either face, opening from its middle over 1.8 s. Only the nearest open
+  portal within 90 m shows its view, one level deep (0.211, as MasterWorld drew it; a view
+  inside a view and every portal at once cost most of the frame rate). The edge boils like
+  MasterWorld's rift: two layers of moving noise push it in and out round the opening, the view
+  fades to violet toward it, a bright flickering line runs along it and sparks drift through
+  (custom material `portal rim`, drawn over the view since Engine 0.059); wisps and rune motes
+  crawl round it, and a lamp in its colour (home green, far side blue) glows on the street.
+  Too far off for the view it is a swirling disc (`portal haze`). Engine 0.058 fixed a ghost of
+  the view flickering over it while the camera moved; Engine 0.059 draws only what fits
+  through the opening. Marking home sends a beam down to glowing rings on the
   floor; a closing portal sucks its light in; a failed one spits sparks and a dark puff;
   whoever steps through rises in rings of light. `HW_PORTAL=1` runs it on its own
   (`HW_PORTAL_SHOT=<dir>` saves `open.png`, `walking.png` and `through.png`, and with

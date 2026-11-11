@@ -24,14 +24,15 @@ use std::collections::BTreeMap;
 
 /// The view through a pair is drawn while the camera is this near one of
 /// its sides (m); further away its openings show the swirling haze.
-pub const VIEW_RANGE: f32 = 160.0;
+pub const VIEW_RANGE: f32 = 90.0;
 /// Seconds a portal takes to open from its middle.
 const OPENING: f32 = 1.8;
 /// The rim reaches this far out of the opening (of its size).
 const RIM_OUT: f32 = 1.5;
-/// The rim reaches this far into the opening (of its size): the living
-/// edge (see [`GATE_RIM`]) wanders between about 0.82 and 0.99.
-const RIM_IN: f32 = 0.8;
+/// The rim reaches this far into the opening (of its size): the view fades
+/// into the rim's colour from about 0.55 out, and its edge (see
+/// [`GATE_RIM`]) boils round 0.8.
+const RIM_IN: f32 = 0.5;
 /// Each opening's lamp: a glow on the street round it, not a wash over
 /// everything seen through its twin.
 const LAMP: f32 = 2.2;
@@ -58,56 +59,65 @@ fn rim_colour(home: bool) -> Color {
     }
 }
 
-/// The rim: a living edge and the haze round it. The edge of what is seen
-/// through wanders in and out round the opening, never still (as
-/// MasterWorld's did): inside it the view; outside it a violet membrane
-/// hides the opening's own fixed outline; on it a bright, flickering line;
-/// beyond it a ragged haze with tendrils crawling off and motes drifting
-/// out, between violet and sea green round the rim's own colour (the
-/// vertex colour). `uv.x` goes round the rim, `uv.y` out of it, from
-/// [`RIM_IN`] of the opening's size (0) to [`RIM_OUT`] (1).
+/// The rim, after MasterWorld's rift: the edge of what is seen through is
+/// a ragged ellipse whose rags boil (3D noise of the place on the rim and
+/// the time), never the same twice. Towards that edge the view fades into
+/// the rim's colour, motes drift in it, a thin line of light runs along
+/// the edge, and past it a dark haze of the rim's colour covers the rest of
+/// the opening and thins out round it. `uv.x` goes round the rim, `uv.y`
+/// out of it, from [`RIM_IN`] of the opening's size (0) to [`RIM_OUT`] (1);
+/// the vertex colour is the rim's (home green, far side blue).
 pub const GATE_RIM: &str = r#"
+fn rift_hash(p: vec3<f32>) -> f32 {
+    return fract(sin(dot(p, vec3<f32>(127.1, 311.7, 74.7))) * 43758.5453);
+}
+
+fn rift_noise(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = mix(rift_hash(i), rift_hash(i + vec3<f32>(1.0, 0.0, 0.0)), u.x);
+    let b = mix(rift_hash(i + vec3<f32>(0.0, 1.0, 0.0)), rift_hash(i + vec3<f32>(1.0, 1.0, 0.0)), u.x);
+    let c = mix(rift_hash(i + vec3<f32>(0.0, 0.0, 1.0)), rift_hash(i + vec3<f32>(1.0, 0.0, 1.0)), u.x);
+    let d = mix(rift_hash(i + vec3<f32>(0.0, 1.0, 1.0)), rift_hash(i + vec3<f32>(1.0, 1.0, 1.0)), u.x);
+    return mix(mix(a, b, u.y), mix(c, d, u.y), u.z) * 2.0 - 1.0;
+}
+
 fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     var o = base;
     let a = m.uv.x * 6.2831853;
-    let rr = mix(0.8, 1.5, m.uv.y);
+    let rr = mix(0.5, 1.5, m.uv.y);
+    let q = vec2<f32>(cos(a), sin(a)) * rr;
     let t = m.time;
-    // Where the view ends: wandering round the opening, 0.82 to 0.99.
-    let n = 0.45 * sin(a * 4.0 + t * 1.1) + 0.3 * sin(a * 9.0 - t * 1.9)
-        + 0.17 * sin(a * 17.0 + t * 3.1) + 0.08 * sin(a * 31.0 - t * 4.7);
-    let e = 0.905 + 0.085 * n;
-    let d = rr - e;
-    // Feathered into the view; the membrane covers the rest of the opening.
-    let feather = smoothstep(-0.035, 0.0, d);
-    let membrane = 1.0 - smoothstep(1.0, 1.07, rr);
-    // The bright line on the living edge, flickering.
-    let line = exp(-pow(d * 30.0, 2.0)) * (0.7 + 0.3 * sin(a * 37.0 + t * 11.0));
-    // The haze beyond, reaching out raggedly.
-    let rag = 0.5 + 0.2 * sin(a * 5.0 + t * 1.3) + 0.14 * sin(a * 11.0 - t * 2.1)
-        + 0.09 * sin(a * 23.0 + t * 3.7);
-    let reach = 0.14 + 0.38 * rag;
-    let haze = pow(clamp(1.0 - max(d, 0.0) / reach, 0.0, 1.0), 1.6);
-    // Tendrils of light crawling outward from the edge.
-    let bend = sin(d * 9.0 - t * 2.4 + a * 2.0) * 0.9;
-    let tendril = pow(abs(sin(a * 13.0 + bend)), 48.0) * smoothstep(reach * 1.4, 0.03, d)
-        * step(0.0, d);
-    // Motes drifting out through the haze.
-    let cell = floor(a * 4.7746);
-    let mote_a = fract(a * 4.7746) - 0.5;
-    let mote_r = fract(t * 0.35 + sin(cell * 3.1) * 0.5) * 0.6;
-    let mote = smoothstep(0.08, 0.0, length(vec2<f32>(mote_a * 0.6, (d - mote_r) * 2.5)));
-    let swirl = 0.5 + 0.5 * sin(a * 3.0 - t * 0.8 + rr * 7.0);
-    let hue = mix(vec3<f32>(0.42, 0.13, 1.0), vec3<f32>(0.12, 1.0, 0.95), swirl);
-    let c = mix(hue, base.color.rgb, 0.45);
-    // The membrane: deep violet, glowing more towards the edge.
-    let deep = mix(vec3<f32>(0.05, 0.02, 0.12), c * 0.5, exp(-max(d, 0.0) * 12.0));
-    let cover = max(membrane * 0.97, haze * 0.6);
-    let glow = haze * 1.4 + line * 7.0 + tendril * 3.5 + mote * 4.0 + membrane * 0.6;
-    o.color = vec4<f32>(mix(c * 0.12, deep, membrane),
-        feather * clamp(cover + line + tendril * 0.8 + mote, 0.0, 1.0));
+    let rim_c = base.color.rgb;
+    // The edge: a ragged ellipse that boils.
+    let ragged = (rift_noise(vec3<f32>(q * 3.0, t * 0.5)) * 0.75
+        + rift_noise(vec3<f32>(q * 7.0, t * 0.9)) * 0.25) * 0.13;
+    let edge = rr + ragged + 0.08;
+    // How much of the view shows (1 well inside, 0 past the edge).
+    let mask = smoothstep(1.0, 0.8, edge);
+    // Towards the edge the view fades into the rim's colour.
+    let toward = smoothstep(0.55, 0.95, edge) * 0.55;
+    // A thin line of light along the edge.
+    let line = smoothstep(0.07, 0.0, abs(edge - 0.95));
+    // Motes drifting in it.
+    let cell = floor(q * 4.0 + vec2<f32>(0.0, -t * 0.6));
+    let mf = fract(q * 4.0 + vec2<f32>(0.0, -t * 0.6)) - 0.5;
+    let wink = rift_hash(vec3<f32>(cell, 3.0));
+    let mote = smoothstep(0.13, 0.0, length(mf)) * step(0.82, wink)
+        * (0.5 + 0.5 * sin(t * 2.0 + wink * 40.0)) * smoothstep(0.5, 0.75, rr);
+    // Past the edge: the dark haze of the rim's colour, swirling, covering
+    // the opening and thinning out beyond it.
+    let swirl = rift_noise(vec3<f32>(q * 1.6 + vec2<f32>(t * 0.05, -t * 0.08), t * 0.25)) * 0.5 + 0.5;
+    let haze = mix(vec3<f32>(0.02, 0.015, 0.04), rim_c * 0.35, swirl);
+    let beyond = 1.0 - smoothstep(1.0, 1.42, rr);
+    let cover = (1.0 - mask) * mix(1.0, beyond * 0.85, step(1.0, rr));
+    let glow_c = mix(rim_c * 0.7, haze, cover);
+    let alpha = clamp(max(max(toward * mask, cover), line * beyond) + mote * 0.8, 0.0, 1.0);
+    o.color = vec4<f32>(glow_c * 0.2, alpha);
     o.roughness = 1.0;
     o.metallic = 0.0;
-    o.emission = c * glow * feather;
+    o.emission = glow_c * (toward * mask + cover * 0.5) * 1.2 + rim_c * (line * 3.0 * beyond + mote * 2.5);
     return o;
 }
 "#;
@@ -164,6 +174,8 @@ struct Shown {
     /// Front to front and back to back.
     portals: Vec<PortalId>,
     viewing: bool,
+    /// How near the camera is to its nearer side (m), once open enough.
+    near: f32,
 }
 
 /// Every open pair on screen.
@@ -204,6 +216,10 @@ impl Gates {
     pub fn install(&mut self, world: &mut World) -> EngineResult<()> {
         if !self.tried {
             self.tried = true;
+            // One level deep, as MasterWorld's: two portals facing each
+            // other otherwise draw the city again and again inside each
+            // other (Engine's default is 3 levels).
+            world.set_portal_recursion(1);
             let rim =
                 world.add_material(CustomMaterial::new("portal rim", GATE_RIM).see_through())?;
             let haze = world.add_material(CustomMaterial::new("portal haze", GATE_HAZE))?;
@@ -270,6 +286,7 @@ impl Gates {
             sides: [home, far],
             portals,
             viewing: false,
+            near: f32::MAX,
         })
     }
 
@@ -355,7 +372,7 @@ impl Gates {
         for shown in self.shown.values_mut() {
             let size = shown.pair.size;
             let (cy, rx, ry) = ellipse(size);
-            let mut near = false;
+            let mut nearest = f32::MAX;
             for s in shown.sides.iter_mut() {
                 if s.open < 1.0 {
                     s.open = (s.open + dt / OPENING).min(1.0);
@@ -390,10 +407,21 @@ impl Gates {
                     lamp.flicker = 0.15;
                     let _ = world.set_lamp(l, lamp);
                 }
-                near |= middle(&s.side, size).distance(eye) < VIEW_RANGE;
+                nearest = nearest.min(middle(&s.side, size).distance(eye));
             }
             let ready = shown.sides.iter().all(|s| s.open > 0.15);
-            let view = near && ready;
+            shown.near = if ready { nearest } else { f32::MAX };
+        }
+        // Only the nearest pair in range is seen through (each view draws
+        // the scene again); the others show their haze.
+        let pick = self
+            .shown
+            .iter()
+            .filter(|(_, s)| s.near < VIEW_RANGE)
+            .min_by(|a, b| a.1.near.total_cmp(&b.1.near))
+            .map(|(o, _)| *o);
+        for (owner, shown) in self.shown.iter_mut() {
+            let view = pick == Some(*owner);
             if view != shown.viewing {
                 for &id in &shown.portals {
                     world.set_portal_enabled(id, view)?;
