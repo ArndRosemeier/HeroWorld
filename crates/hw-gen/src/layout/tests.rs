@@ -113,3 +113,46 @@ fn the_checks_catch_mistakes() {
     });
     assert!(!l.problems().is_empty());
 }
+
+/// No stack of copies: in a tall town office most upper storeys have a
+/// plan of their own (rooms, their sizes and heights).
+#[test]
+fn storeys_differ_from_each_other() {
+    use std::collections::BTreeSet;
+    let (mut floors, mut kinds) = (0, 0);
+    for k in 0..40u64 {
+        let l = super::office::plan_town(
+            Seed(300 + k),
+            DVec2::new(40.0 + (k % 5) as f64 * 4.0, 48.0),
+            7,
+        );
+        let levels = l.levels();
+        let plans: BTreeSet<Vec<[i64; 5]>> = levels[1..levels.len() - 1]
+            .iter()
+            .map(|y| {
+                let mut rooms: Vec<[i64; 5]> = l
+                    .spaces
+                    .iter()
+                    .filter(|s| s.within.is_none() && (s.y - y).abs() < 1e-6)
+                    .map(|s| {
+                        [s.rect.min.x, s.rect.min.y, s.rect.max.x, s.rect.max.y, s.h]
+                            .map(|v| (v * 2.0).round() as i64)
+                    })
+                    .collect();
+                rooms.sort();
+                rooms
+            })
+            .collect();
+        floors += levels.len() - 2;
+        kinds += plans.len();
+        assert!(
+            plans.len() >= 4,
+            "seed {k}: only {} plans on six upper storeys",
+            plans.len()
+        );
+    }
+    assert!(
+        kinds * 10 >= floors * 9,
+        "{kinds} plans on {floors} storeys"
+    );
+}

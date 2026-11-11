@@ -311,7 +311,7 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
             let here: Vec<_> = lifts
-                .runs_near(&[mid], 20.0)
+                .runs_near(&[mid], 45.0)
                 .into_iter()
                 .filter(|r| inside(r.car.at()))
                 .collect();

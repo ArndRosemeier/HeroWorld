@@ -1596,7 +1596,11 @@ pub fn open_stand(solids: &Obstacles, center: DVec3, want: DVec2, taken: &[DVec2
     let seen = room_to_stand(solids, DVec2::new(center.x, center.z), center.y);
     let ok = |p: DVec2| {
         let y = ground(p);
-        (y - center.y).abs() < 1.5
+        // On an upper floor the ground is that floor: not a table's top
+        // or a stair's step (out of doors it may slope).
+        let upstairs = center.y > solids.ground_at(p).max(GROUND_Y) + 1.0;
+        let level = if upstairs { 0.3 } else { 1.5 };
+        (y - center.y).abs() < level
             && room_to_stand(solids, p, y)
             && taken.iter().all(|t| t.distance(p) >= 1.0)
             && (!seen || in_sight(solids, anchor, DVec3::new(p.x, y, p.y) + chest))

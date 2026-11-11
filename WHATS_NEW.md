@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.212 (2026-11-11)
+
+- No two floors alike in the town's office buildings (and the Comet buildings): every storey has its own height and its own rooms. Some are one open hall, some have a row of small rooms, some open straight on to the atrium's rail.
+- Here and there a room is two storeys high, and the floor above looks down into it through glass.
+- The towns' buildings are planned anew (world version 41).
+
 ## 0.211 (2026-11-11)
 
 - Portals boil at the edge now, like a torn rift: the rim wanders in and out all the time, the view fades to violet toward it, and sparks drift through.

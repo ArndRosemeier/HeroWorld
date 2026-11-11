@@ -582,6 +582,14 @@ targeting, ragdolls, nobody dies.
   lifts run like the Comet buildings' (worked out for the buildings within about 70 m of a
   hero). Their windows sit at most 7.5 cm deep in the wall. Some towns have none yet: small
   ones (under about 10 000 people), and bigger ones that are all old lanes.
+- **No two storeys alike** (grand hall and atrium plans): every upper storey has its own
+  height (5.5 to 7 m) and divides its rooms anew (one open hall, two halls of unlike size, or
+  a hall with a row of small rooms 6-7 m deep). About one part in four is two storeys high,
+  and the storey above looks down into it through glass. In a grand hall plan the front band
+  is 4 m shallower or 3 m deeper on some storeys, and on about a third of them the concourse
+  and the rooms on one side are one open hall. In an atrium plan a wing on about a third of
+  the storeys has no gallery (one open hall up to the rail), the middle of the front merges
+  with a corner now and then, and bridges cross on about half the storeys from the second up.
 - **Furniture** in those buildings (`hw_gen::layout::furnish`): 850 to 1 400 pieces a
   building, every one solid (rugs excepted). Office halls have desks in blocks of two rows,
   runs of four with 2.6 m gaps and 3.4 m aisles; other halls are archives (rows of shelves)

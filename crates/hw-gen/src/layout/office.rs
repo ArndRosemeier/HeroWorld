@@ -62,18 +62,167 @@ fn rect(x0: f64, z0: f64, x1: f64, z1: f64) -> Rect {
     Rect::from_xz(x0, z0, x1, z1)
 }
 
-/// Floor-to-floor heights: a tall ground floor, upper floors, and a taller
-/// top floor on buildings of four storeys or more.
-fn heights(rng: &mut Rng, storeys: u32) -> Vec<f64> {
+/// Floor-to-floor heights that differ from storey to storey: a tall ground
+/// floor, every upper floor its own height, and a taller top floor on
+/// buildings of four storeys or more.
+fn varied_heights(rng: &mut Rng, storeys: u32) -> Vec<f64> {
     let ground = *rng.pick(&[7.0, 7.5, 8.0]);
-    let upper = *rng.pick(&[5.5, 6.0, 6.5]);
     (0..storeys)
-        .map(|i| match i {
-            0 => ground,
-            i if i + 1 == storeys && storeys >= 4 => upper + 2.0,
-            _ => upper,
+        .map(|i| {
+            let upper: f64 = *rng.pick(&[5.5, 6.0, 6.0, 6.5, 7.0]);
+            match i {
+                0 => ground,
+                i if i + 1 == storeys && storeys >= 4 => upper.min(6.5) + 2.0,
+                _ => upper,
+            }
         })
         .collect()
+}
+
+/// What a part of the plan is on one storey.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Span {
+    /// Rooms of this storey.
+    Own,
+    /// Rooms through this storey and the next.
+    Tall,
+    /// The upper half of the tall rooms from the storey below.
+    Void,
+}
+
+/// For each of `n` storeys, from storey `from` up: now and then a part is
+/// two storeys high.
+fn spans(rng: &mut Rng, n: usize, from: usize, chance: f64) -> Vec<Span> {
+    let mut out = vec![Span::Own; n];
+    let mut i = from;
+    while i + 1 < n {
+        if rng.chance(chance) {
+            out[i] = Span::Tall;
+            out[i + 1] = Span::Void;
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Rooms on `r`, laid out by the dice: one open hall, two halls of unlike
+/// size, or a hall with a row of small rooms along one side. Doors join
+/// them to each other; the caller joins them to the rest.
+fn divide(b: &mut Builder, rng: &mut Rng, r: Rect, y: f64, h: f64, kind: SpaceKind) -> Vec<usize> {
+    let s = r.size();
+    if s.min_element() < MIN_HALL {
+        return vec![b.space(SpaceKind::Service, r, y, h)];
+    }
+    let along_x = s.x >= s.y;
+    let (long, short) = (s.max_element(), s.min_element());
+    let (lo, side) = if along_x {
+        (r.min.x, r.min.y)
+    } else {
+        (r.min.y, r.min.x)
+    };
+    // The part from `a` to `c` the long way, `e` to `f` the short way.
+    let part = |a: f64, c: f64, e: f64, f: f64| {
+        if along_x {
+            rect(a, e, c, f)
+        } else {
+            rect(e, a, f, c)
+        }
+    };
+    let dice = rng.index(10);
+    if dice < 5 && long >= 2.0 * MIN_HALL {
+        let f = *rng.pick(&[0.35, 0.5, 0.65]);
+        let m = snap(lo + long * f).clamp(lo + MIN_HALL, lo + long - MIN_HALL);
+        let other = if kind == SpaceKind::Hall && rng.chance(0.4) {
+            SpaceKind::Boardroom
+        } else {
+            kind
+        };
+        let (first, second) = if rng.chance(0.5) {
+            (kind, other)
+        } else {
+            (other, kind)
+        };
+        let a = b.space(first, part(lo, m, side, side + short), y, h);
+        let c = b.space(second, part(m, lo + long, side, side + short), y, h);
+        b.door(a, c, LinkKind::Double, y, DOUBLE);
+        return vec![a, c];
+    }
+    if dice < 8 && long >= 16.0 && short >= MIN_HALL + 6.0 {
+        let deep = if short >= MIN_HALL + 7.0 && rng.chance(0.5) {
+            7.0
+        } else {
+            6.0
+        };
+        let (h0, h1, r0, r1) = if rng.chance(0.5) {
+            (side + deep, side + short, side, side + deep)
+        } else {
+            (side, side + short - deep, side + short - deep, side + short)
+        };
+        let hall = b.space(kind, part(lo, lo + long, h0, h1), y, h);
+        let mut out = vec![hall];
+        for (a, c) in parts(lo, lo + long, (long / 9.0).floor() as usize) {
+            let room = b.space(SpaceKind::Service, part(a, c, r0, r1), y, h);
+            b.door(room, hall, LinkKind::Door, y, DOOR);
+            out.push(room);
+        }
+        return out;
+    }
+    vec![b.space(kind, r, y, h)]
+}
+
+/// How long the edge is that two spaces share.
+fn touch(b: &Builder, a: usize, c: usize) -> f64 {
+    b.shared(a, c).map_or(0.0, |(_, _, lo, hi)| hi - lo)
+}
+
+/// A door from every one of `rooms` that has the wall for it to `to`, or
+/// at least from the one with the most wall. False if none touches it.
+fn join_all(b: &mut Builder, rooms: &[usize], to: usize, kind: LinkKind, y: f64, w: f64) -> bool {
+    let mut any = false;
+    for r in rooms {
+        if touch(b, *r, to) >= w + 0.6 {
+            b.door(*r, to, kind, y, w);
+            any = true;
+        }
+    }
+    if !any {
+        let best = rooms
+            .iter()
+            .copied()
+            .max_by(|p, q| touch(b, *p, to).total_cmp(&touch(b, *q, to)));
+        if let Some(r) = best.filter(|r| touch(b, *r, to) > 1.0) {
+            b.door(r, to, kind, y, w);
+            any = true;
+        }
+    }
+    any
+}
+
+/// One door between the two groups of rooms, where they share the most
+/// wall (if that is enough for it).
+fn join(b: &mut Builder, these: &[usize], those: &[usize], kind: LinkKind, y: f64, w: f64) -> bool {
+    let best = these
+        .iter()
+        .flat_map(|p| those.iter().map(move |q| (*p, *q)))
+        .max_by(|p, q| touch(b, p.0, p.1).total_cmp(&touch(b, q.0, q.1)));
+    match best {
+        Some((p, q)) if touch(b, p, q) >= w + 0.6 => {
+            b.door(p, q, kind, y, w);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// From `from` on the storey above, glass down into the tall `rooms`.
+fn overlook(b: &mut Builder, from: usize, rooms: &[usize], y: f64) {
+    for r in rooms {
+        if touch(b, from, *r) > 1.0 {
+            b.edge(from, *r, LinkKind::Glass, y);
+        }
+    }
 }
 
 /// Floor heights from storey heights, and the roof last.
@@ -181,7 +330,7 @@ fn grand_hall(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
     let (w, d) = (size.x, size.y);
     let n = n as usize;
     let mut rng = seed.child("grand hall").rng();
-    let hs = heights(&mut rng, n as u32);
+    let hs = varied_heights(&mut rng, n as u32);
     let ys = levels(&hs);
     let top = ys[n];
     let floors = &ys[..n];
@@ -233,8 +382,34 @@ fn grand_hall(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
     let (hall, door_x, door_w) = stair_hall(&mut b, &mut rng, spiral, hall_rect, floors, top);
     // The concourse is as wide as the stair hall it leads to.
     let sx = (hall_rect.min.x, hall_rect.max.x);
+    // No two storeys alike: now and then the front or a side of the back
+    // is two storeys high, and every storey divides its rooms anew.
+    let front_span = spans(&mut rng, n, 2, 0.3);
+    let back_span = [spans(&mut rng, n, 0, 0.22), spans(&mut rng, n, 0, 0.22)];
+    let mut front_below: Vec<usize> = Vec::new();
+    let mut back_below: [Vec<usize>; 2] = Default::default();
+    // How deep the front band is on each storey: its own from the second
+    // floor up, but the same as below where a tall room comes up from there.
+    let mut lzs = vec![lz; n];
+    for i in 2..n {
+        let held = front_span[i] == Span::Void || back_span.iter().any(|s| s[i] == Span::Void);
+        lzs[i] = if held {
+            lzs[i - 1]
+        } else {
+            let fits: Vec<f64> = [lz - 4.0, lz, lz, lz + 3.0]
+                .into_iter()
+                .filter(|z| *z >= 14.0 && *z <= d - bd - 4.0)
+                .collect();
+            *rng.pick(&fits)
+        };
+    }
     for i in 0..n {
         let (y, h) = (ys[i], hs[i]);
+        let lz = lzs[i];
+        let high = |s: Span| match s {
+            Span::Tall => h + hs[i + 1],
+            _ => h,
+        };
         let top_floor = i + 1 == n && n >= 4;
         // Front band.
         let mut front: Vec<usize> = Vec::new();
@@ -259,25 +434,41 @@ fn grand_hall(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
                     }
                 }
             }
+            _ if front_span[i] == Span::Void => {}
             _ => {
                 let kind = if top_floor {
                     SpaceKind::Boardroom
                 } else {
                     SpaceKind::Hall
                 };
-                let k = (w / 32.0).ceil() as usize;
-                let pieces: Vec<usize> = parts(0.0, w, k)
-                    .into_iter()
-                    .map(|(x0, x1)| b.space(kind, rect(x0, 0.0, x1, lz), y, h))
-                    .collect();
-                for p in pieces.windows(2) {
-                    b.door(p[0], p[1], LinkKind::Double, y, DOUBLE);
+                let r = rect(0.0, 0.0, w, lz);
+                front = divide(&mut b, &mut rng, r, y, high(front_span[i]), kind);
+                if front_span[i] == Span::Tall {
+                    front_below = front.clone();
                 }
-                front.extend(pieces);
             }
         }
         // Back part: concourse, halls either side, corners by the stair hall.
-        let spine = b.space(SpaceKind::Concourse, rect(sx.0, lz, sx.1, d - bd), y, h);
+        // Now and then the concourse and the rooms on one side of it are
+        // one open hall, with a room left over beside the stair hall.
+        let sides = [(0.0, sx.0), (sx.1, w)];
+        let open_side = rng.index(2);
+        let open = i >= 1
+            && rng.chance(0.3)
+            && back_span[open_side][i] == Span::Own
+            && d - bd - lz >= MIN_HALL
+            && sides[open_side].1 - sides[open_side].0 >= 0.5;
+        let spine = if open {
+            let (x0, x1) = sides[open_side];
+            b.space(
+                SpaceKind::Hall,
+                rect(x0.min(sx.0), lz, x1.max(sx.1), d - bd),
+                y,
+                h,
+            )
+        } else {
+            b.space(SpaceKind::Concourse, rect(sx.0, lz, sx.1, d - bd), y, h)
+        };
         b.door_at(spine, hall, LinkKind::Double, y, door_w, Some(door_x));
         match i {
             0 => b.door(
@@ -290,38 +481,39 @@ fn grand_hall(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
             1 if !front_gallery => b.door(spine, gallery, LinkKind::Double, y, DOUBLE),
             _ => {}
         }
-        for f in &front {
-            if b.shared(*f, spine).is_some() {
-                b.door(*f, spine, LinkKind::Double, y, DOUBLE);
+        if i < 2 {
+            for f in &front {
+                if b.shared(*f, spine).is_some() {
+                    b.door(*f, spine, LinkKind::Double, y, DOUBLE);
+                }
             }
+        } else if front_span[i] == Span::Void {
+            overlook(&mut b, spine, &front_below, y);
+        } else {
+            join_all(&mut b, &front, spine, LinkKind::Double, y, DOUBLE);
         }
-        for (x0, x1) in [(0.0, sx.0), (sx.1, w)] {
+        for (side, (x0, x1)) in sides.into_iter().enumerate() {
             if x1 - x0 < 0.5 {
                 continue;
             }
-            // Halls deeper than 26 m split in two.
-            let k = ((d - lz) / 26.0).ceil() as usize;
-            let mut prev: Option<usize> = None;
-            let mut first = None;
-            for (z0, z1) in parts(lz, d, k) {
-                let r = rect(x0, z0, x1, z1);
-                let s = b.space(hall_or_service(&r), r, y, h);
-                if b.shared(s, spine).is_some() {
-                    b.door(s, spine, LinkKind::Double, y, DOUBLE);
-                }
-                if let Some(p) = prev {
-                    b.door(p, s, LinkKind::Double, y, DOUBLE);
-                }
-                first.get_or_insert(s);
-                prev = Some(s);
+            if open && side == open_side {
+                let r = rect(x0, d - bd, x1, d);
+                let room = b.space(hall_or_service(&r), r, y, h);
+                b.door(room, spine, LinkKind::Double, y, DOUBLE);
+                continue;
             }
-            // The front band piece in front of it.
-            if let Some(f) = first {
-                for p in &front {
-                    if b.shared(*p, f).is_some() && b.shared(*p, spine).is_none() {
-                        b.door(*p, f, LinkKind::Door, y, DOOR);
-                    }
-                }
+            let span = back_span[side][i];
+            if span == Span::Void {
+                overlook(&mut b, spine, &back_below[side], y);
+                continue;
+            }
+            let r = rect(x0, lz, x1, d);
+            let rooms = divide(&mut b, &mut rng, r, y, high(span), SpaceKind::Hall);
+            join_all(&mut b, &rooms, spine, LinkKind::Double, y, DOUBLE);
+            // And a door from the front band straight into it.
+            join(&mut b, &front, &rooms, LinkKind::Door, y, DOOR);
+            if span == Span::Tall {
+                back_below[side] = rooms;
             }
         }
     }
@@ -347,7 +539,7 @@ fn atrium(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
         return None;
     }
     let mut rng = seed.child("atrium").rng();
-    let hs = heights(&mut rng, n as u32);
+    let hs = varied_heights(&mut rng, n as u32);
     let ys = levels(&hs);
     let top = ys[n];
     let floors = &ys[..n];
@@ -403,6 +595,13 @@ fn atrium(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
     let hall_rect = rect(hx0, az1, hx0 + hw, d);
     let (hall, door_x, door_w) = stair_hall(&mut b, &mut rng, spiral, hall_rect, floors, top);
 
+    // No two storeys alike: one front corner is now and then two storeys
+    // high (never both: the middle of the front is reached through them),
+    // bridges cross where the dice say, and every storey divides its
+    // wings anew.
+    let tall_side = rng.index(2);
+    let corner_span = spans(&mut rng, n, 1, 0.3);
+    let mut corner_below: Vec<usize> = Vec::new();
     for i in 0..n {
         let (y, h) = (ys[i], hs[i]);
         let ground = i == 0;
@@ -412,12 +611,23 @@ fn atrium(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
         } else {
             SpaceKind::Gallery
         };
-        let left = b.space(ring_kind, rect(ax0 - g, az0, ax0, az1), y, h);
-        let right = b.space(ring_kind, rect(ax1, az0, ax1 + g, az1), y, h);
+        // Now and then a wing has no gallery of its own: one open hall
+        // right up to the rail.
+        let open_wing = [(); 2].map(|_| !ground && rng.chance(0.3));
+        let left = if open_wing[0] {
+            b.space(SpaceKind::Hall, rect(0.0, az0, ax0, az1), y, h)
+        } else {
+            b.space(ring_kind, rect(ax0 - g, az0, ax0, az1), y, h)
+        };
+        let right = if open_wing[1] {
+            b.space(SpaceKind::Hall, rect(ax1, az0, w, az1), y, h)
+        } else {
+            b.space(ring_kind, rect(ax1, az0, ax1 + g, az1), y, h)
+        };
         let back = b.space(ring_kind, rect(ax0, az1 - g, ax1, az1), y, h);
         b.edge(left, back, LinkKind::Open, y);
         b.edge(back, right, LinkKind::Open, y);
-        let bridge = (i >= 2 && i % 2 == 0).then(|| {
+        let bridge = (i >= 2 && rng.chance(0.5)).then(|| {
             let r = rect(ax0, bridge_z - 2.5, ax1, bridge_z + 2.5);
             let s = b.nested(atrium, SpaceKind::Bridge, r, y, h);
             b.edge(s, left, LinkKind::Open, y);
@@ -438,49 +648,78 @@ fn atrium(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
             rail_except(&mut b, atrium, back, y, gaps);
         }
         // Wings either side.
-        let wings: Vec<usize> = [(0.0, ax0 - g, left), (ax1 + g, w, right)]
+        let wings: Vec<Vec<usize>> = [(0.0, ax0 - g, left), (ax1 + g, w, right)]
             .into_iter()
-            .map(|(x0, x1, ring)| {
-                let wing = b.space(SpaceKind::Hall, rect(x0, az0, x1, az1), y, h);
-                b.door(wing, ring, LinkKind::Double, y, DOUBLE);
+            .zip(open_wing)
+            .map(|((x0, x1, ring), open)| {
+                if open {
+                    return vec![ring];
+                }
+                let r = rect(x0, az0, x1, az1);
+                let wing = divide(&mut b, &mut rng, r, y, h, SpaceKind::Hall);
+                join_all(&mut b, &wing, ring, LinkKind::Double, y, DOUBLE);
                 wing
             })
             .collect();
         // Front band: a vestibule and shops on the ground, halls above.
-        let fl = b.space(
-            if ground {
+        let span_of = |side: usize| {
+            if side == tall_side {
+                corner_span[i]
+            } else {
+                Span::Own
+            }
+        };
+        // Now and then the middle and one corner are one hall.
+        let merge_side = rng.index(2);
+        let merged =
+            (!ground && rng.chance(0.3) && span_of(merge_side) == Span::Own).then_some(merge_side);
+        let corner = |b: &mut Builder, side: usize, r: Rect| -> Option<usize> {
+            if merged == Some(side) {
+                return None;
+            }
+            let span = span_of(side);
+            let kind = if ground {
                 SpaceKind::Shop
             } else {
                 SpaceKind::Hall
-            },
-            rect(0.0, 0.0, ax0, az0),
-            y,
-            h,
-        );
+            };
+            match span {
+                Span::Void => None,
+                Span::Tall => Some(b.space(kind, r, y, h + hs[i + 1])),
+                Span::Own => Some(b.space(kind, r, y, h)),
+            }
+        };
+        let fl = corner(&mut b, 0, rect(0.0, 0.0, ax0, az0));
         let fc = b.space(
             if ground {
                 SpaceKind::Vestibule
             } else {
                 SpaceKind::Hall
             },
-            rect(ax0, 0.0, ax1, az0),
-            y,
-            h,
-        );
-        let fr = b.space(
-            if ground {
-                SpaceKind::Shop
-            } else {
-                SpaceKind::Hall
+            match merged {
+                Some(0) => rect(0.0, 0.0, ax1, az0),
+                Some(_) => rect(ax0, 0.0, w, az0),
+                None => rect(ax0, 0.0, ax1, az0),
             },
-            rect(ax1, 0.0, w, az0),
             y,
             h,
         );
-        b.door(fl, fc, LinkKind::Double, y, DOUBLE);
-        b.door(fc, fr, LinkKind::Double, y, DOUBLE);
-        b.door(fl, wings[0], LinkKind::Door, y, DOOR);
-        b.door(fr, wings[1], LinkKind::Door, y, DOOR);
+        let fr = corner(&mut b, 1, rect(ax1, 0.0, w, az0));
+        for (side, c) in [fl, fr].into_iter().enumerate() {
+            match c {
+                Some(c) => {
+                    b.door(c, fc, LinkKind::Double, y, DOUBLE);
+                    join(&mut b, &[c], &wings[side], LinkKind::Door, y, DOOR);
+                    if corner_span[i] == Span::Tall && side == tall_side {
+                        corner_below = vec![c];
+                    }
+                }
+                None if merged == Some(side) => {
+                    join(&mut b, &[fc], &wings[side], LinkKind::Door, y, DOOR);
+                }
+                None => overlook(&mut b, fc, &corner_below, y),
+            }
+        }
         let face = if ground {
             LinkKind::Open
         } else {
@@ -492,7 +731,7 @@ fn atrium(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
             let c = b.spaces[*s].rect.center().x;
             b.door_at(*s, fc, LinkKind::Door, y, DOOR, Some(c));
         }
-        if ground {
+        if let (true, Some(fl), Some(fr)) = (ground, fl, fr) {
             b.entrance(fc, cx, ENTRANCE);
             b.entrance(fl, ax0 * 0.5, DOUBLE);
             b.entrance(fr, (ax1 + w) * 0.5, DOUBLE);
@@ -500,13 +739,21 @@ fn atrium(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
         // Back band: the stair hall and rooms either side of it.
         b.door_at(back, hall, LinkKind::Double, y, door_w, Some(door_x));
         for (x0, x1, wing) in [
-            (0.0, hall_rect.min.x, wings[0]),
-            (hall_rect.max.x, w, wings[1]),
+            (0.0, hall_rect.min.x, &wings[0]),
+            (hall_rect.max.x, w, &wings[1]),
         ] {
             if x1 - x0 > 0.5 {
                 let r = rect(x0, az1, x1, d);
                 let s = b.space(hall_or_service(&r), r, y, h);
-                b.door(s, wing, LinkKind::Door, y, DOOR);
+                if !join(&mut b, &[s], wing, LinkKind::Door, y, DOOR) {
+                    // A narrow one: a door as wide as its wall allows.
+                    let best = wing
+                        .iter()
+                        .copied()
+                        .max_by(|p, q| touch(&b, s, *p).total_cmp(&touch(&b, s, *q)))
+                        .expect("a wing has rooms");
+                    b.door(s, best, LinkKind::Door, y, DOOR);
+                }
             }
         }
     }
