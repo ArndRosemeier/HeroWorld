@@ -21,8 +21,12 @@ const RUN: f64 = 2.6;
 const NEAR_M: f32 = 22.0;
 const NEAR_MAX: usize = 20;
 
+/// A citizen on screen: the agent it is, in the crowd of the look it had
+/// when it was added. The crowd is kept with the agent, so the agent is
+/// always used with the crowd that holds it.
 struct Shown {
     look: u32,
+    crowd: CrowdId,
     agent: CrowdAgentId,
 }
 
@@ -75,10 +79,7 @@ impl CrowdView {
     pub fn nearest(&self, world: &World, eye: Vec3) -> Option<Place> {
         self.shown
             .values()
-            .filter_map(|s| {
-                let crowd = *self.crowds.get(&s.look)?;
-                world.crowd_agent_place(crowd, s.agent).ok()
-            })
+            .filter_map(|s| world.crowd_agent_place(s.crowd, s.agent).ok())
             .min_by(|a, b| {
                 a.position
                     .distance(eye)
@@ -120,9 +121,7 @@ impl CrowdView {
     pub fn clear(&mut self, world: &mut World) {
         self.placed.clear();
         for (_, s) in std::mem::take(&mut self.shown) {
-            if let Some(&crowd) = self.crowds.get(&s.look) {
-                world.remove_crowd_agent(crowd, s.agent);
-            }
+            world.remove_crowd_agent(s.crowd, s.agent);
         }
         self.near.clear();
         self.delay.clear();
@@ -131,8 +130,14 @@ impl CrowdView {
         self.refresh = 0.0;
     }
 
-    /// A finished citizen look becomes a crowd.
-    pub fn add_look(&mut self, world: &mut World, look: u32, built: &Built) -> EngineResult<()> {
+    /// A finished citizen look becomes a crowd. A look has one crowd for
+    /// good: the people at bus stops, in cars and on the streets hold agents
+    /// of it by its id, so a look built a second time (asked for again)
+    /// keeps the crowd it has. Returns whether a crowd was made.
+    pub fn add_look(&mut self, world: &mut World, look: u32, built: &Built) -> EngineResult<bool> {
+        if self.crowds.contains_key(&look) {
+            return Ok(false);
+        }
         let profile = CrowdProfile::new("idle", built.walk.clone())
             .walk_speed(crate::people::WALK_MPS)
             .near(NEAR_M, NEAR_MAX / 4)
@@ -144,7 +149,7 @@ impl CrowdView {
         let id = world.add_crowd(built.model.clone(), profile)?;
         self.crowds.insert(look, id);
         self.sits.insert(look, built.sits);
-        Ok(())
+        Ok(true)
     }
 
     /// Moves everyone to `time`; `camera` is where they are seen from.
@@ -211,36 +216,20 @@ impl CrowdView {
                     c = r;
                 }
             }
-            let Some(&crowd) = self.crowds.get(&c.look) else {
+            if !self.crowds.contains_key(&c.look) {
                 continue;
-            };
+            }
             seen.insert(c.id);
             self.placed.push(c.pos);
             if self.down.contains_key(&c.id) {
                 *self.delay.entry(c.id).or_insert(0.0) += dt;
                 if let Some(s) = self.shown.get(&c.id) {
-                    let p = world.crowd_agent_place(crowd, s.agent)?;
-                    world.set_crowd_agent(crowd, s.agent, p, 0.0)?;
+                    let p = world.crowd_agent_place(s.crowd, s.agent)?;
+                    world.set_crowd_agent(s.crowd, s.agent, p, 0.0)?;
                 }
                 continue;
             }
-            let yaw = c.facing.x.atan2(c.facing.y).to_degrees() as f32;
-            let place =
-                Place::new(c.pos.x as f32, c.pos.y as f32, c.pos.z as f32).with_yaw_deg(yaw);
-            match self.shown.get(&c.id) {
-                Some(s) => world.set_crowd_agent(crowd, s.agent, place, c.speed as f32)?,
-                None => {
-                    let agent = world.add_crowd_agent(crowd, place)?;
-                    world.set_crowd_agent(crowd, agent, place, c.speed as f32)?;
-                    self.shown.insert(
-                        c.id,
-                        Shown {
-                            look: c.look,
-                            agent,
-                        },
-                    );
-                }
-            }
+            self.put(world, &c)?;
         }
         let gone: Vec<u64> = self
             .shown
@@ -250,12 +239,42 @@ impl CrowdView {
             .collect();
         for id in gone {
             if let Some(s) = self.shown.remove(&id) {
-                if let Some(&crowd) = self.crowds.get(&s.look) {
-                    world.remove_crowd_agent(crowd, s.agent);
-                }
+                world.remove_crowd_agent(s.crowd, s.agent);
             }
             self.down.remove(&id);
         }
+        Ok(())
+    }
+
+    /// Shows citizen `c` where it is now. Someone can come back under the
+    /// same id with another look (people indoors at a shop or office are a
+    /// new visitor every visit, see `Citizens::indoors`): they leave the
+    /// old look's crowd and join the new one's, so an agent is never used
+    /// with a crowd that does not hold it.
+    fn put(&mut self, world: &mut World, c: &Citizen) -> EngineResult<()> {
+        let Some(&crowd) = self.crowds.get(&c.look) else {
+            return Ok(());
+        };
+        let yaw = c.facing.x.atan2(c.facing.y).to_degrees() as f32;
+        let place = Place::new(c.pos.x as f32, c.pos.y as f32, c.pos.z as f32).with_yaw_deg(yaw);
+        if let Some(s) = self.shown.get(&c.id) {
+            if s.look == c.look {
+                return world.set_crowd_agent(s.crowd, s.agent, place, c.speed as f32);
+            }
+        }
+        if let Some(old) = self.shown.remove(&c.id) {
+            world.remove_crowd_agent(old.crowd, old.agent);
+        }
+        let agent = world.add_crowd_agent(crowd, place)?;
+        world.set_crowd_agent(crowd, agent, place, c.speed as f32)?;
+        self.shown.insert(
+            c.id,
+            Shown {
+                look: c.look,
+                crowd,
+                agent,
+            },
+        );
         Ok(())
     }
 
@@ -321,9 +340,7 @@ impl CrowdView {
     pub fn knock_down(&mut self, world: &mut World, center: Vec3, radius: f32) -> usize {
         let mut n = 0;
         for (id, s) in &self.shown {
-            let Some(&crowd) = self.crowds.get(&s.look) else {
-                continue;
-            };
+            let crowd = s.crowd;
             let Some(e) = world.crowd_agent_character(crowd, s.agent) else {
                 continue;
             };
@@ -344,5 +361,119 @@ impl CrowdView {
             }
         }
         n
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::people::Who;
+    use engine::anim::{AnimatedModel, AnimationClip, JointChannels, Skeleton, SkinMesh};
+    use glam::{DVec3, Mat4, Quat};
+    use std::sync::Arc;
+
+    /// A one-bone person with the clips a citizen's crowd asks for.
+    fn built(look: u32) -> Built {
+        let clip = |name: &str| AnimationClip {
+            name: name.into(),
+            duration: 1.0,
+            channels: vec![JointChannels::default()],
+        };
+        let model = AnimatedModel {
+            skeleton: Skeleton {
+                joint_names: vec!["root".into()],
+                parents: vec![None],
+                inverse_bind: vec![Mat4::IDENTITY],
+                joint_node_indices: vec![0],
+                root_transforms: vec![Mat4::IDENTITY],
+            },
+            meshes: vec![SkinMesh {
+                positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+                normals: vec![Vec3::Z; 3],
+                colors: vec![glam::Vec4::ONE; 3],
+                uvs: vec![[0.0; 2]; 3],
+                joints: vec![[0; 4]; 3],
+                weights: vec![[1.0, 0.0, 0.0, 0.0]; 3],
+                indices: vec![0, 1, 2],
+                double_sided: false,
+                albedo: None,
+                maps: Default::default(),
+                morphs: vec![],
+            }],
+            clips: [
+                "idle",
+                "walk",
+                crate::riderview::DRIVE,
+                crate::riderview::RIDE,
+            ]
+            .map(clip)
+            .into(),
+            bind_local: vec![(Vec3::ZERO, Quat::IDENTITY, Vec3::ONE)],
+            morph_targets: vec![],
+        };
+        Built {
+            who: Who::Citizen(look),
+            model: Arc::new(model),
+            walk: "walk".into(),
+            sits: true,
+        }
+    }
+
+    fn citizen(id: u64, look: u32) -> Citizen {
+        Citizen {
+            id,
+            pos: DVec3::new(id as f64, 0.0, 0.0),
+            facing: DVec2::Y,
+            speed: 1.0,
+            look,
+        }
+    }
+
+    /// "no crowd agent 0" (0.171): the street acts asked for a citizen look
+    /// again, and the second build replaced the look's crowd with an empty
+    /// one while the people at bus stops and in cars still held agents of
+    /// the first.
+    #[test]
+    fn a_look_built_twice_keeps_its_crowd_and_its_agents() {
+        let mut world = World::new();
+        let mut crowd = CrowdView::new();
+        assert!(crowd.add_look(&mut world, 3, &built(3)).unwrap());
+        let id = crowd.crowd_of(3).unwrap();
+        // Someone waiting at a bus stop (busview holds the agent).
+        let waiting = world
+            .add_crowd_agent(id, Place::new(1.0, 0.0, 0.0))
+            .unwrap();
+        // The look comes again.
+        assert!(!crowd.add_look(&mut world, 3, &built(3)).unwrap());
+        assert_eq!(crowd.crowd_of(3), Some(id));
+        let again = crowd.crowd_of(3).unwrap();
+        world
+            .set_crowd_agent(again, waiting, Place::new(2.0, 0.0, 0.0), 1.0)
+            .expect("the waiting one is still in its look's crowd");
+    }
+
+    /// A shop's visitor comes back under the same id with another look
+    /// (`Citizens::indoors`): it moves to the new look's crowd.
+    #[test]
+    fn a_citizen_whose_look_changes_moves_to_that_looks_crowd() {
+        let mut world = World::new();
+        let mut crowd = CrowdView::new();
+        for look in [1, 2] {
+            crowd.add_look(&mut world, look, &built(look)).unwrap();
+        }
+        let (one, two) = (crowd.crowd_of(1).unwrap(), crowd.crowd_of(2).unwrap());
+        // Look 1's crowd has more people than look 2's, so the visitor's
+        // agent number does not exist in look 2's crowd.
+        crowd.put(&mut world, &citizen(10, 1)).unwrap();
+        crowd.put(&mut world, &citizen(11, 1)).unwrap();
+        crowd.put(&mut world, &citizen(11, 2)).expect("a new look");
+        crowd
+            .put(&mut world, &citizen(11, 2))
+            .expect("and on with it");
+        assert_eq!(world.crowd_agent_count(one), 1);
+        assert_eq!(world.crowd_agent_count(two), 1);
+        crowd.clear(&mut world);
+        assert_eq!(world.crowd_agent_count(one), 0);
+        assert_eq!(world.crowd_agent_count(two), 0);
     }
 }

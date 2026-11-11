@@ -254,7 +254,11 @@ impl StreetView {
                 }
                 let who = who_of(p.role);
                 let Some(model) = models.get(&who) else {
-                    if self.asked.insert(who.clone()) {
+                    // The citizens' looks are all asked for at the start,
+                    // with the world's seed (and become crowds that must
+                    // not be made twice): wait for them. Others on demand.
+                    let citizen = matches!(who, Who::Citizen(_));
+                    if !citizen && self.asked.insert(who.clone()) {
                         if let Some(people) = people {
                             people.request(who, 0);
                         }

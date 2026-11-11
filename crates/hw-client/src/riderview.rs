@@ -259,8 +259,11 @@ impl RiderView {
                 };
                 let key = (v.id, seat);
                 match self.shown.get(&key) {
-                    Some(s) => world.set_crowd_agent(id, s.agent, place, 0.0)?,
-                    None => {
+                    Some(s) if s.look == look => world.set_crowd_agent(id, s.agent, place, 0.0)?,
+                    old => {
+                        if let Some(s) = old {
+                            remove(world, crowd, s.look, s.agent);
+                        }
                         let agent = world.add_crowd_agent(id, place)?;
                         let pose = if seat == 0 { DRIVE } else { RIDE };
                         world.set_crowd_agent_pose(id, agent, Some(pose))?;
@@ -330,9 +333,14 @@ impl RiderView {
             let Some(place) = seat_place(wreck, seat) else {
                 continue;
             };
+            // The one sitting there gets out (the same look: an agent is
+            // only ever used with its own look's crowd).
             let agent = match taken.remove(&seat) {
-                Some(s) => s.agent,
-                None => {
+                Some(s) if s.look == look => s.agent,
+                old => {
+                    if let Some(s) = old {
+                        remove(world, crowd, s.look, s.agent);
+                    }
                     let a = world.add_crowd_agent(id, place)?;
                     world.set_crowd_agent_pose(
                         id,

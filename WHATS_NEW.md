@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.173 (2026-11-11)
+
+- Fixed a crash when continuing a hero ("no crowd agent 0"): people at bus stops and in cars could lose track of who they were when the street acts came near before the townsfolk had finished loading.
+
 ## 0.172 (2026-11-11)
 
 - Smoother busy streets: trees, props and other repeated things are now culled on the graphics card in a few passes instead of one per kind of thing, which frees up CPU time each frame (Engine 0.051)

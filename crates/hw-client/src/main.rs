@@ -453,6 +453,11 @@ fn main() -> EngineResult<()> {
             asked.insert(Who::Villain(kind, look));
         }
     }
+    // The citizens' looks were asked for above, with the world's seed:
+    // never again (a bystander in a crime waits for its look like the rest).
+    for look in 0..hw_sim::citizens::LOOKS + hw_sim::citizens::MOLE_LOOKS {
+        asked.insert(Who::Citizen(look));
+    }
     // The fight: targets, effects, the screen.
     let mut fight = FightView::new();
     let mut robots = RobotView::new();
