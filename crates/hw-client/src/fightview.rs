@@ -9,6 +9,7 @@
 //! fight events it sends, and turns keys into input.
 
 use crate::chat::{self, Said, Voice};
+use crate::speech::{Speech, SpeechBubbles};
 use crate::tray::{self, Tray};
 use engine::prelude::*;
 use engine::ui::egui;
@@ -331,6 +332,8 @@ pub struct FightView {
     last_tab: f32,
     sounds: Option<Sounds>,
     floaters: Vec<Floater>,
+    /// Comic speech bubbles over people talking (see `crate::speech`).
+    pub speech: SpeechBubbles,
     /// Words said out loud since the game last took them, for the chat
     /// window's Local channel (see `chat.rs`).
     pub said: Vec<crate::chat::Said>,
@@ -417,6 +420,7 @@ impl FightView {
             sounds: None,
             said: Vec::new(),
             floaters: Vec::new(),
+            speech: SpeechBubbles::default(),
             shake: 0.0,
             hurt: 0.0,
             hitstop: BTreeMap::new(),
@@ -1343,11 +1347,8 @@ impl FightView {
                     let line = lines[(e.from.0 as usize + e.tick as usize / 7) % lines.len()];
                     let speaker = all.iter().find(|x| x.id == e.from);
                     let head = speaker.map_or(at, pos);
-                    self.speak(
-                        head + Vec3::Y * 2.3,
-                        line.to_string(),
-                        egui::Color32::from_rgb(255, 120, 90),
-                    );
+                    self.speech
+                        .add(Speech::shout(head, line, Voice::Villain).from(e.from));
                     self.said.push(Said {
                         at: head,
                         range: chat::SHOUT_RANGE,
@@ -1369,11 +1370,8 @@ impl FightView {
                     let line = THANKS[(e.from.0 as usize + e.tick as usize / 7) % THANKS.len()];
                     let speaker = all.iter().find(|x| x.id == e.from);
                     let head = speaker.map_or(at, pos);
-                    self.speak(
-                        head + Vec3::Y * 2.3,
-                        line.to_string(),
-                        egui::Color32::from_rgb(200, 170, 255),
-                    );
+                    self.speech
+                        .add(Speech::say(head, line, Voice::Folk).from(e.from));
                     self.said.push(Said {
                         at: head,
                         range: chat::SAY_RANGE,
@@ -1400,7 +1398,8 @@ impl FightView {
                     let speaker = all.iter().find(|x| x.id == e.from);
                     let head = speaker.map_or(at, pos);
                     self.act(e.from, "thanks", hw_sim::incidents::THANK_SECONDS as f32);
-                    self.speak(head + Vec3::Y * 2.3, line.to_string(), Voice::Folk.colour());
+                    self.speech
+                        .add(Speech::say(head, line, Voice::Folk).from(e.from));
                     self.said.push(Said {
                         at: head,
                         range: chat::SAY_RANGE,
@@ -1423,11 +1422,8 @@ impl FightView {
                     let tip =
                         hw_sim::npcheroes::TIPS[e.amount as usize % hw_sim::npcheroes::TIPS.len()];
                     let head = all.iter().find(|x| x.id == e.from).map_or(at, pos);
-                    self.speak(
-                        head + Vec3::Y * 2.4,
-                        format!("{name}: {tip}"),
-                        egui::Color32::from_rgb(255, 214, 110),
-                    );
+                    self.speech
+                        .add(Speech::say(head, format!("{name}: {tip}"), Voice::Ally).from(e.from));
                     self.said.push(Said {
                         at: head,
                         range: chat::SAY_RANGE,
@@ -1517,6 +1513,14 @@ impl FightView {
                 }
                 FxKind::Lifted => {
                     self.play(world, |s| &s.whoosh, at, 0.8, 1.0);
+                }
+                FxKind::Admitted => {
+                    // Set down at the hospital: into a recovery pod.
+                    rise(world, at, rgb(120, 255, 200));
+                    self.play(world, |s| &s.chime, at, 0.7, 0.8);
+                    if on_me || mine {
+                        self.say("Into a recovery pod at Aether Mercy");
+                    }
                 }
                 FxKind::Healed => {
                     rise(world, at, rgb(140, 255, 170));
@@ -1608,33 +1612,27 @@ impl FightView {
         });
     }
 
-    /// Words someone says, over their head for a few seconds (`head` is
-    /// where they stand; the words float a little above it).
+    /// Words our hero says (`head`: where they stand), in a bubble over
+    /// their head.
     pub fn speech(&mut self, head: Vec3, text: &str) {
-        self.speak(
-            head + Vec3::Y * 2.3,
-            text.to_string(),
-            crate::chat::Voice::Me.colour(),
-        );
+        self.speech.add(Speech::say(head, text, Voice::Me));
     }
 
-    /// Words someone says (`head`: where they stand), over their head in
-    /// their voice's colour.
-    pub fn say_at(&mut self, head: Vec3, text: &str, voice: crate::chat::Voice) {
-        self.speak(head + Vec3::Y * 2.3, text.to_string(), voice.colour());
+    /// Words someone says (`head`: where they stand), in a bubble over
+    /// their head.
+    pub fn say_at(&mut self, head: Vec3, text: &str, voice: Voice) {
+        self.speech.add(Speech::say(head, text, voice));
     }
 
-    /// Words someone says, over their head for a few seconds.
-    fn speak(&mut self, at: Vec3, text: String, colour: egui::Color32) {
-        self.floaters.push(Floater {
-            at,
-            text,
-            colour,
-            age: 0.0,
-            big: false,
-            life: 3.2,
-            rise: 0.15,
-        });
+    /// Words someone shouts ("Stop, thief!"): a spiky burst over their head.
+    pub fn shout_at(&mut self, head: Vec3, text: &str, voice: Voice) {
+        self.speech.add(Speech::shout(head, text, voice));
+    }
+
+    /// A line for the chat, as a bubble over the speaker (a shout when it
+    /// carries as far as one).
+    pub fn bubble(&mut self, said: &Said) {
+        self.speech.add(Speech::of(said));
     }
 
     fn play(
@@ -1877,6 +1875,7 @@ impl FightView {
             f.at.y += dt * f.rise;
         }
         self.floaters.retain(|f| f.age < f.life);
+        self.speech.update(dt);
         if let Some(n) = &mut self.note {
             n.1 -= dt;
             if n.1 <= 0.0 {
@@ -2164,6 +2163,10 @@ impl FightView {
             );
             painter.text(p, egui::Align2::CENTER_CENTER, &f.text, font(size), col);
         }
+
+        // Speech bubbles over whoever is talking.
+        let where_is = |id: NetId| all.iter().find(|e| e.id == id).map(pos);
+        self.speech.draw(&painter, view_proj, &where_is);
 
         // A red edge when hurt.
         if self.hurt > 0.0 {

@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.182 (2026-11-11)
+
+- Puts back hospitals and comic speech bubbles, which build 0.181 left out by mistake.
+
 ## 0.181 (2026-11-11)
 
 - Behind the scenes: the first piece of a new interior designer. Buildings will get much roomier insides built for heroes: tall lobbies, atriums with galleries and bridges, split levels, real stairs and lifts. Nothing in the game changes yet.

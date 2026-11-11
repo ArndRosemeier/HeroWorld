@@ -78,6 +78,7 @@ pub fn model(l: &Landmark, near: bool) -> Vec<Mesh> {
         LandmarkKind::MoleDrill => crate::drillview::model(&mut b, l, near),
         LandmarkKind::WeatherTower => crate::weathermodel::tower(&mut b, l, near),
         LandmarkKind::RobotWorks => crate::worksview::model_into(&mut b, near),
+        LandmarkKind::Hospital => crate::hospitalmesh::hospital(&mut b, near),
     }
     stairs(&mut b, l, near);
     b.finish_parts()

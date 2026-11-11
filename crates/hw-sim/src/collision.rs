@@ -2046,6 +2046,20 @@ mod tests {
             let (y0, _) = f.span();
             assert!(o.solid_at(DVec3::new(c.x, y0 + 0.3, c.y)), "{:?}", l.kind);
         }
+        // The hospital's walls, roof, tower, pods, desk and couches too.
+        let hospital = w
+            .landmarks
+            .iter()
+            .find(|l| l.ward().is_some())
+            .expect("a hospital");
+        for f in hospital.footprints() {
+            let c = f.at();
+            let (y0, _) = f.span();
+            assert!(
+                o.solid_at(DVec3::new(c.x, y0 + 0.1, c.y)),
+                "a hospital part at {c:?}, {y0:.1} m up, can be walked through"
+            );
+        }
         // On the plinth the ground is its top.
         let on = l.pos + l.dir * (l.plaza - 0.5);
         assert_eq!(o.ground_at(on), l.base);
