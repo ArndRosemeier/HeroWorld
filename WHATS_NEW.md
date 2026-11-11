@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.198 (2026-11-11)
+
+- Portals work from both sides now: you can see through the back too, and walking into the back brings you out of the back of the other portal.
+- The edge of a portal is alive: it wanders in and out all the time, with a flickering line of light on it.
+- No more ghostly copy of the view flickering over a portal while you walk towards or away from it.
+
 ## 0.197 (2026-11-11)
 
 - The Daily Comet building, the Atlas Assurance hall and the Zenith Radio house are furnished: office halls full of desks in blocks with wide aisles, archives, canteens, lobbies with a front desk and seats, benches and plants on the galleries.

@@ -29,6 +29,9 @@ pub const VIEW_RANGE: f32 = 160.0;
 const OPENING: f32 = 1.8;
 /// The rim reaches this far out of the opening (of its size).
 const RIM_OUT: f32 = 1.5;
+/// The rim reaches this far into the opening (of its size): the living
+/// edge (see [`GATE_RIM`]) wanders between about 0.82 and 0.99.
+const RIM_IN: f32 = 0.8;
 /// Each opening's lamp: a glow on the street round it, not a wash over
 /// everything seen through its twin.
 const LAMP: f32 = 2.2;
@@ -55,40 +58,56 @@ fn rim_colour(home: bool) -> Color {
     }
 }
 
-/// The rim: a ragged, rippling haze round the opening, a bright line at
-/// its edge and tendrils crawling out of it, drifting between violet and
-/// sea green round the rim's own colour (the vertex colour). `uv.x` goes
-/// round the rim, `uv.y` out of it (0 a little inside the opening's edge,
-/// 1 at the rim's outside).
+/// The rim: a living edge and the haze round it. The edge of what is seen
+/// through wanders in and out round the opening, never still (as
+/// MasterWorld's did): inside it the view; outside it a violet membrane
+/// hides the opening's own fixed outline; on it a bright, flickering line;
+/// beyond it a ragged haze with tendrils crawling off and motes drifting
+/// out, between violet and sea green round the rim's own colour (the
+/// vertex colour). `uv.x` goes round the rim, `uv.y` out of it, from
+/// [`RIM_IN`] of the opening's size (0) to [`RIM_OUT`] (1).
 pub const GATE_RIM: &str = r#"
 fn material(m: MaterialIn, base: MaterialOut) -> MaterialOut {
     var o = base;
     let a = m.uv.x * 6.2831853;
-    let r = m.uv.y;
+    let rr = mix(0.8, 1.5, m.uv.y);
     let t = m.time;
-    // How far out the haze reaches, rippling round the rim.
+    // Where the view ends: wandering round the opening, 0.82 to 0.99.
+    let n = 0.45 * sin(a * 4.0 + t * 1.1) + 0.3 * sin(a * 9.0 - t * 1.9)
+        + 0.17 * sin(a * 17.0 + t * 3.1) + 0.08 * sin(a * 31.0 - t * 4.7);
+    let e = 0.905 + 0.085 * n;
+    let d = rr - e;
+    // Feathered into the view; the membrane covers the rest of the opening.
+    let feather = smoothstep(-0.035, 0.0, d);
+    let membrane = 1.0 - smoothstep(1.0, 1.07, rr);
+    // The bright line on the living edge, flickering.
+    let line = exp(-pow(d * 30.0, 2.0)) * (0.7 + 0.3 * sin(a * 37.0 + t * 11.0));
+    // The haze beyond, reaching out raggedly.
     let rag = 0.5 + 0.2 * sin(a * 5.0 + t * 1.3) + 0.14 * sin(a * 11.0 - t * 2.1)
-        + 0.09 * sin(a * 23.0 + t * 3.7) + 0.05 * sin(a * 41.0 - t * 5.3);
-    let reach = 0.18 + 0.5 * rag;
-    let haze = pow(clamp(1.0 - r / reach, 0.0, 1.0), 1.6);
-    // The bright line just outside the opening's edge, flickering.
-    let edge = 0.035 + 0.012 * sin(a * 9.0 + t * 4.0);
-    let line = exp(-pow((r - edge) * 34.0, 2.0)) * (0.75 + 0.25 * sin(a * 37.0 + t * 11.0));
-    // Tendrils of light crawling outward.
-    let bend = sin(r * 9.0 - t * 2.4 + a * 2.0) * 0.9;
-    let tendril = pow(abs(sin(a * 13.0 + bend)), 48.0) * smoothstep(reach * 1.3, 0.05, r);
+        + 0.09 * sin(a * 23.0 + t * 3.7);
+    let reach = 0.14 + 0.38 * rag;
+    let haze = pow(clamp(1.0 - max(d, 0.0) / reach, 0.0, 1.0), 1.6);
+    // Tendrils of light crawling outward from the edge.
+    let bend = sin(d * 9.0 - t * 2.4 + a * 2.0) * 0.9;
+    let tendril = pow(abs(sin(a * 13.0 + bend)), 48.0) * smoothstep(reach * 1.4, 0.03, d)
+        * step(0.0, d);
     // Motes drifting out through the haze.
-    let mote_a = fract(a * 4.7746 + sin(floor(a * 4.7746) * 7.3) * 0.5);
-    let mote_r = fract(t * 0.35 + sin(floor(a * 4.7746) * 3.1) * 0.5);
-    let mote = smoothstep(0.08, 0.0, length(vec2<f32>((mote_a - 0.5) * 0.6, (r - mote_r) * 2.5)));
-    let swirl = 0.5 + 0.5 * sin(a * 3.0 - t * 0.8 + r * 7.0);
+    let cell = floor(a * 4.7746);
+    let mote_a = fract(a * 4.7746) - 0.5;
+    let mote_r = fract(t * 0.35 + sin(cell * 3.1) * 0.5) * 0.6;
+    let mote = smoothstep(0.08, 0.0, length(vec2<f32>(mote_a * 0.6, (d - mote_r) * 2.5)));
+    let swirl = 0.5 + 0.5 * sin(a * 3.0 - t * 0.8 + rr * 7.0);
     let hue = mix(vec3<f32>(0.42, 0.13, 1.0), vec3<f32>(0.12, 1.0, 0.95), swirl);
     let c = mix(hue, base.color.rgb, 0.45);
-    let glow = haze * 1.4 + line * 7.0 + tendril * 3.5 + mote * 4.0;
-    o.color = vec4<f32>(c * 0.12, clamp(haze * 0.6 + line + tendril * 0.8 + mote, 0.0, 1.0));
+    // The membrane: deep violet, glowing more towards the edge.
+    let deep = mix(vec3<f32>(0.05, 0.02, 0.12), c * 0.5, exp(-max(d, 0.0) * 12.0));
+    let cover = max(membrane * 0.97, haze * 0.6);
+    let glow = haze * 1.4 + line * 7.0 + tendril * 3.5 + mote * 4.0 + membrane * 0.6;
+    o.color = vec4<f32>(mix(c * 0.12, deep, membrane),
+        feather * clamp(cover + line + tendril * 0.8 + mote, 0.0, 1.0));
     o.roughness = 1.0;
     o.metallic = 0.0;
-    o.emission = c * glow;
+    o.emission = c * glow * feather;
     return o;
 }
 "#;
@@ -128,6 +147,9 @@ struct ShownSide {
     side: Side,
     home: bool,
     opening: EntityId,
+    /// The same opening facing the other way: a portal is seen through
+    /// (and walked through) from both sides.
+    back_opening: EntityId,
     rim: EntityId,
     haze: EntityId,
     lamp: Option<LampId>,
@@ -139,7 +161,8 @@ struct ShownSide {
 struct Shown {
     pair: Pair,
     sides: [ShownSide; 2],
-    portal: Option<PortalId>,
+    /// Front to front and back to back.
+    portals: Vec<PortalId>,
     viewing: bool,
 }
 
@@ -232,16 +255,20 @@ impl Gates {
     fn show(&mut self, world: &mut World, p: &Pair, home_open: f32) -> EngineResult<Shown> {
         let home = self.side(world, p.home, p.size, true, home_open)?;
         let far = self.side(world, p.far, p.size, false, 0.0)?;
-        let portal = world
-            .create_portal(home.opening, far.opening, PortalSettings::VIEW_ONLY)
-            .ok();
-        if let Some(id) = portal {
-            world.set_portal_enabled(id, false)?;
+        let mut portals = Vec::new();
+        for (a, b) in [
+            (home.opening, far.opening),
+            (home.back_opening, far.back_opening),
+        ] {
+            if let Ok(id) = world.create_portal(a, b, PortalSettings::VIEW_ONLY) {
+                world.set_portal_enabled(id, false)?;
+                portals.push(id);
+            }
         }
         Ok(Shown {
             pair: *p,
             sides: [home, far],
-            portal,
+            portals,
             viewing: false,
         })
     }
@@ -261,6 +288,9 @@ impl Gates {
         let opening = world.spawn(opening_mesh(rx, ry)?);
         world.set_place(opening, place)?;
         world.set_casts_shadow(opening, false)?;
+        let back_opening = world.spawn(opening_mesh(rx, ry)?);
+        world.set_place(back_opening, place_of(&s.back(), size, open))?;
+        world.set_casts_shadow(back_opening, false)?;
         let rim = world.spawn(rim_mesh(rx, ry, colour)?);
         world.set_place(rim, place)?;
         world.set_casts_shadow(rim, false)?;
@@ -271,7 +301,7 @@ impl Gates {
             world.set_custom_material(rim, rim_m)?;
             world.set_custom_material(haze, haze_m)?;
         }
-        let centre = middle(&s, size) + normal(&s) * 0.7;
+        let centre = middle(&s, size);
         let lamp = world
             .add_lamp(Lamp::point(centre, colour, 0.01, LAMP_RANGE).flicker(0.15))
             .ok();
@@ -307,6 +337,7 @@ impl Gates {
             side: s,
             home,
             opening,
+            back_opening,
             rim,
             haze,
             lamp,
@@ -332,6 +363,7 @@ impl Gates {
                     for id in [s.opening, s.rim, s.haze] {
                         world.set_place(id, place)?;
                     }
+                    world.set_place(s.back_opening, place_of(&s.side.back(), size, s.open))?;
                 }
                 let o = smooth(s.open);
                 // Wisps crawl round the rim, just outside it.
@@ -348,8 +380,9 @@ impl Gates {
                 }
                 if let Some(l) = s.lamp {
                     let breathe = 0.85 + 0.15 * (t * 1.7 + s.home as u8 as f32).sin();
+                    // In the opening's middle: it lights both sides.
                     let mut lamp = Lamp::point(
-                        middle(&s.side, size) + normal(&s.side) * 0.7,
+                        middle(&s.side, size),
                         rim_colour(s.home),
                         LAMP * o * breathe,
                         LAMP_RANGE,
@@ -361,8 +394,10 @@ impl Gates {
             }
             let ready = shown.sides.iter().all(|s| s.open > 0.15);
             let view = near && ready;
-            if let (Some(id), true) = (shown.portal, view != shown.viewing) {
-                world.set_portal_enabled(id, view)?;
+            if view != shown.viewing {
+                for &id in &shown.portals {
+                    world.set_portal_enabled(id, view)?;
+                }
                 shown.viewing = view;
             }
         }
@@ -685,11 +720,11 @@ impl Gates {
 
 fn remove(world: &mut World, s: Shown) {
     // The portal first: an opening may not go while a portal links it.
-    if let Some(id) = s.portal {
+    for id in s.portals {
         let _ = world.destroy_portal(id);
     }
     for side in s.sides {
-        for id in [side.opening, side.rim, side.haze] {
+        for id in [side.opening, side.back_opening, side.rim, side.haze] {
             world.despawn(id);
         }
         if let Some(l) = side.lamp {
@@ -746,14 +781,16 @@ fn opening_mesh(rx: f32, ry: f32) -> EngineResult<Mesh> {
     Ok(m)
 }
 
-/// The rim: a band round the opening from a little inside its edge to
-/// [`RIM_OUT`] of it, seen from both sides (a hair in front of and behind
-/// the opening).
+/// The rim: a band round the opening from [`RIM_IN`] of its size (well
+/// inside it: the living edge wanders there) to [`RIM_OUT`], seen from
+/// both sides. Its faces stand 4 cm out in front of and behind the
+/// opening, before the depth Engine puts back over a portal's view (its
+/// opening nudged 2.5 cm out).
 fn rim_mesh(rx: f32, ry: f32, colour: Color) -> EngineResult<Mesh> {
-    const N: usize = 120;
-    const INNER: f32 = 0.98;
+    const N: usize = 160;
+    const INNER: f32 = RIM_IN;
     let mut m = Mesh::new();
-    for (z, front) in [(0.006f32, true), (-0.006, false)] {
+    for (z, front) in [(0.04f32, true), (-0.04, false)] {
         let mut inner = Vec::with_capacity(N + 1);
         let mut outer = Vec::with_capacity(N + 1);
         for i in 0..=N {
@@ -782,14 +819,14 @@ fn rim_mesh(rx: f32, ry: f32, colour: Color) -> EngineResult<Mesh> {
     Ok(m)
 }
 
-/// The haze disc: a hair behind the opening, its front facing +Z (shown
-/// where the view is not drawn) and its back facing -Z (a portal seen from
-/// behind).
+/// The haze disc, shown where the view is not drawn (too far off): its
+/// front facing +Z a hair behind the opening, its back facing -Z a hair in
+/// front, so each face lies behind the opening seen from its side.
 fn haze_mesh(rx: f32, ry: f32, colour: Color) -> EngineResult<Mesh> {
     const N: usize = 72;
     const RINGS: usize = 6;
     let mut m = Mesh::new();
-    for (z, front) in [(-0.03f32, true), (-0.05, false)] {
+    for (z, front) in [(-0.006f32, true), (0.006, false)] {
         let c = m.add_point((0.0, 0.0, z))?;
         m.set_point_uv(c, [0.0, 0.0])?;
         m.set_point_color(c, colour)?;
@@ -829,14 +866,14 @@ fn haze_mesh(rx: f32, ry: f32, colour: Color) -> EngineResult<Mesh> {
 }
 
 /// The camera's boom from the hero's head `head` back to `eye`: if it
-/// passes into a portal's front, the camera looks from beyond the other
+/// passes into a portal (either face), the camera looks from beyond the other
 /// side (so stepping through never cuts away). The eye to use, and how
 /// far to turn the camera's yaw (degrees).
 pub fn eye_through(pairs: &[Pair], head: Vec3, eye: Vec3) -> Option<(Vec3, f32)> {
     let (h, e) = (head.as_dvec3(), eye.as_dvec3());
     let mut best: Option<(f64, Side, Side)> = None;
     for p in pairs {
-        for (into, out) in [(p.home, p.far), (p.far, p.home)] {
+        for (into, out) in p.ways() {
             let (a, b) = (into.local(h), into.local(e));
             if !(a.z > 0.0 && b.z <= 0.0) {
                 continue;

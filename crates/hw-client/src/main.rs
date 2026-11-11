@@ -288,24 +288,40 @@ impl PortalScript {
         }
     }
 
-    /// A screenshot to take now.
+    /// `HW_PORTAL_ORBIT=<degrees>`: while the portal stands open, the
+    /// camera swings that far round the hero and pulls back (to see it
+    /// from behind).
+    fn orbit(&self) -> Option<f32> {
+        let w = Self::walk_secs();
+        let deg = std::env::var("HW_PORTAL_ORBIT").ok()?.parse().ok()?;
+        (w + 4.0..w + 5.8).contains(&self.clock).then_some(deg)
+    }
+
+    /// A screenshot to take now: `open.png` (open, seen through),
+    /// `orbit.png` (with `HW_PORTAL_ORBIT`), `walking.png` (walking up to
+    /// it) and `through.png` (just out at home).
     fn shot(&mut self) -> Option<std::path::PathBuf> {
         let dir = std::path::PathBuf::from(std::env::var("HW_PORTAL_SHOT").ok()?);
         let w = Self::walk_secs();
-        let (at, name) = match self.shots {
-            0 => (w + 4.6, "open.png"),
-            1 => (w + 9.5, "through.png"),
-            _ => return None,
-        };
-        if self.clock < at {
+        const SHOTS: [(f32, &str); 4] = [
+            (3.8, "open.png"),
+            (5.6, "orbit.png"),
+            (6.35, "walking.png"),
+            (9.5, "through.png"),
+        ];
+        let &(at, name) = SHOTS.get(self.shots as usize)?;
+        if self.clock < w + at {
             return None;
         }
         self.shots += 1;
+        if name == "orbit.png" && std::env::var_os("HW_PORTAL_ORBIT").is_none() {
+            return None;
+        }
         Some(dir.join(name))
     }
 
     fn done(&self) -> bool {
-        self.shots >= 2 && self.clock > Self::walk_secs() + 10.5
+        self.shots >= 4 && self.clock > Self::walk_secs() + 10.5
     }
 }
 
@@ -4300,6 +4316,12 @@ fn main() -> EngineResult<()> {
                     if let Some(turn) = fight.gate_turn.take() {
                         hero_cam.yaw = (hero_cam.yaw + turn).rem_euclid(360.0);
                     }
+                    let orbit = portal_script.as_ref().and_then(|s| s.orbit());
+                    let kept = (hero_cam.yaw, hero_cam.distance);
+                    if let Some(deg) = orbit {
+                        hero_cam.yaw += deg;
+                        hero_cam.distance = HeroCamera::MAX_DISTANCE;
+                    }
                     hero_cam.update(
                         world,
                         frame,
@@ -4308,6 +4330,9 @@ fn main() -> EngineResult<()> {
                         open_above,
                         fight.gates.pairs(),
                     );
+                    if orbit.is_some() {
+                        (hero_cam.yaw, hero_cam.distance) = kept;
+                    }
                     let shake = fight.shake();
                     if shake != Vec3::ZERO {
                         let cam = world.camera();

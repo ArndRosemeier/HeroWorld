@@ -264,19 +264,24 @@ does, what it needs, and Buy or Give up.
   one moves its far side). Each opening is an ellipse 2.6 m wide and 3.5 m high, shrunk to
   86%, 74% or 64% where a full one has no room; under that, or with a wall, a floor more
   than 0.55 m out of level or home within 6 m, it fizzles ("No room for a portal there") and costs
-  nothing. Anyone (heroes, not villains) walking into either front comes out of the other,
-  turned with it and keeping their speed; the camera turns with the hero and looks back
+  nothing. Both faces work (0.198, as MasterWorld's did): anyone (heroes, not villains)
+  walking into a front comes out of the other side's front, and into a back out of the other
+  side's back, turned with it and keeping their speed; the camera turns with the hero and looks back
   through the portal for a moment, so the step never cuts. Portals close when their hero
   leaves (16 open at most in a world).
-- How it looks: each side is an Engine portal, the other place seen through it (drawn
-  while the camera is within 160 m), opening from its middle over 1.8 s. Round it a ragged
-  rim of violet and sea green ripples with a bright edge and crawling tendrils (custom
-  material `portal rim`), wisps and rune motes crawl round it, and a lamp in its colour
-  (home green, far side blue) glows on the street. From behind (or too far off) it is a
-  swirling disc (`portal haze`). Marking home sends a beam down to glowing rings on the
+- How it looks: each pair is two Engine portals (front to front, back to back), the other
+  place seen through either face (drawn while the camera is within 160 m), opening from its
+  middle over 1.8 s. The edge of the view is alive: it wanders in and out round the opening
+  (between 82% and 99% of its size), with a bright flickering line on it, a violet membrane
+  outside it, and a ragged rim of violet and sea green beyond with crawling tendrils (custom
+  material `portal rim`); wisps and rune motes crawl round it, and a lamp in its colour (home
+  green, far side blue) glows on the street. Too far off for the view it is a swirling disc
+  (`portal haze`). Engine 0.058 fixed a ghost of the view flickering over it while the camera
+  moved. Marking home sends a beam down to glowing rings on the
   floor; a closing portal sucks its light in; a failed one spits sparks and a dark puff;
   whoever steps through rises in rings of light. `HW_PORTAL=1` runs it on its own
-  (`HW_PORTAL_SHOT=<dir>` saves `open.png` and `through.png`).
+  (`HW_PORTAL_SHOT=<dir>` saves `open.png`, `walking.png` and `through.png`, and with
+  `HW_PORTAL_ORBIT=<degrees>` also `orbit.png`, seen from round the back).
 - The server checks every purchase against the hero file.
 - **Every power must help in a hard fight** (Arnd, 0.177): no power only makes an easy
   thing easier. Rescues need no powers of their own; they stay a plain hold-E job, flavour

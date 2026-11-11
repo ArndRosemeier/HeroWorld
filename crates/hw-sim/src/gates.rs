@@ -68,6 +68,14 @@ impl Side {
         DVec3::new(s, 0.0, c)
     }
 
+    /// The same opening seen from behind: its back as a front of its own.
+    pub fn back(&self) -> Side {
+        Side {
+            at: self.at,
+            yaw: self.yaw + std::f64::consts::PI,
+        }
+    }
+
     /// Across it, to its right seen from its front's back (Engine's local +X).
     pub fn right(&self) -> DVec3 {
         let (s, c) = det::sin_cos(self.yaw);
@@ -148,9 +156,13 @@ impl Pair {
         }
     }
 
-    /// Both ways through: (into this side, out of that one).
-    fn ways(&self) -> [(Side, Side); 2] {
-        [(self.home, self.far), (self.far, self.home)]
+    /// Every way through (into this side, out of that one): a portal has
+    /// two faces, as MasterWorld's had. Into home's front, out of the far
+    /// side's front; into home's back, out of the far side's back; and the
+    /// same the other way.
+    pub fn ways(&self) -> [(Side, Side); 4] {
+        let (h, f) = (self.home, self.far);
+        [(h, f), (f, h), (h.back(), f.back()), (f.back(), h.back())]
     }
 }
 
@@ -522,26 +534,30 @@ mod tests {
     }
 
     #[test]
-    fn the_back_and_the_rim_do_not_carry_anyone() {
+    fn both_faces_carry_but_the_rim_does_not() {
         let solids = flat();
         let home = mark_spot(&solids, DVec3::ZERO, 0.0).unwrap();
         let far = open_spot(&solids, DVec3::new(30.0, 0.0, 0.0), 0.0).unwrap();
         let p = pair(home, far);
-        // Through the far portal from behind (its front faces -Z).
+        // Into the far portal from behind (its front faces -Z): out of
+        // home's back (home's front faces +Z), still going the way home's
+        // back faces.
         let a = Body {
             pos: far.at + DVec3::Z * 0.1,
             vel: -DVec3::Z,
             grounded: true,
         };
-        assert!(pass(
+        let (out, _) = pass(
             [&p],
             &a,
             &Body {
                 pos: far.at - DVec3::Z * 0.1,
                 ..a
-            }
+            },
         )
-        .is_none());
+        .expect("the back carries too");
+        assert!(out.pos.z < home.at.z, "out behind home: {}", out.pos);
+        assert!(out.vel.z < 0.0, "going on out of home's back: {}", out.vel);
         // Past its edge.
         let side = far.at + DVec3::X * (HALF_WIDTH + 0.2);
         let b = Body {
