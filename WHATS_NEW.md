@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.209 (2026-11-11)
+
+- Atomic Annie hands out more than one case: up to three open at once, one to a building.
+  Each press of E at her gives one.
+- The radio follows one case at a time. Pick which in the case file (J): every open case
+  has its own divider, and the one you follow is stamped TRACKED.
+- Open cases are saved with your hero and come back next time you play.
+- The cabinet of closed cases keeps every case you closed, with a tally per gang.
+
 ## 0.208 (2026-11-11)
 
 - The game's screens got the title's comic look: navy panels with gold chrome rims and a bold drop shadow, the title's lettering on headings and buttons, red buttons with cream letters.

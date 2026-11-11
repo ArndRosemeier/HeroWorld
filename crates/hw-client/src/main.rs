@@ -351,6 +351,13 @@ fn save_hero(hero: Option<hw_net::Sheet>) {
     p.save();
 }
 
+/// Keeps the cabinet of closed cases in the profile on this PC.
+fn save_cabinet(cabinet: &[hw_client::missionview::Filed]) {
+    let mut p = Profile::load();
+    p.cabinet = cabinet.to_vec();
+    p.save();
+}
+
 /// Keeps the power tray in the profile on this PC.
 fn save_tray(tray: &hw_client::tray::Tray) {
     let mut p = Profile::load();
@@ -576,6 +583,9 @@ fn main() -> EngineResult<()> {
     let mut signal = hw_client::dispatchview::Signal::default();
     let mut story = hw_client::storyview::StoryView::default();
     let mut cases = hw_client::missionview::MissionView::default();
+    // The cabinet of closed cases lives in the profile on this PC.
+    cases.filed = profile.cabinet.clone();
+    let mut cabinet_saved = cases.filed.clone();
     let mut case_file = hw_client::casefile::CaseFile::default();
     // `HW_CASEFILE=case|doctor|closed`: the case file open on that tab
     // (screenshots).
@@ -3229,7 +3239,7 @@ fn main() -> EngineResult<()> {
                     story.hear(m);
                     false
                 }
-                hw_net::ToClient::Case { .. } => {
+                hw_net::ToClient::Case { .. } | hw_net::ToClient::CaseDesk { .. } => {
                     cases.hear(m);
                     false
                 }
@@ -4770,8 +4780,15 @@ fn main() -> EngineResult<()> {
                 if frame.input.pressed(Key::J) && !on_ui_keys(frame) {
                     case_file.toggle();
                 }
-                case_file.update(&cases, frame.dt);
-                case_file.show(frame.ui.ctx(), &cases, &story);
+                case_file.update(&mut cases, frame.dt);
+                // A case closed: keep the cabinet. On this thread like the
+                // hero file's saves (`save_hero`), so the two never race over
+                // the profile; it happens once a case, a small file.
+                if cases.filed != cabinet_saved {
+                    cabinet_saved = cases.filed.clone();
+                    save_cabinet(&cabinet_saved);
+                }
+                case_file.show(frame.ui.ctx(), &mut cases, &story);
                 if case_file.taking_pointer() && world.pointer_lock() {
                     world.set_pointer_lock(false);
                     case_file.relock = true;

@@ -1,27 +1,34 @@
-//! The case file (J): Hero Hall's manila folder of the hero's cases. The
-//! open case typed up on a sheet (where, who, what, Annie's notes in the
-//! margin, a mugshot of the gang's boss clipped on, a checklist ticked off
-//! as the rooms fall), the Doctor's dossier (chapters solved stamped,
-//! the ones to come blacked out) and the cabinet of closed cases. A new
-//! case slides it in with a NEW CASE stamp, a closed one with CASE CLOSED.
-//! It only shows what the server said (`missionview`, `storyview`).
+//! The case file (J): Hero Hall's manila folder of the hero's cases. Every
+//! open case has its own divider: typed up on a sheet (where, who, what,
+//! Annie's notes in the margin, a mugshot of the gang's boss clipped on,
+//! a checklist ticked off as the rooms fall), and the one the radio
+//! follows is stamped TRACKED (click another's "track" line, or Enter,
+//! to follow that one). Then the Doctor's dossier (chapters solved
+//! stamped, the ones to come blacked out) and the cabinet of closed
+//! cases, with a tally per gang, scrolled with the wheel. A new case
+//! slides it in with a NEW CASE stamp, a closed one with CASE CLOSED.
+//! Nothing assumes one case. It only shows what the server said
+//! (`missionview`, `storyview`).
 
-use crate::missionview::{MissionView, State};
+use crate::missionview::{Event, Filed, MissionView, State};
 use crate::storyview::StoryView;
 use egui::epaint::TextShape;
 use egui::{pos2, vec2, Align2, Color32, FontFamily, FontId, Pos2, Rect, Stroke};
 use engine::ui::egui;
-use hw_sim::missions::{CaseKind, CONTACT_NAME, DONE, GANGS, GO, GUARDED, IDLE};
+use hw_sim::missions::{CaseKind, CONTACT_NAME, DONE, GANGS, GO, GUARDED};
 use hw_sim::story::{CHAPTERS, LOCKED};
 
 /// Seconds the file stays up when a case opens or closes on its own.
 const AUTO_SECONDS: f32 = 7.0;
 /// Seconds a stamp takes to come down.
 const STAMP_SECONDS: f32 = 0.35;
+/// Closed cases one look at the cabinet shows (the wheel scrolls).
+const CABINET_ROWS: usize = 8;
 
 const MANILA: Color32 = Color32::from_rgb(214, 178, 112);
 const MANILA_DARK: Color32 = Color32::from_rgb(170, 132, 74);
 const PAPER: Color32 = Color32::from_rgb(246, 239, 220);
+const DIVIDER: Color32 = Color32::from_rgb(232, 222, 196);
 const TYPE: Color32 = Color32::from_rgb(38, 34, 30);
 const FADED: Color32 = Color32::from_rgb(120, 108, 92);
 const STAMP_RED: Color32 = Color32::from_rgb(196, 40, 36);
@@ -34,15 +41,6 @@ pub enum Tab {
     Case,
     Doctor,
     Closed,
-}
-
-/// A case in the cabinet.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Closed {
-    pub number: u16,
-    pub kind: CaseKind,
-    pub gang: usize,
-    pub building: &'static str,
 }
 
 /// A stamp coming down on the sheet.
@@ -58,16 +56,17 @@ pub struct CaseFile {
     /// Opened with J (it takes the pointer); else it came up on its own.
     pinned: bool,
     pub tab: Tab,
+    /// The open case on the sheet (by number); else the tracked one.
+    pub selected: Option<u16>,
     /// Seconds it has been up.
     up: f32,
     /// Opened on its own: closes again at this many seconds up.
     auto_until: Option<f32>,
     stamp: Option<(Stamp, f32)>,
     /// The case just closed, shown under its stamp.
-    just_closed: Option<Closed>,
-    last: Option<State>,
-    last_building: Option<&'static str>,
-    pub history: Vec<Closed>,
+    just_closed: Option<Filed>,
+    /// Closed cases scrolled past in the cabinet.
+    scroll: usize,
     /// The pointer was let go for the file.
     pub relock: bool,
 }
@@ -85,6 +84,8 @@ impl CaseFile {
             self.open = true;
             self.pinned = true;
             self.auto_until = None;
+            self.stamp = None;
+            self.just_closed = None;
         }
     }
 
@@ -93,8 +94,8 @@ impl CaseFile {
         self.open && self.pinned
     }
 
-    /// Every frame: news of the case (a new one, one closed) and time.
-    pub fn update(&mut self, cases: &MissionView, dt: f32) {
+    /// Every frame: news of the cases (one opened, one closed) and time.
+    pub fn update(&mut self, cases: &mut MissionView, dt: f32) {
         if self.open {
             self.up += dt;
         }
@@ -109,28 +110,21 @@ impl CaseFile {
                 self.just_closed = None;
             }
         }
-        let now = cases.state.as_ref();
-        if now != self.last.as_ref() {
-            if let (Some(before), Some(now)) = (self.last.as_ref(), now) {
-                if now.closed > before.closed {
-                    let c = Closed {
-                        number: now.closed,
-                        kind: before.kind,
-                        gang: before.gang,
-                        building: self.last_building.unwrap_or("building"),
-                    };
-                    self.history.push(c.clone());
-                    self.just_closed = Some(c);
-                    self.pop(Stamp::Closed);
-                } else if before.stage == IDLE && now.stage == GO {
+        for e in std::mem::take(&mut cases.events) {
+            match e {
+                Event::Opened(n) => {
+                    self.selected = Some(n);
                     self.just_closed = None;
                     self.pop(Stamp::New);
                 }
+                Event::Closed(f) => {
+                    self.just_closed = Some(f);
+                    self.pop(Stamp::Closed);
+                }
             }
-            self.last = now.cloned();
         }
-        if let Some(b) = cases.building() {
-            self.last_building = Some(b);
+        if self.selected.is_some_and(|n| !cases.cases.contains_key(&n)) {
+            self.selected = None;
         }
     }
 
@@ -147,18 +141,32 @@ impl CaseFile {
         }
     }
 
-    /// Draws the folder. Only a pinned file takes clicks (tabs) and keys
-    /// (Escape shuts it, arrows turn the tabs).
-    pub fn show(&mut self, ctx: &egui::Context, cases: &MissionView, story: &StoryView) {
+    /// The open case on the sheet.
+    fn shown(&self, cases: &MissionView) -> Option<u16> {
+        self.selected
+            .filter(|n| cases.cases.contains_key(n))
+            .or(cases.tracked)
+            .or_else(|| cases.cases.keys().next().copied())
+    }
+
+    /// Draws the folder. Only a pinned file takes clicks and keys: Escape
+    /// shuts it, Left/Right turn the tabs, Up/Down go through the open
+    /// cases, Enter tracks the one shown, the wheel scrolls the cabinet.
+    pub fn show(&mut self, ctx: &egui::Context, cases: &mut MissionView, story: &StoryView) {
         if !self.open {
             return;
         }
+        let shown = self.shown(cases);
         if self.pinned {
-            let (esc, left, right) = ctx.input(|i| {
+            let (esc, left, right, up, down, enter, wheel) = ctx.input(|i| {
                 (
                     i.key_pressed(egui::Key::Escape),
                     i.key_pressed(egui::Key::ArrowLeft),
                     i.key_pressed(egui::Key::ArrowRight),
+                    i.key_pressed(egui::Key::ArrowUp),
+                    i.key_pressed(egui::Key::ArrowDown),
+                    i.key_pressed(egui::Key::Enter),
+                    i.raw_scroll_delta.y,
                 )
             });
             if esc {
@@ -174,7 +182,30 @@ impl CaseFile {
             if right {
                 self.tab = tabs[(k + 1) % 3];
             }
+            let numbers: Vec<u16> = cases.cases.keys().copied().collect();
+            if let (Some(n), true) = (shown, up || down) {
+                let at = numbers.iter().position(|x| *x == n).unwrap_or(0);
+                let next = if up {
+                    (at + numbers.len() - 1) % numbers.len()
+                } else {
+                    (at + 1) % numbers.len()
+                };
+                self.selected = Some(numbers[next]);
+                self.just_closed = None;
+            }
+            if let (Some(n), true, Tab::Case) = (shown, enter, self.tab) {
+                cases.track(n);
+            }
+            if self.tab == Tab::Closed && wheel != 0.0 {
+                let most = cases.filed.len().saturating_sub(CABINET_ROWS);
+                self.scroll = if wheel > 0.0 {
+                    self.scroll.saturating_sub(1)
+                } else {
+                    (self.scroll + 1).min(most)
+                };
+            }
         }
+        let shown = self.shown(cases);
         // The typewriter comes with the title screen's fonts; a game started
         // straight into the street gets them now (from the next frame).
         if family(ctx, "hw-type") == FontFamily::Proportional {
@@ -193,6 +224,16 @@ impl CaseFile {
         let painter = ctx.layer_painter(layer);
         let type_font = |size: f32| FontId::new(size, family(ctx, "hw-type"));
         let bold_font = |size: f32| FontId::new(size, family(ctx, "hw-logo"));
+        let click = |id: egui::Id, r: Rect| -> bool {
+            egui::Area::new(id)
+                .order(egui::Order::Tooltip)
+                .fixed_pos(r.min)
+                .show(ctx, |ui| {
+                    ui.allocate_rect(Rect::from_min_size(r.min, r.size()), egui::Sense::click())
+                })
+                .inner
+                .clicked()
+        };
 
         // The folder: its back, the tabs along the top, its front edge.
         painter.rect_filled(
@@ -201,12 +242,20 @@ impl CaseFile {
             Color32::from_black_alpha(90),
         );
         painter.rect_filled(folder, 10.0, MANILA);
+        let open_count = cases.cases.len();
         let names = [
-            (Tab::Case, "OPEN CASE"),
-            (Tab::Doctor, "THE DOCTOR"),
-            (Tab::Closed, "CLOSED"),
+            (
+                Tab::Case,
+                if open_count > 1 {
+                    format!("OPEN CASES ({open_count})")
+                } else {
+                    "OPEN CASE".to_string()
+                },
+            ),
+            (Tab::Doctor, "THE DOCTOR".to_string()),
+            (Tab::Closed, format!("CLOSED ({})", cases.filed.len())),
         ];
-        let tab_w = 150.0;
+        let tab_w = 170.0;
         for (k, (tab, name)) in names.iter().enumerate() {
             let x = folder.left() + 24.0 + k as f32 * (tab_w + 8.0);
             let r = Rect::from_min_size(pos2(x, folder.top() - 30.0), vec2(tab_w, 34.0));
@@ -215,7 +264,7 @@ impl CaseFile {
             painter.text(
                 r.center() - vec2(0.0, 2.0),
                 Align2::CENTER_CENTER,
-                *name,
+                name,
                 bold_font(15.0),
                 if on {
                     TYPE
@@ -223,18 +272,8 @@ impl CaseFile {
                     Color32::from_rgb(90, 70, 40)
                 },
             );
-            if self.pinned {
-                let id = egui::Id::new(("case-file-tab", k));
-                let hit = egui::Area::new(id)
-                    .order(egui::Order::Tooltip)
-                    .fixed_pos(r.min)
-                    .show(ctx, |ui| {
-                        ui.allocate_rect(Rect::from_min_size(r.min, r.size()), egui::Sense::click())
-                    })
-                    .inner;
-                if hit.clicked() {
-                    self.tab = *tab;
-                }
+            if self.pinned && click(egui::Id::new(("case-file-tab", k)), r) {
+                self.tab = *tab;
             }
         }
         painter.text(
@@ -244,9 +283,39 @@ impl CaseFile {
             bold_font(14.0),
             Color32::from_rgb(110, 80, 40),
         );
-        // The sheet.
-        let sheet =
-            Rect::from_min_max(folder.min + vec2(26.0, 44.0), folder.max - vec2(26.0, 34.0));
+        // The sheet; on the case tab, dividers for the open cases above it.
+        let dividers = self.tab == Tab::Case && open_count > 1 && self.just_closed.is_none();
+        let top = if dividers { 72.0 } else { 44.0 };
+        let sheet = Rect::from_min_max(folder.min + vec2(26.0, top), folder.max - vec2(26.0, 34.0));
+        if dividers {
+            let dw = ((sheet.width() - 10.0) / open_count as f32).min(200.0);
+            for (k, (n, s)) in cases.cases.iter().enumerate() {
+                let r = Rect::from_min_size(
+                    pos2(sheet.left() + k as f32 * (dw + 4.0), sheet.top() - 30.0),
+                    vec2(dw, 34.0),
+                );
+                let on = shown == Some(*n);
+                painter.rect_filled(r, 4.0, if on { PAPER } else { DIVIDER });
+                let tracked = cases.tracked == Some(*n);
+                let label = format!(
+                    "{}No. {:04}  {}",
+                    if tracked { "* " } else { "" },
+                    n,
+                    short(cases.building(*n))
+                );
+                painter.text(
+                    r.left_center() + vec2(8.0, -3.0),
+                    Align2::LEFT_CENTER,
+                    label,
+                    type_font(13.0),
+                    if on { TYPE } else { FADED },
+                );
+                let _ = s;
+                if self.pinned && click(egui::Id::new(("case-file-case", *n)), r) {
+                    self.selected = Some(*n);
+                }
+            }
+        }
         painter.rect_filled(
             sheet.translate(vec2(3.0, 3.0)),
             2.0,
@@ -269,9 +338,38 @@ impl CaseFile {
             font: type_font(16.0),
         };
         match self.tab {
-            Tab::Case => self.case_sheet(&mut pen, sheet, cases, &type_font),
+            Tab::Case => match (&self.just_closed, shown.and_then(|n| cases.cases.get(&n))) {
+                // A case just closed stays on the sheet under its stamp.
+                (Some(f), _) => closed_sheet_for(&mut pen, sheet, f, &type_font),
+                (None, Some(s)) => {
+                    let tracked = cases.tracked == Some(s.number);
+                    let track_line = case_sheet(
+                        &mut pen,
+                        sheet,
+                        s,
+                        cases.building(s.number),
+                        tracked,
+                        &type_font,
+                    );
+                    if tracked {
+                        stamp_shape(
+                            &painter,
+                            pos2(sheet.left() + 300.0, sheet.top() + 34.0),
+                            "TRACKED",
+                            type_font(18.0),
+                            0.1,
+                            0.75,
+                        );
+                    } else if let Some(r) = track_line {
+                        if self.pinned && click(egui::Id::new(("case-file-track", s.number)), r) {
+                            cases.track(s.number);
+                        }
+                    }
+                }
+                (None, None) => empty_sheet(&mut pen, sheet, cases, &type_font),
+            },
             Tab::Doctor => doctor_sheet(&mut pen, sheet, story, &type_font),
-            Tab::Closed => self.closed_sheet(&mut pen, &type_font),
+            Tab::Closed => cabinet(&mut pen, sheet, cases, self.scroll, &type_font),
         }
         // The stamp coming down.
         if let (Tab::Case, Some((stamp, t))) = (self.tab, self.stamp) {
@@ -285,10 +383,13 @@ impl CaseFile {
             rubber_stamp(&painter, ctx, at, text, 34.0 * scale, -0.22, alpha);
         }
         // How to work it.
-        let hint = if self.pinned {
-            "J or Escape: close   Left/Right or click: turn the tabs"
-        } else {
-            "J: open the case file"
+        let hint = match (self.pinned, self.tab, open_count > 1) {
+            (false, _, _) => "J: open the case file",
+            (true, Tab::Case, true) => {
+                "J or Escape: close   Left/Right: tabs   Up/Down: cases   Enter: track"
+            }
+            (true, Tab::Closed, _) => "J or Escape: close   Left/Right: tabs   Wheel: scroll",
+            _ => "J or Escape: close   Left/Right or click: turn the tabs",
         };
         painter.text(
             pos2(folder.center().x, folder.bottom() - 16.0),
@@ -298,171 +399,248 @@ impl CaseFile {
             Color32::from_rgb(90, 66, 36),
         );
     }
+}
 
-    fn case_sheet(
-        &self,
-        pen: &mut Pen,
-        sheet: Rect,
-        cases: &MissionView,
-        type_font: &dyn Fn(f32) -> FontId,
-    ) {
-        let painter = pen.painter;
-        // A case just closed stays on the sheet under its stamp.
-        let shown: Option<(State, &str)> = match (&self.just_closed, cases.state.as_ref()) {
-            (Some(c), Some(s)) if s.stage == IDLE => {
-                let mut st = s.clone();
-                st.kind = c.kind;
-                st.gang = c.gang;
-                Some((st, c.building))
-            }
-            (_, Some(s)) if s.stage != IDLE => {
-                Some((s.clone(), cases.building().unwrap_or("building")))
-            }
-            _ => None,
-        };
-        let Some((s, building)) = shown else {
-            pen.line_font("NO OPEN CASE", type_font(24.0), TYPE);
-            pen.gap(10.0);
-            pen.para(&format!(
-                "The cabinet is quiet. {CONTACT_NAME} keeps the cases on the steps of Hero Hall: \
-                 stand beside her and hold E, and she'll hand you the next one."
-            ));
-            pen.gap(16.0);
-            pen.para(
-                "Bring a friend if you like. The crooks bring theirs: one more to a room for every \
-                 hero who comes along.",
-            );
-            margin_note(
-                painter,
-                type_font,
-                pos2(sheet.right() - 250.0, sheet.top() + 150.0),
-                "Coffee's on me\nwhen you're ready! -A.",
-            );
-            return;
-        };
-        let number = if self.just_closed.is_some() && s.stage == IDLE {
-            s.closed
-        } else {
-            s.closed + 1
-        };
-        let gang = &GANGS[s.gang.min(GANGS.len() - 1)];
-        let flavour = &GANG_FLAVOUR[s.gang.min(GANG_FLAVOUR.len() - 1)];
-        pen.line_font(&format!("CASE No. {number:04}"), type_font(26.0), TYPE);
-        pen.gap(4.0);
-        pen.field("FILED BY", CONTACT_NAME);
-        pen.field("LOCATION", &format!("the {building}"));
-        pen.field("SUSPECTS", &capitalised(gang.name));
-        pen.field(
-            "NATURE",
-            match s.kind {
-                CaseKind::Takeover => "Hostile takeover",
-                CaseKind::Evidence => "Evidence wanted",
-                CaseKind::Hostages => "Hostages held",
-            },
-        );
+/// A building's name without "the ... building" round it, for a divider.
+fn short(building: &str) -> &str {
+    building
+        .trim_end_matches(" building")
+        .trim_end_matches(" house")
+        .trim_end_matches(" hall")
+}
+
+/// No open case: where to get one.
+fn empty_sheet(pen: &mut Pen, sheet: Rect, cases: &MissionView, type_font: &dyn Fn(f32) -> FontId) {
+    pen.line_font("NO OPEN CASE", type_font(24.0), TYPE);
+    pen.gap(10.0);
+    pen.para(&format!(
+        "The cabinet is quiet. {CONTACT_NAME} keeps the cases on the steps of Hero Hall: \
+         stand beside her and hold E, and she'll hand you the next one."
+    ));
+    pen.gap(16.0);
+    if let Some(d) = cases.desk {
+        pen.para(&format!(
+            "She lets a team work up to {} cases at once, one to a building.",
+            d.limit
+        ));
         pen.gap(10.0);
-        pen.para(&briefing(s.kind, flavour, building));
-        pen.gap(12.0);
-        pen.line_font("PROGRESS", type_font(17.0), TYPE);
-        pen.gap(2.0);
-        let ticked = |b: bool| if b { "[X]" } else { "[ ]" };
-        match s.stage {
-            GO => pen.line(&format!("{} Get to the {building}", ticked(false))),
-            _ => pen.line(&format!("{} Get to the {building}", ticked(true))),
-        }
-        if s.groups > 0 {
-            pen.line(&format!(
-                "{} Rooms cleared: {} of {}",
-                ticked(s.cleared >= s.groups),
-                s.cleared,
-                s.groups
-            ));
-        }
-        match s.kind {
-            CaseKind::Takeover => {
-                let bagged = s.boss == 2 || (self.just_closed.is_some() && s.stage == IDLE);
-                pen.line(&format!(
-                    "{} {} on the top floor: {}",
-                    ticked(bagged),
-                    flavour.boss,
-                    if bagged { "BAGGED" } else { "at large" }
-                ));
-            }
-            CaseKind::Evidence | CaseKind::Hostages => {
-                let hostage = s.kind == CaseKind::Hostages;
-                let n = if s.clues.is_empty() { 3 } else { s.clues.len() };
-                for k in 0..n {
-                    let state = s.clues.get(k).map(|c| c.1);
-                    let done =
-                        state == Some(DONE) || (self.just_closed.is_some() && s.stage == IDLE);
-                    let what = match (hostage, done, state) {
-                        (true, true, _) => "freed, and thankful".to_string(),
-                        (true, false, Some(GUARDED)) => "held, under guard".to_string(),
-                        (true, false, Some(_)) => "held, guards down: untie them!".to_string(),
-                        (true, false, None) => "somewhere inside".to_string(),
-                        (false, true, _) => {
-                            CLUE_FINDS[(number as usize + k) % CLUE_FINDS.len()].to_string()
-                        }
-                        (false, false, _) => "not found".to_string(),
-                    };
-                    let label = if hostage { "Hostage" } else { "Clue" };
-                    pen.line(&format!("{} {label} #{}: {what}", ticked(done), k + 1));
-                }
-            }
-        }
-        // The boss's mugshot, clipped on at the right.
-        let card = Rect::from_min_size(
-            pos2(sheet.right() - 200.0, sheet.top() + 26.0),
-            vec2(150.0, 186.0),
-        );
-        mugshot(painter, card, flavour, type_font);
-        // Annie's note in the margin, in her blue ink.
-        let note = flavour.notes[(number as usize) % flavour.notes.len()];
-        margin_note(
-            painter,
-            type_font,
-            pos2(card.left() - 10.0, card.bottom() + 36.0),
-            note,
-        );
     }
+    pen.para(
+        "Bring a friend if you like. The crooks bring theirs: one more to a room for every \
+         hero who comes along.",
+    );
+    margin_note(
+        pen.painter,
+        pos2(sheet.right() - 250.0, sheet.top() + 150.0),
+        "Coffee's on me\nwhen you're ready! -A.",
+    );
+}
 
-    fn closed_sheet(&self, pen: &mut Pen, type_font: &dyn Fn(f32) -> FontId) {
-        pen.line_font("CLOSED CASES", type_font(24.0), TYPE);
-        pen.gap(8.0);
-        if self.history.is_empty() {
-            pen.para(&format!(
-                "Nothing in the drawer yet. {CONTACT_NAME} says the first one is always the \
-                 hardest. The second one too, mostly."
-            ));
-            return;
-        }
-        let painter = pen.painter;
-        // Newest on top; as many as fit.
-        for c in self.history.iter().rev().take(9) {
-            let y = pen.at.y;
+/// An open case typed up. The "track" line's place when it is not the
+/// tracked one (a click there tracks it).
+fn case_sheet(
+    pen: &mut Pen,
+    sheet: Rect,
+    s: &State,
+    building: &str,
+    tracked: bool,
+    type_font: &dyn Fn(f32) -> FontId,
+) -> Option<Rect> {
+    let painter = pen.painter;
+    let number = s.number;
+    let gang = &GANGS[s.gang.min(GANGS.len() - 1)];
+    let flavour = &GANG_FLAVOUR[s.gang.min(GANG_FLAVOUR.len() - 1)];
+    pen.line_font(&format!("CASE No. {number:04}"), type_font(26.0), TYPE);
+    pen.gap(4.0);
+    pen.field("FILED BY", CONTACT_NAME);
+    pen.field("LOCATION", &format!("the {building}"));
+    pen.field("SUSPECTS", &capitalised(gang.name));
+    pen.field("NATURE", nature(s.kind));
+    pen.gap(10.0);
+    pen.para(&briefing(s.kind, flavour, building));
+    pen.gap(12.0);
+    pen.line_font("PROGRESS", type_font(17.0), TYPE);
+    pen.gap(2.0);
+    let ticked = |b: bool| if b { "[X]" } else { "[ ]" };
+    pen.line(&format!("{} Get to the {building}", ticked(s.stage != GO)));
+    if s.groups > 0 {
+        pen.line(&format!(
+            "{} Rooms cleared: {} of {}",
+            ticked(s.cleared >= s.groups),
+            s.cleared,
+            s.groups
+        ));
+    }
+    match s.kind {
+        CaseKind::Takeover => {
+            let bagged = s.boss == 2;
             pen.line(&format!(
-                "No. {:04}   the {}   {}",
-                c.number,
-                c.building,
-                match c.kind {
-                    CaseKind::Takeover => "takeover",
-                    CaseKind::Evidence => "evidence",
-                    CaseKind::Hostages => "hostages",
-                }
+                "{} {} on the top floor: {}",
+                ticked(bagged),
+                flavour.boss,
+                if bagged { "BAGGED" } else { "at large" }
             ));
-            pen.line_font(
-                &format!(
-                    "        {}",
-                    capitalised(GANGS[c.gang.min(GANGS.len() - 1)].name)
-                ),
-                type_font(14.0),
-                FADED,
-            );
-            let at = pos2(pen.left + pen.width + 90.0, y + 18.0);
-            stamp_shape(painter, at, "CLOSED", type_font(18.0), -0.12, 0.85);
-            pen.gap(6.0);
+        }
+        CaseKind::Evidence | CaseKind::Hostages => {
+            let hostage = s.kind == CaseKind::Hostages;
+            let n = if s.clues.is_empty() { 3 } else { s.clues.len() };
+            for k in 0..n {
+                let state = s.clues.get(k).map(|c| c.1);
+                let done = state == Some(DONE);
+                let what = match (hostage, done, state) {
+                    (true, true, _) => "freed, and thankful".to_string(),
+                    (true, false, Some(GUARDED)) => "held, under guard".to_string(),
+                    (true, false, Some(_)) => "held, guards down: untie them!".to_string(),
+                    (true, false, None) => "somewhere inside".to_string(),
+                    (false, true, _) => {
+                        CLUE_FINDS[(number as usize + k) % CLUE_FINDS.len()].to_string()
+                    }
+                    (false, false, _) => "not found".to_string(),
+                };
+                let label = if hostage { "Hostage" } else { "Clue" };
+                pen.line(&format!("{} {label} #{}: {what}", ticked(done), k + 1));
+            }
         }
     }
+    let track = (!tracked).then(|| {
+        pen.gap(10.0);
+        let at = pen.at;
+        pen.line_font(
+            "> Follow this case on the radio (click, or Enter)",
+            type_font(15.0),
+            TEAL,
+        );
+        Rect::from_min_max(at, pos2(at.x + 420.0, pen.at.y))
+    });
+    // The boss's mugshot, clipped on at the right.
+    let card = Rect::from_min_size(
+        pos2(sheet.right() - 200.0, sheet.top() + 26.0),
+        vec2(150.0, 186.0),
+    );
+    mugshot(painter, card, flavour, type_font);
+    // Annie's note in the margin, in her blue ink.
+    let note = flavour.notes[(number as usize) % flavour.notes.len()];
+    margin_note(
+        painter,
+        pos2(card.left() - 10.0, card.bottom() + 36.0),
+        note,
+    );
+    track
+}
+
+/// A case just closed, under its CASE CLOSED stamp.
+fn closed_sheet_for(pen: &mut Pen, sheet: Rect, f: &Filed, type_font: &dyn Fn(f32) -> FontId) {
+    let gang = &GANGS[f.gang.min(GANGS.len() - 1)];
+    let flavour = &GANG_FLAVOUR[f.gang.min(GANG_FLAVOUR.len() - 1)];
+    pen.line_font(&format!("CASE No. {:04}", f.number), type_font(26.0), TYPE);
+    pen.gap(4.0);
+    pen.field("FILED BY", CONTACT_NAME);
+    pen.field("LOCATION", &format!("the {}", f.building));
+    pen.field("SUSPECTS", &capitalised(gang.name));
+    pen.field("NATURE", nature(f.kind));
+    pen.gap(12.0);
+    pen.line(&match f.kind {
+        CaseKind::Takeover => format!("[X] {} BAGGED", flavour.boss),
+        CaseKind::Evidence => "[X] All three clues found".to_string(),
+        CaseKind::Hostages => "[X] Everyone out safe".to_string(),
+    });
+    pen.line("[X] Karma paid out to the heroes on the scene");
+    let card = Rect::from_min_size(
+        pos2(sheet.right() - 200.0, sheet.top() + 26.0),
+        vec2(150.0, 186.0),
+    );
+    mugshot(pen.painter, card, flavour, type_font);
+}
+
+/// The cabinet: a tally per gang, then the closed cases, newest first.
+fn cabinet(
+    pen: &mut Pen,
+    sheet: Rect,
+    cases: &MissionView,
+    scroll: usize,
+    type_font: &dyn Fn(f32) -> FontId,
+) {
+    pen.line_font("CLOSED CASES", type_font(24.0), TYPE);
+    pen.gap(4.0);
+    if cases.filed.is_empty() {
+        pen.gap(4.0);
+        pen.para(&format!(
+            "Nothing in the drawer yet. {CONTACT_NAME} says the first one is always the \
+             hardest. The second one too, mostly."
+        ));
+        return;
+    }
+    // The tally: cases closed against each gang.
+    let tally: Vec<String> = (0..GANGS.len())
+        .filter_map(|g| {
+            let n = cases.filed.iter().filter(|f| f.gang == g).count();
+            (n > 0).then(|| format!("{} {n}", short_gang(g)))
+        })
+        .collect();
+    pen.line_font(
+        &format!("Tally: {}", tally.join("   ")),
+        type_font(14.0),
+        FADED,
+    );
+    pen.gap(8.0);
+    let painter = pen.painter;
+    let total = cases.filed.len();
+    let scroll = scroll.min(total.saturating_sub(CABINET_ROWS));
+    for f in cases.filed.iter().rev().skip(scroll).take(CABINET_ROWS) {
+        let y = pen.at.y;
+        pen.line(&format!(
+            "No. {:04}   the {}   {}",
+            f.number,
+            f.building,
+            nature(f.kind).to_lowercase()
+        ));
+        pen.line_font(
+            &format!(
+                "        {}",
+                capitalised(GANGS[f.gang.min(GANGS.len() - 1)].name)
+            ),
+            type_font(14.0),
+            FADED,
+        );
+        let at = pos2(pen.left + pen.width + 90.0, y + 18.0);
+        stamp_shape(painter, at, "CLOSED", type_font(18.0), -0.12, 0.85);
+        pen.gap(4.0);
+    }
+    if total > CABINET_ROWS {
+        painter.text(
+            pos2(sheet.right() - 24.0, sheet.bottom() - 16.0),
+            Align2::RIGHT_BOTTOM,
+            format!(
+                "{}-{} of {total}",
+                scroll + 1,
+                (scroll + CABINET_ROWS).min(total)
+            ),
+            type_font(13.0),
+            FADED,
+        );
+    }
+}
+
+fn nature(kind: CaseKind) -> &'static str {
+    match kind {
+        CaseKind::Takeover => "Hostile takeover",
+        CaseKind::Evidence => "Evidence wanted",
+        CaseKind::Hostages => "Hostages held",
+    }
+}
+
+/// A gang's short name for the tally.
+fn short_gang(g: usize) -> &'static str {
+    [
+        "Doctor's men",
+        "Jackets & Syndicate",
+        "Sky pirates",
+        "Iron Empire",
+        "Zorrak",
+    ]
+    .get(g)
+    .copied()
+    .unwrap_or("Others")
 }
 
 /// The Doctor's dossier: what is solved, what is open, the rest blacked out.
@@ -652,9 +830,8 @@ fn stamp_shape(
 }
 
 /// Annie's note: blue ink, a little slanted.
-fn margin_note(painter: &egui::Painter, type_font: &dyn Fn(f32) -> FontId, at: Pos2, text: &str) {
+fn margin_note(painter: &egui::Painter, at: Pos2, text: &str) {
     let font = FontId::new(17.0, family(painter.ctx(), "hw-logo"));
-    let _ = type_font;
     let g = painter.layout(text.to_string(), font, INK_BLUE, 240.0);
     painter.add(TextShape::new(at, g, INK_BLUE).with_angle(-0.06));
 }
@@ -934,51 +1111,40 @@ fn ease_out_back(x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use glam::Vec3;
-    use hw_sim::missions::INSIDE;
 
-    fn st(stage: u8, closed: u16) -> State {
-        State {
-            stage,
-            closed,
+    fn filed(number: u16) -> Filed {
+        Filed {
+            number,
             kind: CaseKind::Hostages,
             gang: 2,
-            at: Vec3::ZERO,
-            cleared: 0,
-            groups: 6,
-            boss: 1,
-            clues: Vec::new(),
-            held: 0.0,
+            building: "Daily Comet building".into(),
         }
     }
 
     #[test]
-    fn a_case_pops_the_file_and_a_closed_one_is_filed() {
+    fn cases_pop_the_file_and_closed_ones_are_stamped() {
         let mut file = CaseFile::default();
         let mut view = MissionView::default();
-        view.state = Some(st(IDLE, 0));
-        file.update(&view, 0.1);
+        file.update(&mut view, 0.1);
         assert!(!file.open);
-        view.state = Some(st(GO, 0));
-        file.update(&view, 0.1);
+        view.events.push(Event::Opened(1));
+        file.update(&mut view, 0.1);
         assert!(file.open && file.stamp.is_some_and(|s| s.0 == Stamp::New));
+        assert!(view.events.is_empty(), "the file takes its news");
         // It goes again on its own.
         for _ in 0..100 {
-            file.update(&view, 0.1);
+            file.update(&mut view, 0.1);
         }
         assert!(!file.open);
-        view.state = Some(st(INSIDE, 0));
-        file.update(&view, 0.1);
-        view.state = Some(st(IDLE, 1));
-        file.update(&view, 0.1);
+        view.events.push(Event::Closed(filed(1)));
+        file.update(&mut view, 0.1);
         assert!(file.open && file.stamp.is_some_and(|s| s.0 == Stamp::Closed));
-        assert_eq!(file.history.len(), 1);
-        assert_eq!(file.history[0].number, 1);
-        assert_eq!(file.history[0].kind, CaseKind::Hostages);
-        // Pinned with J, it stays.
+        assert_eq!(file.just_closed.as_ref().map(|f| f.number), Some(1));
+        // Pinned with J, it stays, and shows the open cases again.
         file.toggle();
+        assert!(file.just_closed.is_none());
         for _ in 0..100 {
-            file.update(&view, 0.1);
+            file.update(&mut view, 0.1);
         }
         assert!(file.open);
         file.toggle();

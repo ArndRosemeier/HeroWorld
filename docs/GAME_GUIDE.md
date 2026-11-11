@@ -132,7 +132,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | H | Call the medical drone when you are down |
 | G | Hail a flying taxi (G again hops out mid-air) |
 | M | Town map (drag to move, wheel to zoom) with the radio's calls |
-| J | Case file: the open case, the Doctor's dossier, closed cases |
+| J | Case file: open cases (pick which one the radio follows), the Doctor's dossier, the cabinet of closed cases |
 | T | Police visor on or off (a new call switches it on) |
 | N | Minimap on or off |
 | O | Free camera |
@@ -800,12 +800,17 @@ who were there; a guest further along keeps their own place.
 ### Building cases (`hw-sim/src/missions.rs`, `hw-client/src/missionview.rs`)
 
 **Atomic Annie** (Hero Hall's second hero) hands out cases: hold **E** near her (3.5 m). She
-never leaves the hall to answer calls, so she is always at her place on its steps. One
-case runs at a time for the whole team, in one of the three Comet buildings (Daily Comet,
+never leaves the hall to answer calls, so she is always at her place on its steps. Each
+press of E gives one case. The team can have up to **3 cases open** at once (`OPEN_LIMIT` in
+missions.rs; nothing else assumes a number), **one to a building**; with all open or every
+building taken she says so ("Your desk's full" / "No building free"). Cases are numbered
+(No. 1, 2, ...) and each plays in one of the three Comet buildings (Daily Comet,
 Atlas Assurance, Zenith Radio), against one of five gangs (the Doctor's sentries, Jackets or
 Syndicate, sky pirates, the Iron Legion, the Zorrak; the last two only from their levels on).
-The radio shows the case in teal under the story, with a teal diamond on the compass and map
-and a teal beacon over the building's way in until you get there.
+The radio, the compass, the map diamond and the teal beacon follow **one tracked case**
+(the newest, until you pick another in the case file); the radio heading says how many are
+open. Every open case plays on regardless: its gang stands when a hero comes near, its
+clues sparkle and its hostages can be freed, tracked or not.
 
 - **Takeover**: the gang holds up to **6 rooms** (halls, boardrooms, lobbies, shops,
   concourses; at least 8 m a side), spread over the floors, **3 villains a room** for one
@@ -832,17 +837,26 @@ and a teal beacon over the building's way in until you get there.
 typewriter. It slides in on its own for 7 s when a case opens (a NEW CASE stamp) or closes
 (CASE CLOSED); J opens it for good and frees the pointer (J or Escape shuts it, Left/Right or a
 click turns the tabs). Tabs:
-- **Open case**: case number, who filed it, where, the gang, what kind; a briefing (what the
+- **Open cases**: with more than one open, a divider tab per case down the folder's edge (Up/Down
+  or a click picks one; Enter or "Follow this case on the radio" tracks it, and the tracked one
+  wears a TRACKED stamp). Each sheet: case number, who filed it, where, the gang, what kind; a briefing (what the
   gang is known for, then the job); a progress checklist (rooms cleared, the boss at large or
   bagged, each clue with what it turned out to be, each hostage held, under guard or freed); the
   boss's mugshot clipped on; one of Annie's notes in blue ink in the margin. With no case: where
   to find Annie.
 - **The Doctor**: Commander Starling's dossier. Chapters done are stamped SOLVED, the current one
   shows its goal (or the level it opens at), the rest are blacked out.
-- **Closed**: the cases closed this session, newest first, each stamped CLOSED (not saved yet).
+- **Closed**: the cabinet. A tally per gang, then the closed cases newest first (8 at a time;
+  the wheel scrolls), each stamped CLOSED. It is kept in the profile on this PC (the newest
+  500).
 
-Not yet: villains riding lifts, cases in ordinary town offices, and cases kept in
-the save file (a case in progress is dropped when the host quits).
+**Saving**: the open cases (number, kind, gang, building) and the opened and closed counts go
+in the hero file (`Sheet.cases`, up to 16 open), tagged with the world's seed. The host's file
+wins: on starting, the server opens the host's saved cases again (in stage "go there"; the gang
+moves in when you come); a book from another world keeps its counts but not its cases. Every
+change is written back into every hero's file.
+
+Not yet: villains riding lifts, cases in ordinary town offices.
 
 ---
 
@@ -1635,7 +1649,7 @@ run, or put them in a `.bat`.
 | `HW_VIEW=getaway` | With `HW_INCIDENT` and `HW_TIMEOUT`: follows the crooks making off. |
 | `HW_VISOR=1` | The police visor stays down; `HW_VISOR=0.4` freezes it part way in (screenshots). |
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
-| `HW_CASE=takeover\|evidence\|hostages` | A case of that kind in the first Comet building starts at once (Jackets), the hero at its way in; with `HW_VIEW=hero`. |
+| `HW_CASE=takeover\|evidence\|hostages` | A case of that kind in the first Comet building starts at once (Jackets), the hero at its way in; with `HW_VIEW=hero`. Several, comma-separated (`hostages,evidence`), open one to a building. |
 | `HW_CASEFILE=case\|doctor\|closed` | The case file open on that tab (screenshots). |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
 | `HW_COLOSSUS_RAMPAGE=1` | The colossus smashes its way through town even with no hero near (screenshots). |

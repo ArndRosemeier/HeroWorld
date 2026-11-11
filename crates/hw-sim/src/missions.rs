@@ -17,8 +17,12 @@
 //!   the room's crew, then hold E by them to untie them. They thank their
 //!   hero and walk out by the route map.
 //!
-//! Done: karma for the heroes near (a share of their next level), and
-//! Annie has the next case. Leave the building for long and the gang
+//! Several cases can be open at once ([`OPEN_LIMIT`], the only place that
+//! says how many), one to a building, each with its own number; Annie
+//! gives one per press of E. Done: karma for the heroes near (a share of
+//! their next level). The open cases and the counts are kept in the host's
+//! hero file ([`hw_net::CaseBook`]) and opened again on the next start.
+//! Leave the building for long and the gang
 //! goes; come back and it stands again, fresh. Cases are made up from the
 //! world's seed and a running count: the same town gives the same cases.
 //! They play in the buildings that have a floor plan (the Comet buildings
@@ -33,7 +37,9 @@ use hw_core::{NetId, Seed};
 use hw_gen::layout::SpaceKind;
 use hw_gen::urban::landmarks::LandmarkKind;
 use hw_gen::urban::world::TownWorld;
-use hw_net::ToClient;
+use hw_net::protocol::MAX_SAVED_CASES;
+use hw_net::{CaseBook, SavedCase, ToClient};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Who hands the cases out (one of Hero Hall's heroes, by index; the
@@ -80,6 +86,10 @@ pub const BOSS_EXTRA: u8 = 1;
 pub const IDLE: u8 = 0;
 pub const GO: u8 = 1;
 pub const INSIDE: u8 = 2;
+/// Sent once, as a case ends.
+pub const CLOSED: u8 = 3;
+/// Cases open at once, at most (and never two in one building).
+pub const OPEN_LIMIT: usize = 3;
 
 /// What a case asks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,26 +188,67 @@ struct Clue {
     hostage: Option<(usize, u32)>,
 }
 
-/// The cases: the one running and how far along it is.
-#[derive(Default)]
+/// A case being worked: which, how far along, and the gang's rooms.
+#[derive(Clone, Debug)]
+pub struct Running {
+    /// Its number in the team's cases (1, 2, ...): its name everywhere.
+    pub number: u16,
+    pub case: Case,
+    /// [`GO`] or [`INSIDE`].
+    pub stage: u8,
+    floors: Arc<Floors>,
+    rooms: Vec<Room>,
+    boss: Option<Room>,
+    clues: Vec<Clue>,
+    /// Seconds of holding the help key at a clue or hostage.
+    held: f64,
+    /// Since when no hero has been near the building (a tick).
+    away_since: Option<u64>,
+}
+
+/// The cases: those being worked, and Annie's desk. Nothing here assumes
+/// one case: [`Missions::limit`] says how many may be open at once (one
+/// to a building at most), and every case keeps its own rooms, clues and
+/// hostages.
 pub struct Missions {
     floors: Option<Arc<Floors>>,
     /// Where Annie stands.
     contact: Option<DVec3>,
     seed: u64,
-    pub stage: u8,
-    pub case: Option<Case>,
-    /// Cases closed so far (the next case's number).
+    pub cases: Vec<Running>,
+    /// Cases closed so far.
     pub closed: u16,
-    rooms: Vec<Room>,
-    boss: Option<Room>,
-    clues: Vec<Clue>,
-    /// Seconds of holding the help key at a clue.
-    held: f64,
-    /// Since when no hero has been near the building (a tick).
-    away_since: Option<u64>,
-    last_sent: Option<ToClient>,
+    /// Cases handed out so far (the next one's number is one more).
+    pub opened: u16,
+    /// Most cases open at once.
+    pub limit: usize,
+    /// Heroes holding the help key by Annie (a new case takes a new press).
+    asking: Vec<NetId>,
+    last_sent: BTreeMap<u16, ToClient>,
+    desk_sent: Option<ToClient>,
     news: Vec<ToClient>,
+    /// The book last written into the heroes' files (or taken from the
+    /// host's): a host's book that differs was loaded, and is adopted.
+    last_book: CaseBook,
+}
+
+impl Default for Missions {
+    fn default() -> Self {
+        Missions {
+            floors: None,
+            contact: None,
+            seed: 0,
+            cases: Vec::new(),
+            closed: 0,
+            opened: 0,
+            limit: OPEN_LIMIT,
+            asking: Vec::new(),
+            last_sent: BTreeMap::new(),
+            desk_sent: None,
+            news: Vec::new(),
+            last_book: CaseBook::default(),
+        }
+    }
 }
 
 /// The middle of a building's way in, for the radio.
@@ -236,13 +287,305 @@ impl Missions {
         }
     }
 
-    /// Starts `case` now, dropping any other (tests and the debug menu).
-    pub fn force(&mut self, world: &mut World, case: Case) {
-        self.leave(world);
-        self.case = Some(case);
-        self.stage = GO;
+    /// Opens `case` now (tests and screenshots), dropping a case in the
+    /// same building. Its number.
+    pub fn force(&mut self, world: &mut World, case: Case) -> u16 {
+        if let Some(k) = self
+            .cases
+            .iter()
+            .position(|r| r.case.building == case.building)
+        {
+            let mut r = self.cases.remove(k);
+            r.leave(world);
+            self.dropped(r.number);
+        }
+        self.open(case)
     }
 
+    fn open(&mut self, case: Case) -> u16 {
+        self.opened = self.opened.wrapping_add(1);
+        let number = self.opened;
+        self.cases.push(Running {
+            number,
+            case,
+            stage: GO,
+            floors: self.floors.clone().expect("available"),
+            rooms: Vec::new(),
+            boss: None,
+            clues: Vec::new(),
+            held: 0.0,
+            away_since: None,
+        });
+        number
+    }
+
+    /// The case with this number, if open.
+    pub fn case(&self, number: u16) -> Option<&Running> {
+        self.cases.iter().find(|r| r.number == number)
+    }
+
+    /// Does this town have cases (a contact and a building to hold them)?
+    /// How many buildings can hold a case.
+    pub fn buildings(&self) -> usize {
+        self.floors.as_ref().map_or(0, |f| f.buildings.len())
+    }
+
+    pub fn available(&self) -> bool {
+        self.contact.is_some()
+            && self
+                .floors
+                .as_ref()
+                .is_some_and(|f| !f.buildings.is_empty())
+    }
+
+    /// Buildings with no open case.
+    fn free_buildings(&self) -> Vec<usize> {
+        let n = self.floors.as_ref().map_or(0, |f| f.buildings.len());
+        (0..n)
+            .filter(|k| self.cases.iter().all(|r| r.case.building != *k))
+            .collect()
+    }
+
+    /// Can Annie hand out another case now?
+    pub fn can_take(&self) -> bool {
+        self.available() && self.cases.len() < self.limit && !self.free_buildings().is_empty()
+    }
+
+    /// The next case: kind, gang and a building with no case in it.
+    fn make_case(&self, team: u8) -> Option<Case> {
+        let free = self.free_buildings();
+        if free.is_empty() {
+            return None;
+        }
+        let mut rng = Seed(self.seed)
+            .child("case")
+            .child(self.opened as u64)
+            .rng();
+        let gangs: Vec<usize> = (0..GANGS.len())
+            .filter(|&g| GANGS[g].level <= team)
+            .collect();
+        let kind = [CaseKind::Takeover, CaseKind::Evidence, CaseKind::Hostages][rng.index(3)];
+        Some(Case {
+            kind,
+            building: free[rng.index(free.len())],
+            gang: gangs[rng.index(gangs.len())],
+        })
+    }
+
+    /// Every tick: searching at clues and hostages, asking Annie. Once a
+    /// second: gangs taking their rooms, cases closed.
+    pub(crate) fn step(&mut self, world: &mut World, tick: u64) {
+        crate::incidents::walk_ways(world, tick);
+        if !self.available() {
+            return;
+        }
+        let heroes = heroes(world);
+        if heroes.is_empty() {
+            return;
+        }
+        for r in &mut self.cases {
+            if r.stage == INSIDE {
+                r.search(world, tick, &heroes);
+            }
+        }
+        self.ask(world, &heroes);
+        if tick.is_multiple_of(TICK_HZ as u64) {
+            self.keep_book(world);
+            let mut done = Vec::new();
+            for (k, r) in self.cases.iter_mut().enumerate() {
+                if r.settle(world, tick, &heroes) {
+                    done.push(k);
+                }
+            }
+            for k in done.into_iter().rev() {
+                let r = self.cases.remove(k);
+                self.close(world, &heroes, r);
+            }
+        }
+        self.tell(world);
+    }
+
+    /// The cases in the host's file: a book that is new to us (the host
+    /// came, a file was loaded) is taken over, open cases and all; then
+    /// what we have now is written into every hero's file.
+    fn keep_book(&mut self, world: &mut World) {
+        let host = world
+            .query::<(&Hero, &crate::Progress)>()
+            .iter(world)
+            .min_by_key(|(h, _)| h.owner)
+            .map(|(_, p)| p.sheet.cases.clone());
+        if let Some(book) = host.filter(|b| *b != self.last_book) {
+            self.adopt(world, &book);
+        }
+        let book = self.book();
+        if book != self.last_book {
+            for mut p in world.query::<&mut crate::Progress>().iter_mut(world) {
+                if p.sheet.cases != book {
+                    p.sheet.cases = book.clone();
+                    p.changed = true;
+                }
+            }
+            self.last_book = book;
+        }
+    }
+
+    /// The cases as a hero file keeps them.
+    pub fn book(&self) -> CaseBook {
+        CaseBook {
+            world: self.seed,
+            opened: self.opened,
+            closed: self.closed,
+            open: self
+                .cases
+                .iter()
+                .take(MAX_SAVED_CASES)
+                .map(|r| SavedCase {
+                    number: r.number,
+                    kind: r.case.kind.code(),
+                    gang: r.case.gang.min(255) as u8,
+                    building: r.case.building.min(255) as u8,
+                })
+                .collect(),
+        }
+    }
+
+    /// Takes over a saved book: its counts, and its open cases if they are
+    /// of this world (a building each, gangs that exist).
+    fn adopt(&mut self, world: &mut World, book: &CaseBook) {
+        for mut r in std::mem::take(&mut self.cases) {
+            r.leave(world);
+            self.dropped(r.number);
+        }
+        self.opened = book.opened;
+        self.closed = book.closed;
+        let buildings = self.floors.as_ref().map_or(0, |f| f.buildings.len());
+        if book.world == self.seed {
+            for c in &book.open {
+                let building = c.building as usize;
+                let taken = self.cases.iter().any(|r| r.case.building == building);
+                if building >= buildings || taken || c.gang as usize >= GANGS.len() {
+                    continue;
+                }
+                self.cases.push(Running {
+                    number: c.number,
+                    case: Case {
+                        kind: CaseKind::from_code(c.kind),
+                        building,
+                        gang: c.gang as usize,
+                    },
+                    stage: GO,
+                    floors: self.floors.clone().expect("available"),
+                    rooms: Vec::new(),
+                    boss: None,
+                    clues: Vec::new(),
+                    held: 0.0,
+                    away_since: None,
+                });
+                self.opened = self.opened.max(c.number);
+            }
+        }
+        self.last_book = book.clone();
+    }
+
+    /// A hero pressing the help key by Annie gets a case, if she has one.
+    fn ask(&mut self, world: &mut World, heroes: &[Seen]) {
+        // Where she stands now (pushed about in a scuffle), else her place.
+        let contact = world
+            .query::<(&crate::npcheroes::NpcHero, &Motion)>()
+            .iter(world)
+            .find(|(n, _)| n.index as usize == CONTACT)
+            .map_or(self.contact.expect("available"), |(_, m)| m.0.pos);
+        let holding: Vec<NetId> = heroes
+            .iter()
+            .filter(|h| h.help && h.at.distance(contact) < ASK_REACH)
+            .map(|h| h.id)
+            .collect();
+        let pressed = holding.iter().any(|id| !self.asking.contains(id));
+        self.asking = holding;
+        if pressed && self.can_take() {
+            let team = world.resource::<Fights>().team_level;
+            if let Some(c) = self.make_case(team) {
+                self.open(c);
+            }
+        }
+    }
+
+    /// A case is closed: karma for the heroes near, and its gang goes.
+    fn close(&mut self, world: &mut World, heroes: &[Seen], mut r: Running) {
+        let at = entrance(&r.floors, r.case.building);
+        let rewards: Vec<combat::Reward> = heroes
+            .iter()
+            .filter(|h| flat(h.at, at) < REWARD)
+            .map(|h| combat::Reward {
+                hero: h.id,
+                karma: (progress::karma_to_next(h.level) as f64 * REWARD_SHARE).round() as u32,
+            })
+            .collect();
+        world.resource_mut::<Fights>().rewards.extend(rewards);
+        r.leave(world);
+        self.closed = self.closed.wrapping_add(1);
+        let mut news = r.news(world);
+        if let ToClient::Case { stage, .. } = &mut news {
+            *stage = CLOSED;
+        }
+        self.last_sent.remove(&r.number);
+        self.news.push(news);
+    }
+
+    /// A case dropped without being closed (a forced one in its building).
+    fn dropped(&mut self, number: u16) {
+        if let Some(ToClient::Case { .. }) = self.last_sent.remove(&number) {
+            self.news.push(ToClient::Case {
+                number,
+                stage: IDLE,
+                kind: 0,
+                gang: 0,
+                at: [0.0; 3],
+                cleared: 0,
+                groups: 0,
+                boss: 0,
+                clues: Vec::new(),
+                held: 0,
+            });
+        }
+    }
+
+    fn tell(&mut self, world: &mut World) {
+        for r in &self.cases {
+            let news = r.news(world);
+            if self.last_sent.get(&r.number) != Some(&news) {
+                self.last_sent.insert(r.number, news.clone());
+                self.news.push(news);
+            }
+        }
+        let desk = ToClient::CaseDesk {
+            at: self.contact.unwrap_or(DVec3::ZERO).as_vec3().to_array(),
+            closed: self.closed,
+            open: self.cases.len().min(255) as u8,
+            limit: self.limit.min(255) as u8,
+            can_take: self.can_take(),
+        };
+        if self.desk_sent.as_ref() != Some(&desk) {
+            self.desk_sent = Some(desk.clone());
+            self.news.push(desk);
+        }
+    }
+
+    /// For a player who joins.
+    pub fn snapshot(&self) -> Vec<ToClient> {
+        self.desk_sent
+            .iter()
+            .cloned()
+            .chain(self.last_sent.values().cloned())
+            .collect()
+    }
+
+    pub fn take_news(&mut self) -> Vec<ToClient> {
+        std::mem::take(&mut self.news)
+    }
+}
+
+impl Running {
     /// Where the clues (or hostages) are and whether each is found (freed).
     pub fn clues(&self) -> Vec<(DVec3, bool)> {
         self.clues.iter().map(|k| (k.at, k.found)).collect()
@@ -256,113 +599,35 @@ impl Missions {
             .collect()
     }
 
-    /// Does this town have cases (a contact and a building to hold them)?
-    pub fn available(&self) -> bool {
-        self.contact.is_some()
-            && self
-                .floors
-                .as_ref()
-                .is_some_and(|f| !f.buildings.is_empty())
-    }
-
-    /// Where to go now: Annie with no case, else the building's way in
-    /// (or, inside, the next clue or the boss).
-    pub fn objective(&self) -> Option<DVec3> {
-        let floors = self.floors.as_ref()?;
-        match (self.stage, self.case) {
-            (GO, Some(c)) => Some(entrance(floors, c.building)),
-            (INSIDE, Some(c)) => Some(match c.kind {
-                CaseKind::Evidence | CaseKind::Hostages => self
-                    .clues
-                    .iter()
-                    .find(|k| !k.found)
-                    .map_or_else(|| entrance(floors, c.building), |k| k.at),
-                CaseKind::Takeover => self
-                    .boss
-                    .as_ref()
-                    .map_or_else(|| entrance(floors, c.building), |b| b.at),
-            }),
-            _ => self.contact,
+    /// Where to go: the building's way in, or inside the next clue or
+    /// hostage, or the boss.
+    pub fn objective(&self) -> DVec3 {
+        let way_in = entrance(&self.floors, self.case.building);
+        match (self.stage, self.case.kind) {
+            (INSIDE, CaseKind::Evidence | CaseKind::Hostages) => self
+                .clues
+                .iter()
+                .find(|k| !k.found)
+                .map_or(way_in, |k| k.at),
+            (INSIDE, CaseKind::Takeover) => self.boss.as_ref().map_or(way_in, |b| b.at),
+            _ => way_in,
         }
     }
 
-    /// The case's next number's case: kind, building and gang.
-    fn make_case(&self, team: u8) -> Option<Case> {
-        let floors = self.floors.as_ref()?;
-        let mut rng = Seed(self.seed)
-            .child("case")
-            .child(self.closed as u64)
-            .rng();
-        let gangs: Vec<usize> = (0..GANGS.len())
-            .filter(|&g| GANGS[g].level <= team)
-            .collect();
-        let kind = [CaseKind::Takeover, CaseKind::Evidence, CaseKind::Hostages][rng.index(3)];
-        Some(Case {
-            kind,
-            building: rng.index(floors.buildings.len()),
-            gang: gangs[rng.index(gangs.len())],
-        })
-    }
-
-    /// Every tick: searching at a clue. Once a second: taking a case,
-    /// the gang taking its rooms, rooms cleared, the case closed.
-    pub(crate) fn step(&mut self, world: &mut World, tick: u64) {
-        crate::incidents::walk_ways(world, tick);
-        if !self.available() {
-            return;
-        }
-        let heroes = heroes(world);
-        if heroes.is_empty() {
-            return;
-        }
-        if self.stage == INSIDE {
-            self.search(world, tick, &heroes);
-        }
-        // Asking for a case: at once, not on the second.
-        if self.stage == IDLE {
-            self.ask(world, &heroes);
-        }
-        if tick.is_multiple_of(TICK_HZ as u64) {
-            self.settle(world, tick, &heroes);
-        }
-        self.tell(world);
-    }
-
-    /// A hero holding the help key by Annie gets a case.
-    fn ask(&mut self, world: &mut World, heroes: &[Seen]) {
-        // Where she stands now (pushed about in a scuffle), else her place.
-        let contact = world
-            .query::<(&crate::npcheroes::NpcHero, &Motion)>()
-            .iter(world)
-            .find(|(n, _)| n.index as usize == CONTACT)
-            .map_or(self.contact.expect("available"), |(_, m)| m.0.pos);
-        if heroes
-            .iter()
-            .any(|h| h.help && h.at.distance(contact) < ASK_REACH)
-        {
-            let team = world.resource::<Fights>().team_level;
-            self.case = self.make_case(team);
-            if self.case.is_some() {
-                self.stage = GO;
-            }
-        }
-    }
-
-    fn settle(&mut self, world: &mut World, tick: u64, heroes: &[Seen]) {
-        let floors = self.floors.clone().expect("available");
+    /// Once a second: the gang takes its rooms when a hero comes near,
+    /// leaves when they are long gone. True once the case is done.
+    fn settle(&mut self, world: &mut World, tick: u64, heroes: &[Seen]) -> bool {
+        let at = entrance(&self.floors, self.case.building);
         match self.stage {
             GO => {
-                let c = self.case.expect("a case");
-                let at = entrance(&floors, c.building);
                 if heroes.iter().any(|h| flat(h.at, at) < WAKE) {
                     self.take_rooms(world, tick, heroes.len());
                     self.stage = INSIDE;
                     self.away_since = None;
                 }
+                false
             }
             INSIDE => {
-                let c = self.case.expect("a case");
-                let at = entrance(&floors, c.building);
                 if heroes.iter().all(|h| flat(h.at, at) > AWAY) {
                     let since = *self.away_since.get_or_insert(tick);
                     if tick >= since + (AWAY_SECONDS * TICK_HZ as f64) as u64 {
@@ -371,18 +636,40 @@ impl Missions {
                         self.leave(world);
                         self.stage = GO;
                     }
-                    return;
+                    return false;
                 }
                 self.away_since = None;
-                let done = match c.kind {
+                match self.case.kind {
                     CaseKind::Takeover => self.boss.as_ref().is_some_and(|b| beaten(world, b.spot)),
                     CaseKind::Evidence | CaseKind::Hostages => self.clues.iter().all(|k| k.found),
-                };
-                if done {
-                    self.close(world, heroes, at);
                 }
             }
-            _ => {}
+            _ => false,
+        }
+    }
+
+    /// What the clients are told of it.
+    fn news(&self, world: &mut World) -> ToClient {
+        let (cleared, groups) = self.cleared(world);
+        let boss = match &self.boss {
+            None => 0,
+            Some(b) if beaten(world, b.spot) => 2,
+            Some(_) => 1,
+        };
+        let held = ((self.held / self.hold_seconds()).clamp(0.0, 1.0) * 255.0) as u8 & !15;
+        ToClient::Case {
+            number: self.number,
+            stage: self.stage,
+            kind: self.case.kind.code(),
+            gang: self.case.gang as u8,
+            at: self.objective().as_vec3().to_array(),
+            cleared,
+            groups,
+            boss,
+            clues: (0..self.clues.len())
+                .map(|k| (self.clues[k].at.as_vec3().to_array(), self.state(world, k)))
+                .collect(),
+            held,
         }
     }
 
@@ -390,8 +677,8 @@ impl Missions {
     /// the floors, the boss and its guard in the biggest room on top, and
     /// the clues of an evidence case.
     fn take_rooms(&mut self, world: &mut World, tick: u64, heroes: usize) {
-        let floors = self.floors.clone().expect("available");
-        let c = self.case.expect("a case");
+        let floors = self.floors.clone();
+        let c = self.case;
         let b = &floors.buildings[c.building];
         let gang = GANGS[c.gang];
         let solids = world.resource::<crate::Solids>().0.clone();
@@ -507,7 +794,7 @@ impl Missions {
                     if let Some(at) = far_corner(&solids, b, &chosen[i].1, y, self.rooms[i].at) {
                         let hostage = (c.kind == CaseKind::Hostages).then(|| {
                             let id = HOSTAGE_IDS
-                                | ((self.closed as u32 & 0xffff) << 4)
+                                | ((self.number as u32 & 0xffff) << 4)
                                 | self.clues.len() as u32;
                             // Hands up, facing their guards.
                             let g = self.rooms[i].at;
@@ -600,8 +887,8 @@ impl Missions {
 
     /// Seconds of holding E a clue or a hostage takes.
     fn hold_seconds(&self) -> f64 {
-        match self.case.map(|c| c.kind) {
-            Some(CaseKind::Hostages) => FREE_SECONDS,
+        match self.case.kind {
+            CaseKind::Hostages => FREE_SECONDS,
             _ => CLUE_SECONDS,
         }
     }
@@ -626,9 +913,7 @@ impl Missions {
     /// building by its route map and a few steps down the street.
     fn set_free(&mut self, world: &mut World, tick: u64, id: u32) {
         crate::incidents::release_bystanders(world, tick, id);
-        let (Some(floors), Some(c)) = (self.floors.clone(), self.case) else {
-            return;
-        };
+        let (floors, c) = (self.floors.clone(), self.case);
         let solids = world.resource::<crate::Solids>().0.clone();
         let mut q = world.query::<(Entity, &Motion, &crate::incidents::Bystander)>();
         let Some((e, from)) = q
@@ -646,65 +931,10 @@ impl Missions {
         world.entity_mut(e).insert(crate::incidents::WayOut(way));
     }
 
-    /// The case is closed: karma for the heroes near, and the gang that is
-    /// left goes.
-    fn close(&mut self, world: &mut World, heroes: &[Seen], at: DVec3) {
-        let rewards: Vec<combat::Reward> = heroes
-            .iter()
-            .filter(|h| flat(h.at, at) < REWARD)
-            .map(|h| combat::Reward {
-                hero: h.id,
-                karma: (progress::karma_to_next(h.level) as f64 * REWARD_SHARE).round() as u32,
-            })
-            .collect();
-        world.resource_mut::<Fights>().rewards.extend(rewards);
-        self.leave(world);
-        self.closed = self.closed.wrapping_add(1);
-        self.case = None;
-        self.stage = IDLE;
-    }
-
-    fn tell(&mut self, world: &mut World) {
-        let (cleared, groups) = self.cleared(world);
-        let boss = match &self.boss {
-            None => 0,
-            Some(b) if beaten(world, b.spot) => 2,
-            Some(_) => 1,
-        };
-        let held = ((self.held / self.hold_seconds()).clamp(0.0, 1.0) * 255.0) as u8 & !15;
-        let news = ToClient::Case {
-            stage: self.stage,
-            closed: self.closed,
-            kind: self.case.map_or(0, |c| c.kind.code()),
-            gang: self.case.map_or(0, |c| c.gang as u8),
-            at: self.objective().unwrap_or(DVec3::ZERO).as_vec3().to_array(),
-            cleared,
-            groups,
-            boss,
-            clues: (0..self.clues.len())
-                .map(|k| (self.clues[k].at.as_vec3().to_array(), self.state(world, k)))
-                .collect(),
-            held,
-        };
-        if self.last_sent.as_ref() != Some(&news) {
-            self.last_sent = Some(news.clone());
-            self.news.push(news);
-        }
-    }
-
     /// Rooms cleared, of the rooms held (the boss's not counted).
     fn cleared(&self, world: &mut World) -> (u8, u8) {
         let n = self.rooms.iter().filter(|r| beaten(world, r.spot)).count();
         (n as u8, self.rooms.len() as u8)
-    }
-
-    /// For a player who joins.
-    pub fn snapshot(&self) -> Vec<ToClient> {
-        self.last_sent.iter().cloned().collect()
-    }
-
-    pub fn take_news(&mut self) -> Vec<ToClient> {
-        std::mem::take(&mut self.news)
     }
 }
 

@@ -4,6 +4,7 @@
 //! user's settings folder (`%APPDATA%\HeroWorld` on Windows,
 //! `~/.config/heroworld` elsewhere). A missing or broken file is a fresh start.
 
+use crate::missionview::{Filed, CABINET_KEEP};
 use crate::tray::Tray;
 use actors_generator::CharacterConfig;
 use hw_net::{OwnedPower, PowerId, Sheet};
@@ -44,6 +45,8 @@ pub struct Profile {
     pub look: Option<CharacterConfig>,
     /// Which key fires which power (see `tray`).
     pub tray: Tray,
+    /// Closed cases for the case file's cabinet, oldest first.
+    pub cabinet: Vec<Filed>,
 }
 
 impl Default for Profile {
@@ -66,6 +69,7 @@ impl Default for Profile {
             hero: None,
             look: None,
             tray: Tray::default(),
+            cabinet: Vec::new(),
         }
     }
 }
@@ -137,6 +141,10 @@ impl Profile {
             hero: sheet_from_json(&v["hero"]),
             look: serde_json::from_value::<CharacterConfig>(v["look"].clone()).ok(),
             tray: Tray::from_json(&v["tray"]),
+            cabinet: v["cabinet"].as_array().map_or_else(Vec::new, |a| {
+                let keep = a.len().saturating_sub(CABINET_KEEP);
+                a[keep..].iter().filter_map(Filed::from_json).collect()
+            }),
         }
     }
 
@@ -159,6 +167,7 @@ impl Profile {
             "hero": self.hero.as_ref().map(sheet_to_json),
             "look": self.look.as_ref().and_then(|l| serde_json::to_value(l).ok()),
             "tray": self.tray.to_json(),
+            "cabinet": self.cabinet.iter().map(Filed::to_json).collect::<Vec<_>>(),
         })
     }
 
@@ -202,7 +211,47 @@ fn sheet_to_json(s: &Sheet) -> Value {
             "at": g.at,
             "yaw": g.yaw,
         })),
+        // The team's cases (see `hw_sim::missions`), in the world they
+        // were opened in.
+        "cases": {
+            "world": s.cases.world.to_string(),
+            "opened": s.cases.opened,
+            "closed": s.cases.closed,
+            "open": s.cases.open.iter().map(|c| json!({
+                "number": c.number,
+                "kind": c.kind,
+                "gang": c.gang,
+                "building": c.building,
+            })).collect::<Vec<_>>(),
+        },
     })
+}
+
+fn cases_from_json(v: &Value) -> hw_net::CaseBook {
+    let small = |x: &Value| x.as_u64().unwrap_or(0).min(u16::MAX as u64) as u16;
+    let byte = |x: &Value| x.as_u64().unwrap_or(0).min(255) as u8;
+    hw_net::CaseBook {
+        world: v["world"]
+            .as_str()
+            .and_then(|w| w.parse().ok())
+            .unwrap_or(0),
+        opened: small(&v["opened"]),
+        closed: small(&v["closed"]),
+        open: v["open"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .take(hw_net::protocol::MAX_SAVED_CASES)
+                    .map(|c| hw_net::SavedCase {
+                        number: small(&c["number"]),
+                        kind: byte(&c["kind"]),
+                        gang: byte(&c["gang"]),
+                        building: byte(&c["building"]),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
 }
 
 fn gate_home_from_json(v: &Value) -> Option<hw_net::GateHome> {
@@ -253,6 +302,7 @@ fn sheet_from_json(v: &Value) -> Option<Sheet> {
         story: num("story").min(255) as u8,
         briefed: o.get("briefed").and_then(|b| b.as_bool()).unwrap_or(false),
         gate_home: o.get("portal_home").and_then(gate_home_from_json),
+        cases: cases_from_json(&v["cases"]),
     };
     if num("version") < 2 {
         // Before the power trees: every power back, nothing picked.
@@ -304,6 +354,12 @@ mod tests {
                 t.put(PowerId::STRIKE, 14);
                 t
             },
+            cabinet: vec![Filed {
+                number: 3,
+                kind: hw_sim::missions::CaseKind::Hostages,
+                gang: 1,
+                building: "Daily Comet building".into(),
+            }],
         };
         assert_eq!(Profile::from_json(&p.to_json()), p);
         let junk = json!({"name": 7, "music": 9.0, "seed": "x", "people": "many", "quality": "max", "fov": 500, "render_scale": 0.1});
@@ -317,6 +373,7 @@ mod tests {
         assert_eq!(q.render_scale, 0.5);
         assert_eq!(q.hero, None);
         assert_eq!(q.look, None);
+        assert!(q.cabinet.is_empty());
         // A hero file with a power from a later version keeps the rest.
         let later = json!({"hero": {"version": 2, "lifetime_karma": 99, "karma": 5,
             "origin": 2, "element": 3,

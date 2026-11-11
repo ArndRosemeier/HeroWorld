@@ -353,18 +353,24 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
         crate::robots::rampage_unseen(true);
     }
     // `HW_CASE=takeover|evidence|hostages`: a case in the first Comet building starts at once,
-    // the hero at its way in (screenshots).
-    let mut case = std::env::var("HW_CASE")
-        .ok()
-        .map(|v| crate::missions::Case {
-            kind: match v.as_str() {
-                "evidence" => crate::missions::CaseKind::Evidence,
-                "hostages" => crate::missions::CaseKind::Hostages,
-                _ => crate::missions::CaseKind::Takeover,
-            },
-            building: 0,
-            gang: 1,
-        });
+    // the hero at its way in (screenshots). Several, comma-separated, open one to a building
+    // (`HW_CASE=hostages,evidence`); the hero stands at the first.
+    let mut case: Vec<crate::missions::Case> = std::env::var("HW_CASE")
+        .map(|v| {
+            v.split(',')
+                .enumerate()
+                .map(|(i, k)| crate::missions::Case {
+                    kind: match k.trim() {
+                        "evidence" => crate::missions::CaseKind::Evidence,
+                        "hostages" => crate::missions::CaseKind::Hostages,
+                        _ => crate::missions::CaseKind::Takeover,
+                    },
+                    building: i,
+                    gang: 1 + i % 2,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let mut busy = Duration::ZERO;
     let mut ticks = 0u32;
     let mut players: Option<BTreeMap<PlayerId, PlayerInfo>> = None;
@@ -387,22 +393,25 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
                 if let Some(n) = colossus_break {
                     host.sim.break_colossus(n);
                 }
-                if let Some(c) = case.take() {
+                let mut first = true;
+                for c in std::mem::take(&mut case) {
                     let sim = &mut host.sim;
-                    if sim.missions.available() {
-                        sim.missions.force(&mut sim.world, c);
-                        // The hero stands at its way in.
-                        let hero = sim.hero_of(me);
-                        if let (Some(at), Some(hero)) = (sim.missions.objective(), hero) {
-                            sim.set_body(
-                                hero,
-                                crate::collision::Body {
-                                    pos: at,
-                                    grounded: true,
-                                    ..Default::default()
-                                },
-                            );
-                        }
+                    if !sim.missions.available() || c.building >= sim.missions.buildings() {
+                        continue;
+                    }
+                    let number = sim.missions.force(&mut sim.world, c);
+                    // The hero stands at the first one's way in.
+                    let hero = sim.hero_of(me);
+                    let at = sim.missions.case(number).map(|r| r.objective());
+                    if let (true, Some(at), Some(hero)) = (std::mem::take(&mut first), at, hero) {
+                        sim.set_body(
+                            hero,
+                            crate::collision::Body {
+                                pos: at,
+                                grounded: true,
+                                ..Default::default()
+                            },
+                        );
                     }
                 }
                 busy += t.elapsed();

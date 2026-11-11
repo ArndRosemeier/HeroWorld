@@ -36,7 +36,7 @@ pub enum Session {
         /// Everyone's names, from the join news.
         names: std::collections::BTreeMap<PlayerId, String>,
         /// Our hero file as the host last sent it.
-        sheet: Option<Sheet>,
+        sheet: Option<Box<Sheet>>,
         /// Everyone's looks.
         looks: Box<Looks>,
     },
@@ -335,7 +335,7 @@ impl Session {
                     if let ToClient::Fx(e) = m {
                         fx.push(e);
                     } else if let ToClient::Sheet(s) = m {
-                        *sheet = Some(s);
+                        *sheet = Some(Box::new(s));
                     } else if let ToClient::Look {
                         player,
                         part,
@@ -510,7 +510,7 @@ impl Session {
     pub fn take_sheet(&mut self) -> Option<Sheet> {
         match self {
             Session::Local { host, .. } => host.take_sheet(),
-            Session::Remote { sheet, .. } => sheet.take(),
+            Session::Remote { sheet, .. } => sheet.take().map(|s| *s),
         }
     }
 

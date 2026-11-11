@@ -535,7 +535,34 @@ pub struct Sheet {
     pub briefed: bool,
     /// Where the hero's portals lead (see `hw_sim::gates`), if marked.
     pub gate_home: Option<GateHome>,
+    /// The team's cases as the host's file keeps them (see
+    /// `hw_sim::missions`).
+    pub cases: CaseBook,
 }
+
+/// Cases kept in a hero file: how many were handed out and closed, and
+/// those still open, in the world they were opened in (an open case from
+/// another world is not used).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CaseBook {
+    pub world: u64,
+    pub opened: u16,
+    pub closed: u16,
+    pub open: Vec<SavedCase>,
+}
+
+/// An open case in a hero file: its number, kind, gang and building (by
+/// index in the town's buildings with a floor plan).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SavedCase {
+    pub number: u16,
+    pub kind: u8,
+    pub gang: u8,
+    pub building: u8,
+}
+
+/// Most open cases a hero file keeps.
+pub const MAX_SAVED_CASES: usize = 16;
 
 /// Where a hero's portals lead: a spot on the floor and the way through
 /// it, in whole centimetres and 1/65536 turns so a hero file compares
@@ -607,6 +634,11 @@ impl Sheet {
             } else {
                 0
             }
+            + 8
+            + 2
+            + 2
+            + 1
+            + 5 * self.cases.open.len().min(MAX_SAVED_CASES)
     }
 
     pub fn write(&self, w: &mut Writer) {
@@ -632,6 +664,13 @@ impl Sheet {
             None => {
                 w.u8(0);
             }
+        }
+        let b = &self.cases;
+        w.u64(b.world).u16(b.opened).u16(b.closed);
+        let n = b.open.len().min(MAX_SAVED_CASES);
+        w.u8(n as u8);
+        for c in &b.open[..n] {
+            w.u16(c.number).u8(c.kind).u8(c.gang).u8(c.building);
         }
     }
 
@@ -670,6 +709,28 @@ impl Sheet {
             }),
             _ => return Err(WireError),
         };
+        let world = r.u64()?;
+        let opened = r.u16()?;
+        let closed = r.u16()?;
+        let n = r.u8()? as usize;
+        if n > MAX_SAVED_CASES {
+            return Err(WireError);
+        }
+        let mut open = Vec::with_capacity(n);
+        for _ in 0..n {
+            open.push(SavedCase {
+                number: r.u16()?,
+                kind: r.u8()?,
+                gang: r.u8()?,
+                building: r.u8()?,
+            });
+        }
+        let cases = CaseBook {
+            world,
+            opened,
+            closed,
+            open,
+        };
         Ok(Self {
             lifetime,
             karma,
@@ -680,6 +741,7 @@ impl Sheet {
             story,
             briefed,
             gate_home,
+            cases,
         })
     }
 
@@ -1497,13 +1559,15 @@ pub enum ToClient {
     Gates {
         gates: Vec<GateView>,
     },
-    /// The team's indoor case (see `hw_sim::missions`): its stage, cases
-    /// closed so far, its kind and gang, where to go, rooms cleared of
-    /// rooms held, the boss (0 none yet, 1 standing, 2 beaten), the clues
-    /// or hostages (where; 0 guarded, 1 ready, 2 found or freed) and how far along holding the help key is (0-255).
+    /// One of the team's indoor cases (see `hw_sim::missions`), by its
+    /// number: its stage (0 dropped, 1 go there, 2 inside, 3 just
+    /// closed), its kind and gang, where to go, rooms cleared of rooms
+    /// held, the boss (0 none yet, 1 standing, 2 beaten), the clues or
+    /// hostages (where; 0 guarded, 1 ready, 2 found or freed) and how far
+    /// along holding the help key is (0-255).
     Case {
+        number: u16,
         stage: u8,
-        closed: u16,
         kind: u8,
         gang: u8,
         at: [f32; 3],
@@ -1512,6 +1576,15 @@ pub enum ToClient {
         boss: u8,
         clues: Vec<([f32; 3], u8)>,
         held: u8,
+    },
+    /// Atomic Annie's desk: where she stands, cases closed so far, cases
+    /// open and how many may be, and whether she has one to hand out.
+    CaseDesk {
+        at: [f32; 3],
+        closed: u16,
+        open: u8,
+        limit: u8,
+        can_take: bool,
     },
 }
 
@@ -1598,8 +1671,9 @@ impl ToClient {
             ToClient::Crime { .. } => 8 + 8 + 1,
             ToClient::Gates { gates } => 1 + GATE_BYTES * gates.len().min(MAX_GATES),
             ToClient::Case { clues, .. } => {
-                1 + 2 + 1 + 1 + 12 + 1 + 1 + 1 + 1 + 13 * clues.len().min(MAX_CLUES) + 1
+                1 + 2 + 1 + 1 + 1 + 12 + 1 + 1 + 1 + 1 + 13 * clues.len().min(MAX_CLUES) + 1
             }
+            ToClient::CaseDesk { .. } => 1 + 12 + 2 + 1 + 1 + 1,
         }
     }
 
@@ -1801,8 +1875,8 @@ impl ToClient {
                 }
             }
             ToClient::Case {
+                number,
                 stage,
-                closed,
                 kind,
                 gang,
                 at,
@@ -1812,7 +1886,7 @@ impl ToClient {
                 clues,
                 held,
             } => {
-                w.u8(24).u8(*stage).u16(*closed).u8(*kind).u8(*gang);
+                w.u8(24).u16(*number).u8(*stage).u8(*kind).u8(*gang);
                 for v in at {
                     w.f32(*v);
                 }
@@ -1826,6 +1900,19 @@ impl ToClient {
                     w.u8(*state);
                 }
                 w.u8(*held);
+            }
+            ToClient::CaseDesk {
+                at,
+                closed,
+                open,
+                limit,
+                can_take,
+            } => {
+                w.u8(25);
+                for v in at {
+                    w.f32(*v);
+                }
+                w.u16(*closed).u8(*open).u8(*limit).bool(*can_take);
             }
         }
     }
@@ -2022,8 +2109,8 @@ impl ToClient {
                 ToClient::Gates { gates }
             }
             24 => {
+                let number = r.u16()?;
                 let stage = r.u8()?;
-                let closed = r.u16()?;
                 let kind = r.u8()?;
                 let gang = r.u8()?;
                 let at = [r.f32()?, r.f32()?, r.f32()?];
@@ -2039,8 +2126,8 @@ impl ToClient {
                     clues.push(([r.f32()?, r.f32()?, r.f32()?], r.u8()?));
                 }
                 ToClient::Case {
+                    number,
                     stage,
-                    closed,
                     kind,
                     gang,
                     at,
@@ -2051,6 +2138,13 @@ impl ToClient {
                     held: r.u8()?,
                 }
             }
+            25 => ToClient::CaseDesk {
+                at: [r.f32()?, r.f32()?, r.f32()?],
+                closed: r.u16()?,
+                open: r.u8()?,
+                limit: r.u8()?,
+                can_take: r.bool()?,
+            },
             15 => ToClient::Incident {
                 id: r.u32()?,
                 kind: r.u8()?,
@@ -2514,6 +2608,25 @@ mod tests {
                 [-1234.56, 7.25, 98765.4],
                 4.0,
             )),
+            cases: CaseBook {
+                world: 0xdead_0000_beef_0001,
+                opened: 12,
+                closed: 9,
+                open: vec![
+                    SavedCase {
+                        number: 11,
+                        kind: 2,
+                        gang: 3,
+                        building: 4,
+                    },
+                    SavedCase {
+                        number: 12,
+                        kind: 0,
+                        gang: 1,
+                        building: 200,
+                    },
+                ],
+            },
         }
     }
 
@@ -2663,8 +2776,8 @@ mod tests {
                 (
                     9,
                     ToClient::Case {
+                        number: 300,
                         stage: 2,
-                        closed: 300,
                         kind: 1,
                         gang: 3,
                         at: [1.0, 7.5, -2.0],
@@ -2673,6 +2786,16 @@ mod tests {
                         boss: 1,
                         clues: vec![([3.0, 12.5, 4.0], 2), ([-1.0, 0.25, 9.5], 0)],
                         held: 112,
+                    },
+                ),
+                (
+                    9,
+                    ToClient::CaseDesk {
+                        at: [4.0, 0.5, -9.0],
+                        closed: 12,
+                        open: 2,
+                        limit: 3,
+                        can_take: true,
                     },
                 ),
                 (
