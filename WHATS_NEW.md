@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.195 (2026-11-11)
+
+- Capes no longer slip through your arms while you stand, or through your back in flight. The
+  cloth now knows the shape of your torso, arms and legs, and keeps clear of them.
+- Running, jumping and fighting still swing the cape hard, but it stays out of the body far better.
+- Characters come from Actors 0.35.0: more golden-age clothes for townsfolk and heroes.
+
 ## 0.194 (2026-11-11)
 
 - The whole town now stands on the horizon. Fly up and you see every building out to 6 km, with its streets, roofs and tower spires, instead of houses popping out of nothing as you fly towards them.

@@ -40,9 +40,9 @@ engine = { git = "https://github.com/ArndRosemeier/Engine", branch = "main" }
 bevy_ecs = { version = "0.20", default-features = false, features = ["std"] }
 # Characters: the Rust port of Actors (pinned; bump the rev to follow it).
 # actors-engine follows Engine main, so both resolve to the one Engine above.
-actors-engine = { git = "https://github.com/ArndRosemeier/Actors", rev = "46f1b06f1bdcfc13f0f0d47a75f908d7b3246633" }
-actors-generator = { git = "https://github.com/ArndRosemeier/Actors", rev = "46f1b06f1bdcfc13f0f0d47a75f908d7b3246633" }
-actors-human = { git = "https://github.com/ArndRosemeier/Actors", rev = "46f1b06f1bdcfc13f0f0d47a75f908d7b3246633" }
+actors-engine = { git = "https://github.com/ArndRosemeier/Actors", rev = "fc0eee7481e363e233c979926d6db10bc0d393ce" }
+actors-generator = { git = "https://github.com/ArndRosemeier/Actors", rev = "fc0eee7481e363e233c979926d6db10bc0d393ce" }
+actors-human = { git = "https://github.com/ArndRosemeier/Actors", rev = "fc0eee7481e363e233c979926d6db10bc0d393ce" }
 glam = "0.33"
 libm = "0.2"
 # The GameHub lobby and relay: a WebSocket over TLS (ring, so Windows builds need no extra tools).

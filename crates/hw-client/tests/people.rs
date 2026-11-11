@@ -221,3 +221,64 @@ fn people_who_ride_in_cars_keep_their_clothes_in_the_car() {
         "too few looks fit in a car: {fits:?}"
     );
 }
+
+/// Capes stay off the hero in the clips heroes play, the game's own
+/// poses (flying, hovering, the heroic stance) included: no arm through the
+/// cape standing, no cape through the back in flight.
+#[test]
+#[ignore = "on demand (looks): scripts/check.sh --on-demand"]
+fn capes_stay_off_heroes() {
+    use hw_client::creator::Creator;
+    use hw_client::looks;
+    let Some(mut b) = builder() else { return };
+    b.allow(&people::allow(true));
+    let cat = people::hero_catalog(b.catalog());
+    // Standing, walking and flying stay clear (what players see most). Other clips swing the
+    // arms or legs hard and get a little give at the cape's edge; a hard landing or a hit can
+    // flick the hem past the neck for a frame, and a heel kicks into a long cape's hem.
+    let calm = ["idle", "walk", "fly"];
+    let jolts = ["jump start", "jump land", "hit to chest", "carry jog"];
+    let mut bad = Vec::new();
+    for (seed, cape) in [(1, "classic"), (2, "long"), (3, "short"), (5, "scalloped")] {
+        let mut look = Creator::random_look(&cat, seed);
+        look.costume.cape = cape.into();
+        let bytes = looks::encode(&look);
+        let back = looks::decode(&bytes).expect("looks");
+        let hero = people::build(&mut b, &Who::Look(looks::key_of(&bytes)), 0, Some(&back))
+            .expect("caped hero");
+        let m = &hero.model;
+        let rig = actors_engine::CapeRig::of(m).expect("a cape");
+        for (ci, clip) in m.clips.iter().enumerate() {
+            let samples: Vec<_> = (0..12)
+                .map(|k| actors_engine::cape_sink(m, &rig, ci, clip.duration * k as f32 / 12.0))
+                .collect();
+            let worst = samples
+                .iter()
+                .max_by(|a, b| a.depth.total_cmp(&b.depth))
+                .cloned()
+                .unwrap_or_default();
+            let joint = worst
+                .joint
+                .map_or("-", |j| m.skeleton.joint_names[j].as_str());
+            eprintln!(
+                "{cape} {}: {:.3} m into {joint} at uv {:.2} {:.2}",
+                clip.name, worst.depth, worst.uv[0], worst.uv[1]
+            );
+            let name = clip.name.as_str();
+            let limit = if calm.contains(&name) {
+                0.015
+            } else if jolts.contains(&name) {
+                0.07
+            } else {
+                0.045
+            };
+            if worst.depth > limit {
+                bad.push(format!(
+                    "the {cape} cape passes {:.3} m into {joint} in {}",
+                    worst.depth, clip.name
+                ));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+}
