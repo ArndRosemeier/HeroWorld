@@ -352,15 +352,15 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
     if std::env::var("HW_COLOSSUS_RAMPAGE").is_ok_and(|v| v == "1") {
         crate::robots::rampage_unseen(true);
     }
-    // `HW_CASE=takeover|evidence`: a case in the first Comet building starts at once,
+    // `HW_CASE=takeover|evidence|hostages`: a case in the first Comet building starts at once,
     // the hero at its way in (screenshots).
     let mut case = std::env::var("HW_CASE")
         .ok()
         .map(|v| crate::missions::Case {
-            kind: if v == "evidence" {
-                crate::missions::CaseKind::Evidence
-            } else {
-                crate::missions::CaseKind::Takeover
+            kind: match v.as_str() {
+                "evidence" => crate::missions::CaseKind::Evidence,
+                "hostages" => crate::missions::CaseKind::Hostages,
+                _ => crate::missions::CaseKind::Takeover,
             },
             building: 0,
             gang: 1,

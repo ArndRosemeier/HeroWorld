@@ -132,6 +132,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | H | Call the medical drone when you are down |
 | G | Hail a flying taxi (G again hops out mid-air) |
 | M | Town map (drag to move, wheel to zoom) with the radio's calls |
+| J | Case file: the open case, the Doctor's dossier, closed cases |
 | T | Police visor on or off (a new call switches it on) |
 | N | Minimap on or off |
 | O | Free camera |
@@ -824,6 +825,19 @@ and a teal beacon over the building's way in until you get there.
   hero is within **250 m** for **30 s** (the case stays; it comes back when you do).
 - **Reward**: every hero within 150 m when it closes gets **40 %** of the karma their next
   level takes.
+
+**The case file** (J; `hw-client/src/casefile.rs`): Hero Hall's manila folder, typed on a
+typewriter. It slides in on its own for 7 s when a case opens (a NEW CASE stamp) or closes
+(CASE CLOSED); J opens it for good and frees the pointer (J or Escape shuts it, Left/Right or a
+click turns the tabs). Tabs:
+- **Open case**: case number, who filed it, where, the gang, what kind; a briefing (what the
+  gang is known for, then the job); a progress checklist (rooms cleared, the boss at large or
+  bagged, each clue with what it turned out to be, each hostage held, under guard or freed); the
+  boss's mugshot clipped on; one of Annie's notes in blue ink in the margin. With no case: where
+  to find Annie.
+- **The Doctor**: Commander Starling's dossier. Chapters done are stamped SOLVED, the current one
+  shows its goal (or the level it opens at), the rest are blacked out.
+- **Closed**: the cases closed this session, newest first, each stamped CLOSED (not saved yet).
 
 Not yet: villains riding lifts, cases in ordinary town offices, and cases kept in
 the save file (a case in progress is dropped when the host quits).
@@ -1619,7 +1633,8 @@ run, or put them in a `.bat`.
 | `HW_VIEW=getaway` | With `HW_INCIDENT` and `HW_TIMEOUT`: follows the crooks making off. |
 | `HW_VISOR=1` | The police visor stays down; `HW_VISOR=0.4` freezes it part way in (screenshots). |
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
-| `HW_CASE=takeover\|evidence` | A case of that kind in the first Comet building starts at once (Jackets), the hero at its way in; with `HW_VIEW=hero`. |
+| `HW_CASE=takeover\|evidence\|hostages` | A case of that kind in the first Comet building starts at once (Jackets), the hero at its way in; with `HW_VIEW=hero`. |
+| `HW_CASEFILE=case\|doctor\|closed` | The case file open on that tab (screenshots). |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
 | `HW_COLOSSUS_RAMPAGE=1` | The colossus smashes its way through town even with no hero near (screenshots). |
 | `HW_VIEW=fight` | Places a test group of minions near the spawn (the game starts without one). |

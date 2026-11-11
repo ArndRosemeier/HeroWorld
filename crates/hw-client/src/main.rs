@@ -576,6 +576,17 @@ fn main() -> EngineResult<()> {
     let mut signal = hw_client::dispatchview::Signal::default();
     let mut story = hw_client::storyview::StoryView::default();
     let mut cases = hw_client::missionview::MissionView::default();
+    let mut case_file = hw_client::casefile::CaseFile::default();
+    // `HW_CASEFILE=case|doctor|closed`: the case file open on that tab
+    // (screenshots).
+    if let Ok(tab) = std::env::var("HW_CASEFILE") {
+        case_file.toggle();
+        case_file.tab = match tab.as_str() {
+            "doctor" => hw_client::casefile::Tab::Doctor,
+            "closed" => hw_client::casefile::Tab::Closed,
+            _ => hw_client::casefile::Tab::Case,
+        };
+    }
     // The chat window (bottom left): what is said near the hero.
     let mut chat = hw_client::chat::ChatLog::new();
     // The pointer was locked when the chat line opened: lock it again after.
@@ -4736,6 +4747,20 @@ fn main() -> EngineResult<()> {
                     fighting,
                 );
                 if !town_map.open && std::mem::take(&mut town_map.relock) {
+                    world.set_pointer_lock(true);
+                }
+                // The case file (J): it comes up on its own when a case
+                // opens or closes; opened with J it takes the pointer.
+                if frame.input.pressed(Key::J) && !on_ui_keys(frame) {
+                    case_file.toggle();
+                }
+                case_file.update(&cases, frame.dt);
+                case_file.show(frame.ui.ctx(), &cases, &story);
+                if case_file.taking_pointer() && world.pointer_lock() {
+                    world.set_pointer_lock(false);
+                    case_file.relock = true;
+                }
+                if !case_file.taking_pointer() && std::mem::take(&mut case_file.relock) {
                     world.set_pointer_lock(true);
                 }
                 if let Some(h) = hero_at {

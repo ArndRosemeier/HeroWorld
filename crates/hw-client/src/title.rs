@@ -45,6 +45,8 @@ const ORBIT_TIME: f32 = 480.0;
 
 const LOGO_FONT: &[u8] = include_bytes!("../assets/fonts/LuckiestGuy-Regular.ttf");
 const UI_FONT: &[u8] = include_bytes!("../assets/fonts/TitanOne-Regular.ttf");
+/// A typewriter, for the case file (`casefile.rs`).
+const TYPE_FONT: &[u8] = include_bytes!("../assets/fonts/SpecialElite-Regular.ttf");
 const THEME: &[u8] = include_bytes!("../assets/title/title_theme.ogg");
 
 const NAVY: Color32 = Color32::from_rgb(22, 26, 64);
@@ -1469,7 +1471,11 @@ pub fn ui_family() -> FontFamily {
 /// Adds the logo and button fonts (they can be used from the next frame).
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-    for (name, bytes) in [("hw-logo", LOGO_FONT), ("hw-ui", UI_FONT)] {
+    for (name, bytes) in [
+        ("hw-logo", LOGO_FONT),
+        ("hw-ui", UI_FONT),
+        ("hw-type", TYPE_FONT),
+    ] {
         fonts
             .font_data
             .insert(name.into(), Arc::new(egui::FontData::from_static(bytes)));

@@ -8,6 +8,7 @@ pub mod buildingmesh;
 pub mod busview;
 pub mod camclip;
 pub mod carmesh;
+pub mod casefile;
 pub mod chat;
 pub mod citybuild;
 pub mod citymesh;

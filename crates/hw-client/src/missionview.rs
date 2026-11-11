@@ -101,6 +101,11 @@ impl MissionView {
         true
     }
 
+    /// The building the case plays in, by name.
+    pub fn building(&self) -> Option<&'static str> {
+        self.building
+    }
+
     /// Every frame: the words for the news, the light over the building,
     /// the sparkles over the clues, the line on the air.
     pub fn update(&mut self, world: &mut World, town: &TownWorld, radio: &mut Radio, dt: f32) {
@@ -259,7 +264,7 @@ fn building_name(town: &TownWorld, at: Vec3) -> Option<&'static str> {
 
 /// The case on the radio: its heading, the goal, and where to go.
 pub fn mark(s: &State, building: &str) -> Option<StoryMark> {
-    let heading = format!("CASE - the {building}");
+    let heading = format!("CASE - the {building}   (J: case file)");
     let rooms = if s.groups > 0 {
         format!(" (rooms cleared {} of {})", s.cleared, s.groups)
     } else {
@@ -298,6 +303,7 @@ pub fn lines(before: Option<&State>, now: &State, building: &str) -> Vec<Line> {
         text,
     };
     let gang = GANGS[now.gang].name;
+    let gang_cap = crate::casefile::capitalised(gang);
     let mut out = Vec::new();
     let Some(b) = before else {
         return out;
@@ -322,7 +328,7 @@ pub fn lines(before: Option<&State>, now: &State, building: &str) -> Vec<Line> {
             }
             CaseKind::Evidence => {
                 out.push(say(format!(
-                    "{gang} are holed up in the {building}, and they're hiding something.",
+                    "{gang_cap} are holed up in the {building}, and they're hiding something.",
                 )));
                 out.push(say(
                     "Find three clues for me. They'll be tucked away in the rooms, upstairs too."
@@ -331,7 +337,7 @@ pub fn lines(before: Option<&State>, now: &State, building: &str) -> Vec<Line> {
             }
             CaseKind::Hostages => {
                 out.push(say(format!(
-                    "{gang} have taken the {building}, and they're holding people inside.",
+                    "{gang_cap} have taken the {building}, and they're holding people inside.",
                 )));
                 out.push(say(
                     "Three of them, on different floors. Beat their guards, then untie them."
@@ -397,7 +403,7 @@ mod tests {
             &st(GO, CaseKind::Evidence, 0, 0),
             b,
         );
-        assert!(brief[0].text.contains(b) && brief[0].text.contains(GANGS[2].name));
+        assert!(brief[0].text.contains(b) && brief[0].text.to_lowercase().contains(GANGS[2].name));
         let one = lines(
             Some(&st(INSIDE, CaseKind::Evidence, 0, 0)),
             &st(INSIDE, CaseKind::Evidence, 0, 1),

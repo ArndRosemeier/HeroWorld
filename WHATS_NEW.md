@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.205 (2026-11-11)
+
+- The case file: press J for Hero Hall's folder of your cases, typed up on Annie's typewriter. The open case with its progress, a mugshot of the boss and Annie's notes in the margin; the Doctor's dossier with the chapters still to come blacked out; and the cases you have closed.
+- It slides in by itself when a case starts (NEW CASE) or ends (CASE CLOSED).
+
 ## 0.204 (2026-11-11)
 
 - The new office buildings no longer flicker round their windows: the inside walls now sit cleanly behind the window panes.
