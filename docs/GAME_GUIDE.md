@@ -537,9 +537,15 @@ targeting, ragdolls, nobody dies.
   Assurance hall (grand hall) and the Zenith Radio house (split levels); a tight town gets
   fewer or smaller ones. Storeys 5.5-8 m high, halls at least 10 m across, steps 0.2 m high
   and 0.35 m deep, rails 1.1 m. Every wall, floor, step, rail and column is one solid box
-  the game both draws and collides with (`hw_gen::layout::solid`). Lift shafts and doors
-  stand but the lifts do not run yet; villains cannot path between floors yet. Views:
-  `HW_VIEW=comet|cometlobby|cometgallery|cometstairs|comethall`, `HW_COMET=0|1|2`.
+  the game both draws and collides with (`hw_gen::layout::solid`). Villains cannot
+  path between floors yet. Views:
+  `HW_VIEW=comet|cometlobby|cometgallery|cometstairs|comethall|cometlift`, `HW_COMET=0|1|2`.
+- **Lifts** in those buildings run on a timetable from the game clock (no call button): a
+  car waits 7 s at a floor with its doors open (they take 0.9 s to slide), rides at up to
+  3 m/s to the next floor, up to the top and down again; neighbouring cars leave 11 s
+  apart. Walk in while the doors are open and stand: the car carries you. Shut doors are
+  solid, so nobody falls into a shaft. Server and clients work the cars out from the same
+  clock (`hw_gen::layout::lifts`, `hw_sim::lifts`), nothing is sent.
 - **Villain AI:** villains notice heroes within their aggro range, walk round walls and
   houses on a grid A* path (`hw-sim/src/nav.rs`), and go home when the fight moves away.
   Ranged ones keep their distance.

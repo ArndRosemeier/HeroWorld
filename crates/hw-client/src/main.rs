@@ -54,7 +54,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; by default
 //! the city picked in the title's city window; joining players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `comet`, `cometlobby`, `cometgallery`, `cometstairs`, `comethall` (a Comet building with its game-scale interior; `HW_COMET=0|1|2` picks the atrium, grand hall or split-level one), `hospital`, `ward`, `pods`, `hospitaldoor` (the nearest hospital: across its plaza, in its Recovery Hall, at its pods, at its door), `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the first call on the police visor, with `HW_INCIDENT`; `HW_VISOR=1` keeps the visor down, `HW_VISOR=0.4` freezes it part way in), `far` (a main road across town, where people and traffic must follow) or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `comet`, `cometlobby`, `cometgallery`, `cometstairs`, `comethall`, `cometlift` (a Comet building with its game-scale interior; `HW_COMET=0|1|2` picks the atrium, grand hall or split-level one), `hospital`, `ward`, `pods`, `hospitaldoor` (the nearest hospital: across its plaza, in its Recovery Hall, at its pods, at its door), `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the first call on the police visor, with `HW_INCIDENT`; `HW_VISOR=1` keeps the visor down, `HW_VISOR=0.4` freezes it part way in), `far` (a main road across town, where people and traffic must follow) or
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
 //! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `weather` (the weather tower and its shower; `weathertop`, `weatherfoot`, `weatherstreet` close up; `HW_WEATHER=brew|rain|clear|bow|fair` picks the moment), `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `far` (a main road across town, where people and traffic must follow) or
@@ -764,7 +764,7 @@ fn main() -> EngineResult<()> {
             let eye = base + 1.9;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, 4.0)
         }
-        "comet" | "cometlobby" | "cometgallery" | "cometstairs" | "comethall" => {
+        "comet" | "cometlobby" | "cometgallery" | "cometstairs" | "comethall" | "cometlift" => {
             // A Comet building (`HW_COMET=0|1|2`: the atrium, the grand
             // hall, the split-level one): from across its plaza, in at
             // its entrance, on its highest gallery, at its grand stair, in
@@ -2380,6 +2380,10 @@ fn main() -> EngineResult<()> {
             }
             if let Some(lights) = extras.comet_lights.as_mut() {
                 lights.update(world, world.camera().eye())?;
+            }
+            if let Some(lifts) = extras.lifts.as_mut() {
+                let now = session.time(tick_clock.frac());
+                lifts.update(world, world.camera().eye(), now)?;
             }
             hw_client::hitch::mark("underground");
             if let Some(under) = extras.under.as_mut() {
@@ -4071,6 +4075,9 @@ fn main() -> EngineResult<()> {
                     }
                     movers.extend(airships.solids_near(&[me], game_time));
                     movers.extend(story.statue_solids(&generated.world));
+                    if let Some(l) = extras.lifts.as_ref() {
+                        movers.extend(l.lifts().solids_near(&[me], 25.0, game_time));
+                    }
                     solids.set_movers(movers);
                 }
             }

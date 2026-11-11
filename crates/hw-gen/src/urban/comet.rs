@@ -96,8 +96,30 @@ pub fn parts(l: &Landmark) -> Vec<Piece> {
         .collect()
 }
 
+/// What stands still: everything but the lifts' landing doors, which
+/// open and shut with their cars ([`lifts`]).
 pub(super) fn footprints(l: &Landmark) -> Vec<Footprint> {
-    parts(l).into_iter().map(|p| p.shape).collect()
+    parts(l)
+        .into_iter()
+        .filter(|p| p.part != crate::layout::solid::Part::LiftDoor)
+        .map(|p| p.shape)
+        .collect()
+}
+
+/// The building's lifts in the town's frame.
+pub fn lifts(l: &Landmark) -> Vec<crate::layout::lifts::LiftRun> {
+    let Some(plan) = layout(l) else {
+        return Vec::new();
+    };
+    // The same two steps as a part: the layout's frame to the landmark's,
+    // the landmark's to the town's.
+    crate::layout::lifts::runs(&plan)
+        .iter()
+        .map(|r| {
+            r.placed(plan.size * 0.5, DVec2::new(0.0, -1.0), 0.0)
+                .placed(l.pos, l.dir, l.base)
+        })
+        .collect()
 }
 
 /// Picks their places: near the core, clear of the other landmarks, each

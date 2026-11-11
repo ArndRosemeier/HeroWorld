@@ -21,6 +21,7 @@
 //! street front, z inwards, y up from the ground floor. Pure data from the
 //! seed, like every plan.
 
+pub mod lifts;
 pub mod office;
 pub mod solid;
 mod stairs;

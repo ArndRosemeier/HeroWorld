@@ -21,6 +21,7 @@ pub mod factions;
 pub mod host;
 pub mod hostthread;
 pub mod incidents;
+pub mod lifts;
 pub mod nav;
 pub mod npcheroes;
 pub mod physics;
@@ -658,6 +659,8 @@ pub struct Sim {
     area_moved: bool,
     /// The rocket port's launches (see [`rocket`]).
     pub rockets: Vec<rocket::Pad>,
+    /// The lifts of the game-scale interiors (they run by the clock).
+    pub lifts: lifts::Lifts,
     /// The airships heroes bump into: the liner on its timetable and the
     /// pirates' moored ship.
     pub airships: airships::Airships,
@@ -701,6 +704,7 @@ impl Sim {
         sim.taxis = taxi::Taxis::new(town.area.clone());
         sim.tubes = tube::Tubes::new(town.world.clone());
         sim.rockets = rocket::pads(&town.world);
+        sim.lifts = lifts::Lifts::new(&town.world);
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.area.clone()));
         sim.incidents = incidents::Incidents::new(town.area.clone());
         sim.crimes.set_area(town.area.clone());
@@ -1006,6 +1010,7 @@ impl Sim {
             area_ready: None,
             area_moved: false,
             rockets: Vec::new(),
+            lifts: lifts::Lifts::default(),
             airships: airships::Airships::default(),
             doors: doors::Doors::default(),
         }
@@ -1237,6 +1242,7 @@ impl Sim {
         let mut movers = rocket::solids(&self.rockets, now, &heroes, 25.0);
         movers.extend(self.airships.solids_near(&heroes, now));
         movers.extend(self.story.statue_solids());
+        movers.extend(self.lifts.solids_near(&heroes, 25.0, now));
         if let Some(t) = self.wrecks.traffic.as_mut() {
             t.set_blockers(&standing, &stops);
             t.set_blocked(&self.alarms.road_blocks());

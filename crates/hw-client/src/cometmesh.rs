@@ -191,10 +191,8 @@ pub fn building(b: &mut MeshBuilder, l: &Landmark, near: bool) {
                     );
                 }
             }
-            Part::LiftDoor => {
-                plain(b, Surf::Metal);
-                put(b, shape, (y0, y1), 0.0, brass);
-            }
+            // The landing doors slide: see `LiftView`.
+            Part::LiftDoor => {}
         }
     }
     plain(b, Surf::Plain);
@@ -484,6 +482,19 @@ pub fn view(l: &Landmark, which: &str) -> Option<(DVec3, DVec3)> {
                 town(far, g.y - eye.distance(far) * 0.3),
             )
         }
+        "lift" => {
+            // In front of the first lift's ground-floor doors, a little
+            // to one side.
+            let runs = hw_gen::layout::lifts::runs(&plan);
+            let run = runs.first()?;
+            let (_, d) = run.doors.iter().find(|d| d.0 == 0)?;
+            let out = (d.at() - run.car.at()).normalize_or_zero();
+            let eye = d.at() + out * 5.5 + out.perp() * 1.6;
+            (
+                town(eye, run.stops[0] + 1.8),
+                town(d.at(), run.stops[0] + 1.6),
+            )
+        }
         "stairs" => {
             let st = plan.stairs.first()?;
             let Flight::Straight { from, dir, .. } = *st.flights.first()? else {
@@ -514,4 +525,167 @@ pub fn view(l: &Landmark, which: &str) -> Option<(DVec3, DVec3)> {
             )
         }
     })
+}
+
+/// The lifts' cars and landing doors, moving by the game clock (the
+/// server makes them solid from the same timetable: `hw_sim::lifts`).
+pub struct LiftView {
+    lifts: hw_sim::lifts::Lifts,
+    /// Per lift: its car, and per door its two leaves.
+    spawned: Vec<Option<(EntityId, Vec<[EntityId; 2]>)>>,
+}
+
+/// Lifts are drawn within this of the eye (m).
+const LIFT_REACH: f64 = 160.0;
+
+impl LiftView {
+    pub fn new(town: &hw_gen::urban::world::TownWorld) -> Self {
+        let lifts = hw_sim::lifts::Lifts::new(town);
+        let spawned = vec![None; lifts.runs.len()];
+        Self { lifts, spawned }
+    }
+
+    /// The lifts as solids, for a joined player's own hero.
+    pub fn lifts(&self) -> &hw_sim::lifts::Lifts {
+        &self.lifts
+    }
+
+    pub fn update(&mut self, world: &mut World, eye: Vec3, now: f64) -> EngineResult<()> {
+        use hw_gen::layout::lifts::{CAR_FLOOR, CAR_LIP, CAR_ROOM};
+        use hw_gen::layout::solid::LIFT_DOOR_H;
+        let eye2 = DVec2::new(eye.x as f64, eye.z as f64);
+        let brass = pieces::brass();
+        for (run, slot) in self.lifts.runs.iter().zip(&mut self.spawned) {
+            let Footprint::Box { at, dir, half, .. } = run.car else {
+                continue;
+            };
+            if at.distance(eye2) > LIFT_REACH {
+                if let Some((car, doors)) = slot.take() {
+                    world.despawn(car);
+                    for d in doors.into_iter().flatten() {
+                        world.despawn(d);
+                    }
+                }
+                continue;
+            }
+            // A door's long way in plan, its width and its middle.
+            let door = |f: &Footprint| {
+                let Footprint::Box { at, dir, half, .. } = *f else {
+                    return (DVec2::X, 0.0, DVec2::ZERO);
+                };
+                let x = DVec2::new(dir.y, -dir.x);
+                if half.x >= half.y {
+                    (x, half.x * 2.0, at)
+                } else {
+                    (dir, half.y * 2.0, at)
+                }
+            };
+            if slot.is_none() {
+                // The car: floor, roof with a light under it, corner posts.
+                let mut b = MeshBuilder::new();
+                let u = DVec3::new(dir.y, 0.0, -dir.x);
+                skin(&mut b, true, Base::Lino);
+                b.oriented_box(
+                    DVec3::Y * ((CAR_LIP - CAR_FLOOR) * 0.5),
+                    u,
+                    DVec3::new(half.x, (CAR_LIP + CAR_FLOOR) * 0.5, half.y),
+                    rgb(196, 60, 50),
+                );
+                plain(&mut b, Surf::Metal);
+                b.oriented_box(
+                    DVec3::Y * (CAR_ROOM + 0.075),
+                    u,
+                    DVec3::new(half.x, 0.075, half.y),
+                    brass,
+                );
+                for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                    let p = DVec2::new(dir.y, -dir.x) * (sx * (half.x - 0.08))
+                        + dir * (sz * (half.y - 0.08));
+                    b.cylinder(
+                        DVec3::new(p.x, CAR_LIP, p.y),
+                        (0.05, 0.05),
+                        CAR_ROOM - CAR_LIP,
+                        12,
+                        false,
+                        brass,
+                    );
+                }
+                plain(&mut b, Surf::Glow);
+                b.oriented_box(
+                    DVec3::Y * (CAR_ROOM - 0.03),
+                    u,
+                    DVec3::new(half.x * 0.6, 0.03, half.y * 0.6),
+                    rgb(255, 236, 190),
+                );
+                let car = world.spawn(b.finish());
+                let mut doors = Vec::new();
+                for (_, d) in &run.doors {
+                    let (a, w, _) = door(d);
+                    let mut leaf = MeshBuilder::new();
+                    plain(&mut leaf, Surf::Metal);
+                    leaf.oriented_box(
+                        DVec3::Y * (LIFT_DOOR_H * 0.5),
+                        DVec3::new(a.x, 0.0, a.y),
+                        DVec3::new(w * 0.25, LIFT_DOOR_H * 0.5, 0.03),
+                        brass,
+                    );
+                    let mesh = leaf.finish();
+                    doors.push([world.spawn(mesh.clone()), world.spawn(mesh)]);
+                }
+                *slot = Some((car, doors));
+            }
+            let Some((car, doors)) = slot else { continue };
+            let state = run.at(now);
+            world.set_place(*car, Place::new(at.x as f32, state.y as f32, at.y as f32))?;
+            for ((k, d), leaves) in run.doors.iter().zip(doors.iter()) {
+                let (a, w, mid) = door(d);
+                let open = state.open.filter(|(s, _)| s == k).map_or(0.0, |(_, o)| o);
+                let (y0, _) = d.span();
+                for (leaf, side) in leaves.iter().zip([-1.0, 1.0]) {
+                    // The doors rise into the shaft wall over the doorway
+                    // (to the side they would stick out past its corner).
+                    let p = mid + a * (side * w * 0.25);
+                    let y = y0 + open * LIFT_DOOR_H * 0.98;
+                    world.set_place(*leaf, Place::new(p.x as f32, y as f32, p.y as f32))?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hw_gen::urban::landmarks::LandmarkKind;
+
+    /// No two faces of a Comet building lie in one plane over each other.
+    #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
+    fn the_comet_buildings_have_no_z_fighting() {
+        let mut bad = Vec::new();
+        for v in 0..3u8 {
+            let l = Landmark {
+                kind: LandmarkKind::CometBuilding,
+                pos: DVec2::new(100.0, -40.0),
+                plaza: comet::plaza(0),
+                base: 3.0,
+                low: 2.0,
+                height: 30.0,
+                dir: DVec2::Y,
+                stairs: Vec::new(),
+                variant: v,
+            };
+            let mut b = MeshBuilder::new();
+            building(&mut b, &l, true);
+            let report = engine::zfight::ZFightCheck::new()
+                .options(crate::zfight::city_options())
+                .with(comet::name(&l), &b.finish())
+                .run();
+            if !report.is_clean() {
+                bad.push(format!("{}: {}", comet::name(&l), report.summary(40)));
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
 }

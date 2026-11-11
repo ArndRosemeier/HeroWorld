@@ -3,11 +3,17 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.189 (2026-11-11)
+
+- The lifts in the Daily Comet building, the Atlas Assurance hall and the Zenith Radio house run. Each car goes up and down by itself, like a paternoster with stops: it waits about seven seconds at every floor with its doors up, then rides on. Walk in while it waits and it carries you; there is no button to press.
+- Shut lift doors are solid, so nobody falls into a shaft.
+
 ## 0.188 (2026-11-11)
 
 - The Doctor's colossus is a real rampage now. It strides through town nearly twice as fast, and once it spots you it leaves the streets and comes straight for you through the houses, ramming buildings in its way.
 - New colossus moves, each warned on the ground first: it lowers its head and charges down a red lane, bulldozing everything in it; it plants itself and rakes a violet line with its Aether lance, cutting through floors; once enraged its cannon fires salvos of three. Its shells and stomps hit much harder too.
 - Its armour now shrugs off nearly every blow on the hull: break the glowing knees and the cannon. Hit the cannon hard while the lance charges and it overloads, and the machine reels.
+
 ## 0.187 (2026-11-11)
 
 - The first buildings with the new, roomy interiors stand in town: the Daily Comet building, the Atlas Assurance hall and the Zenith Radio house (on the map, in the taxi list, and in the debug menu's places). Walk in at the front doors: halls ten metres and more across under ceilings six to eight metres up, a lobby or atrium several storeys high, galleries and bridges, and grand stairs you can run and fight on.
