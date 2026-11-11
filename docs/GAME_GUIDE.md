@@ -796,7 +796,8 @@ who were there; a guest further along keeps their own place.
 
 ### Building cases (`hw-sim/src/missions.rs`, `hw-client/src/missionview.rs`)
 
-**Atomic Annie** (Hero Hall's second hero) hands out cases: hold **E** near her (3.5 m). One
+**Atomic Annie** (Hero Hall's second hero) hands out cases: hold **E** near her (3.5 m). She
+never leaves the hall to answer calls, so she is always at her place on its steps. One
 case runs at a time for the whole team, in one of the three Comet buildings (Daily Comet,
 Atlas Assurance, Zenith Radio), against one of five gangs (the Doctor's sentries, Jackets or
 Syndicate, sky pirates, the Iron Legion, the Zorrak; the last two only from their levels on).
@@ -810,6 +811,11 @@ and a teal beacon over the building's way in until you get there.
 - **Evidence**: the same gang, plus **3 clues** hidden in far corners of rooms on different
   floors. Hold **E** within 2.8 m of a clue for 3 s to search it (sparkles mark them);
   finding all three closes the case.
+- **Hostages**: the same gang holding **3 townsfolk** (hands up) in rooms on different
+  floors. While that room's crew is on its feet nobody can be untied ("Beat their guards
+  first"); once they are all down, hold **E** by a hostage for **2 s**. They thank you, then
+  hurry out by the building's route map (2.2 m/s, stairs and all) and are gone outside the
+  door. Freeing all three closes the case.
 - **Room by room**: each room is its own group with its own sight. A group notices a hero
   only in aggro range and in sight, and only its own room's friends come along, so a floor
   can be cleared one room at a time without bringing the whole gang. Villains who saw you
@@ -819,7 +825,7 @@ and a teal beacon over the building's way in until you get there.
 - **Reward**: every hero within 150 m when it closes gets **40 %** of the karma their next
   level takes.
 
-Not yet: hostages, villains riding lifts, cases in ordinary town offices, and cases kept in
+Not yet: villains riding lifts, cases in ordinary town offices, and cases kept in
 the save file (a case in progress is dropped when the host quits).
 
 ---

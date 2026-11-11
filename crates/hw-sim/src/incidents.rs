@@ -551,6 +551,14 @@ pub struct Bystander {
     pub march: Option<DVec3>,
 }
 
+/// How fast someone set free indoors hurries out (m/s).
+pub const ESCAPE_SPEED: f64 = 2.2;
+
+/// The way out for someone set free indoors (a case's hostage): the
+/// points still to walk to, in order; gone after the last.
+#[derive(Component, Clone, Debug, Default)]
+pub struct WayOut(pub Vec<DVec3>);
+
 /// Seconds someone saved stands thanking their hero before they go.
 pub const THANK_SECONDS: f64 = 3.0;
 /// A hero this near when it is over gets thanked (m).
@@ -671,12 +679,69 @@ pub(crate) fn release_bystanders(world: &mut World, tick: u64, incident: u32) {
     world.resource_mut::<Fights>().events.extend(fx);
 }
 
+/// People set free indoors walking out along their [`WayOut`] (after
+/// thanking their hero), and gone at its end.
+pub(crate) fn walk_ways(world: &mut World, tick: u64) {
+    let mut gone = Vec::new();
+    for (e, b, mut m, mut o, mut way) in world
+        .query::<(
+            Entity,
+            &Bystander,
+            &mut Motion,
+            &mut crate::Orientation,
+            &mut WayOut,
+        )>()
+        .iter_mut(world)
+    {
+        if b.leaving.is_none() {
+            continue;
+        }
+        if tick < b.thanking_until {
+            m.0.vel = DVec3::ZERO;
+            continue;
+        }
+        let mut left = ESCAPE_SPEED * DT;
+        let mut pos = m.0.pos;
+        let mut dir = DVec3::ZERO;
+        while left > 0.0 {
+            let Some(&to) = way.0.first() else { break };
+            let d = to - pos;
+            let len = d.length();
+            if len <= left {
+                pos = to;
+                left -= len;
+                way.0.remove(0);
+            } else {
+                dir = d / len;
+                pos += dir * left;
+                left = 0.0;
+            }
+        }
+        if way.0.is_empty() {
+            gone.push(e);
+            continue;
+        }
+        m.0.pos = pos;
+        m.0.vel = dir * ESCAPE_SPEED;
+        let flat = DVec2::new(dir.x, dir.z);
+        if flat.length() > 1e-3 {
+            let q = yaw_quat(flat.normalize());
+            if o.0 != q {
+                o.0 = q;
+            }
+        }
+    }
+    for e in gone {
+        world.despawn(e);
+    }
+}
+
 /// Bystanders walking off, and gone once out of sight.
 fn walk_bystanders(world: &mut World, tick: u64) {
     let solids = world.resource::<Solids>().0.clone();
     let mut gone = Vec::new();
     for (e, mut b, mut m, mut o) in world
-        .query::<(Entity, &mut Bystander, &mut Motion, &mut crate::Orientation)>()
+        .query_filtered::<(Entity, &mut Bystander, &mut Motion, &mut crate::Orientation), Without<WayOut>>()
         .iter_mut(world)
     {
         if let (Some(to), None) = (b.march, b.leaving) {

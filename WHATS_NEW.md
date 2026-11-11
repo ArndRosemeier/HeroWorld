@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.203 (2026-11-11)
+
+- New case: hostages. A gang holds three people on different floors: beat their guards, then hold E to untie them, and they hurry out of the building.
+- Atomic Annie now always stays at Hero Hall, so you can find her to ask for a case, and holding E by her works at once.
+
 ## 0.202 (2026-11-11)
 
 - Office buildings in town are now roomy inside, like the Daily Comet building: a tall lobby with sweeping stairs, galleries, wide office halls with columns, lamps and furniture. Walk in through the front doors; there are ceilings now, and no cut-open view in these buildings.

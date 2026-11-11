@@ -1500,7 +1500,7 @@ pub enum ToClient {
     /// The team's indoor case (see `hw_sim::missions`): its stage, cases
     /// closed so far, its kind and gang, where to go, rooms cleared of
     /// rooms held, the boss (0 none yet, 1 standing, 2 beaten), the clues
-    /// (where, found) and how far along holding the help key is (0-255).
+    /// or hostages (where; 0 guarded, 1 ready, 2 found or freed) and how far along holding the help key is (0-255).
     Case {
         stage: u8,
         closed: u16,
@@ -1510,7 +1510,7 @@ pub enum ToClient {
         cleared: u8,
         groups: u8,
         boss: u8,
-        clues: Vec<([f32; 3], bool)>,
+        clues: Vec<([f32; 3], u8)>,
         held: u8,
     },
 }
@@ -1819,11 +1819,11 @@ impl ToClient {
                 w.u8(*cleared).u8(*groups).u8(*boss);
                 let n = clues.len().min(MAX_CLUES);
                 w.u8(n as u8);
-                for (p, found) in &clues[..n] {
+                for (p, state) in &clues[..n] {
                     for v in p {
                         w.f32(*v);
                     }
-                    w.bool(*found);
+                    w.u8(*state);
                 }
                 w.u8(*held);
             }
@@ -2036,7 +2036,7 @@ impl ToClient {
                 }
                 let mut clues = Vec::with_capacity(n);
                 for _ in 0..n {
-                    clues.push(([r.f32()?, r.f32()?, r.f32()?], r.bool()?));
+                    clues.push(([r.f32()?, r.f32()?, r.f32()?], r.u8()?));
                 }
                 ToClient::Case {
                     stage,
@@ -2671,7 +2671,7 @@ mod tests {
                         cleared: 2,
                         groups: 6,
                         boss: 1,
-                        clues: vec![([3.0, 12.5, 4.0], true), ([-1.0, 0.25, 9.5], false)],
+                        clues: vec![([3.0, 12.5, 4.0], 2), ([-1.0, 0.25, 9.5], 0)],
                         held: 112,
                     },
                 ),

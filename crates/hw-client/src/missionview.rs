@@ -14,7 +14,8 @@ use hw_gen::urban::landmarks::LandmarkKind;
 use hw_gen::urban::world::TownWorld;
 use hw_net::ToClient;
 use hw_sim::missions::{
-    CaseKind, ASK_REACH, CLUES, CLUE_REACH, CONTACT_NAME, GANGS, GO, IDLE, INSIDE,
+    CaseKind, ASK_REACH, CLUES, CLUE_REACH, CONTACT_NAME, DONE, GANGS, GO, GUARDED, HOSTAGES, IDLE,
+    INSIDE,
 };
 use std::collections::VecDeque;
 
@@ -32,14 +33,15 @@ pub struct State {
     pub cleared: u8,
     pub groups: u8,
     pub boss: u8,
-    pub clues: Vec<(Vec3, bool)>,
+    /// Clues or hostages: where, and guarded, ready or done.
+    pub clues: Vec<(Vec3, u8)>,
     /// How far along holding the help key is (0-1).
     pub held: f32,
 }
 
 impl State {
     fn found(&self) -> usize {
-        self.clues.iter().filter(|c| c.1).count()
+        self.clues.iter().filter(|c| c.1 == DONE).count()
     }
 }
 
@@ -132,8 +134,9 @@ impl MissionView {
         if self.sparkle <= 0.0 {
             self.sparkle = 0.45;
             if let Some(s) = self.state.as_ref().filter(|s| s.stage == INSIDE) {
-                for (at, found) in &s.clues {
-                    if !found {
+                // Clues sparkle; hostages are there to see.
+                for (at, state) in s.clues.iter().filter(|_| s.kind == CaseKind::Evidence) {
+                    if *state != DONE {
                         crate::fightview::glow_at(
                             world,
                             *at + Vec3::Y * 0.7,
@@ -193,8 +196,12 @@ impl MissionView {
             INSIDE => s
                 .clues
                 .iter()
-                .find(|(at, found)| !found && h.distance(*at) < CLUE_REACH as f32 + 1.5)
-                .map(|_| ("Hold E to search here".to_string(), Some(s.held))),
+                .find(|(at, state)| *state != DONE && h.distance(*at) < CLUE_REACH as f32 + 1.5)
+                .map(|(_, state)| match (s.kind, *state) {
+                    (CaseKind::Hostages, GUARDED) => ("Beat their guards first".to_string(), None),
+                    (CaseKind::Hostages, _) => ("Hold E to untie them".to_string(), Some(s.held)),
+                    _ => ("Hold E to search here".to_string(), Some(s.held)),
+                }),
             _ => None,
         };
         let Some((text, bar)) = prompt else {
@@ -268,6 +275,13 @@ pub fn mark(s: &State, building: &str) -> Option<StoryMark> {
                 s.clues.len().max(CLUES)
             )
         }
+        (INSIDE, CaseKind::Hostages) => {
+            format!(
+                "Free the hostages: {} of {}{rooms}",
+                s.found(),
+                s.clues.len().max(HOSTAGES)
+            )
+        }
         _ => return None,
     };
     Some(StoryMark {
@@ -315,6 +329,15 @@ pub fn lines(before: Option<&State>, now: &State, building: &str) -> Vec<Line> {
                         .to_string(),
                 ));
             }
+            CaseKind::Hostages => {
+                out.push(say(format!(
+                    "{gang} have taken the {building}, and they're holding people inside.",
+                )));
+                out.push(say(
+                    "Three of them, on different floors. Beat their guards, then untie them."
+                        .to_string(),
+                ));
+            }
         },
         (GO, INSIDE) => out.push(say(
             "That's the place. Each room has its own crew: take them one at a time.".to_string(),
@@ -324,10 +347,11 @@ pub fn lines(before: Option<&State>, now: &State, building: &str) -> Vec<Line> {
         )),
         (INSIDE, INSIDE) if now.found() > b.found() => {
             let left = now.clues.len() - now.found();
-            out.push(say(if left == 0 {
-                "That's all of them!".to_string()
-            } else {
-                format!("Got one! {left} more to find.")
+            out.push(say(match (now.kind, left) {
+                (CaseKind::Hostages, 0) => "Everyone's out safe!".to_string(),
+                (CaseKind::Hostages, _) => format!("They're free! {left} more held inside."),
+                (_, 0) => "That's all of them!".to_string(),
+                _ => format!("Got one! {left} more to find."),
             }));
         }
         _ => {}
@@ -349,7 +373,18 @@ mod tests {
             cleared: 1,
             groups: 6,
             boss: 1,
-            clues: (0..3).map(|k| (Vec3::ZERO, k < found)).collect(),
+            clues: (0..3)
+                .map(|k| {
+                    (
+                        Vec3::ZERO,
+                        if k < found {
+                            DONE
+                        } else {
+                            hw_sim::missions::READY
+                        },
+                    )
+                })
+                .collect(),
             held: 0.0,
         }
     }
@@ -382,7 +417,15 @@ mod tests {
             m.goal
         );
         assert!(mark(&st(IDLE, CaseKind::Evidence, 0, 0), b).is_none());
-        for l in brief.iter().chain(&one).chain(&closed) {
+        let freed = lines(
+            Some(&st(INSIDE, CaseKind::Hostages, 0, 1)),
+            &st(INSIDE, CaseKind::Hostages, 0, 2),
+            b,
+        );
+        assert!(freed[0].text.contains("1 more"), "{}", freed[0].text);
+        let m = mark(&st(INSIDE, CaseKind::Hostages, 0, 2), b).expect("a mark");
+        assert!(m.goal.contains("hostages: 2 of 3"), "{}", m.goal);
+        for l in brief.iter().chain(&one).chain(&closed).chain(&freed) {
             assert!(l.text.len() <= 110, "too long for the radio: {}", l.text);
         }
     }

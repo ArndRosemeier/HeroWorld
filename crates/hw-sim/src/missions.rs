@@ -10,9 +10,12 @@
 //! notice follow through doorways and up the stairs by the building's
 //! route map ([`crate::floornav`]).
 //!
-//! Two kinds of case so far:
+//! Three kinds of case:
 //! - **Takeover**: beat the boss.
 //! - **Evidence**: find three clues spread over the floors (hold E at each).
+//! - **Hostages**: three townsfolk held in rooms on different floors; beat
+//!   the room's crew, then hold E by them to untie them. They thank their
+//!   hero and walk out by the route map.
 //!
 //! Done: karma for the heroes near (a share of their next level), and
 //! Annie has the next case. Leave the building for long and the gang
@@ -51,6 +54,17 @@ pub const CLUES: usize = 3;
 /// A hero this near a clue can search it (m), for this long (s).
 pub const CLUE_REACH: f64 = 2.8;
 pub const CLUE_SECONDS: f64 = 3.0;
+/// Hostages a hostage case holds, and the seconds it takes to untie one.
+pub const HOSTAGES: usize = 3;
+pub const FREE_SECONDS: f64 = 2.0;
+/// A clue's or hostage's state, as [`ToClient::Case`] carries it: still
+/// guarded by its room's crew, ready (search it, untie them), done.
+pub const GUARDED: u8 = 0;
+pub const READY: u8 = 1;
+pub const DONE: u8 = 2;
+/// Bystander numbers of hostages (apart from incidents' and street
+/// crimes'): this bit, the case's number and the hostage's.
+const HOSTAGE_IDS: u32 = 0x4000_0000;
 /// Heroes this near the building share the reward (m) ...
 pub const REWARD: f64 = 150.0;
 /// ... this share of what their next level takes.
@@ -72,6 +86,7 @@ pub const INSIDE: u8 = 2;
 pub enum CaseKind {
     Takeover,
     Evidence,
+    Hostages,
 }
 
 impl CaseKind {
@@ -79,12 +94,14 @@ impl CaseKind {
         match self {
             CaseKind::Takeover => 0,
             CaseKind::Evidence => 1,
+            CaseKind::Hostages => 2,
         }
     }
 
     pub fn from_code(c: u8) -> Self {
         match c {
             1 => CaseKind::Evidence,
+            2 => CaseKind::Hostages,
             _ => CaseKind::Takeover,
         }
     }
@@ -151,11 +168,14 @@ struct Room {
     at: DVec3,
 }
 
-/// A clue to find.
+/// A clue to find, or a hostage to free.
 #[derive(Clone, Copy, Debug)]
 struct Clue {
     at: DVec3,
     found: bool,
+    /// A hostage: the room whose crew guards them (in `rooms`), and their
+    /// bystander number.
+    hostage: Option<(usize, u32)>,
 }
 
 /// The cases: the one running and how far along it is.
@@ -223,9 +243,17 @@ impl Missions {
         self.stage = GO;
     }
 
-    /// Where the clues are and whether each is found.
+    /// Where the clues (or hostages) are and whether each is found (freed).
     pub fn clues(&self) -> Vec<(DVec3, bool)> {
         self.clues.iter().map(|k| (k.at, k.found)).collect()
+    }
+
+    /// The hostages' bystander numbers.
+    pub fn hostages(&self) -> Vec<u32> {
+        self.clues
+            .iter()
+            .filter_map(|k| k.hostage.map(|h| h.1))
+            .collect()
     }
 
     /// Does this town have cases (a contact and a building to hold them)?
@@ -244,7 +272,7 @@ impl Missions {
         match (self.stage, self.case) {
             (GO, Some(c)) => Some(entrance(floors, c.building)),
             (INSIDE, Some(c)) => Some(match c.kind {
-                CaseKind::Evidence => self
+                CaseKind::Evidence | CaseKind::Hostages => self
                     .clues
                     .iter()
                     .find(|k| !k.found)
@@ -268,11 +296,7 @@ impl Missions {
         let gangs: Vec<usize> = (0..GANGS.len())
             .filter(|&g| GANGS[g].level <= team)
             .collect();
-        let kind = if rng.chance(0.5) {
-            CaseKind::Takeover
-        } else {
-            CaseKind::Evidence
-        };
+        let kind = [CaseKind::Takeover, CaseKind::Evidence, CaseKind::Hostages][rng.index(3)];
         Some(Case {
             kind,
             building: rng.index(floors.buildings.len()),
@@ -283,6 +307,7 @@ impl Missions {
     /// Every tick: searching at a clue. Once a second: taking a case,
     /// the gang taking its rooms, rooms cleared, the case closed.
     pub(crate) fn step(&mut self, world: &mut World, tick: u64) {
+        crate::incidents::walk_ways(world, tick);
         if !self.available() {
             return;
         }
@@ -291,7 +316,11 @@ impl Missions {
             return;
         }
         if self.stage == INSIDE {
-            self.search(world, &heroes);
+            self.search(world, tick, &heroes);
+        }
+        // Asking for a case: at once, not on the second.
+        if self.stage == IDLE {
+            self.ask(world, &heroes);
         }
         if tick.is_multiple_of(TICK_HZ as u64) {
             self.settle(world, tick, &heroes);
@@ -299,22 +328,29 @@ impl Missions {
         self.tell(world);
     }
 
+    /// A hero holding the help key by Annie gets a case.
+    fn ask(&mut self, world: &mut World, heroes: &[Seen]) {
+        // Where she stands now (pushed about in a scuffle), else her place.
+        let contact = world
+            .query::<(&crate::npcheroes::NpcHero, &Motion)>()
+            .iter(world)
+            .find(|(n, _)| n.index as usize == CONTACT)
+            .map_or(self.contact.expect("available"), |(_, m)| m.0.pos);
+        if heroes
+            .iter()
+            .any(|h| h.help && h.at.distance(contact) < ASK_REACH)
+        {
+            let team = world.resource::<Fights>().team_level;
+            self.case = self.make_case(team);
+            if self.case.is_some() {
+                self.stage = GO;
+            }
+        }
+    }
+
     fn settle(&mut self, world: &mut World, tick: u64, heroes: &[Seen]) {
         let floors = self.floors.clone().expect("available");
         match self.stage {
-            IDLE => {
-                let contact = self.contact.expect("available");
-                if heroes
-                    .iter()
-                    .any(|h| h.help && h.at.distance(contact) < ASK_REACH)
-                {
-                    let team = world.resource::<Fights>().team_level;
-                    self.case = self.make_case(team);
-                    if self.case.is_some() {
-                        self.stage = GO;
-                    }
-                }
-            }
             GO => {
                 let c = self.case.expect("a case");
                 let at = entrance(&floors, c.building);
@@ -340,7 +376,7 @@ impl Missions {
                 self.away_since = None;
                 let done = match c.kind {
                     CaseKind::Takeover => self.boss.as_ref().is_some_and(|b| beaten(world, b.spot)),
-                    CaseKind::Evidence => self.clues.iter().all(|k| k.found),
+                    CaseKind::Evidence | CaseKind::Hostages => self.clues.iter().all(|k| k.found),
                 };
                 if done {
                     self.close(world, heroes, at);
@@ -446,7 +482,12 @@ impl Missions {
         self.rooms = placed.into_iter().map(|p| p.0).collect();
         self.boss = place(world, &top, BOSS_SIZE + extra, Some(gang.boss), true);
         self.clues.clear();
-        if c.kind == CaseKind::Evidence {
+        if c.kind != CaseKind::Takeover {
+            let want = if c.kind == CaseKind::Hostages {
+                HOSTAGES
+            } else {
+                CLUES
+            };
             // In rooms on different floors (high ones first), tucked away
             // from where each room's group stands; a second round fills
             // up when there are fewer floors than clues.
@@ -455,7 +496,7 @@ impl Missions {
             let mut used: Vec<usize> = Vec::new();
             for second in [false, true] {
                 for &i in &order {
-                    if self.clues.len() >= CLUES || used.contains(&i) {
+                    if self.clues.len() >= want || used.contains(&i) {
                         continue;
                     }
                     let y = chosen[i].2;
@@ -464,7 +505,21 @@ impl Missions {
                         continue;
                     }
                     if let Some(at) = far_corner(&solids, b, &chosen[i].1, y, self.rooms[i].at) {
-                        self.clues.push(Clue { at, found: false });
+                        let hostage = (c.kind == CaseKind::Hostages).then(|| {
+                            let id = HOSTAGE_IDS
+                                | ((self.closed as u32 & 0xffff) << 4)
+                                | self.clues.len() as u32;
+                            // Hands up, facing their guards.
+                            let g = self.rooms[i].at;
+                            let face = DVec2::new(g.x - at.x, g.z - at.z).normalize_or(DVec2::X);
+                            crate::incidents::spawn_bystander(world, tick, id, at, face, None);
+                            (i, id)
+                        });
+                        self.clues.push(Clue {
+                            at,
+                            found: false,
+                            hostage,
+                        });
                         used.push(i);
                     }
                 }
@@ -487,6 +542,19 @@ impl Missions {
             .filter(|(_, _, en)| spots.contains(&en.spot))
             .map(|(e, n, _)| (n.0, e))
             .collect();
+        let held: Vec<u32> = self
+            .clues
+            .iter()
+            .filter(|k| !k.found)
+            .filter_map(|k| k.hostage.map(|h| h.1))
+            .collect();
+        gone.extend(
+            world
+                .query::<(Entity, &Net, &crate::incidents::Bystander)>()
+                .iter(world)
+                .filter(|(_, _, b)| held.contains(&b.incident))
+                .map(|(e, n, _)| (n.0, e)),
+        );
         gone.sort_by_key(|g| g.0);
         for (id, e) in gone {
             world.resource_mut::<Fights>().paths.remove(&id);
@@ -505,22 +573,77 @@ impl Missions {
         self.held = 0.0;
     }
 
-    /// Heroes holding the help key at a clue.
-    fn search(&mut self, _world: &mut World, heroes: &[Seen]) {
-        let Some(k) = self.clues.iter().position(|k| {
-            !k.found
+    /// Heroes holding the help key at a clue, or by a hostage whose
+    /// guards are beaten.
+    fn search(&mut self, world: &mut World, tick: u64, heroes: &[Seen]) {
+        let states: Vec<u8> = (0..self.clues.len())
+            .map(|k| self.state(world, k))
+            .collect();
+        let Some(k) = (0..self.clues.len()).find(|&k| {
+            states[k] == READY
                 && heroes
                     .iter()
-                    .any(|h| h.help && h.at.distance(k.at) < CLUE_REACH)
+                    .any(|h| h.help && h.at.distance(self.clues[k].at) < CLUE_REACH)
         }) else {
             self.held = (self.held - DT).max(0.0);
             return;
         };
         self.held += DT;
-        if self.held + 1e-9 >= CLUE_SECONDS {
+        if self.held + 1e-9 >= self.hold_seconds() {
             self.clues[k].found = true;
             self.held = 0.0;
+            if let Some((_, id)) = self.clues[k].hostage {
+                self.set_free(world, tick, id);
+            }
         }
+    }
+
+    /// Seconds of holding E a clue or a hostage takes.
+    fn hold_seconds(&self) -> f64 {
+        match self.case.map(|c| c.kind) {
+            Some(CaseKind::Hostages) => FREE_SECONDS,
+            _ => CLUE_SECONDS,
+        }
+    }
+
+    /// Clue or hostage `k`: guarded, ready or done.
+    fn state(&self, world: &mut World, k: usize) -> u8 {
+        let c = &self.clues[k];
+        if c.found {
+            DONE
+        } else if c.hostage.is_some_and(|(room, _)| {
+            self.rooms
+                .get(room)
+                .is_some_and(|r| !subdued(world, r.spot))
+        }) {
+            GUARDED
+        } else {
+            READY
+        }
+    }
+
+    /// A hostage untied: they thank their hero, then walk out of the
+    /// building by its route map and a few steps down the street.
+    fn set_free(&mut self, world: &mut World, tick: u64, id: u32) {
+        crate::incidents::release_bystanders(world, tick, id);
+        let (Some(floors), Some(c)) = (self.floors.clone(), self.case) else {
+            return;
+        };
+        let solids = world.resource::<crate::Solids>().0.clone();
+        let mut q = world.query::<(Entity, &Motion, &crate::incidents::Bystander)>();
+        let Some((e, from)) = q
+            .iter(world)
+            .find(|(_, _, b)| b.incident == id)
+            .map(|(e, m, _)| (e, m.0.pos))
+        else {
+            return;
+        };
+        let b = &floors.buildings[c.building];
+        let door = b.to_town(b.graph.front());
+        let out = DVec2::new(door.x - b.pos.x, door.z - b.pos.y).normalize_or(DVec2::X) * 8.0;
+        let mut way = walk_out(&solids, &floors, from, door);
+        way.push(door + DVec3::new(out.x, 0.0, out.y));
+        world.entity_mut(e).insert(crate::incidents::WayOut(way));
     }
 
     /// The case is closed: karma for the heroes near, and the gang that is
@@ -548,7 +671,7 @@ impl Missions {
             Some(b) if beaten(world, b.spot) => 2,
             Some(_) => 1,
         };
-        let held = ((self.held / CLUE_SECONDS).clamp(0.0, 1.0) * 255.0) as u8 & !15;
+        let held = ((self.held / self.hold_seconds()).clamp(0.0, 1.0) * 255.0) as u8 & !15;
         let news = ToClient::Case {
             stage: self.stage,
             closed: self.closed,
@@ -558,10 +681,8 @@ impl Missions {
             cleared,
             groups,
             boss,
-            clues: self
-                .clues
-                .iter()
-                .map(|k| (k.at.as_vec3().to_array(), k.found))
+            clues: (0..self.clues.len())
+                .map(|k| (self.clues[k].at.as_vec3().to_array(), self.state(world, k)))
                 .collect(),
             held,
         };
@@ -585,6 +706,52 @@ impl Missions {
     pub fn take_news(&mut self) -> Vec<ToClient> {
         std::mem::take(&mut self.news)
     }
+}
+
+/// The way from `from` in a building to its door, every flat stretch
+/// round the furniture.
+fn walk_out(
+    solids: &crate::collision::Obstacles,
+    floors: &Floors,
+    from: DVec3,
+    door: DVec3,
+) -> Vec<DVec3> {
+    let Some(legs) = floors.route(from, door, false) else {
+        return vec![door];
+    };
+    let mut out = Vec::new();
+    let mut at = from;
+    for leg in legs {
+        let flat = (leg.to.y - at.y).abs() < 0.3;
+        if flat && !crate::nav::walkable_line(solids, at, leg.to) {
+            if let Some(p) = crate::nav::find_path(solids, at, leg.to) {
+                out.extend(p);
+            }
+        }
+        out.push(leg.to);
+        at = leg.to;
+    }
+    if out.last().is_none_or(|p| p.distance(door) > 0.1) {
+        out.push(door);
+    }
+    out
+}
+
+/// Is a room's group all down (cuffed, or carried off by the drone) or gone?
+fn subdued(world: &mut World, spot: usize) -> bool {
+    beaten(world, spot)
+        || (world
+            .resource::<Fights>()
+            .spots
+            .get(spot)
+            .is_some_and(|s| s.groups > 0)
+            && world
+                .query::<(&combat::Enemy, &Fighter)>()
+                .iter(world)
+                .filter(|(e, _)| e.spot == spot)
+                .all(|(_, f)| {
+                    !matches!(f.status, hw_net::Status::Standing | hw_net::Status::Knocked)
+                }))
 }
 
 /// Is a room's group all beaten (or gone)?

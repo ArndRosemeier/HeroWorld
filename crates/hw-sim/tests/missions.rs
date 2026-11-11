@@ -174,3 +174,108 @@ fn a_hero_takes_a_case_and_closes_it() {
     // The gang that was left has gone.
     assert!(sim.enemies().is_empty());
 }
+
+fn hold(sim: &mut Sim, hero: hw_core::NetId, at: DVec3, seconds: f64) {
+    sim.set_input(
+        PlayerId(1),
+        InputState {
+            revive: true,
+            ..InputState::default()
+        },
+    );
+    for _ in 0..(seconds * TICK_HZ as f64) as usize {
+        put(sim, hero, at);
+        sim.step();
+    }
+    sim.set_input(PlayerId(1), InputState::default());
+    sim.step();
+}
+
+/// Where the hostages are now (bystanders of the case).
+fn hostages(sim: &mut Sim, ids: &[u32]) -> Vec<DVec3> {
+    sim.world
+        .query::<(&hw_sim::Motion, &hw_sim::incidents::Bystander)>()
+        .iter(&sim.world)
+        .filter(|(_, b)| ids.contains(&b.incident))
+        .map(|(m, _)| m.0.pos)
+        .collect()
+}
+
+#[test]
+fn hostages_are_freed_room_by_room_and_walk_out() {
+    let (mut sim, floors) = town();
+    let b = &floors.buildings[0];
+    let front = b.to_town(b.graph.front());
+    let hero = sim.spawn_hero(PlayerId(1), front);
+    sim.missions.force(
+        &mut sim.world,
+        Case {
+            kind: CaseKind::Hostages,
+            building: 0,
+            gang: 1,
+        },
+    );
+    for _ in 0..TICK_HZ * 3 {
+        put(&mut sim, hero, front);
+        sim.step();
+    }
+    assert_eq!(sim.missions.stage, missions::INSIDE);
+    let ids = sim.missions.hostages();
+    assert_eq!(ids.len(), missions::HOSTAGES);
+    let held = sim.missions.clues();
+    assert_eq!(hostages(&mut sim, &ids).len(), missions::HOSTAGES);
+    let mut ys: Vec<i64> = held.iter().map(|c| (c.0.y * 10.0).round() as i64).collect();
+    ys.sort();
+    ys.dedup();
+    assert!(ys.len() >= 2, "hostages on one floor: {held:?}");
+    // Guarded: holding E by them does nothing while their crew stands.
+    hold(&mut sim, hero, held[0].0, missions::FREE_SECONDS * 1.5);
+    assert!(
+        !sim.missions.clues()[0].1,
+        "untied under their guards' noses"
+    );
+    // Every crew down (cuffed, waiting for the drone).
+    for (id, _, _, mut f) in sim.enemies() {
+        f.health = 0.0;
+        f.status = hw_net::Status::Down;
+        sim.set_fighter(id, f);
+    }
+    sim.step();
+    let karma = sim.sheet(PlayerId(1)).expect("a sheet").karma;
+    for (at, _) in &held {
+        hold(&mut sim, hero, *at, missions::FREE_SECONDS * 1.3);
+    }
+    assert!(
+        sim.missions.clues().iter().all(|c| c.1),
+        "{:?}",
+        sim.missions.clues()
+    );
+    // Out of the hero's way, the freed walk out: down the stairs, out of
+    // the door and gone.
+    let mut lowest = f64::MAX;
+    let mut last = Vec::new();
+    for _ in 0..TICK_HZ * 150 {
+        put(&mut sim, hero, front);
+        sim.step();
+        let now = hostages(&mut sim, &ids);
+        if now.is_empty() {
+            break;
+        }
+        lowest = now.iter().map(|p| p.y).fold(lowest, f64::min);
+        last = now;
+    }
+    assert!(
+        hostages(&mut sim, &ids).is_empty(),
+        "still inside after 150 s at {last:.1?}"
+    );
+    assert!((lowest - GROUND_Y).abs() < 0.3, "never came down: {lowest}");
+    for p in &last {
+        assert!(
+            p.distance(front) < 12.0,
+            "gone at {p:.1?}, not by the door {front:.1?}"
+        );
+    }
+    assert_eq!(sim.missions.closed, 1);
+    let after = sim.sheet(PlayerId(1)).expect("a sheet").karma;
+    assert!(after > karma, "karma {karma} -> {after}");
+}

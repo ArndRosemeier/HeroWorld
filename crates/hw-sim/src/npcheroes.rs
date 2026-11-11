@@ -163,8 +163,11 @@ pub fn step(world: &mut World, tick: u64, open: &[Incident]) {
                 .iter()
                 .enumerate()
                 .filter(|(_, n)| n.2.job == Job::Home && n.4.health >= n.4.max_health * READY_AT)
-                // The story's contact keeps the hall.
-                .filter(|(_, n)| n.2.index != crate::story::CONTACT)
+                // The story's contact and the cases' keep the hall.
+                .filter(|(_, n)| {
+                    n.2.index != crate::story::CONTACT
+                        && n.2.index as usize != crate::missions::CONTACT
+                })
                 .min_by(|a, b| {
                     let da = a.1 .3.pos.distance(inc.at);
                     let db = b.1 .3.pos.distance(inc.at);
