@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.200 (2026-11-11)
+
+- The town map (M) now shows what the minimap shows: every house and street up close, blocks further out, parks, water and the villains' quarter.
+- Drag the map with the mouse to look around, and zoom with the wheel. "Back to me" brings you home; a scale bar shows the distances.
 ## 0.199 (2026-11-11)
 
 - Villains find their way through the Daily Comet building, the Atlas Assurance hall and the Zenith Radio house: run upstairs and the ones who saw you follow, through the doorways, round the desks and up the stairs.

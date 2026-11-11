@@ -1,7 +1,7 @@
 //! The minimap: a round street map in the bottom right corner that turns
 //! with the camera (what you look at is up), zooms out as you fly higher,
 //! and marks you, your friends, the landmarks and every call on the radio.
-//! N hides it; M still opens the whole town map.
+//! N hides it; M opens the town map (`townmap.rs`), drawn from the same tiles.
 //!
 //! The map is drawn from tiles of map pixels (`mapraster.rs`) made by a
 //! worker thread round the player and forgotten when far, so it streams
@@ -16,7 +16,6 @@ use crate::radioview::Radio;
 use engine::prelude::*;
 use engine::ui::egui;
 use glam::DVec2;
-use hw_gen::urban::landmarks::LandmarkKind;
 use hw_gen::urban::world::TownWorld;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -307,20 +306,7 @@ impl Minimap {
         for l in &town.landmarks {
             let (p, inside) = to_screen(l.pos);
             if inside {
-                let c = match l.kind {
-                    LandmarkKind::AetherSpire => egui::Color32::from_rgb(120, 200, 255),
-                    LandmarkKind::Lighthouse => egui::Color32::from_rgb(250, 250, 250),
-                    LandmarkKind::TeslaTower => egui::Color32::from_rgb(140, 220, 90),
-                    LandmarkKind::HeroHall => egui::Color32::from_rgb(240, 190, 70),
-                    LandmarkKind::MooringMast => egui::Color32::from_rgb(230, 70, 60),
-                    LandmarkKind::RocketGantry => egui::Color32::from_rgb(235, 90, 60),
-                    LandmarkKind::AtomicPlant => egui::Color32::from_rgb(90, 175, 255),
-                    LandmarkKind::MoleDrill => egui::Color32::from_rgb(200, 120, 60),
-                    LandmarkKind::WeatherTower => egui::Color32::from_rgb(110, 180, 235),
-                    LandmarkKind::RobotWorks => egui::Color32::from_rgb(200, 60, 50),
-                    LandmarkKind::Hospital => egui::Color32::from_rgb(120, 255, 200),
-                    LandmarkKind::CometBuilding => egui::Color32::from_rgb(255, 214, 120),
-                };
+                let c = crate::townmap::landmark_colour(l.kind);
                 painter.circle_filled(p, 4.5, c);
                 painter.circle_stroke(
                     p,

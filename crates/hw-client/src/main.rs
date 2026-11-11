@@ -579,7 +579,6 @@ fn main() -> EngineResult<()> {
     let mut chat = hw_client::chat::ChatLog::new();
     // The pointer was locked when the chat line opened: lock it again after.
     let mut chat_relock = false;
-    let mut town_map = view == "map";
     // What was drawn last frame (for targeting), and a power key pressed
     // but not yet sent with a tick.
     let mut drawn: Vec<hw_net::EntityState> = Vec::new();
@@ -672,6 +671,9 @@ fn main() -> EngineResult<()> {
     let mut door_view = hw_client::doorview::DoorView::new();
     // The minimap (N) and the town's sounds and music.
     let mut minimap = hw_client::minimap::Minimap::new(generated.world.clone());
+    // The town map (M).
+    let mut town_map = hw_client::townmap::TownMap::new(generated.world.clone());
+    town_map.open = view == "map";
     let mut sounds = hw_client::soundscape::Soundscape::new();
     let mut hero_was: Option<(Vec3, f32)> = None;
     let mut hero_speed = 0.0f32;
@@ -1984,6 +1986,7 @@ fn main() -> EngineResult<()> {
                     solids = generated.obstacles.clone();
                     town = TownView::new(generated.world.clone());
                     minimap = hw_client::minimap::Minimap::new(generated.world.clone());
+                    town_map = hw_client::townmap::TownMap::new(generated.world.clone());
                     sounds.stop(world);
                     traffic = hw_sim::traffic::Traffic::new(generated.area.clone());
                     citizens = std::sync::Arc::new(hw_sim::citizens::Citizens::new(
@@ -2410,7 +2413,7 @@ fn main() -> EngineResult<()> {
                             let changed = town.cells_near(town.cut_focus, CUT_REACH);
                             town.rebuild(world, changed);
                         }
-                        A::Map => town_map = !town_map,
+                        A::Map => town_map.toggle(radio.hero_at),
                         A::Rebuild(surface) => {
                             quality_log.mark(if surface {
                                 "redo window surface"
@@ -4620,18 +4623,6 @@ fn main() -> EngineResult<()> {
                 let look = cam.target() - cam.eye();
                 hw_client::hitch::mark("compass and map");
                 hw_client::dispatchview::compass(frame.ui.ctx(), cam.eye(), look, &radio, fighting);
-                if frame.input.pressed(Key::M) {
-                    town_map = !town_map;
-                }
-                hw_client::dispatchview::map(
-                    frame.ui.ctx(),
-                    &mut town_map,
-                    &generated.world,
-                    hero_at,
-                    look,
-                    &radio,
-                    fighting,
-                );
                 // The minimap (N hides it) and the town's sounds.
                 hw_client::hitch::mark("minimap");
                 let eye = cam.eye();
@@ -4655,6 +4646,27 @@ fn main() -> EngineResult<()> {
                     fighting,
                     frame.input.pressed(Key::N) && !on_ui_keys(frame),
                 );
+                // The town map (M): the minimap's tiles, the whole screen;
+                // the pointer is let go while it is open.
+                if frame.input.pressed(Key::M) {
+                    town_map.toggle(hero_at);
+                }
+                if town_map.open && world.pointer_lock() {
+                    world.set_pointer_lock(false);
+                    town_map.relock = true;
+                }
+                town_map.show(
+                    frame.ui.ctx(),
+                    &generated.world,
+                    hero_at,
+                    look,
+                    &mates,
+                    &radio,
+                    fighting,
+                );
+                if !town_map.open && std::mem::take(&mut town_map.relock) {
+                    world.set_pointer_lock(true);
+                }
                 if let Some(h) = hero_at {
                     if let Some((was, _)) = hero_was {
                         let moved = glam::Vec2::new(h.x - was.x, h.z - was.z).length();

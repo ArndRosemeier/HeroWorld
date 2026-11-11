@@ -75,6 +75,7 @@ pub mod sweeperview;
 pub mod teslaview;
 pub mod tilestream;
 pub mod title;
+pub mod townmap;
 pub mod townmesh;
 pub mod trafficview;
 pub mod tray;

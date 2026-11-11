@@ -131,7 +131,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | E (hold) | Revive a downed teammate; help trapped people out; pick up the hurt |
 | H | Call the medical drone when you are down |
 | G | Hail a flying taxi (G again hops out mid-air) |
-| M | Town map with the radio's calls |
+| M | Town map (drag to move, wheel to zoom) with the radio's calls |
 | T | Police visor on or off (a new call switches it on) |
 | N | Minimap on or off |
 | O | Free camera |
@@ -1465,6 +1465,14 @@ on the way. Rides are free.
   fly higher; marks you, friends, landmarks and radio calls; `minimap.rs`, `mapraster.rs`).
 - **Windows:** powers (B: karma, level, shop, give up, faction standings), map (M), menu
   (Escape: settings, controls, quit).
+- **Town map** (M, or Escape to close; `townmap.rs`): fills the screen, north up, with the
+  minimap's detail from the same tiles: every house when close (closer than about 1.6 m a
+  pixel), blocks and streets further out (up to about 4 m a pixel), main roads beyond; parks,
+  water and the villains' quarter tinted. Landmarks with names, radio calls, the story's
+  star, friends and you. Drag to move, wheel to zoom round the pointer (0.35 m a point up to
+  the whole town), "Back to me" re-centres; a scale bar bottom left. Only tiles in view are
+  made, on two worker threads, nearest first; at most 320 kept. `HW_MAP_MPP` sets the
+  zoom it opens at, `HW_VIEW=map` opens it.
 - **Chat window** (bottom left, beside the power tray or above it on narrow screens;
   drag its corner to resize; `hw-client/src/chat.rs`): one log with a tab per channel, as in
   EverQuest and City of Heroes. Today there is one channel, **Local**: what is said near the
