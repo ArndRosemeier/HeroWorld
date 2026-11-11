@@ -1898,9 +1898,13 @@ pub fn build_sharing(
     }
     if matches!(who, Who::Villain(..)) {
         poses::add_cuffed_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+        // Street crime: threats, snatches, tags, smashing (see `crimeview`).
+        poses::add_menace_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
     if matches!(who, Who::Citizen(_)) {
         poses::add_hands_up_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+        // A crime's victim (see `crimeview`).
+        poses::add_victim_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         // Drivers and passengers (see `riderview`).
         poses::add_seated_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }

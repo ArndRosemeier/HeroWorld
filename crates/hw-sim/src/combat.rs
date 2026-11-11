@@ -977,6 +977,13 @@ pub struct Enemy {
     pub provoke: Option<f64>,
     /// The hero its group warned off, and when.
     pub warned: Option<(NetId, u64)>,
+    /// Which of its kind's looks it wears, when it must be a particular
+    /// one (a street crook stepped in on, who was drawn before: see
+    /// [`crate::crimes`]); else its id picks.
+    pub look: Option<u8>,
+    /// Making off from a crime nobody stopped: it hurries to its `home`,
+    /// far down the street, and is gone there (see [`crate::incidents`]).
+    pub leaving: bool,
 }
 
 /// A perched villain notices and reaches this much farther.
@@ -1651,6 +1658,8 @@ pub(crate) fn spawn_enemy(
             turf: spot_turf,
             provoke: spot_provoke,
             warned: None,
+            look: None,
+            leaving: false,
         },
         LastChange(tick),
     ));
@@ -4401,7 +4410,9 @@ fn enemies_act(
                             input.move_z = d.y as f32;
                         }
                     } else if flat.length() > 1.0 {
-                        let d = heading(paths, solids, id, tick, here, en.home) * 0.3;
+                        // Walking back to its corner; making off at a jog.
+                        let pace = if en.leaving { 0.62 } else { 0.3 };
+                        let d = heading(paths, solids, id, tick, here, en.home) * pace;
                         input.move_x = d.x as f32;
                         input.move_z = d.y as f32;
                     } else {

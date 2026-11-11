@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.184 (2026-11-11)
+
+- The gangs now do their evil where you can see it. In the rough streets a Chrome Jacket snatches a lady's handbag and sprints off with it, two greasers hassle a passer-by, shopkeepers are shaken down at their doors, Syndicate gunsels collect protection money after dark, the gang sprays its sign on walls while one keeps a lookout, and mutant brutes smash lamp posts.
+- Walk up to a crime and you step in: the crooks turn on you, and the victim thanks you once you've dealt with them (extra karma).
+- Calls nobody answers play out: the crooks run off with their loot (a handbag, swag sacks, crates), pirates climb back up their ladders and the Iron Legion marches its captives into the capsule. Catch up with them and it's a fight again.
+- Rampaging mutants and loose lab technicians smash up the street while nobody stops them.
+
 ## 0.183 (2026-11-11)
 
 - Aliens! Flying saucers from Zorrak, the small quick moon, now raid the town once your team reaches level 2: a chrome saucer hangs over a street and beams two townsfolk up its green tractor beam while bug-eyed zappers, grabbers and their big-brained Overlord keep everyone back. Beat them and the beam switches off and the saucer zips away. The saucer is solid: you can land on it.

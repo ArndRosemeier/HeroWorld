@@ -151,6 +151,11 @@ impl Session {
             .world
             .resource_mut::<hw_sim::combat::Fights>()
             .pod_start = std::env::var_os("HW_POD").is_some();
+        // `HW_TIMEOUT=<s>`: calls end unanswered this soon (and their
+        // crooks make off).
+        host.sim.incidents.timeout = std::env::var("HW_TIMEOUT")
+            .ok()
+            .and_then(|v| v.parse().ok());
         // `HW_CARRY=1`: that rescue starts with the hurt one in our arms.
         host.sim.incidents.carried_start = std::env::var_os("HW_CARRY").is_some();
         // `HW_BESIDE=1`: by the next one trapped (`HW_HOLD=1` holds E).

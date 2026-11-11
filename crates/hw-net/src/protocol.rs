@@ -986,6 +986,22 @@ pub enum FxKind {
     Buff,
     /// Something burning took `amount` damage over time (`to`).
     Burn,
+    /// A villain carries loot (`from`): `amount` says what (see
+    /// [`loot`]); 0 puts it down.
+    Loot,
+}
+
+/// What a villain carries off ([`FxKind::Loot`]).
+pub mod loot {
+    pub const NONE: u16 = 0;
+    pub const HANDBAG: u16 = 1;
+    pub const CASH: u16 = 2;
+    pub const ENVELOPE: u16 = 3;
+    pub const SPRAY_CAN: u16 = 4;
+    /// A sack of a shop's takings.
+    pub const SACK: u16 = 5;
+    /// A crate of a shop's goods (sky pirates).
+    pub const CRATE: u16 = 6;
 }
 
 /// Why a power a hero asked for did not fire ([`FxKind::Fizzle`]).
@@ -1065,6 +1081,7 @@ impl FxKind {
             FxKind::Buff => 54,
             FxKind::Burn => 55,
             FxKind::Admitted => 56,
+            FxKind::Loot => 57,
         }
     }
 
@@ -1126,6 +1143,7 @@ impl FxKind {
             54 => FxKind::Buff,
             55 => FxKind::Burn,
             56 => FxKind::Admitted,
+            57 => FxKind::Loot,
             _ => return Err(WireError),
         })
     }
@@ -1301,6 +1319,14 @@ pub enum ToClient {
         level: u8,
         held: u8,
     },
+    /// A street crime (see `hw_sim::streetlife::crime`): its place's key
+    /// and slot, and how it stands: 1 a hero stepped in (its crooks and
+    /// victim are real now), 2 stopped, 3 they got away.
+    Crime {
+        place: u64,
+        slot: i64,
+        state: u8,
+    },
 }
 
 /// Most broken elements in one [`ToClient::Damage`] (it must fit a packet
@@ -1377,6 +1403,7 @@ impl ToClient {
             ToClient::Alarm { .. } => 4 + 1 + 12 + 4 + 1,
             ToClient::AreaMoved { .. } => 16,
             ToClient::Story { .. } => 1 + 1 + 12 + 1 + 1,
+            ToClient::Crime { .. } => 8 + 8 + 1,
         }
     }
 
@@ -1559,6 +1586,9 @@ impl ToClient {
                 }
                 w.u8(*level).u8(*held);
             }
+            ToClient::Crime { place, slot, state } => {
+                w.u8(22).u64(*place).u64(*slot as u64).u8(*state);
+            }
         }
     }
 
@@ -1728,6 +1758,11 @@ impl ToClient {
                 at: [r.f32()?, r.f32()?, r.f32()?],
                 level: r.u8()?,
                 held: r.u8()?,
+            },
+            22 => ToClient::Crime {
+                place: r.u64()?,
+                slot: r.u64()? as i64,
+                state: r.u8()?,
             },
             15 => ToClient::Incident {
                 id: r.u32()?,
@@ -2331,6 +2366,14 @@ mod tests {
                         at: [10.0, 2.5, -40.0],
                         level: 5,
                         held: 128,
+                    },
+                ),
+                (
+                    9,
+                    ToClient::Crime {
+                        place: 0xdead_beef_0123,
+                        slot: -3,
+                        state: 1,
                     },
                 ),
                 (

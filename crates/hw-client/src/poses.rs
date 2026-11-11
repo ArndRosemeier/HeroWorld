@@ -231,6 +231,261 @@ pub fn add_visor_tap_clips(model: &mut AnimatedModel) -> Result<(), String> {
     Ok(())
 }
 
+/// A pose from `(bone, child, direction)` aims and `(bone, axis, angle)`
+/// turns, standing.
+fn stand(aims: Vec<Aim>, turns: Vec<(&'static str, Vec3, f32)>) -> Pose {
+    Pose {
+        aims,
+        turns,
+        lift: 0.0,
+        seated: false,
+        lay: None,
+    }
+}
+
+/// Smoothstep of `k` (0..1).
+fn ease(k: f32) -> f32 {
+    let k = k.clamp(0.0, 1.0);
+    k * k * (3.0 - 2.0 * k)
+}
+
+/// The street crooks' clips (see `crimeview`), for every villain:
+/// "threaten" (a finger jabbing at someone's face, the other fist on the
+/// hip), "shove" (both hands thrust out), "grab" (a snatch at a bag and a
+/// yank back), "laugh" (hands on the belly, rocking back), "count" (thumbing
+/// through the take, head down), "spray" (an arm out, sweeping a can over
+/// a wall), "smash" (a two-fisted blow brought down from overhead),
+/// "lookout" (arms folded, head turning up and down the street) and
+/// "lounge" (slouched on one leg, hands at the hips).
+pub fn add_menace_clips(model: &mut AnimatedModel) -> Result<(), String> {
+    use std::f32::consts::TAU;
+    let hip_l = || {
+        [
+            aim("upperarm_l", "lowerarm_l", 0.75, -0.55, -0.1),
+            aim("lowerarm_l", "hand_l", -0.6, -0.1, 0.15),
+        ]
+    };
+    let threaten = make_clip(model, "threaten", 1.6, |t| {
+        // Two jabs a loop, leaning in.
+        let k = (t * TAU * 2.0).sin().max(0.0);
+        let mut aims = vec![
+            aim("upperarm_r", "lowerarm_r", -0.25, -0.05 + 0.05 * k, 0.95),
+            aim("lowerarm_r", "hand_r", -0.05, 0.12 - 0.08 * k, 1.0),
+        ];
+        aims.extend(hip_l());
+        stand(
+            aims,
+            vec![
+                ("spine_03", Vec3::X, 0.1 + 0.08 * k),
+                ("head", Vec3::X, -0.12),
+                ("head", Vec3::Z, 0.08 * (t * TAU).sin()),
+            ],
+        )
+    })?;
+    let shove = make_clip(model, "shove", 1.4, |t| {
+        // A thrust at 0.15, held, drawn back for the next.
+        let k = ease(if t < 0.15 {
+            t / 0.15
+        } else {
+            1.0 - (t - 0.15) / 0.85
+        });
+        stand(
+            vec![
+                aim(
+                    "upperarm_l",
+                    "lowerarm_l",
+                    0.2,
+                    -0.35 + 0.3 * k,
+                    0.55 + 0.4 * k,
+                ),
+                aim("lowerarm_l", "hand_l", 0.02, 0.15, 1.0),
+                aim(
+                    "upperarm_r",
+                    "lowerarm_r",
+                    -0.2,
+                    -0.35 + 0.3 * k,
+                    0.55 + 0.4 * k,
+                ),
+                aim("lowerarm_r", "hand_r", -0.02, 0.15, 1.0),
+            ],
+            vec![
+                ("spine_03", Vec3::X, 0.05 + 0.18 * k),
+                ("head", Vec3::X, -0.1),
+            ],
+        )
+    })?;
+    let grab = make_clip(model, "grab", 1.0, |t| {
+        // Reach in by 0.35, yank back by 0.6, the prize held close.
+        let reach = ease(t / 0.35);
+        let yank = ease((t - 0.35) / 0.25);
+        let up = Vec3::new(-0.2, -0.85, 0.2)
+            .lerp(Vec3::new(-0.2, -0.35, 0.95), reach)
+            .lerp(Vec3::new(-0.35, -0.8, -0.35), yank);
+        let fore = Vec3::new(-0.05, -0.6, 0.6)
+            .lerp(Vec3::new(-0.05, -0.15, 1.0), reach)
+            .lerp(Vec3::new(0.2, 0.1, 0.95), yank);
+        stand(
+            vec![
+                aim("upperarm_r", "lowerarm_r", up.x, up.y, up.z),
+                aim("lowerarm_r", "hand_r", fore.x, fore.y, fore.z),
+            ],
+            vec![
+                ("spine_03", Vec3::X, 0.18 * reach * (1.0 - yank)),
+                ("spine_02", Vec3::Y, -0.25 * yank),
+            ],
+        )
+    })?;
+    let laugh = make_clip(model, "laugh", 1.2, |t| {
+        let shake = (t * TAU * 6.0).sin();
+        stand(
+            vec![
+                aim("upperarm_l", "lowerarm_l", 0.35, -0.85, 0.3),
+                aim("lowerarm_l", "hand_l", -0.75, 0.05, 0.6),
+                aim("upperarm_r", "lowerarm_r", -0.35, -0.85, 0.3),
+                aim("lowerarm_r", "hand_r", 0.75, 0.05, 0.6),
+            ],
+            vec![
+                ("spine_03", Vec3::X, -0.16 + 0.04 * shake),
+                ("head", Vec3::X, -0.32 + 0.05 * shake),
+            ],
+        )
+    })?;
+    let count = make_clip(model, "count", 2.0, |t| {
+        // The right thumb flicks the notes four times a loop.
+        let flick = (t * TAU * 4.0).sin().max(0.0);
+        stand(
+            vec![
+                aim("upperarm_l", "lowerarm_l", 0.22, -0.85, 0.4),
+                aim("lowerarm_l", "hand_l", -0.3, 0.1, 1.0),
+                aim("upperarm_r", "lowerarm_r", -0.22, -0.85, 0.4),
+                aim("lowerarm_r", "hand_r", 0.3, 0.12 + 0.08 * flick, 1.0),
+            ],
+            vec![("head", Vec3::X, 0.38), ("spine_03", Vec3::X, 0.06)],
+        )
+    })?;
+    let spray = make_clip(model, "spray", 2.4, |t| {
+        // A zigzag over the wall: side to side twice, up and down thrice.
+        let x = (t * TAU * 2.0).sin();
+        let y = (t * TAU * 3.0).cos();
+        let d = Vec3::new(-0.15 + 0.35 * x, 0.1 + 0.18 * y, 0.95);
+        let mut aims = vec![
+            aim("upperarm_r", "lowerarm_r", d.x - 0.1, d.y - 0.05, d.z),
+            aim("lowerarm_r", "hand_r", d.x, d.y, d.z),
+        ];
+        aims.extend(hip_l());
+        stand(
+            aims,
+            vec![("head", Vec3::Y, -0.25 * x), ("head", Vec3::X, -0.1 * y)],
+        )
+    })?;
+    let smash = make_clip(model, "smash", 1.3, |t| {
+        // Fists raised by 0.45, brought down at 0.55, back up slowly.
+        let up = ease(t / 0.45) * (1.0 - ease((t - 0.45) / 0.1));
+        let down = ease((t - 0.45) / 0.1) * (1.0 - ease((t - 0.6) / 0.4));
+        let arm = |s: f32| {
+            Vec3::new(0.2 * s, -0.9, 0.3)
+                .lerp(Vec3::new(0.15 * s, 0.95, 0.25), up)
+                .lerp(Vec3::new(0.08 * s, -0.45, 0.9), down)
+        };
+        let fore = |s: f32| {
+            Vec3::new(0.05 * s, -0.6, 0.6)
+                .lerp(Vec3::new(-0.1 * s, 0.9, 0.35), up)
+                .lerp(Vec3::new(-0.15 * s, -0.6, 0.8), down)
+        };
+        let (l, r, fl, fr) = (arm(1.0), arm(-1.0), fore(1.0), fore(-1.0));
+        stand(
+            vec![
+                aim("upperarm_l", "lowerarm_l", l.x, l.y, l.z),
+                aim("lowerarm_l", "hand_l", fl.x, fl.y, fl.z),
+                aim("upperarm_r", "lowerarm_r", r.x, r.y, r.z),
+                aim("lowerarm_r", "hand_r", fr.x, fr.y, fr.z),
+            ],
+            vec![("spine_03", Vec3::X, -0.15 * up + 0.3 * down)],
+        )
+    })?;
+    let folded = || {
+        vec![
+            aim("upperarm_l", "lowerarm_l", 0.3, -0.75, 0.4),
+            aim("lowerarm_l", "hand_l", -0.92, 0.12, 0.3),
+            aim("upperarm_r", "lowerarm_r", -0.3, -0.75, 0.42),
+            aim("lowerarm_r", "hand_r", 0.92, 0.18, 0.26),
+        ]
+    };
+    let lookout = make_clip(model, "lookout", 5.0, |t| {
+        // Up the street, a look back, down it.
+        let w = (t * TAU).sin();
+        stand(
+            folded(),
+            vec![("head", Vec3::Y, 0.75 * w), ("spine_03", Vec3::Y, 0.2 * w)],
+        )
+    })?;
+    let lounge = make_clip(model, "lounge", 4.0, |t| {
+        let w = (t * TAU).sin();
+        stand(
+            vec![
+                // Thumbs hooked in the belt, elbows out.
+                aim("upperarm_l", "lowerarm_l", 0.45, -0.85, 0.0),
+                aim("lowerarm_l", "hand_l", -0.45, -0.6, 0.45),
+                aim("upperarm_r", "lowerarm_r", -0.45, -0.85, 0.0),
+                aim("lowerarm_r", "hand_r", 0.45, -0.6, 0.45),
+                // The weight on the right leg, the left knee bent.
+                aim("thigh_l", "calf_l", 0.1, -1.0, 0.25),
+                aim("calf_l", "foot_l", 0.08, -1.0, -0.2),
+            ],
+            vec![
+                ("pelvis", Vec3::Z, 0.06),
+                ("spine_03", Vec3::Z, -0.07),
+                ("head", Vec3::Y, 0.3 * w),
+                ("head", Vec3::X, -0.08),
+            ],
+        )
+    })?;
+    let clips = [
+        threaten, shove, grab, laugh, count, spray, smash, lookout, lounge,
+    ];
+    model
+        .clips
+        .retain(|c| !clips.iter().any(|n| n.name == c.name));
+    model.clips.extend(clips);
+    Ok(())
+}
+
+/// A crime's victim's clips (see `crimeview`), for the townsfolk: "shout"
+/// (pointing after the thief, a hand cupped at the mouth: "Stop, thief!")
+/// and "shaken" (arms hugged round, head down, trembling).
+pub fn add_victim_clips(model: &mut AnimatedModel) -> Result<(), String> {
+    use std::f32::consts::TAU;
+    let shout = make_clip(model, "shout", 1.5, |t| {
+        let k = (t * TAU * 2.0).sin().max(0.0);
+        stand(
+            vec![
+                aim("upperarm_r", "lowerarm_r", -0.2, 0.3 + 0.05 * k, 0.92),
+                aim("lowerarm_r", "hand_r", -0.1, 0.35 + 0.05 * k, 0.95),
+                aim("upperarm_l", "lowerarm_l", 0.55, -0.25, 0.65),
+                aim("lowerarm_l", "hand_l", -0.6, 0.6, 0.45),
+            ],
+            vec![("spine_03", Vec3::X, 0.08 * k), ("head", Vec3::X, -0.1)],
+        )
+    })?;
+    let shaken = make_clip(model, "shaken", 1.0, |t| {
+        let w = (t * TAU * 5.0).sin() * 0.02;
+        stand(
+            vec![
+                aim("upperarm_l", "lowerarm_l", 0.22, -0.8, 0.5 + w),
+                aim("lowerarm_l", "hand_l", -0.95, 0.22, 0.2),
+                aim("upperarm_r", "lowerarm_r", -0.22, -0.8, 0.52 - w),
+                aim("lowerarm_r", "hand_r", 0.95, 0.26, 0.18),
+            ],
+            vec![("spine_03", Vec3::X, 0.12), ("head", Vec3::X, 0.32 + w)],
+        )
+    })?;
+    model
+        .clips
+        .retain(|c| c.name != "shout" && c.name != "shaken");
+    model.clips.extend([shout, shaken]);
+    Ok(())
+}
+
 /// Adds "cuffed": hands bound behind the back in energy cuffs, legs
 /// dangling, a slow sway, for a villain hanging from a police drone.
 pub fn add_cuffed_clip(model: &mut AnimatedModel) -> Result<(), String> {

@@ -744,6 +744,24 @@ factor, for rescues per person freed. The crooks of a crime mind their own busin
 hero steps within its reach; a mugging's victim (and townsfolk the villains held) first thanks the nearest hero within 30 m,
 standing 3 s, then walks off once you deal with the muggers.
 
+**Nobody came** (`make_off`): when a street crime's or a raid's call ends unanswered, its
+crooks do not just vanish. The radio says "...: they're getting away!" and the call (on the
+visor too) follows them. Muggers, robbers, mutants and technicians run off about 70 m, away
+from the nearest hero (the path finding takes them round what is in the way; one still within
+45 m of a hero when it gets there runs on); sky pirates climb back up their rope ladders and
+the Iron Legion marches its two captives into the capsule. What they took is in their hands:
+a mugger has the victim's handbag, two robbers swag sacks, a technician and two pirates a
+crate. They are gone when they get there, or after 50 s. A hero who gets within 22 m of one
+of them has **caught up**: they stand and fight, the captives stop, and beating the rest wins
+the call as usual. If they all get away, the call ends unanswered.
+
+**Rampages and breakouts wreck the street** while nobody stops them: every 7 s one of the
+group who is not fighting walks up to a lamp, bin, bench or the like within 18 m of the call
+and smashes it (a punch, or a technician's ray from up to 12 m); it falls over and is
+repaired off camera later, like anything else broken. While a fight's crooks are at their
+crime and not fighting, they menace it: brawlers jab a finger at their victims ("threaten"),
+gunmen hold their guns up.
+
 **Rescues:** stand within 3.5 m of the next trapped person and hold **E**; a bar under the
 prompt fills while you hold it (4 s for a crash, 5 s digging out of rubble, 3 s at a fire, 60%
 of that at a fire put out with a freeze ray). Let go and it drains again. Freed people turn to
@@ -1182,6 +1200,41 @@ own clips (preach, theremin, statue, startle, juggle, binoculars, holler, peer, 
 case; watchers clap and look up). Near the theremin, the radio or the club the scenery's music
 keeps quiet.
 
+### Street crime (`hw-sim/src/streetlife/crime.rs`, `hw-sim/src/crimes.rs`, `hw-client/src/crimeview.rs`)
+
+Besides the radio's calls, the gangs commit small crimes in plain view round the town, as a
+pure function of seed and game time like the acts (the server and every client work out the
+same ones). Places are planned per 96 m patch (at most 160 patches and 512 crimes kept): shop
+doors, blank walls, points along the pavements every 26-46 m, and lamps, bins, mailboxes,
+hydrants and phone booths. Each place gets at most one crime per game hour (150 s of play),
+far more often the rougher the street: none near Hero Hall's plaza or inside the villain
+quarter, most along its frayed edge (fading out over 320 m), a little in the old town, rarely
+elsewhere. Crooks walk in along the pavement, do it, and walk or run off; the victim was
+walking by and goes on afterwards.
+
+| Crime | Hours | Who | What happens |
+| --- | --- | --- | --- |
+| Bag snatch | 8-23 | 1 Chrome Jacket | follows a lady, grabs her handbag and sprints off with it; she shouts "Stop, thief!" |
+| Hassling | 11-02 (roughish streets) | 2 Chrome Jackets | stop a passer-by, threaten and shove them, laugh as they hurry off |
+| Shakedown | 8:30-19 | 2 Chrome Jackets | at a shop door: the owner comes out, is threatened, hands over cash; they count it |
+| Protection money | 19-04 | 2 Syndicate gunsels | the same, quieter, for an envelope ("Mr. Velvet sends his regards") |
+| Gang tagging | 16-05 (rough streets) | 2 Chrome Jackets | one sprays the gang's sign on a wall while the other keeps a lookout; it stays 8 game hours |
+| Vandals | 17-05:30 (roughest streets) | 2 mutant brutes | smash a lamp, bin or phone booth (it really breaks, if a hero is within 220 m) |
+
+People nearby stop and stare while it goes on. A hero within 16 m hears the crooks and the
+victim. **Stepping in:** a hero who comes within 7 m of anyone in a crime going on (on the
+same level) turns it into a fight: its crooks become real villains where they were drawn, in
+the same looks, and go for the hero; whatever they were holding stays in their hands (a thief
+keeps the bag); the victim cowers and thanks the hero when it is over. Beating them stops it: karma as for
+beating them, plus 60% (to every hero within 120 m). If no hero is within 160 m for 20 s, they
+leave. A sign half sprayed when a hero stepped in stays as far as it got.
+
+Which crimes are near the camera is found on a worker thread twice a second (the nearest 8
+within 110 m, their people within 80 m); crooks and victims are Actors characters with their
+own clips (threaten, shove, grab, laugh, count, spray, smash, lookout, lounge; shout, shaken),
+and what they hold (handbag, cash, envelope, spray can; swag sacks and crates for raiders
+making off) is drawn in the hand.
+
 ### Traffic (`hw-sim/src/traffic.rs`)
 
 - **Cars** (finned two-tone cruisers, bubble cars, ground-hugging hover cars) drive lane
@@ -1394,6 +1447,10 @@ run, or put them in a `.bat`.
 | --- | --- |
 | `HW_INCIDENT=1` | The first incident starts at once. |
 | `HW_INCIDENT=mugging\|robbery\|rampage\|breakout\|crash\|fire\|colossus\|moles\|pirates\|iron\|saucer` | ...and of that kind. |
+| `HW_TIMEOUT=s` | Calls end unanswered after s seconds (and their crooks make off). |
+| `HW_CRIME=snatch\|hassle\|shakedown\|protection\|tagging\|vandals` | Every place of that kind has that street crime, every hour. |
+| `HW_VIEW=crime` | With `HW_CRIME`: the nearest such crime, the street clock jumped into it (`HW_CRIME_AT`: 0 crooks arrive, 1 deed done, 2 leaving; default 0.6). |
+| `HW_VIEW=getaway` | With `HW_INCIDENT` and `HW_TIMEOUT`: follows the crooks making off. |
 | `HW_VISOR=1` | The police visor stays down; `HW_VISOR=0.4` freezes it part way in (screenshots). |
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |

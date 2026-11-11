@@ -253,6 +253,9 @@ impl Host {
             for m in self.sim.incidents.snapshot() {
                 r.rel_out.push(m);
             }
+            for m in self.sim.crimes.snapshot() {
+                r.rel_out.push(m);
+            }
             for m in self.sim.story.snapshot() {
                 r.rel_out.push(m);
             }

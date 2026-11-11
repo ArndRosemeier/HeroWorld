@@ -236,6 +236,58 @@ impl PropDamage {
         (fresh.len(), spent)
     }
 
+    /// Standing props within `r` of `p` (x, z) that a crook could break,
+    /// nearest first: (id, foot).
+    pub fn breakable_near(&self, p: DVec2, r: f64) -> Vec<(u64, DVec2)> {
+        let mut out: Vec<(u64, DVec2)> = self
+            .near(p, r)
+            .into_iter()
+            .filter(|(i, q)| {
+                q.pos.distance(p) <= r
+                    && !self.broken.contains_key(i)
+                    && toughness(q.kind).is_some()
+            })
+            .map(|(i, q)| (i, q.pos))
+            .collect();
+        out.sort_by(|a, b| {
+            a.1.distance(p)
+                .total_cmp(&b.1.distance(p))
+                .then(a.0.cmp(&b.0))
+        });
+        out
+    }
+
+    /// Breaks prop `i` (a street crook smashing it from `from`): it falls
+    /// away from them. False if it is broken already, cannot break or is
+    /// not in town.
+    pub fn smash(&mut self, i: u64, from: DVec2, tick: u64) -> bool {
+        if self.broken.contains_key(&i) {
+            return false;
+        }
+        let Some(p) = self.prop(i) else {
+            return false;
+        };
+        if toughness(p.kind).is_none() {
+            return false;
+        }
+        let away = (p.pos - from).normalize_or(p.dir);
+        let fell = yaw_to_byte(away.x.atan2(away.y));
+        self.broken.insert(
+            i,
+            Broken {
+                fell,
+                last_seen: tick,
+            },
+        );
+        self.at.insert(i, p.pos);
+        self.sync(i, true);
+        self.news.push(ToClient::PropsBroken {
+            props: vec![(i, fell)],
+            live: true,
+        });
+        true
+    }
+
     /// The first standing prop along a ray (from `from` along unit `dir`, at
     /// most `max` m): where the ray meets its trunk.
     pub fn raycast(&self, from: DVec3, dir: DVec3, max: f64) -> Option<DVec3> {

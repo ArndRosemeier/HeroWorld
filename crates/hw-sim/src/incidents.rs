@@ -105,6 +105,24 @@ pub const IRON_LEVEL: u8 = 2;
 /// level.
 pub const SAUCER_LEVEL: u8 = 2;
 
+/// News state: unanswered, its crooks are making off with what they took.
+pub const GETTING_AWAY: u8 = 4;
+/// How far they run before they are gone (m).
+const FLEE_FAR: f64 = 70.0;
+/// Seconds they have to get away before they are gone for good.
+const FLEE_MOST: f64 = 50.0;
+/// One this near where it is running to is gone (m).
+const FLEE_HOME: f64 = 2.5;
+/// Nor while a hero is this near: it runs on instead (m).
+const FLEE_SEEN: f64 = 45.0;
+/// A hero this near one making off has caught up with them (m).
+pub const CATCH_UP: f64 = 22.0;
+/// A rampage's villains smash something in the street every this many
+/// seconds (one of them, if nothing else is going on)...
+const SMASH_EVERY: f64 = 7.0;
+/// ...within this many metres of the incident.
+const SMASH_REACH: f64 = 18.0;
+
 /// What kind of trouble.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IncidentKind {
@@ -293,6 +311,40 @@ impl IncidentKind {
         }
     }
 
+    /// Unanswered, its villains make off in plain view (rather than just
+    /// being gone): every street crime and raid. The walking tank and the
+    /// mole folk go home as before.
+    pub fn makes_off(self) -> bool {
+        matches!(
+            self,
+            IncidentKind::Mugging
+                | IncidentKind::Robbery
+                | IncidentKind::Rampage
+                | IncidentKind::Breakout
+                | IncidentKind::PirateRaid
+                | IncidentKind::IronLanding
+        )
+    }
+
+    /// They make off to their own ride, standing where the call is (the
+    /// pirates' ladders, the legion's capsule), so the call stays put.
+    pub fn flees_to_its_ride(self) -> bool {
+        matches!(self, IncidentKind::PirateRaid | IncidentKind::IronLanding)
+    }
+
+    /// What its villains carry off, the first `n` of them (see
+    /// [`hw_net::protocol::loot`]).
+    fn loot(self) -> (u16, usize) {
+        use hw_net::protocol::loot;
+        match self {
+            IncidentKind::Mugging => (loot::HANDBAG, 1),
+            IncidentKind::Robbery => (loot::SACK, 2),
+            IncidentKind::Breakout => (loot::CRATE, 1),
+            IncidentKind::PirateRaid => (loot::CRATE, 2),
+            _ => (loot::NONE, 0),
+        }
+    }
+
     /// Seconds it waits for heroes before it ends unanswered.
     fn timeout(self) -> f64 {
         match self {
@@ -371,6 +423,15 @@ pub struct Incident {
     /// A fight's villains have all been away from it since this tick
     /// (see [`STRAY_REACH`]).
     pub strayed: Option<u64>,
+    /// Unanswered, its crooks started making off at this tick (see
+    /// [`GETTING_AWAY`]).
+    pub fleeing: Option<u64>,
+    /// How many of them got clean away.
+    pub escaped: u32,
+    /// A hero caught up with them as they made off: beating the rest wins.
+    pub caught: bool,
+    /// The next smash in a rampage (tick).
+    pub next_smash: u64,
 }
 
 impl Incident {
@@ -401,6 +462,7 @@ impl Incident {
             at: self.at.as_vec3().to_array(),
             level: self.level,
             state: match self.state {
+                State::Open if self.fleeing.is_some() => GETTING_AWAY,
                 State::Open if self.doused => DOUSED,
                 s => s.code(),
             },
@@ -480,6 +542,13 @@ pub struct Bystander {
     pub leaving: Option<(DVec2, u64)>,
     /// Standing to thank their hero until this tick, before walking off.
     pub thanking_until: u64,
+    /// Which of the citizens' looks they have, when it must be a
+    /// particular one (someone a hero saw before the crime was stepped
+    /// in on: see [`crate::crimes`]); else their id picks.
+    pub look: Option<u8>,
+    /// Marched off to the Iron-Masked capsule (their legionaries got away
+    /// with them): gone once there.
+    pub march: Option<DVec3>,
 }
 
 /// Seconds someone saved stands thanking their hero before they go.
@@ -491,6 +560,8 @@ pub const THANK_REACH: f64 = 30.0;
 pub const LEAVE_SECONDS: f64 = 12.0;
 /// Their walking pace (m/s).
 pub const LEAVE_SPEED: f64 = 1.4;
+/// How fast captives are marched off (m/s).
+const MARCH_SPEED: f64 = 1.8;
 /// How far ahead (m) someone walking off looks for something in the way.
 const LEAVE_LOOK: f64 = 0.5;
 
@@ -516,7 +587,14 @@ fn yaw_quat(dir: DVec2) -> [f32; 4] {
     glam::Quat::from_rotation_y(dir.x.atan2(dir.y) as f32).to_array()
 }
 
-fn spawn_bystander(world: &mut World, tick: u64, incident: u32, at: DVec3, facing: DVec2) {
+pub(crate) fn spawn_bystander(
+    world: &mut World,
+    tick: u64,
+    incident: u32,
+    at: DVec3,
+    facing: DVec2,
+    look: Option<u8>,
+) -> NetId {
     // On the ground where they stand, not at the spot's height: a few
     // metres off it on a slope, that is half a metre up or down.
     let at = match world.get_resource::<Solids>() {
@@ -543,14 +621,17 @@ fn spawn_bystander(world: &mut World, tick: u64, incident: u32, at: DVec3, facin
             incident,
             leaving: None,
             thanking_until: 0,
+            look,
+            march: None,
         },
         crate::LastChange(tick),
     ));
+    id
 }
 
 /// The crime is over: its bystanders turn to the nearest hero and thank
 /// them, then walk off, away from where it was.
-fn release_bystanders(world: &mut World, tick: u64, incident: u32) {
+pub(crate) fn release_bystanders(world: &mut World, tick: u64, incident: u32) {
     let mut heroes: Vec<(NetId, DVec3)> = world
         .query::<(&Hero, &Net, &Motion, &Fighter)>()
         .iter(world)
@@ -598,6 +679,25 @@ fn walk_bystanders(world: &mut World, tick: u64) {
         .query::<(Entity, &mut Bystander, &mut Motion, &mut crate::Orientation)>()
         .iter_mut(world)
     {
+        if let (Some(to), None) = (b.march, b.leaving) {
+            // Marched off to the capsule, and in: gone.
+            let flat = DVec2::new(to.x - m.0.pos.x, to.z - m.0.pos.z);
+            if flat.length() < 1.2 {
+                gone.push(e);
+                continue;
+            }
+            let d = flat.normalize();
+            let step = d * MARCH_SPEED * DT;
+            let next = DVec2::new(m.0.pos.x + step.x, m.0.pos.z + step.y);
+            let y = solids.ground_for(next, m.0.pos.y).max(GROUND_Y);
+            m.0.pos = DVec3::new(next.x, y, next.y);
+            m.0.vel = DVec3::new(d.x, 0.0, d.y) * MARCH_SPEED;
+            let q = yaw_quat(d);
+            if o.0 != q {
+                o.0 = q;
+            }
+            continue;
+        }
         let Some((dir, until)) = b.leaving else {
             continue;
         };
@@ -678,6 +778,9 @@ pub struct Incidents {
     /// Start one of this kind at the next second, however many are open
     /// and whenever the last one started (the debug menu).
     pub forced: Option<IncidentKind>,
+    /// Seconds a new one waits for heroes, in place of its kind's own
+    /// (screenshots of crooks making off: `HW_TIMEOUT`).
+    pub timeout: Option<f64>,
     /// Spots of incidents that ended, free to use again.
     free: Vec<usize>,
     /// When the colossus last came out.
@@ -770,6 +873,7 @@ impl Incidents {
             })
             .collect();
         heroes.sort_by_key(|h| h.0);
+        self.got_away(world, &heroes);
         self.settle(world, tick, &heroes);
         for b in std::mem::take(&mut self.collapses) {
             self.start_collapse(world, tick, b);
@@ -866,7 +970,7 @@ impl Incidents {
             medic: Some(medic),
             level,
             started: tick,
-            expires: tick + ticks(kind.timeout()),
+            expires: tick + ticks(self.timeout.unwrap_or(kind.timeout())),
             answered: false,
             state: State::Open,
             calmed: None,
@@ -876,6 +980,10 @@ impl Incidents {
             collateral_from: self.collateral.clone(),
             held_sent: 0,
             strayed: None,
+            fleeing: None,
+            escaped: 0,
+            caught: false,
+            next_smash: 0,
         }
     }
 
@@ -1245,6 +1353,7 @@ impl Incidents {
             .map(|(e, m, f)| (e.spot, m.0.pos, !f.fighting()))
             .collect();
         let mut ended = Vec::new();
+        let (mut making_off, mut caught_up) = (Vec::new(), Vec::new());
         for (k, inc) in self.open.iter_mut().enumerate() {
             if let Some(t) = inc.calmed {
                 // Talked down: resolved once they are home.
@@ -1265,7 +1374,8 @@ impl Incidents {
             let beaten = match inc.spot {
                 Some(i) => {
                     let spot = &world.resource::<Fights>().spots[i];
-                    spot.groups > 0 && spot.members == 0
+                    // All gone without a fight is not beaten.
+                    spot.groups > 0 && spot.members == 0 && (inc.escaped == 0 || inc.caught)
                 }
                 None => inc.left == 0 && inc.hurt.is_none(),
             };
@@ -1292,19 +1402,54 @@ impl Incidents {
             if beaten {
                 inc.state = State::Resolved;
                 ended.push(k);
+            } else if let Some(t) = inc.fleeing {
+                // Making off: gone once all are away (or after a while);
+                // a hero who catches up makes it a fight again.
+                let mine: Vec<DVec3> = crooks
+                    .iter()
+                    .filter(|c| Some(c.0) == inc.spot && !c.2)
+                    .map(|c| c.1)
+                    .collect();
+                let caught = heroes
+                    .iter()
+                    .any(|h| mine.iter().any(|c| c.distance(h.1) < CATCH_UP));
+                if crew == 0 || tick >= t + ticks(FLEE_MOST) {
+                    inc.state = State::TimedOut;
+                    ended.push(k);
+                } else if caught {
+                    caught_up.push(k);
+                } else if !mine.is_empty() && !inc.kind.flees_to_its_ride() {
+                    // The call follows them.
+                    let mid = mine.iter().copied().sum::<DVec3>() / mine.len() as f64;
+                    if mid.distance(inc.at) > 8.0 {
+                        inc.at = mid;
+                        self.news.push(inc.news());
+                    }
+                }
             } else if got_away {
                 // Gone without being beaten (none left, or all far off):
                 // the crooks got away.
                 inc.state = State::TimedOut;
                 ended.push(k);
             } else if tick >= inc.expires && !inc.answered {
-                inc.state = State::TimedOut;
-                ended.push(k);
+                if inc.spot.is_some() && crew > 0 && inc.kind.makes_off() {
+                    // Nobody came: they make off with it, in plain view.
+                    making_off.push(k);
+                } else {
+                    inc.state = State::TimedOut;
+                    ended.push(k);
+                }
             } else if inc.answered && heroes.iter().all(|h| h.1.distance(inc.at) > combat::SLEEP) {
                 // Answered, then left behind: they get away all the same.
                 inc.state = State::TimedOut;
                 ended.push(k);
             }
+        }
+        for k in making_off {
+            self.make_off(world, tick, k, heroes);
+        }
+        for k in caught_up {
+            self.catch_up(world, k);
         }
         for k in ended.into_iter().rev() {
             let inc = self.open.remove(k);
@@ -1342,6 +1487,210 @@ impl Incidents {
                 let mut e = combat::event(tick, FxKind::Careful, h.0, h.0, h.1);
                 e.amount = bonus.min(u16::MAX as u32) as u16;
                 f.events.push(e);
+            }
+        }
+    }
+
+    /// Open incident `k`, unanswered, is over: its villains make off with
+    /// what they took (thieves away from the heroes, raiders back to their
+    /// ladders or capsule, with the townsfolk they hold).
+    fn make_off(&mut self, world: &mut World, tick: u64, k: usize, heroes: &[Seen]) {
+        let solids = world.resource::<Solids>().0.clone();
+        let inc = &mut self.open[k];
+        let Some(spot) = inc.spot else {
+            return;
+        };
+        inc.fleeing = Some(tick);
+        let f = DVec3::new(inc.facing.x, 0.0, inc.facing.y).normalize_or(DVec3::X);
+        let side = DVec3::new(f.z, 0.0, -f.x);
+        // Away from the nearest hero (or on the way it faces).
+        let away = heroes
+            .iter()
+            .min_by(|a, b| a.1.distance(inc.at).total_cmp(&b.1.distance(inc.at)))
+            .map(|h| DVec2::new(inc.at.x - h.1.x, inc.at.z - h.1.z).normalize_or(inc.facing))
+            .unwrap_or(inc.facing);
+        let to = match inc.kind {
+            IncidentKind::IronLanding => inc.at - f * 5.5,
+            IncidentKind::PirateRaid => inc.at,
+            _ => flee_point(&solids, inc.at, away),
+        };
+        let mut crew: Vec<(NetId, Entity, DVec3)> = world
+            .query::<(Entity, &Net, &combat::Enemy, &Motion, &Fighter)>()
+            .iter(world)
+            .filter(|(_, _, en, _, f)| en.spot == spot && f.fighting())
+            .map(|(e, n, _, m, _)| (n.0, e, m.0.pos))
+            .collect();
+        crew.sort_by_key(|c| c.0);
+        let (what, carriers) = inc.kind.loot();
+        let mut fx = Vec::new();
+        for (j, (id, e, pos)) in crew.iter().enumerate() {
+            // Spread out a little, so they do not run into each other.
+            let spread = side * ((j as f64 - (crew.len() as f64 - 1.0) * 0.5) * 1.4);
+            let ladder = match inc.kind {
+                // Up the two rope ladders by turns.
+                IncidentKind::PirateRaid => side * if j % 2 == 0 { -2.4 } else { 2.4 },
+                _ => spread,
+            };
+            if let Some(mut en) = world.get_mut::<combat::Enemy>(*e) {
+                en.home = to + ladder;
+                en.leaving = true;
+            }
+            if j < carriers {
+                let mut l = combat::event(tick, FxKind::Loot, *id, *id, *pos);
+                l.amount = what;
+                fx.push(l);
+            }
+        }
+        // The legion takes its captives along.
+        if inc.kind == IncidentKind::IronLanding {
+            let id = inc.id;
+            for mut b in world.query::<&mut Bystander>().iter_mut(world) {
+                if b.incident == id && b.leaving.is_none() {
+                    b.march = Some(to);
+                }
+            }
+        }
+        world.resource_mut::<Fights>().events.extend(fx);
+        let news = self.open[k].news();
+        self.news.push(news);
+    }
+
+    /// A hero caught up with incident `k`'s crooks as they made off: they
+    /// stand and fight, and the captives stop.
+    fn catch_up(&mut self, world: &mut World, k: usize) {
+        let inc = &mut self.open[k];
+        inc.fleeing = None;
+        inc.caught = true;
+        inc.answered = true;
+        inc.strayed = None;
+        let (spot, id) = (inc.spot, inc.id);
+        for (mut en, m) in world
+            .query::<(&mut combat::Enemy, &Motion)>()
+            .iter_mut(world)
+        {
+            if Some(en.spot) == spot && en.leaving {
+                en.leaving = false;
+                en.home = m.0.pos;
+            }
+        }
+        for mut b in world.query::<&mut Bystander>().iter_mut(world) {
+            if b.incident == id {
+                b.march = None;
+            }
+        }
+        let news = self.open[k].news();
+        self.news.push(news);
+    }
+
+    /// Every second: crooks making off who got where they were going, out
+    /// of every hero's sight, are gone (a thief round the corner, a pirate
+    /// up the ladder); one still in sight runs on.
+    fn got_away(&mut self, world: &mut World, heroes: &[Seen]) {
+        for inc in self.open.iter_mut().filter(|i| i.fleeing.is_some()) {
+            let Some(spot) = inc.spot else {
+                continue;
+            };
+            let ride = inc.kind.flees_to_its_ride();
+            let mut there: Vec<(NetId, Entity, DVec3, DVec3)> = world
+                .query::<(Entity, &Net, &combat::Enemy, &Motion, &Fighter)>()
+                .iter(world)
+                .filter(|(_, _, en, m, f)| {
+                    en.spot == spot
+                        && en.leaving
+                        && f.fighting()
+                        && DVec2::new(m.0.pos.x - en.home.x, m.0.pos.z - en.home.z).length()
+                            < FLEE_HOME
+                })
+                .map(|(e, n, en, m, _)| (n.0, e, m.0.pos, en.home))
+                .collect();
+            there.sort_by_key(|t| t.0);
+            for (id, e, pos, home) in there {
+                let seen = heroes.iter().any(|h| h.1.distance(pos) < FLEE_SEEN);
+                if seen && !ride {
+                    // Runs on, the same way.
+                    let on =
+                        DVec2::new(home.x - inc.at.x, home.z - inc.at.z).normalize_or(inc.facing);
+                    let solids = world.resource::<Solids>().0.clone();
+                    if let Some(mut en) = world.get_mut::<combat::Enemy>(e) {
+                        en.home = flee_point(&solids, pos, on);
+                    }
+                    continue;
+                }
+                let mut f = world.resource_mut::<Fights>();
+                f.paths.remove(&id);
+                f.spots[spot].members = f.spots[spot].members.saturating_sub(1);
+                world.despawn(e);
+                inc.escaped += 1;
+            }
+        }
+    }
+
+    /// Every second: mutant brutes on a rampage, and the lab's loose
+    /// technicians, wreck the street round them while nobody stops them:
+    /// one walks up to a lamp, a bin or a bench now and then and smashes it.
+    pub(crate) fn vandalise(
+        &mut self,
+        world: &mut World,
+        tick: u64,
+        street: &mut crate::props::PropDamage,
+    ) {
+        for inc in self.open.iter_mut() {
+            if !matches!(inc.kind, IncidentKind::Rampage | IncidentKind::Breakout)
+                || inc.fleeing.is_some()
+                || tick < inc.next_smash
+            {
+                continue;
+            }
+            let Some(spot) = inc.spot else {
+                continue;
+            };
+            let mut idle: Vec<(NetId, Entity, DVec3, bool)> = world
+                .query::<(Entity, &Net, &combat::Enemy, &Motion, &Fighter)>()
+                .iter(world)
+                .filter(|(_, _, en, _, f)| {
+                    en.spot == spot && !en.leaving && f.fighting() && f.target.is_none()
+                })
+                .map(|(e, n, en, m, _)| (n.0, e, m.0.pos, en.kind.back_row()))
+                .collect();
+            idle.sort_by_key(|i| i.0);
+            // The one by a prop it is not already at.
+            let at = DVec2::new(inc.at.x, inc.at.z);
+            let props = street.breakable_near(at, SMASH_REACH);
+            let pick = idle.iter().find_map(|v| {
+                let me = DVec2::new(v.2.x, v.2.z);
+                props
+                    .iter()
+                    .min_by(|a, b| a.1.distance(me).total_cmp(&b.1.distance(me)))
+                    .map(|p| (*v, *p))
+            });
+            let Some(((id, e, pos, ranged), (prop, foot))) = pick else {
+                inc.next_smash = tick + ticks(SMASH_EVERY);
+                continue;
+            };
+            let me = DVec2::new(pos.x, pos.z);
+            let reach = if ranged { 12.0 } else { 1.8 };
+            if me.distance(foot) <= reach + 1.0 {
+                // There: a blow (or a ray), and it goes over.
+                let hit_at = DVec3::new(foot.x, pos.y + 1.0, foot.y);
+                let kind = if ranged { FxKind::Ray } else { FxKind::Punch };
+                let wind = if ranged {
+                    FxKind::RayWindup
+                } else {
+                    FxKind::PunchWindup
+                };
+                if street.smash(prop, me, tick) {
+                    let mut f = world.resource_mut::<Fights>();
+                    f.events.push(combat::event(tick, wind, id, id, hit_at));
+                    f.events.push(combat::event(tick, kind, id, id, hit_at));
+                }
+                if let Some(mut en) = world.get_mut::<combat::Enemy>(e) {
+                    en.home = DVec3::new(pos.x, pos.y, pos.z);
+                }
+                inc.next_smash = tick + ticks(SMASH_EVERY);
+            } else if let Some(mut en) = world.get_mut::<combat::Enemy>(e) {
+                // On its way to it (it stops a step short).
+                let to = foot + (me - foot).normalize_or(DVec2::X) * (reach * 0.7);
+                en.home = DVec3::new(to.x, pos.y, to.y);
             }
         }
     }
@@ -1639,7 +1988,7 @@ impl Incidents {
             medic: None,
             level,
             started: tick,
-            expires: tick + ticks(kind.timeout()),
+            expires: tick + ticks(self.timeout.unwrap_or(kind.timeout())),
             answered: false,
             state: State::Open,
             calmed: None,
@@ -1649,15 +1998,19 @@ impl Incidents {
             collateral_from: self.collateral.clone(),
             held_sent: 0,
             strayed: None,
+            fleeing: None,
+            escaped: 0,
+            caught: false,
+            next_smash: 0,
         };
         if kind == IncidentKind::Colossus {
             self.last_colossus = Some(tick);
         }
         if kind == IncidentKind::Mugging {
-            spawn_bystander(world, tick, inc.id, mugged(at, facing), -facing);
+            spawn_bystander(world, tick, inc.id, mugged(at, facing), -facing, None);
         }
         for p in captives(kind, at, facing) {
-            spawn_bystander(world, tick, inc.id, p, facing);
+            spawn_bystander(world, tick, inc.id, p, facing, None);
         }
         self.news.push(inc.news());
         self.open.push(inc);
@@ -1673,6 +2026,32 @@ impl Incidents {
     pub fn take_news(&mut self) -> Vec<ToClient> {
         std::mem::take(&mut self.news)
     }
+}
+
+/// Where crooks making off from `from` run to: about [`FLEE_FAR`] along
+/// `dir` (turned aside as little as will do) to a place on the open
+/// ground; the villains' own path finding takes them round what is in the
+/// way.
+fn flee_point(solids: &crate::collision::Obstacles, from: DVec3, dir: DVec2) -> DVec3 {
+    let open = |p: DVec2| {
+        let y = solids.ground_for(p, from.y).max(GROUND_Y);
+        let at = DVec3::new(p.x, y, p.y);
+        ((y - from.y).abs() < 4.0
+            && solids.passable_at(at + DVec3::Y * 0.4)
+            && solids.passable_at(at + DVec3::Y * 1.4))
+        .then_some(at)
+    };
+    let here = DVec2::new(from.x, from.z);
+    for far in [FLEE_FAR, FLEE_FAR * 0.6, FLEE_FAR * 0.35] {
+        for a in [0.0, 25.0, -25.0, 50.0, -50.0, 80.0, -80.0, 120.0, -120.0] {
+            let (s, c) = (det::sin(f64::to_radians(a)), det::cos(f64::to_radians(a)));
+            let d = DVec2::new(dir.x * c - dir.y * s, dir.x * s + dir.y * c);
+            if let Some(p) = open(here + d * far) {
+                return p;
+            }
+        }
+    }
+    from
 }
 
 /// Where an ambulance waits for a rescue at `p`: parked at the kerb of a

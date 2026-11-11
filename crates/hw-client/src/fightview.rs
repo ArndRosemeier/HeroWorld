@@ -326,6 +326,9 @@ pub struct FightInput {
 pub struct FightView {
     /// The villain picked with Tab.
     pub target: Option<NetId>,
+    /// Villains carrying something off, and what ([`hw_net::protocol::loot`]):
+    /// drawn in their hand by `crimeview`; dropped when they go down.
+    pub loot: BTreeMap<NetId, u16>,
     /// Villains Tab has already gone through in this cycle, and the clock
     /// time of the last Tab.
     cycled: Vec<NetId>,
@@ -418,6 +421,7 @@ impl FightView {
     pub fn new() -> Self {
         Self {
             target: None,
+            loot: BTreeMap::new(),
             cycled: Vec::new(),
             last_tab: f32::NEG_INFINITY,
             sounds: None,
@@ -1312,6 +1316,13 @@ impl FightView {
                         let text = fizzle_text(PowerId(e.theme), e.amount & 0xff);
                         self.log_fizzle(&text, e, me, all);
                         self.say(&text);
+                    }
+                }
+                FxKind::Loot => {
+                    if e.amount == 0 {
+                        self.loot.remove(&e.from);
+                    } else {
+                        self.loot.insert(e.from, e.amount);
                     }
                 }
                 FxKind::Careful => {

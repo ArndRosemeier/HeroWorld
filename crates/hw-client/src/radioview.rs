@@ -39,6 +39,8 @@ pub struct Call {
     pub bar: f32,
     /// A fire put out by a freeze ray.
     pub doused: bool,
+    /// Nobody came: its crooks are making off.
+    pub fleeing: bool,
 }
 
 /// A rescue's hurt person and the ambulance waiting for them.
@@ -546,13 +548,26 @@ impl Radio {
         let a = hw_sim::props::byte_to_yaw(*yaw);
         let facing = DVec2::new(a.sin(), a.cos());
         let doused = *state == hw_sim::incidents::DOUSED;
-        if *state == 0 || doused {
+        let fleeing = *state == hw_sim::incidents::GETTING_AWAY;
+        if *state == 0 || doused || fleeing {
             if let Some(c) = self.calls.get_mut(id) {
                 c.held = *held;
                 // A call that moves (the walking colossus) sends where it
                 // is now: the radio, compass, map and visor follow it.
                 c.at = at;
                 c.facing = facing;
+                if fleeing || c.fleeing {
+                    if fleeing != c.fleeing {
+                        c.fleeing = fleeing;
+                        let word = if fleeing {
+                            format!("{}: they're getting away!", kind.name())
+                        } else {
+                            "You caught up with them!".to_string()
+                        };
+                        self.flash = Some((word, 4.0));
+                    }
+                    return true;
+                }
                 if doused && !c.doused {
                     c.doused = true;
                     self.put_out(world, *id);
@@ -587,6 +602,7 @@ impl Radio {
                     held: *held,
                     bar: 0.0,
                     doused,
+                    fleeing,
                 },
             );
             if kind.trapped() > 0 {
@@ -1539,6 +1555,15 @@ impl Radio {
     }
 
     /// Whether hero `id` is carrying someone hurt (their arms are full).
+    /// Is `p` at a call whose villains are at their crime (not rescues,
+    /// the walking tank or frightened mole folk; not once they make off)?
+    /// They menace their victims there rather than standing about.
+    pub fn menacing(&self, p: Vec3) -> bool {
+        self.calls.values().any(|c| {
+            c.kind.trapped() == 0 && c.kind.makes_off() && !c.fleeing && c.at.distance(p) < 14.0
+        })
+    }
+
     pub fn is_carrying(&self, id: u32) -> bool {
         self.calls
             .values()

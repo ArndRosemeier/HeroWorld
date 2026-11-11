@@ -774,3 +774,145 @@ fn crooks_never_start_inside_a_house() {
     assert!(seen.len() >= 20, "only {} fights started", seen.len());
     assert!(crooks >= 60, "only {crooks} crooks looked at");
 }
+
+#[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
+fn unanswered_robbers_make_off_with_the_loot_and_a_hero_can_catch_them() {
+    use hw_sim::combat::Enemy;
+    use hw_sim::Motion;
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    let hero = sim.spawn_hero(PlayerId(1), sim.spawn_point(1));
+    let mut news = Vec::new();
+    let start = |sim: &mut Sim, news: &mut Vec<_>| {
+        sim.incidents.forced = Some(incidents::IncidentKind::Robbery);
+        run(sim, 1.5, news);
+        let inc = sim
+            .incidents
+            .open
+            .iter()
+            .rfind(|i| i.kind == incidents::IncidentKind::Robbery)
+            .cloned()
+            .expect("a robbery");
+        // Nobody came in time.
+        let i = sim
+            .incidents
+            .open
+            .iter()
+            .position(|i| i.id == inc.id)
+            .unwrap();
+        sim.incidents.open[i].expires = sim.tick + 1;
+        inc
+    };
+    let inc = start(&mut sim, &mut news);
+    let spot = inc.spot.unwrap();
+    run(&mut sim, 1.5, &mut news);
+    assert!(
+        news.iter()
+            .any(|n| n.0 == inc.id && n.3 == incidents::GETTING_AWAY),
+        "nobody told they are getting away: {news:?}"
+    );
+    // Loot in hand, running off.
+    let crew: Vec<(DVec3, DVec3, bool)> = sim
+        .world
+        .query::<(&Enemy, &Motion)>()
+        .iter(&sim.world)
+        .filter(|(e, _)| e.spot == spot)
+        .map(|(e, m)| (m.0.pos, e.home, e.leaving))
+        .collect();
+    assert!(crew.iter().all(|c| c.2), "not all making off");
+    assert!(
+        crew.iter().all(|c| c.1.distance(inc.at) > 15.0),
+        "not running anywhere: {crew:?}"
+    );
+    // Left alone, they get clean away; the call ends unanswered.
+    let mut over = false;
+    for _ in 0..60 {
+        run(&mut sim, 1.0, &mut news);
+        if !sim.incidents.open.iter().any(|i| i.id == inc.id) {
+            over = true;
+            break;
+        }
+    }
+    assert!(over, "still getting away after a minute");
+    assert!(news.iter().any(|n| n.0 == inc.id && n.3 == 2));
+    assert_eq!(
+        sim.world
+            .query::<&Enemy>()
+            .iter(&sim.world)
+            .filter(|e| e.spot == spot)
+            .count(),
+        0
+    );
+
+    // The next lot: a hero runs after them and catches up. It is a fight
+    // again, and beating them wins it.
+    let inc = start(&mut sim, &mut news);
+    let spot = inc.spot.unwrap();
+    run(&mut sim, 4.0, &mut news);
+    let runner = sim
+        .world
+        .query::<(&Enemy, &Motion)>()
+        .iter(&sim.world)
+        .find(|(e, _)| e.spot == spot)
+        .map(|(_, m)| m.0.pos)
+        .expect("a robber");
+    sim.set_body(
+        hero,
+        Body {
+            pos: runner + DVec3::new(6.0, 0.5, 0.0),
+            vel: DVec3::ZERO,
+            grounded: false,
+        },
+    );
+    run(&mut sim, 1.5, &mut news);
+    let now = sim
+        .incidents
+        .open
+        .iter()
+        .find(|i| i.id == inc.id)
+        .expect("still on");
+    assert!(now.caught && now.fleeing.is_none(), "not caught up");
+    for (id, _, at, mut f) in sim.enemies() {
+        if at.distance(runner) < 40.0 {
+            f.health = 0.0;
+            f.status = Status::Down;
+            f.until = sim.tick;
+            sim.set_fighter(id, f);
+        }
+    }
+    run(&mut sim, 15.0, &mut news);
+    assert!(
+        news.iter().any(|n| n.0 == inc.id && n.3 == 1),
+        "catching them did not win it: {news:?}"
+    );
+}
+
+#[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
+fn a_rampage_nobody_stops_smashes_up_the_street() {
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    sim.spawn_hero(PlayerId(1), sim.spawn_point(1));
+    let mut news = Vec::new();
+    sim.incidents.forced = Some(incidents::IncidentKind::Rampage);
+    run(&mut sim, 1.5, &mut news);
+    let mut broke = 0;
+    for _ in 0..40 {
+        sim.step();
+        for m in sim.take_news() {
+            if let ToClient::PropsBroken { props, live: true } = m {
+                broke += props.len();
+            }
+        }
+        for _ in 1..TICK_HZ {
+            sim.step();
+            for m in sim.take_news() {
+                if let ToClient::PropsBroken { props, live: true } = m {
+                    broke += props.len();
+                }
+            }
+        }
+    }
+    assert!(broke >= 2, "only {broke} props smashed in 40 s");
+}

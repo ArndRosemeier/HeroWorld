@@ -13,6 +13,7 @@ pub mod citizens;
 pub mod clock;
 pub mod collision;
 pub mod combat;
+pub mod crimes;
 pub mod deepspots;
 pub mod destruction;
 pub mod doors;
@@ -565,6 +566,9 @@ pub struct Sim {
     pub wrecks: wrecks::Wrecks,
     /// Trouble that comes to the heroes (see [`incidents`]).
     pub incidents: incidents::Incidents,
+    /// The gangs' street crime near the heroes, and heroes stepping in
+    /// (see [`crimes`]).
+    pub crimes: crimes::Crimes,
     /// The Doctor's story: the chain of chapters (see [`story`]).
     pub story: story::Story,
     /// Trouble bystanders notice: they run, stare, cars stop (see
@@ -630,6 +634,7 @@ impl Sim {
         sim.rockets = rocket::pads(&town.world);
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.area.clone()));
         sim.incidents = incidents::Incidents::new(town.area.clone());
+        sim.crimes.set_area(town.area.clone());
         sim.world.resource_mut::<Fights>().streets = Some(Arc::new(streets::Streets::new(
             &town.world,
             streets::TANK_STREET,
@@ -781,6 +786,7 @@ impl Sim {
         self.taxis.set_town(area.clone());
         self.incidents.set_town(area.clone());
         self.world.resource_mut::<combat::Fights>().area = Some(combat::Skyline(area.clone()));
+        self.crimes.set_area(area.clone());
         self.area = Some(area);
         self.area_moved = true;
     }
@@ -921,6 +927,7 @@ impl Sim {
             tubes: tube::Tubes::default(),
             wrecks: wrecks::Wrecks::default(),
             incidents: incidents::Incidents::default(),
+            crimes: crimes::Crimes::default(),
             story: story::Story::default(),
             alarms: alarms::Alarms::default(),
             crime_alarms: BTreeMap::new(),
@@ -1094,6 +1101,16 @@ impl Sim {
             .collateral
             .clone_from(&self.damage.collateral);
         self.incidents.step(&mut self.world, self.tick);
+        if self.tick.is_multiple_of(TICK_HZ as u64) {
+            self.incidents
+                .vandalise(&mut self.world, self.tick, &mut self.street);
+        }
+        self.crimes.step(
+            &mut self.world,
+            self.tick,
+            &mut self.street,
+            &mut self.alarms,
+        );
         self.story.step(&mut self.world, self.tick);
         self.raise_crime_alarms();
         let solids = self.solids();
@@ -1346,6 +1363,7 @@ impl Sim {
         news.extend(self.street.take_news());
         news.extend(self.wrecks.take_news());
         news.extend(self.incidents.take_news());
+        news.extend(self.crimes.take_news());
         news.extend(self.story.take_news());
         news.extend(self.damage.take_news());
         news.extend(self.doors.take_news());
@@ -2032,7 +2050,7 @@ impl Sim {
                     &LastChange,
                     Option<&taxi::Fare>,
                     Option<&robots::Mount>,
-                    Has<incidents::Bystander>,
+                    Option<&incidents::Bystander>,
                     Option<&tube::Passenger>,
                     Option<&npcheroes::NpcHero>,
                     Option<&sidekick::Sidekick>,
@@ -2061,7 +2079,7 @@ impl Sim {
                                 e.kind.entity_kind()
                             } else if drone.is_some() {
                                 EntityKind::Drone
-                            } else if bystander {
+                            } else if bystander.is_some() {
                                 EntityKind::Bystander
                             } else if npc.is_some() {
                                 EntityKind::NpcHero
@@ -2080,13 +2098,17 @@ impl Sim {
                                 .or(fare.map(|f| f.0))
                                 .or(rider.map(|r| r.0))
                                 .or(sidekick.map(|s| s.player)),
+                            // Looks that must be a particular one ride on
+                            // the entity's own id (see `Enemy::look`).
                             mount: mount
                                 .map(|m| (m.on, m.part))
                                 .or(npc.map(|h| (n.0, h.index)))
                                 .or(sidekick.map(|s| (s.owner, s.theme)))
                                 // A drone: whom it fetches, and medical (1)
                                 // or police (0).
-                                .or(drone.map(|d| (d.carry, d.medical as u8))),
+                                .or(drone.map(|d| (d.carry, d.medical as u8)))
+                                .or(enemy.and_then(|e| e.look).map(|l| (n.0, l)))
+                                .or(bystander.and_then(|b| b.look).map(|l| (n.0, l))),
                         },
                         c.0,
                     )

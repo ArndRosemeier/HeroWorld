@@ -12,6 +12,7 @@
 //! frame, which is cheap: their parts are planned already.
 
 use crate::chat::{Said, Voice, SAY_RANGE, SHOUT_RANGE};
+use crate::crimeview::CrimeView;
 use crate::people::{People, Who, JOG_MPS, WALK_MPS};
 use crate::soundscape::{keep_loop, Bank};
 use crate::streetgear::Gear;
@@ -122,12 +123,16 @@ pub struct StreetView {
     music_near: bool,
     /// What was said this frame: for the floating words and the chat.
     pub said: Vec<Said>,
+    /// The gangs' street crime, from the same street life.
+    pub crime: CrimeView,
 }
 
 impl StreetView {
     pub fn new(area: Arc<Area>) -> Self {
+        let life = Arc::new(StreetLife::new(area));
         Self {
-            life: Arc::new(StreetLife::new(area)),
+            crime: CrimeView::new(life.clone()),
+            life,
             ask: None,
             answers: None,
             waiting: false,
@@ -215,6 +220,7 @@ impl StreetView {
         camera: DVec2,
         eye: Vec3,
         hero: Option<Vec3>,
+        carried: &[(EntityId, u16)],
         time: f64,
         dt: f64,
     ) -> EngineResult<()> {
@@ -316,6 +322,19 @@ impl StreetView {
                 world.despawn(p.e);
             }
         }
+        // Street crime, its loot drawn with the acts' things.
+        self.crime.update(
+            world,
+            models,
+            people,
+            camera,
+            hero,
+            carried,
+            time,
+            dt,
+            &mut places,
+        )?;
+        self.said.append(&mut self.crime.said);
         for (g, lod) in &self.gear {
             world.set_lod_places(*lod, places.get(g).map_or(&[][..], |v| &v[..]))?;
         }
@@ -349,6 +368,7 @@ impl StreetView {
 
     /// Takes everything off screen (a new town, a new square).
     pub fn clear(&mut self, world: &mut World) {
+        self.crime.clear(world);
         for (_, p) in std::mem::take(&mut self.shown) {
             world.despawn(p.e);
         }

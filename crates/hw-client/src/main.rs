@@ -360,7 +360,12 @@ fn main() -> EngineResult<()> {
     // `HW_VIEW=act` jumps the street acts' clock on (`HW_ACT_SKIP` seconds,
     // 150 by default: the middle of a two-hour slot) so acts are set up
     // in the first frames; play leaves it at 0.
-    let act_skip = if view == "act" {
+    // `HW_VIEW=crime`: the crime it looks at (where, the way to look from)
+    // and tries; `HW_VIEW=getaway`: where crooks are making off.
+    let mut crime_spot: Option<(Vec3, Vec3, f64)> = None;
+    let mut crime_try = 0u64;
+    let mut getaway_at: Option<Vec3> = None;
+    let mut act_skip = if view == "act" {
         env_num("HW_ACT_SKIP").unwrap_or(150) as f64
     } else {
         0.0
@@ -2954,6 +2959,11 @@ fn main() -> EngineResult<()> {
                         ));
                     }
                     radio.hear(world, m);
+                    // `HW_VIEW=getaway`: the camera follows the crooks
+                    // making off.
+                    if view == "getaway" && *state == hw_sim::incidents::GETTING_AWAY {
+                        getaway_at = Some(Vec3::from_array(*at));
+                    }
                     // `HW_VIEW=incident`: the camera goes to the first call.
                     if view == "incident" && radio.calls.len() == 1 && radio.calls.contains_key(id)
                     {
@@ -3018,6 +3028,10 @@ fn main() -> EngineResult<()> {
                             .to_degrees();
                         fly = FlyCamera::new((p.x, p.y, p.z), yaw, pitch);
                     }
+                    false
+                }
+                hw_net::ToClient::Crime { .. } => {
+                    street.crime.hear(m, session.time(tick_clock.frac()));
                     false
                 }
                 hw_net::ToClient::Casualty { medic, yaw, .. } => {
@@ -3360,13 +3374,18 @@ fn main() -> EngineResult<()> {
                 }
                 // A look per player until the hero creator, the same on
                 // every machine; villains by kind, a few looks each.
+                // A crook or victim of a street crime a hero stepped into
+                // keeps the looks it was drawn in (the server sends them).
+                let own_look = h.mount.filter(|m| m.0 == h.id).map(|m| m.1 as u32);
                 let who = match h.kind {
                     k if VillainKind::of(k).is_some() => {
                         let v = VillainKind::of(k).expect("a villain");
-                        Who::Villain(v, h.id.0 % v.looks())
+                        Who::Villain(v, own_look.unwrap_or(h.id.0) % v.looks())
                     }
                     // A townsperson in a crime: one of the citizens' looks.
-                    hw_net::EntityKind::Bystander => Who::Citizen(h.id.0 % hw_sim::citizens::LOOKS),
+                    hw_net::EntityKind::Bystander => {
+                        Who::Citizen(own_look.unwrap_or(h.id.0) % hw_sim::citizens::LOOKS)
+                    }
                     // One of Hero Hall's own heroes.
                     hw_net::EntityKind::NpcHero => Who::NpcHero(h.mount.map_or(0, |m| m.1)),
                     // A hero's robot sidekick, by the power's theme.
@@ -3494,6 +3513,15 @@ fn main() -> EngineResult<()> {
                         ("pistol idle", false)
                     }
                     None if in_fight && d.clip == "idle" => ("fight stance", false),
+                    // Villains at a call nobody has stopped yet go about
+                    // their crime: menacing their victims, waving guns.
+                    None if villain && d.clip == "idle" && radio.menacing(feet) => {
+                        if h.kind.is_ranged() {
+                            ("pistol aim", false)
+                        } else {
+                            ("threaten", false)
+                        }
+                    }
                     // The one being mugged cowers until it is over.
                     None if bystander && d.clip == "idle" => ("hands up", false),
                     // A level up: a fist to the sky, standing or hovering.
@@ -3812,6 +3840,19 @@ fn main() -> EngineResult<()> {
             // (`HW_STREETLIFE=0` turns it off, to measure without it.)
             if std::env::var("HW_STREETLIFE").map_or(true, |v| v != "0") {
                 let hero_at = session.my_position(&heroes).map(|p| p.as_vec3());
+                // Villains carrying something off: their bodies.
+                fight.loot.retain(|id, _| {
+                    heroes.iter().any(|h| {
+                        h.id == *id
+                            && h.combat
+                                .is_none_or(|c| c.status == hw_net::Status::Standing)
+                    })
+                });
+                let carried: Vec<(EntityId, u16)> = fight
+                    .loot
+                    .iter()
+                    .filter_map(|(id, l)| hero_entities.get(id).map(|e| (e.0, *l)))
+                    .collect();
                 street.update(
                     world,
                     &citizens,
@@ -3821,6 +3862,7 @@ fn main() -> EngineResult<()> {
                     eye2,
                     eye,
                     hero_at,
+                    &carried,
                     game_time + act_skip,
                     dt,
                 )?;
@@ -3855,6 +3897,66 @@ fn main() -> EngineResult<()> {
                         .to_degrees();
                     fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
                 }
+            }
+            // `HW_VIEW=crime HW_CRIME=<snatch|hassle|shakedown|protection|
+            // tagging|vandals>`: the nearest such crime, the street's clock
+            // jumped to the middle of it (`HW_CRIME_AT`: 0 as the crooks
+            // arrive, 1 as the deed is done, 2 as they leave), from a few
+            // metres off.
+            if view == "crime" {
+                crime_try += 1;
+                if crime_spot.is_none() && crime_try % 30 == 1 {
+                    let life = street.crime.life().clone();
+                    let near = life.crimes_near(spawn, 400.0, game_time, 2.0 * 150.0);
+                    if let Some(c) = near.first() {
+                        let at: f64 = std::env::var("HW_CRIME_AT")
+                            .ok()
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(0.6);
+                        let when = if at <= 1.0 {
+                            c.on + (c.done - c.on) * at
+                        } else {
+                            c.done + (c.gone - c.done) * (at - 1.0) * 0.5
+                        };
+                        act_skip = when - game_time;
+                        let p = &c.place;
+                        // Where its people are then (a thief runs on).
+                        let folk = c.people(&life, when);
+                        let mid = if folk.is_empty() {
+                            Vec3::new(p.at.x as f32, p.y as f32, p.at.y as f32)
+                        } else {
+                            folk.iter().map(|f| f.pos.as_vec3()).sum::<Vec3>() / folk.len() as f32
+                        };
+                        let out = Vec3::new(p.inner.x as f32, 0.0, p.inner.y as f32);
+                        let side = Vec3::new(p.along.x as f32, 0.0, p.along.y as f32);
+                        let eye = mid - out * 5.5 + side * 2.5 + Vec3::Y * 2.2;
+                        crime_spot = Some((mid, eye, when));
+                        println!(
+                            "crime view: {:?} at {:.0}, {:.0}, game time {:.0} s (skip {:.0} s)",
+                            c.kind, p.at.x, p.at.y, game_time, act_skip
+                        );
+                    }
+                }
+                if let Some((at, p, when)) = crime_spot {
+                    // The street's clock held at that moment (a slow
+                    // render takes minutes of real time).
+                    act_skip = when - game_time;
+                    let d = at + Vec3::Y * 1.1 - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
+            // `HW_VIEW=getaway HW_INCIDENT=robbery HW_TIMEOUT=<s>`: the crooks
+            // of an unanswered call making off, from above and behind.
+            if let (true, Some(at)) = (view == "getaway", getaway_at) {
+                let p = at + Vec3::new(9.0, 7.0, 9.0);
+                let d = at + Vec3::Y * 1.0 - p;
+                let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                    .atan()
+                    .to_degrees();
+                fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
             }
             // `HW_VIEW=citizen`: a close-up of the nearest passer-by.
             if view == "citizen" {

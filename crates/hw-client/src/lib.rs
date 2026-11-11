@@ -13,6 +13,7 @@ pub mod citybuild;
 pub mod citymesh;
 pub mod crash;
 pub mod creator;
+pub mod crimeview;
 pub mod crowdview;
 pub mod damageview;
 pub mod daylight;

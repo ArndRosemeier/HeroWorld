@@ -47,10 +47,23 @@ pub enum Gear {
     /// The trader's floating tray of trinkets: origin on the ground under
     /// its middle.
     Wares,
+    /// Loot a crook carries off (see `crimeview`), each held by its handle
+    /// or top at the origin, hanging down: a snatched handbag...
+    Handbag,
+    /// ...a wad of banknotes (origin at its middle)...
+    Cash,
+    /// ...the protection money's envelope (origin at its middle)...
+    Envelope,
+    /// ...a tagger's spray can (held round its middle)...
+    SprayCan,
+    /// ...a robber's swag sack, tied at the neck...
+    Sack,
+    /// ...and a crate of stolen gadgets (its bottom at the origin).
+    LootCrate,
 }
 
 impl Gear {
-    pub const ALL: [Gear; 16] = [
+    pub const ALL: [Gear; 22] = [
         Gear::Soapbox,
         Gear::Board,
         Gear::Theremin,
@@ -67,13 +80,25 @@ impl Gear {
         Gear::ClubSign,
         Gear::Disc,
         Gear::Wares,
+        Gear::Handbag,
+        Gear::Cash,
+        Gear::Envelope,
+        Gear::SprayCan,
+        Gear::Sack,
+        Gear::LootCrate,
     ];
 
     /// Its three levels (near, mid, far) and how far each is drawn.
     pub fn levels(self) -> Vec<LodLevel> {
         let far = match self {
             Gear::ClubSign => 220.0,
-            Gear::Atom | Gear::Binoculars | Gear::FoilCap | Gear::Paper => 70.0,
+            Gear::Atom
+            | Gear::Binoculars
+            | Gear::FoilCap
+            | Gear::Paper
+            | Gear::Cash
+            | Gear::Envelope
+            | Gear::SprayCan => 70.0,
             _ => 130.0,
         };
         vec![
@@ -114,6 +139,12 @@ impl Gear {
             Gear::ClubSign => club_sign(&mut b, lod),
             Gear::Disc => disc(&mut b, lod),
             Gear::Wares => wares(&mut b, lod),
+            Gear::Handbag => handbag(&mut b, lod),
+            Gear::Cash => cash(&mut b, lod),
+            Gear::Envelope => envelope(&mut b, lod),
+            Gear::SprayCan => spray_can(&mut b, lod),
+            Gear::Sack => sack(&mut b, lod),
+            Gear::LootCrate => crate_box(&mut b, (0.52, 0.36, 0.4), (120, 128, 98), lod, true),
         }
         b.finish()
     }
@@ -1094,6 +1125,258 @@ fn wares(b: &mut MeshBuilder, lod: Lod) {
         10,
         Surf::Glow,
         rgb(255, 236, 140),
+    );
+}
+
+/// A 1950s lady's handbag in red patent leather: a trapezoid body on a
+/// gilt clasp frame, a rounded handle; held by the handle.
+fn handbag(b: &mut MeshBuilder, lod: Lod) {
+    let red = rgb(168, 28, 40);
+    let gilt = rgb(214, 178, 92);
+    // The body, wider at the bottom, in three bands.
+    for (k, (y, w)) in [(-0.2, 0.15), (-0.27, 0.165), (-0.33, 0.17)]
+        .iter()
+        .enumerate()
+    {
+        slab(
+            b,
+            DVec3::new(0.0, *y, 0.0),
+            [DVec3::X, DVec3::Y],
+            DVec3::new(
+                *w,
+                if k == 0 { 0.035 } else { 0.033 },
+                0.055 + 0.008 * k as f64,
+            ),
+            red,
+        );
+    }
+    if lod == Lod::Far {
+        return;
+    }
+    metal(b, |b| {
+        tube(
+            b,
+            &[
+                DVec3::new(-0.15, -0.165, 0.0),
+                DVec3::new(0.15, -0.165, 0.0),
+            ],
+            (0.012, 0.012),
+            sides(lod, 10),
+            Some((Surf::Metal, gilt)),
+        );
+        // The kiss-lock clasp.
+        for x in [-0.018, 0.018] {
+            lathe(
+                b,
+                DVec3::new(x, -0.165, 0.0),
+                DVec3::Y,
+                &[(0.0, 0.0), (0.012, 0.004), (0.012, 0.016), (0.0, 0.026)],
+                sides(lod, 10),
+                |_| Some((Surf::Metal, gilt)),
+            );
+        }
+    });
+    // The handle: an arc from the frame up to the hand.
+    let n = lod.pick(10, 6, 3);
+    let arc: Vec<DVec3> = (0..=n)
+        .map(|k| {
+            let a = PI * k as f64 / n as f64;
+            DVec3::new(-0.1 * a.cos(), -0.165 + 0.16 * a.sin(), 0.0)
+        })
+        .collect();
+    tube(
+        b,
+        &arc,
+        (0.011, 0.011),
+        sides(lod, 8),
+        Some((Surf::Plain, red)),
+    );
+}
+
+/// A wad of green banknotes in a paper band.
+fn cash(b: &mut MeshBuilder, lod: Lod) {
+    let green = rgb(118, 150, 104);
+    slab(
+        b,
+        DVec3::ZERO,
+        [DVec3::X, DVec3::Y],
+        DVec3::new(0.078, 0.022, 0.034),
+        green,
+    );
+    if lod == Lod::Far {
+        return;
+    }
+    slab(
+        b,
+        DVec3::ZERO,
+        [DVec3::X, DVec3::Y],
+        DVec3::new(0.02, 0.0235, 0.0355),
+        rgb(236, 226, 196),
+    );
+    // A note's edge peeling off the top.
+    slab(
+        b,
+        DVec3::new(0.0, 0.024, 0.006),
+        [DVec3::X, DVec3::new(0.0, 0.94, 0.34)],
+        DVec3::new(0.076, 0.001, 0.032),
+        rgb(132, 164, 116),
+    );
+}
+
+/// A fat manila envelope, its flap tucked in.
+fn envelope(b: &mut MeshBuilder, lod: Lod) {
+    let manila = rgb(214, 188, 132);
+    slab(
+        b,
+        DVec3::ZERO,
+        [DVec3::X, DVec3::Y],
+        DVec3::new(0.12, 0.08, 0.012),
+        manila,
+    );
+    if lod == Lod::Far {
+        return;
+    }
+    // The flap and a string round the button.
+    slab(
+        b,
+        DVec3::new(0.0, 0.05, 0.0125),
+        [DVec3::X, DVec3::Y],
+        DVec3::new(0.115, 0.03, 0.001),
+        rgb(196, 168, 112),
+    );
+    lathe(
+        b,
+        DVec3::new(0.0, 0.03, 0.012),
+        DVec3::Z,
+        &[(0.0, 0.0), (0.012, 0.0), (0.012, 0.004), (0.0, 0.005)],
+        sides(lod, 10),
+        |_| Some((Surf::Plain, rgb(150, 40, 36))),
+    );
+}
+
+/// A spray can: a tin body with a domed shoulder, a coloured cap and the
+/// nozzle, held round its middle.
+fn spray_can(b: &mut MeshBuilder, lod: Lod) {
+    let tin = rgb(214, 216, 222);
+    let band = rgb(236, 70, 140);
+    let n = sides(lod, 16);
+    metal(b, |b| {
+        lathe(
+            b,
+            DVec3::new(0.0, -0.09, 0.0),
+            DVec3::Y,
+            &[
+                (0.0, 0.0),
+                (0.03, 0.002),
+                (0.032, 0.01),
+                (0.032, 0.05),
+                (0.032, 0.12),
+                (0.03, 0.15),
+                (0.018, 0.165),
+                (0.0, 0.168),
+            ],
+            n,
+            |k| Some((Surf::Metal, if k == 3 { band } else { tin })),
+        );
+    });
+    if lod == Lod::Far {
+        return;
+    }
+    lathe(
+        b,
+        DVec3::new(0.0, 0.075, 0.0),
+        DVec3::Y,
+        &[(0.0, 0.0), (0.01, 0.0), (0.01, 0.018), (0.0, 0.02)],
+        sides(lod, 10),
+        |_| Some((Surf::Plain, rgb(30, 30, 34))),
+    );
+    tube(
+        b,
+        &[DVec3::new(0.0, 0.088, 0.0), DVec3::new(0.0, 0.088, 0.014)],
+        (0.003, 0.003),
+        6,
+        Some((Surf::Plain, rgb(30, 30, 34))),
+    );
+}
+
+/// A burlap swag sack, bulging, tied at the neck with rope; held by the
+/// neck.
+fn sack(b: &mut MeshBuilder, lod: Lod) {
+    let burlap = rgb(172, 146, 104);
+    let n = lod.pick(14, 8, 5);
+    let profile: Vec<(f64, f64)> = (0..=n)
+        .map(|k| {
+            let t = k as f64 / n as f64;
+            // From the bottom (round) up to the gathered neck.
+            let r = if t < 0.75 {
+                0.21 * (PI * (t / 0.75) * 0.5 + 0.25).sin().max(0.0) * (1.0 - 0.15 * t)
+            } else {
+                0.045 + 0.06 * (1.0 - (t - 0.75) / 0.25)
+            };
+            (if k == 0 || k == n { 0.0 } else { r }, -0.5 + 0.45 * t)
+        })
+        .collect();
+    lathe(b, DVec3::ZERO, DVec3::Y, &profile, sides(lod, 18), |_| {
+        Some((Surf::Plain, burlap))
+    });
+    if lod == Lod::Far {
+        return;
+    }
+    // The rope round the neck, and the gathered top above it.
+    let m = sides(lod, 14);
+    let ring: Vec<DVec3> = (0..=m)
+        .map(|k| {
+            let a = TAU * k as f64 / m as f64;
+            DVec3::new(0.052 * a.cos(), -0.11, 0.052 * a.sin())
+        })
+        .collect();
+    tube(
+        b,
+        &ring,
+        (0.01, 0.01),
+        6,
+        Some((Surf::Plain, rgb(110, 84, 50))),
+    );
+    lathe(
+        b,
+        DVec3::new(0.0, -0.11, 0.0),
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.05, 0.0),
+            (0.065, 0.06),
+            (0.03, 0.1),
+            (0.0, 0.105),
+        ],
+        sides(lod, 12),
+        |_| Some((Surf::Plain, rgb(160, 134, 94))),
+    );
+    // A dollar sign stencilled on, as a comic robber's sack has.
+    let ink = rgb(40, 34, 28);
+    for (y, w) in [(-0.24, 0.055), (-0.3, 0.055), (-0.36, 0.055)] {
+        slab(
+            b,
+            DVec3::new(0.0, y, 0.208),
+            [DVec3::X, DVec3::Y],
+            DVec3::new(w, 0.009, 0.002),
+            ink,
+        );
+    }
+    for (x, y) in [(-0.05, -0.27), (0.05, -0.33)] {
+        slab(
+            b,
+            DVec3::new(x, y, 0.208),
+            [DVec3::X, DVec3::Y],
+            DVec3::new(0.009, 0.03, 0.002),
+            ink,
+        );
+    }
+    slab(
+        b,
+        DVec3::new(0.0, -0.3, 0.212),
+        [DVec3::X, DVec3::Y],
+        DVec3::new(0.008, 0.095, 0.002),
+        ink,
     );
 }
 

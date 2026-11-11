@@ -419,6 +419,8 @@ pub struct StreetLife {
     patches: Mutex<Cache<(i64, i64), Patch>>,
     shows: Mutex<Cache<(u64, i64), Planned>>,
     plans: Mutex<Cache<u64, Arc<BuildingPlan>>>,
+    /// Street crime's places and crimes (see [`crime`]).
+    crime: Mutex<crime::CrimeCache>,
 }
 
 /// A small least-recently-used cache.
@@ -498,6 +500,7 @@ impl StreetLife {
             patches: Mutex::new(Cache::new(KEEP_PATCHES)),
             shows: Mutex::new(Cache::new(KEEP_SHOWS)),
             plans: Mutex::new(Cache::new(64)),
+            crime: Mutex::new(crime::CrimeCache::new()),
         }
     }
 
@@ -1696,6 +1699,8 @@ impl Show {
         Some(person(p, f, 0.0, Doing::Queueing))
     }
 }
+
+pub mod crime;
 
 #[cfg(test)]
 mod tests;

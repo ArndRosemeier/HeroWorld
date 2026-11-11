@@ -32,7 +32,7 @@ const IMAGES: [&[u8]; TAG_IMAGES as usize] = [
 /// only a few custom images).
 static KINDS: Mutex<Option<Vec<DecalKind>>> = Mutex::new(None);
 
-fn kinds(world: &mut World) -> Option<Vec<DecalKind>> {
+pub(crate) fn kinds(world: &mut World) -> Option<Vec<DecalKind>> {
     let mut k = KINDS.lock().ok()?;
     if k.is_none() {
         let mut out = Vec::new();
