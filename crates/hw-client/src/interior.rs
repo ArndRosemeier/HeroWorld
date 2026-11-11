@@ -255,6 +255,9 @@ pub fn floor_finish(plan: &BuildingPlan, room: &Room) -> (Tex, Color) {
         (RoomKind::Shop, _) if shop_kind(plan, room) == ShopKind::Diner => {
             (skin(Base::Lino), rgb(236, 230, 214))
         }
+        (RoomKind::Shop, _) if shop_kind(plan, room) == ShopKind::Club => {
+            (skin(Base::Parquet), rgb(110, 62, 40))
+        }
         (RoomKind::Shop, Era::Old) => (skin(Base::Parquet), rgb(170, 128, 92)),
         (_, Era::Shabby) => (skin(Base::Lino), rgb(190, 184, 160)),
         (RoomKind::Corridor, _) => (skin(Base::Terrazzo), rgb(214, 206, 192)),
@@ -299,9 +302,17 @@ pub enum ShopKind {
     /// Radios, televisions, refrigerators.
     Appliances,
     Diner,
+    /// The night club behind the street life's neon sign and doorman
+    /// (`hw_sim::streetlife::is_club`): a bar, velvet booths, a bandstand.
+    Club,
 }
 
 pub fn shop_kind(plan: &BuildingPlan, room: &Room) -> ShopKind {
+    if let Some((k, _)) = hw_sim::streetlife::club_room(plan) {
+        if plan.floors[0].rooms[k].id == room.id {
+            return ShopKind::Club;
+        }
+    }
     let h = hash(room.rect.center() + plan.site.origin, 3, 11);
     [
         ShopKind::Grocer,
@@ -2192,6 +2203,74 @@ fn shop(fu: &mut Furnisher, room: &Room, area: &Rect, seed: u64) {
                 }
             }
         }
+        ShopKind::Club => {
+            // A long bar with a mirrored back bar and red leather stools
+            // down one wall, velvet booths round the others, a bandstand
+            // in a corner.
+            let walnut = rgb(92, 54, 32);
+            let red = rgb(160, 30, 44);
+            let mut len = (wall_run(area, walls[0]) * 0.75).clamp(1.8, 7.0);
+            let mut at = None;
+            while at.is_none() && len >= 1.8 {
+                let l = len;
+                at = place_one(fu, area, &walls, DVec2::new(l, 2.4), false, |m| {
+                    let mut back = m.sub(DVec3::new(0.0, 0.0, -1.0), 0.0);
+                    pieces::back_bar(&mut back, l, walnut);
+                    let mut c = m.sub(DVec3::new(0.0, 0.0, 0.0), 0.0);
+                    pieces::shop_counter(&mut c, l, walnut, red);
+                })
+                .map(|w| (w, l));
+                len -= 0.5;
+            }
+            let mut used = None;
+            if let Some(((wall, c), l)) = at {
+                used = Some(wall);
+                let n = wall.inward();
+                let k = ((l - 0.4) / 0.7) as usize;
+                for i in 0..k {
+                    let x = -l * 0.5 + 0.55 + i as f64 * 0.7;
+                    let p = c + wall.along() * x + n * 0.75;
+                    let mut m = fu.maker(p, 0.0, -n);
+                    pieces::stool(&mut m, red);
+                }
+            }
+            // The bandstand first, in a corner, so the booths leave it room.
+            let corners: Vec<f64> = (0..=4)
+                .flat_map(|k| [1.0 - k as f64 * 0.05, k as f64 * 0.05])
+                .collect();
+            for wall in walls {
+                if Some(wall) == used {
+                    continue;
+                }
+                if fu
+                    .against(area, wall, &corners, DVec2::new(2.0, 1.6), false, |m| {
+                        pieces::bandstand(m)
+                    })
+                    .is_some()
+                {
+                    break;
+                }
+            }
+            let velvet = rgb(120, 26, 52);
+            let top = rgb(70, 40, 28);
+            for wall in [Wall::Front, walls[0], walls[1], walls[2]] {
+                if Some(wall) == used {
+                    continue;
+                }
+                fill_wall(
+                    fu,
+                    area,
+                    wall,
+                    DVec2::new(1.25, 1.8),
+                    false,
+                    0.25,
+                    |m, _| {
+                        let mut b = m.sub(DVec3::ZERO, FRAC_PI_2);
+                        pieces::booth(&mut b, velvet, top);
+                    },
+                );
+            }
+        }
         ShopKind::Grocer => {
             counter(fu, rgb(236, 232, 220));
             for wall in walls {
@@ -2658,6 +2737,61 @@ mod tests {
             "{} faces for {flats} flats",
             b.face_count()
         );
+    }
+
+    /// A building with the night club's sign and doorman outside has the
+    /// club inside: the shop room behind its door is furnished as it.
+    #[test]
+    fn a_night_club_is_a_club_inside() {
+        let mut p = plan(BuildingUse::ShopsAndOffices, 3);
+        let club = (0..200u64)
+            .map(|k| BuildingSite {
+                seed: Seed(k),
+                ..p.site.clone()
+            })
+            .find(hw_sim::streetlife::is_club)
+            .expect("one building in five is a club");
+        p = BuildingPlan::generate(&club);
+        let f = &p.floors[0];
+        let (k, _) = hw_sim::streetlife::club_room(&p).expect("a club has a shop front");
+        let clubs = f
+            .rooms
+            .iter()
+            .filter(|r| r.kind == RoomKind::Shop && shop_kind(&p, r) == ShopKind::Club)
+            .count();
+        assert_eq!(clubs, 1, "one club room");
+        {
+            let room = &f.rooms[k];
+            let mut b = MeshBuilder::new();
+            let mut fu = Furnisher {
+                b: &mut b,
+                plan: &p,
+                top: 0.0,
+                seg: 12,
+                decor: Decor::of(&p),
+                keepout: f.doors.iter().map(door_keepout).collect(),
+                taken: Vec::new(),
+                lamp: 0,
+                walls: inner(room, OFF_WALL),
+                rugs: Vec::new(),
+            };
+            let area = inner(room, OFF_WALL);
+            shop(&mut fu, room, &area, 1);
+            assert!(fu.taken.len() >= 4, "a club with {} pieces", fu.taken.len());
+        }
+        // An ordinary shop building is not.
+        let plain = (0..200u64)
+            .map(|k| BuildingSite {
+                seed: Seed(k),
+                ..p.site.clone()
+            })
+            .find(|s| !hw_sim::streetlife::is_club(s))
+            .expect("most buildings are not clubs");
+        let q = BuildingPlan::generate(&plain);
+        assert!(q.floors[0]
+            .rooms
+            .iter()
+            .all(|r| r.kind != RoomKind::Shop || shop_kind(&q, r) != ShopKind::Club));
     }
 
     #[test]

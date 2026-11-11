@@ -407,6 +407,56 @@ struct Index {
 }
 
 /// The street life of one town square (the citizens' [`Area`]).
+/// Whether a building is a night club: a big shop building of the
+/// business or civic district, one in five, picked by its own seed (so
+/// the same building whatever square of town is loaded). Its shop floor
+/// is furnished as the club inside (`hw-client` `interior`); the street
+/// life puts its sign, doorman and queue at its door where the pavement
+/// has room.
+pub fn is_club(s: &hw_gen::building::BuildingSite) -> bool {
+    s.usage == BuildingUse::ShopsAndOffices
+        && s.floors >= 3
+        && s.size.x >= 10.0
+        && matches!(s.district, DistrictKind::Commercial | DistrictKind::Civic)
+        && s.seed.child("night club").rng().chance(0.2)
+}
+
+/// A night club's room and door: the biggest shop room on the ground
+/// floor with a door in the front, and that door's middle (building-local
+/// x along the front, z inwards). `None` for a building that is not a
+/// club, or has no shop front to be one.
+pub fn club_room(plan: &BuildingPlan) -> Option<(usize, DVec2)> {
+    if !is_club(&plan.site) {
+        return None;
+    }
+    let floor = plan.floors.first()?;
+    let front = floor.outline.min.y;
+    plan.openings
+        .iter()
+        .filter(|o| {
+            o.floor == 0
+                && o.side == Side::Front
+                && matches!(o.kind, OpeningKind::Door | OpeningKind::Entrance)
+        })
+        .filter_map(|o| {
+            let door = DVec2::new(o.along, front);
+            let inside = door + DVec2::Y * 0.3;
+            let k = floor.rooms.iter().position(|r| {
+                r.kind == hw_gen::building::RoomKind::Shop && r.rect.contains_point(inside)
+            })?;
+            Some((k, door))
+        })
+        .max_by(|a, b| {
+            let area = |k: usize| {
+                let s = floor.rooms[k].rect.max - floor.rooms[k].rect.min;
+                s.x * s.y
+            };
+            area(a.0)
+                .total_cmp(&area(b.0))
+                .then(b.1.x.total_cmp(&a.1.x))
+        })
+}
+
 /// The pitches planned in one patch.
 type Patch = Arc<Vec<Arc<Site>>>;
 /// The act planned at a pitch in a slot, if any.
@@ -776,18 +826,10 @@ impl StreetLife {
             let w: &WorldBuilding = &self.area.buildings[b as usize];
             let s = &w.site;
             let mid = s.origin + s.along * s.size.x * 0.5;
-            if !inside(mid)
-                || s.usage != BuildingUse::ShopsAndOffices
-                || s.floors < 3
-                || s.size.x < 10.0
-                || !matches!(s.district, DistrictKind::Commercial | DistrictKind::Civic)
-            {
+            if !inside(mid) || !is_club(s) {
                 continue;
             }
-            let mut rng = seed.child(b as u64).rng();
-            if !rng.chance(0.2) {
-                continue;
-            }
+            let mut rng = s.seed.child("club door").rng();
             let Some((ri, kerb)) = self.road_in_front(mid - s.inward * 0.5) else {
                 continue;
             };
@@ -974,14 +1016,9 @@ impl StreetLife {
     fn club(&self, b: u32, ri: u32, doors: &[DVec2], rng: &mut hw_core::Rng) -> Option<Site> {
         let s = &self.area.buildings[b as usize].site;
         let out_dir = -s.inward;
-        let door = self
-            .doors_of(b)
-            .into_iter()
-            .filter(|d| (d - s.origin).dot(s.inward).abs() < 0.6)
-            .min_by(|a, b| {
-                let m = s.origin + s.along * s.size.x * 0.5;
-                a.distance(m).total_cmp(&b.distance(m))
-            })?;
+        // The club's own door: into the shop room furnished as the club.
+        let (_, local) = club_room(&self.plan_of(b))?;
+        let door = s.origin + s.along * local.x + s.inward * local.y;
         let others: Vec<DVec2> = doors
             .iter()
             .copied()
@@ -1219,12 +1256,30 @@ impl StreetLife {
         } else {
             t0 + rng.range(0.0, 30.0)
         };
+        // Through a long night the doorman of one slot hands over to the
+        // next at the slot's end, on the spot: one doorman at a time.
         let leave = if after {
-            t0 + SLOT + 60.0
+            t0 + SLOT
         } else {
             t0 + SLOT - rng.range(8.0, 30.0)
         };
+        // The club's doorman keeps one id through the night (the slot it
+        // opened in), so the hand-over between slots is seamless.
+        let mut opened = slot;
+        while before && opened > slot - 8 && self.act_at(site, opened - 1, hour, time) == Some(act)
+        {
+            opened -= 1;
+        }
         for k in 0..act.performers() {
+            let lead_id = if act == Act::Club {
+                self.seed
+                    .child("doorman")
+                    .child(site.key)
+                    .child(opened as u64)
+                    .0
+            } else {
+                seed.child("lead").child(k as u64).0
+            };
             let at = performer_at(site, act, k);
             let ahead = if rng.chance(0.5) { 1.0 } else { -1.0 };
             let walk_in = if before {
@@ -1238,7 +1293,7 @@ impl StreetLife {
                 self.walk_off(citizens, at, along, -ahead)
             };
             lead.push(Part {
-                id: seed.child("lead").child(k as u64).0,
+                id: lead_id,
                 role: Role::Performer(act, k),
                 spot: None,
                 arrive: arrive + k as f64 * 0.8,
@@ -1541,6 +1596,10 @@ impl Show {
 
     /// What performer `k` is doing during the act at `t`.
     fn performing(&self, t: f64, k: u8) -> Doing {
+        // The doorman has nothing to set up: he minds the door all night.
+        if self.act == Act::Club {
+            return Doing::Performing;
+        }
         if t < self.on + SETUP {
             return Doing::Setting;
         }

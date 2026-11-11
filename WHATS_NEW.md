@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.190 (2026-11-11)
+
+- The Orbit Room night club is a club inside now: a long bar with red leather stools, a mirrored back bar full of bottles, velvet booths and a little bandstand. Its neon sign and doorman are at that door.
+- Only one doorman minds the club door at a time; two used to stand on the same spot for a minute at each change of shift.
+
 ## 0.189 (2026-11-11)
 
 - The lifts in the Daily Comet building, the Atlas Assurance hall and the Zenith Radio house run. Each car goes up and down by itself, like a paternoster with stops: it waits about seven seconds at every floor with its doors up, then rides on. Walk in while it waits and it carries you; there is no button to press.

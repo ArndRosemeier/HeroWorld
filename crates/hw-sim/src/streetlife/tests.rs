@@ -206,3 +206,43 @@ fn what_is_kept_stays_bounded() {
     assert!(patches <= KEEP_PATCHES, "{patches} patches");
     assert!(shows <= KEEP_SHOWS, "{shows} shows");
 }
+
+#[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
+fn one_doorman_at_a_time() {
+    let (area, citizens) = town();
+    let life = StreetLife::new(area.clone());
+    let at = centre(&area);
+    let mut seen = 0;
+    for slot in 0..36i64 {
+        // Just before, at and after the change of slot, and in the middle.
+        for dt in [-0.5, 0.0, 0.5, 30.0, SLOT * 0.5] {
+            let time = slot as f64 * SLOT + dt;
+            if time < 0.0 {
+                continue;
+            }
+            let hour = crate::clock::hour_at(time);
+            let mut doormen: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+            for show in life.shows_near(&citizens, at, 900.0, time, hour) {
+                if show.act != Act::Club {
+                    continue;
+                }
+                for p in show.people(&life, &citizens, time) {
+                    if matches!(p.role, Role::Performer(Act::Club, _)) {
+                        doormen.entry(show.site.key).or_default().push(p.id);
+                    }
+                }
+            }
+            for (site, ids) in doormen {
+                seen += 1;
+                assert_eq!(
+                    ids.len(),
+                    1,
+                    "club {site} has {} doormen at {time}",
+                    ids.len()
+                );
+            }
+        }
+    }
+    assert!(seen > 0, "no club open");
+}

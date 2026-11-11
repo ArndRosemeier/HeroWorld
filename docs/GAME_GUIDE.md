@@ -1248,7 +1248,7 @@ villain quarter has none. An act comes, walks in along the pavement with its thi
 | Stargazer | 20-02:30 | a brass telescope; people queue to peer at the stars |
 | Swing dancers | 17-00:30 | a couple dancing to a portable radio |
 | Vael star trader | 10-19:30 | a friendly alien from round another sun (lilac skin, gold eyes, a teal coat) glides in on a hover disc and sells glowing trinkets from a floating tray: comet glass, ringed globes, toy rockets, a star in a jar; people come up and buy |
-| The Orbit Room | 20:30-03 | a night club in a big shop building of the business or civic district: neon atom sign, a doorman, a queue of guests in evening clothes that moves up and goes in, the band muffled through the door |
+| The Orbit Room | 20:30-03 | a night club in a big shop building of the business or civic district: neon atom sign, a doorman, a queue of guests in evening clothes that moves up and goes in, the band muffled through the door. One big shop building in five there is a club (`streetlife::is_club`, by its own seed); its biggest shop room with a front door is the club inside (bar with stools, a mirrored back bar of bottles, velvet booths, a bandstand), and that is the door with the sign. Through the night one doorman hands over to the next at each change of slot |
 
 Up to 2-6 passers-by stop to watch (one or two at a time for the spotter and the newsboy).
 They watch, clap now and then, and those of a busker drop a coin in the case before they go.

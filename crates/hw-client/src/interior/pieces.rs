@@ -2166,6 +2166,129 @@ pub fn jukebox(m: &mut Maker) {
     );
 }
 
+/// A night club's back bar, `w` long, against the wall: a walnut
+/// cabinet, a mirror above with two glass shelves of bottles in front.
+pub fn back_bar(m: &mut Maker, w: f64, wood: Color) {
+    let hw = w * 0.5;
+    m.block(
+        Mat::Wood(wood),
+        DVec3::new(-hw, 0.0, -0.2),
+        DVec3::new(hw, 0.9, 0.2),
+    );
+    m.block(
+        Mat::Chrome,
+        DVec3::new(-hw, 0.9, -0.2),
+        DVec3::new(hw, 0.92, 0.21),
+    );
+    m.block(
+        Mat::Glass(rgb(200, 210, 220)),
+        DVec3::new(-hw + 0.05, 1.0, -0.2),
+        DVec3::new(hw - 0.05, 1.9, -0.18),
+    );
+    m.block(
+        Mat::Wood(wood),
+        DVec3::new(-hw, 1.9, -0.2),
+        DVec3::new(hw, 2.0, 0.0),
+    );
+    let tints = [
+        rgb(120, 70, 20),
+        rgb(60, 120, 60),
+        rgb(200, 190, 150),
+        rgb(150, 40, 40),
+        rgb(90, 60, 30),
+    ];
+    for (row, y) in [1.2, 1.55].into_iter().enumerate() {
+        m.block(
+            Mat::Glass(rgb(220, 230, 235)),
+            DVec3::new(-hw + 0.05, y - 0.02, -0.18),
+            DVec3::new(hw - 0.05, y, -0.04),
+        );
+        let n = ((w - 0.2) / 0.12) as usize;
+        for i in 0..n {
+            let x = -hw + 0.16 + i as f64 * 0.12;
+            let k = (i * 7 + row * 3) % tints.len();
+            let tall = 0.22 + 0.06 * ((i + row) % 3) as f64;
+            m.lathe(
+                Mat::Glass(tints[k]),
+                DVec3::new(x, y, -0.11),
+                &[
+                    (0.03, 0.0),
+                    (0.035, 0.01),
+                    (0.035, tall * 0.65),
+                    (0.012, tall * 0.8),
+                    (0.012, tall),
+                    (0.0, tall),
+                ],
+            );
+        }
+    }
+}
+
+/// A small bandstand for a corner: a round red stage a step high with a
+/// chrome rail behind, a microphone on its stand, a drum and a double
+/// bass leaning on the rail.
+pub fn bandstand(m: &mut Maker) {
+    m.slab(Mat::Paint(rgb(150, 30, 40)), &oval(1.9, 1.5, 24), 0.0, 0.22);
+    m.slab(Mat::Chrome, &oval(1.94, 1.54, 24), 0.18, 0.22);
+    let rail: Vec<DVec3> = (0..=12)
+        .map(|k| {
+            let a = PI * k as f64 / 12.0;
+            DVec3::new(0.9 * a.cos(), 1.0, -0.7 * a.sin())
+        })
+        .collect();
+    m.tube(Mat::Chrome, &rail, 0.02);
+    for p in [rail[0], rail[6], rail[12]] {
+        m.tube(Mat::Chrome, &[DVec3::new(p.x, 0.22, p.z), p], 0.015);
+    }
+    // The microphone at the front.
+    m.lathe(
+        Mat::Chrome,
+        DVec3::new(0.0, 0.22, 0.4),
+        &[
+            (0.12, 0.0),
+            (0.1, 0.02),
+            (0.012, 0.03),
+            (0.012, 1.45),
+            (0.0, 1.45),
+        ],
+    );
+    m.blob(
+        Mat::Chrome,
+        DVec3::new(0.0, 1.72, 0.4),
+        DVec3::new(0.05, 0.07, 0.04),
+        0.0,
+        (0.6, 0.6),
+    );
+    // A drum, its skin up.
+    m.lathe(
+        Mat::Paint(rgb(230, 230, 236)),
+        DVec3::new(-0.45, 0.22, -0.2),
+        &[(0.0, 0.0), (0.25, 0.0), (0.25, 0.35), (0.0, 0.36)],
+    );
+    m.lathe(
+        Mat::Chrome,
+        DVec3::new(-0.45, 0.4, -0.2),
+        &[(0.255, 0.0), (0.255, 0.03), (0.0, 0.031)],
+    );
+    // A double bass leaning on the rail.
+    m.blob_axes(
+        Mat::Wood(rgb(140, 70, 30)),
+        DVec3::new(0.5, 0.75, -0.35),
+        [
+            DVec3::X,
+            DVec3::new(0.0, 0.97, -0.24).normalize(),
+            DVec3::new(0.0, 0.24, 0.97).normalize(),
+        ],
+        DVec3::new(0.3, 0.5, 0.12),
+        (0.7, 0.9),
+    );
+    m.tube(
+        Mat::Plain(rgb(30, 24, 20)),
+        &[DVec3::new(0.5, 1.2, -0.46), DVec3::new(0.5, 1.75, -0.6)],
+        0.03,
+    );
+}
+
 /// A diner booth: two padded benches facing each other across a table,
 /// `w` long (across the booth).
 pub fn booth(m: &mut Maker, cover: Color, top: Color) {
