@@ -1749,7 +1749,7 @@ impl Radio {
                 .interactable(false)
                 .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -170.0))
                 .show(ctx, |ui| {
-                    crate::uikit::card().show(ui, |ui| {
+                    crate::googie::plate(ui, false, |ui| {
                         ui.label(
                             egui::RichText::new(text)
                                 .color(egui::Color32::from_rgb(255, 230, 140))
@@ -1783,7 +1783,7 @@ impl Radio {
             .interactable(false)
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(10.0, 10.0))
             .show(ctx, |ui| {
-                crate::uikit::card().show(ui, |ui| {
+                crate::googie::plate(ui, false, |ui| {
                     ui.label(
                         egui::RichText::new("WRIST RADIO")
                             .color(crate::uikit::GOLD)

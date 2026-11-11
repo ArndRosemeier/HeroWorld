@@ -116,7 +116,7 @@ impl StoryView {
                 .interactable(false)
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 52.0))
                 .show(ctx, |ui| {
-                    crate::uikit::card().show(ui, |ui| {
+                    crate::googie::plate(ui, false, |ui| {
                         ui.set_max_width(620.0);
                         ui.label(
                             egui::RichText::new(format!("WRIST RADIO - {}", l.who))
@@ -143,7 +143,7 @@ impl StoryView {
             .interactable(false)
             .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -210.0))
             .show(ctx, |ui| {
-                crate::uikit::card().show(ui, |ui| {
+                crate::googie::plate(ui, false, |ui| {
                     ui.label(
                         egui::RichText::new(c.search_goal)
                             .color(STORY_GOLD)

@@ -6,15 +6,14 @@
 //! with a gold chrome rim and a hard comic block shadow, cream lettering,
 //! headings and buttons in the title's Titan One, gold buttons with a navy
 //! rim, hero red for what is picked, Aether blue for what glows. Things
-//! move a little: a glint runs round a window's rim now and then, the
-//! Googie stars on its corners turn, gauges have stripes that roll and a
-//! sheen that sweeps, and a low gauge throbs.
+//! move a little: gauges have stripes that roll and a sheen that sweeps, a
+//! low gauge throbs, ready tray slots glint.
 //!
 //! - [`install`] sets egui's style for play (every `egui::Window`, button,
 //!   tab, text field and tooltip takes it from there).
-//! - [`adorn`] adds the stars and the glint to a window once it is drawn.
-//! - [`panel`], [`gauge`], [`slot`], [`ribbon`] paint HUD pieces with an
-//!   `egui::Painter`; [`card`] is the frame for small HUD boxes.
+//! - [`gauge`] and [`slot`] paint HUD pieces with an `egui::Painter`.
+//! - The Googie shapes (panels, sign plates, starbursts, the windows
+//!   themselves) are in `googie.rs`.
 
 use engine::ui::egui::{
     self, epaint::CornerRadius, pos2, vec2, Align2, Color32, FontFamily, FontId, Margin, Mesh,
@@ -167,67 +166,11 @@ fn visuals() -> egui::Visuals {
         state.weak_bg_fill = fill;
         state.bg_stroke = Stroke::new(2.0_f32, rim);
         state.fg_stroke = Stroke::new(1.5_f32, text);
-        state.corner_radius = CornerRadius::same(9);
+        state.corner_radius = crate::googie::leaf(11);
         state.expansion = 0.0;
     }
     w.hovered.expansion = 1.5;
     v
-}
-
-/// A small HUD box (a prompt, a status line): navy enamel, a gold rim, a
-/// block shadow.
-pub fn card() -> egui::Frame {
-    egui::Frame::new()
-        .fill(with_alpha(NAVY, PANEL_ALPHA))
-        .stroke(Stroke::new(2.0_f32, GOLD))
-        .corner_radius(10.0)
-        .inner_margin(Margin::symmetric(14, 8))
-        .shadow(Shadow {
-            offset: [4, 5],
-            blur: 0,
-            spread: 0,
-            color: Color32::from_black_alpha(130),
-        })
-}
-
-/// Like [`card`], with a red rim: something that wants the hero now.
-pub fn alert_card() -> egui::Frame {
-    card().stroke(Stroke::new(2.5_f32, HERO_RED))
-}
-
-/// A HUD panel painted by hand: block shadow, navy enamel with a soft sheen
-/// at the top, a gold chrome rim with a pale inner line.
-pub fn panel(painter: &egui::Painter, r: Rect, round: f32, alpha: f32) {
-    let cr = CornerRadius::same(round as u8);
-    painter.rect_filled(
-        r.translate(SHADOW),
-        cr,
-        Color32::from_black_alpha((140.0 * alpha) as u8),
-    );
-    painter.rect_filled(r, cr, with_alpha(NAVY, PANEL_ALPHA * alpha));
-    // A sheen across the top third, like enamel under a lamp.
-    let sheen = Rect::from_min_max(
-        r.min + vec2(3.0, 3.0),
-        pos2(r.max.x - 3.0, r.min.y + r.height() * 0.38),
-    );
-    vertical_wash(
-        painter,
-        sheen,
-        with_alpha(Color32::from_rgb(90, 110, 200), 0.22 * alpha),
-        Color32::TRANSPARENT,
-    );
-    painter.rect_stroke(
-        r,
-        cr,
-        Stroke::new(3.0_f32, with_alpha(GOLD, alpha)),
-        StrokeKind::Inside,
-    );
-    painter.rect_stroke(
-        r.shrink(3.5),
-        CornerRadius::same((round - 3.0).max(0.0) as u8),
-        Stroke::new(1.0_f32, with_alpha(GOLD_LIGHT, 0.35 * alpha)),
-        StrokeKind::Inside,
-    );
 }
 
 /// A rectangle going from `top` to `bottom` colour (square corners).
@@ -309,6 +252,17 @@ pub fn gauge(painter: &egui::Painter, r: Rect, value: f32, colour: Color32, t: f
             );
         }
     }
+    // Dial ticks every tenth on long gauges, like a dashboard's.
+    if r.width() > 160.0 {
+        for k in 1..10 {
+            let x = r.left() + r.width() * k as f32 / 10.0;
+            let tall = if k == 5 { 0.55 } else { 0.32 };
+            painter.line_segment(
+                [pos2(x, r.top()), pos2(x, r.top() + h * tall)],
+                Stroke::new(1.0_f32, Color32::from_black_alpha(110)),
+            );
+        }
+    }
     painter.rect_stroke(
         r,
         round,
@@ -356,7 +310,7 @@ pub fn slot(
     } else {
         r
     };
-    let cr = CornerRadius::same(7);
+    let cr = crate::googie::slot_corners();
     if look == SlotLook::Empty {
         painter.rect_filled(r, cr, with_alpha(DEEP, 0.6));
         painter.rect_stroke(
@@ -485,72 +439,6 @@ fn key_disc(painter: &egui::Painter, r: Rect, key: &str, text: Color32, fill: Co
     k.right() - r.left() + 4.0
 }
 
-/// A red pennant with a heading on it, its tail notched: tops a HUD panel
-/// (the target's name). Returns the pennant's rectangle.
-pub fn ribbon(
-    painter: &egui::Painter,
-    ctx: &egui::Context,
-    left_mid: Pos2,
-    text: &str,
-    size: f32,
-    fill: Color32,
-) -> Rect {
-    let font = ui_font(ctx, size);
-    let galley = painter.layout_no_wrap(text.to_owned(), font, CREAM);
-    let h = size * 1.45;
-    let w = galley.size().x + size * 1.6;
-    let r = Rect::from_min_size(left_mid - vec2(0.0, h * 0.5), vec2(w, h));
-    let notch = h * 0.35;
-    let pts = vec![
-        r.left_top(),
-        r.right_top(),
-        pos2(r.right() - notch, r.center().y),
-        r.right_bottom(),
-        r.left_bottom(),
-    ];
-    let shadow: Vec<Pos2> = pts.iter().map(|p| *p + vec2(3.0, 3.0)).collect();
-    painter.add(egui::Shape::convex_polygon(
-        shadow,
-        Color32::from_black_alpha(130),
-        Stroke::NONE,
-    ));
-    // The notch makes it concave: two halves.
-    let c = r.center();
-    painter.add(egui::Shape::convex_polygon(
-        vec![
-            r.left_top(),
-            r.right_top(),
-            pos2(r.right() - notch, c.y),
-            pos2(r.left(), c.y),
-        ],
-        fill,
-        Stroke::NONE,
-    ));
-    painter.add(egui::Shape::convex_polygon(
-        vec![
-            pos2(r.left(), c.y),
-            pos2(r.right() - notch, c.y),
-            r.right_bottom(),
-            r.left_bottom(),
-        ],
-        fill,
-        Stroke::NONE,
-    ));
-    painter.add(egui::Shape::closed_line(pts, Stroke::new(2.0_f32, DEEP)));
-    let text_at = pos2(r.left() + size * 0.55, c.y);
-    painter.galley(
-        text_at - vec2(0.0, galley.size().y * 0.5) + vec2(1.5, 1.5),
-        painter.layout_no_wrap(
-            text.to_owned(),
-            ui_font(ctx, size),
-            Color32::from_black_alpha(160),
-        ),
-        Color32::BLACK,
-    );
-    painter.galley(text_at - vec2(0.0, galley.size().y * 0.5), galley, CREAM);
-    r
-}
-
 /// A four-pointed Googie star.
 pub fn star(painter: &egui::Painter, p: Pos2, size: f32, turn: f32, col: Color32) {
     let (s, c) = turn.sin_cos();
@@ -563,60 +451,6 @@ pub fn star(painter: &egui::Painter, p: Pos2, size: f32, turn: f32, col: Color32
             Stroke::NONE,
         ));
     }
-}
-
-/// The finishing touches on a window just drawn (pass its rectangle): a
-/// Googie star turning on two corners and a glint running along the top rim
-/// every few seconds. Drawn on a layer above the window.
-pub fn adorn(ctx: &egui::Context, id: &str, r: Rect) {
-    let t = now(ctx);
-    let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
-        egui::Id::new(("adorn", id)),
-    ));
-    let still = reduced_motion(ctx);
-    let turn = if still { 0.3 } else { t * 0.6 };
-    star(
-        &painter,
-        r.left_top() + vec2(6.0, 6.0),
-        11.0,
-        turn,
-        GOLD_LIGHT,
-    );
-    star(
-        &painter,
-        r.right_bottom() - vec2(6.0, 6.0),
-        9.0,
-        -turn * 1.3,
-        AETHER,
-    );
-    if still {
-        return;
-    }
-    let k = (t / 6.0 + hash(id) * 0.7).fract();
-    if k < 0.18 {
-        let x = r.left() + 14.0 + (k / 0.18) * (r.width() - 28.0);
-        let y = r.top() + 1.5;
-        painter.add(egui::Shape::convex_polygon(
-            vec![
-                pos2(x - 22.0, y),
-                pos2(x, y - 1.6),
-                pos2(x + 22.0, y),
-                pos2(x, y + 1.6),
-            ],
-            with_alpha(Color32::WHITE, 0.9),
-            Stroke::NONE,
-        ));
-        star(&painter, pos2(x, y), 6.0, t * 4.0, Color32::WHITE);
-    }
-}
-
-fn hash(s: &str) -> f32 {
-    let mut h: u32 = 2166136261;
-    for b in s.bytes() {
-        h = (h ^ b as u32).wrapping_mul(16777619);
-    }
-    (h % 1000) as f32 / 1000.0
 }
 
 /// The player asked for less motion (the title's setting): the stars stand

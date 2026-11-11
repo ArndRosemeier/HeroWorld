@@ -142,9 +142,9 @@ pub fn compass(ctx: &egui::Context, eye: Vec3, look: Vec3, radio: &Radio, mine: 
         egui::Order::Background,
         egui::Id::new("compass"),
     ));
-    crate::uikit::panel(&painter, rect, 15.0, 0.9);
-    // Ticks and letters stay inside the rim.
-    let painter = painter.with_clip_rect(rect.shrink(4.0));
+    crate::googie::badge_strip(&painter, rect);
+    // Ticks and letters stay inside the badge.
+    let painter = painter.with_clip_rect(rect.shrink2(egui::vec2(height * 0.8, 3.0)));
     let x_of = |b: f32| {
         let rel = (b - heading + PI).rem_euclid(TAU) - PI;
         (rel.abs() < fov * 0.5).then(|| rect.center().x + rel / fov * width)

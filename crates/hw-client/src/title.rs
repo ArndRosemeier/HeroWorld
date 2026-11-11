@@ -47,6 +47,8 @@ const LOGO_FONT: &[u8] = include_bytes!("../assets/fonts/LuckiestGuy-Regular.ttf
 const UI_FONT: &[u8] = include_bytes!("../assets/fonts/TitanOne-Regular.ttf");
 /// A typewriter, for the case file (`casefile.rs`).
 const TYPE_FONT: &[u8] = include_bytes!("../assets/fonts/SpecialElite-Regular.ttf");
+/// The diner-sign script on the game's window plates (`uikit`).
+const SIGN_FONT: &[u8] = include_bytes!("../assets/fonts/Pacifico-Regular.ttf");
 const THEME: &[u8] = include_bytes!("../assets/title/title_theme.ogg");
 
 // The comic palette is the whole game's (`uikit`).
@@ -1472,6 +1474,7 @@ pub fn install_fonts(ctx: &egui::Context) {
         ("hw-logo", LOGO_FONT),
         ("hw-ui", UI_FONT),
         ("hw-type", TYPE_FONT),
+        ("hw-sign", SIGN_FONT),
     ] {
         fonts
             .font_data

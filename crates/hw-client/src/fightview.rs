@@ -9,6 +9,7 @@
 //! fight events it sends, and turns keys into input.
 
 use crate::chat::{self, Said, Voice};
+use crate::googie;
 use crate::speech::{Speech, SpeechBubbles};
 use crate::tray::{self, Tray};
 use crate::uikit;
@@ -130,7 +131,7 @@ pub fn beside_tray(screen_w: f32, two_rows: bool) -> (f32, f32) {
     let rows = if two_rows { 2.0 } else { 1.0 };
     (
         (screen_w - w) * 0.5 - 20.0,
-        112.0 + (rows - 1.0) * ROW_STEP + 26.0,
+        112.0 + (rows - 1.0) * ROW_STEP + 56.0,
     )
 }
 
@@ -2345,19 +2346,20 @@ impl FightView {
                     egui::pos2(screen.center().x - w * 0.5, screen.top() + 22.0),
                     egui::vec2(w, 62.0),
                 );
-                uikit::panel(&painter, r, 12.0, 1.0);
-                // The villain's name on a pennant in its con colour, with
-                // the rank and level on the panel.
-                uikit::ribbon(
+                googie::panel(&painter, r, 16.0, 1.0, 77);
+                // The villain's name on a sign plate in its con colour,
+                // breaking the panel's top edge; rank and level beside it.
+                googie::sign(
                     &painter,
-                    ctx,
-                    r.left_top() + egui::vec2(-10.0, 4.0),
+                    r.left_top() + egui::vec2(-14.0, -12.0),
                     name,
-                    16.0,
-                    uikit::mix(col, egui::Color32::BLACK, 0.25),
+                    uikit::ui_font(ctx, 16.0),
+                    uikit::mix(col, egui::Color32::BLACK, 0.3),
+                    0.0,
+                    now,
                 );
                 painter.text(
-                    egui::pos2(r.max.x - 14.0, r.min.y + 13.0),
+                    egui::pos2(r.max.x - 16.0, r.min.y + 12.0),
                     egui::Align2::RIGHT_TOP,
                     format!("{rank} · level {}", c.level),
                     font(13.0),
@@ -2387,35 +2389,27 @@ impl FightView {
             let extra = (rows - 1) as f32 * ROW_STEP;
             let base = egui::pos2(screen.center().x - w * 0.5, screen.bottom() - 112.0 - extra);
             let panel = egui::Rect::from_min_size(base, egui::vec2(w, 98.0 + extra));
-            uikit::panel(&painter, panel, 14.0, 1.0);
-            let label = |y: f32, text: &str| {
-                uikit::shadow_text(
-                    &painter,
-                    base + egui::vec2(14.0, y),
-                    egui::Align2::LEFT_CENTER,
-                    text,
-                    uikit::ui_font(ctx, 12.5),
-                    uikit::GOLD,
-                );
-            };
-            label(17.0, "HEALTH");
+            // A Googie dashboard: a fin with a spinning atom on top, a heart
+            // and a bolt for the two gauges.
+            googie::dashboard(&painter, panel, now, uikit::reduced_motion(ctx));
+            googie::heart_icon(&painter, base + egui::vec2(26.0, 16.5), 8.5);
+            googie::bolt_icon(&painter, base + egui::vec2(26.0, 34.5), 8.5);
             uikit::gauge(
                 &painter,
                 egui::Rect::from_min_size(
-                    base + egui::vec2(74.0, 10.0),
-                    egui::vec2(w - 88.0, 13.0),
+                    base + egui::vec2(42.0, 10.0),
+                    egui::vec2(w - 58.0, 13.0),
                 ),
                 c.health as f32 / 255.0,
                 egui::Color32::from_rgb(70, 200, 90),
                 now,
                 0.3,
             );
-            label(35.0, "ENERGY");
             uikit::gauge(
                 &painter,
                 egui::Rect::from_min_size(
-                    base + egui::vec2(74.0, 28.0),
-                    egui::vec2(w - 88.0, 13.0),
+                    base + egui::vec2(42.0, 28.0),
+                    egui::vec2(w - 58.0, 13.0),
                 ),
                 c.energy as f32 / 255.0,
                 egui::Color32::from_rgb(70, 150, 255),
@@ -2575,7 +2569,7 @@ impl FightView {
             }
             uikit::shadow_text(
                 &painter,
-                egui::pos2(screen.center().x, base.y - 8.0),
+                egui::pos2(screen.center().x, base.y - 38.0),
                 egui::Align2::CENTER_BOTTOM,
                 &{
                     let mut hint = String::from("Tab: target   Left mouse / 1   Q / 2   B: powers");

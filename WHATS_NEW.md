@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.210 (2026-11-11)
+
+- The screens go full Googie: windows are slanted panels with a gold rim, a turquoise pinstripe and a faint 1950s boomerang pattern, their names on a red diner-sign plate with chrome speed lines.
+- The power tray is a dashboard with a fin on top and an atom spinning in it; a heart and a bolt mark health and energy, and the gauges have dial ticks.
+- A starburst clock rings the minimap, the compass is a hood badge, and prompts, buttons and the powers tree are leaf-shaped. Close a window with the red button on its sputnik.
+
 ## 0.209 (2026-11-11)
 
 - Atomic Annie hands out more than one case: up to three open at once, one to a building.

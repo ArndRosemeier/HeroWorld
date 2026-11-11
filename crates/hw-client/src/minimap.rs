@@ -24,7 +24,7 @@ use std::sync::Arc;
 /// The map's radius on screen (points).
 const RADIUS: f32 = 92.0;
 /// Gap to the screen's edges (points).
-const MARGIN: f32 = 18.0;
+const MARGIN: f32 = 30.0;
 /// Metres from the middle to the rim when on foot.
 const WALK_REACH: f64 = 110.0;
 /// The most it zooms out to, high in the sky (m).
@@ -262,6 +262,8 @@ impl Minimap {
                 egui::Color32::WHITE,
             );
         }
+        // A 1950s starburst clock round a gold chrome bezel.
+        crate::googie::starburst_ring(&painter, centre, RADIUS);
         // A gold chrome bezel with hour ticks, Googie style.
         painter.circle_stroke(
             centre,

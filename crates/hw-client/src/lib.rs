@@ -33,6 +33,7 @@ pub mod facades;
 pub mod factionview;
 pub mod fightview;
 pub mod gateview;
+pub mod googie;
 pub mod grassview;
 pub mod hallfurniture;
 pub mod heroview;

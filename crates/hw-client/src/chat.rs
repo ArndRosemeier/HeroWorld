@@ -244,7 +244,7 @@ impl ChatLog {
                 1.5_f32,
                 crate::uikit::with_alpha(crate::uikit::GOLD, 0.6),
             ))
-            .corner_radius(10.0)
+            .corner_radius(crate::googie::leaf(16))
             .inner_margin(egui::Margin::symmetric(10, 7));
         egui::Window::new("chat")
             .title_bar(false)

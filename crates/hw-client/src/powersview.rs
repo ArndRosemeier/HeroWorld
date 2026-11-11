@@ -215,13 +215,16 @@ impl PowersView {
         let origin = &ORIGINS[(sheet.origin as usize).min(ORIGINS.len() - 1)];
         let element = Element::from_code(sheet.element);
         let mut open = self.open;
-        let shown = egui::Window::new("Powers")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(COL_STEP * COLUMNS as f32 + 20.0)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -20.0))
-            .show(ctx, |ui| {
+        crate::googie::window(
+            ctx,
+            egui::Window::new("Powers")
+                .collapsible(false)
+                .resizable(false)
+                .default_width(COL_STEP * COLUMNS as f32 + 20.0)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -20.0)),
+            "Powers",
+            Some(&mut open),
+            |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(format!("Level {level}"))
@@ -292,8 +295,16 @@ impl PowersView {
                     .size(12.5)
                     .color(egui::Color32::from_gray(190)),
                 );
-                let tree = if self.travel { Tree::Common } else { origin.tree };
-                if self.selected.and_then(powers::get).is_none_or(|d| d.tree != tree) {
+                let tree = if self.travel {
+                    Tree::Common
+                } else {
+                    origin.tree
+                };
+                if self
+                    .selected
+                    .and_then(powers::get)
+                    .is_none_or(|d| d.tree != tree)
+                {
                     self.selected = powers::tree(tree).next().map(|d| d.id);
                 }
                 self.tree(ui, sheet, tree);
@@ -339,10 +350,8 @@ impl PowersView {
                     .size(12.0)
                     .color(egui::Color32::from_gray(170)),
                 );
-            });
-        if let Some(r) = shown {
-            crate::uikit::adorn(ctx, "powers", r.response.rect);
-        }
+            },
+        );
         self.open = open;
     }
 
@@ -450,7 +459,9 @@ impl PowersView {
             } else {
                 fill
             };
-            painter.rect_filled(r, 6.0, fill);
+            // Googie leaves, like the tray's slots.
+            let leaf = crate::googie::leaf(12);
+            painter.rect_filled(r, leaf, fill);
             let edge = if d.helper && !owned { HELPER } else { edge };
             let width: f32 = if self.selected == Some(d.id) {
                 3.0
@@ -459,7 +470,7 @@ impl PowersView {
             };
             painter.rect_stroke(
                 r,
-                6.0,
+                leaf,
                 egui::Stroke::new(width, edge),
                 egui::StrokeKind::Inside,
             );
@@ -643,12 +654,16 @@ impl PowersView {
     /// element riding on every blow, and the first power.
     fn origin_card(&mut self, ctx: &egui::Context) -> Option<Sheet> {
         let mut made = None;
-        let shown = egui::Window::new("Who are you?")
-            .collapsible(false)
-            .resizable(false)
-            .default_width(600.0)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -10.0))
-            .show(ctx, |ui| {
+        crate::googie::window(
+            ctx,
+            egui::Window::new("Who are you?")
+                .collapsible(false)
+                .resizable(false)
+                .default_width(600.0)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -10.0)),
+            "Who are you?",
+            None,
+            |ui| {
                 ui.label(
                     egui::RichText::new(
                         "Everyone starts as a normal person. Then the Aether touched you.",
@@ -697,10 +712,8 @@ impl PowersView {
                     let _ = progress::buy(&mut s, first.id);
                     made = Some(s);
                 }
-            });
-        if let Some(r) = shown {
-            crate::uikit::adorn(ctx, "who are you", r.response.rect);
-        }
+            },
+        );
         made
     }
 
@@ -735,12 +748,16 @@ impl PowersView {
     /// pick an element once.
     fn element_card(&mut self, ctx: &egui::Context, sheet: &Sheet) -> Option<Element> {
         let mut picked = None;
-        let shown = egui::Window::new("The power trees are here")
-            .collapsible(false)
-            .resizable(false)
-            .default_width(560.0)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -10.0))
-            .show(ctx, |ui| {
+        crate::googie::window(
+            ctx,
+            egui::Window::new("The power trees are here")
+                .collapsible(false)
+                .resizable(false)
+                .default_width(560.0)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -10.0)),
+            "The power trees are here",
+            None,
+            |ui| {
                 ui.label(
                     egui::RichText::new(format!(
                         "Powers now grow in a tree for each origin, and every hero has an element. \
@@ -762,10 +779,8 @@ impl PowersView {
                 if ui.add(go).clicked() {
                     picked = Some(self.element);
                 }
-            });
-        if let Some(r) = shown {
-            crate::uikit::adorn(ctx, "trees here", r.response.rect);
-        }
+            },
+        );
         picked
     }
 

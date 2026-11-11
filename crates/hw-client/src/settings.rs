@@ -294,8 +294,7 @@ impl GameMenu {
         let mut picture = false;
         let mut open = self.open;
         let page = &mut self.page;
-        ui.modal("HeroWorld", &mut open, |panel, open| {
-            let ui = panel.ui();
+        crate::googie::modal(ui, "HeroWorld", &mut open, |ui, open| {
             menu_style(ui);
             match *page {
                 Page::Main => {

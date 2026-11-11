@@ -4600,7 +4600,7 @@ fn main() -> EngineResult<()> {
                                 engine::ui::egui::vec2(0.0, -170.0),
                             )
                             .show(frame.ui.ctx(), |ui| {
-                                hw_client::uikit::card().show(ui, |ui| {
+                                hw_client::googie::plate(ui, false, |ui| {
                                     ui.label(
                                         engine::ui::egui::RichText::new(
                                             hw_client::doorview::prompt(d.open, d.kind),
@@ -5060,7 +5060,7 @@ fn taxi_panel(
     egui::Area::new(egui::Id::new("taxi"))
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
-            hw_client::uikit::card().show(ui, |ui| {
+            hw_client::googie::plate(ui, false, |ui| {
                 ui.set_min_width(280.0);
                 ui.label(
                     egui::RichText::new("TAXI! Where to?")
@@ -5102,7 +5102,7 @@ fn tube_panel(
     egui::Area::new(egui::Id::new("tube"))
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
-            hw_client::uikit::alert_card().show(ui, |ui| {
+            hw_client::googie::plate(ui, true, |ui| {
                 ui.set_min_width(300.0);
                 ui.label(
                     egui::RichText::new("AETHER TUBE")
@@ -5167,7 +5167,7 @@ fn tube_status(
         .interactable(false)
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 44.0))
         .show(ui.ctx(), |ui| {
-            hw_client::uikit::card().show(ui, |ui| {
+            hw_client::googie::plate(ui, false, |ui| {
                 ui.label(
                     egui::RichText::new(text)
                         .color(egui::Color32::from_rgb(232, 196, 96))
@@ -5208,7 +5208,7 @@ fn way_up_hint(ui: &engine::ui::UiFrame, eye: Vec3, look: Vec3, to: Option<DVec2
         .interactable(false)
         .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -150.0))
         .show(ui.ctx(), |ui| {
-            hw_client::uikit::card().show(ui, |ui| {
+            hw_client::googie::plate(ui, false, |ui| {
                 ui.label(
                     egui::RichText::new(format!("Way up to the street: {way}"))
                         .color(egui::Color32::from_rgb(130, 255, 160))
@@ -5232,7 +5232,7 @@ fn taxi_status(ui: &engine::ui::UiFrame, cab: bool, riding: bool, to: Option<&st
     egui::Area::new(egui::Id::new("taxi status"))
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 14.0))
         .show(ui.ctx(), |ui| {
-            hw_client::uikit::card().show(ui, |ui| {
+            hw_client::googie::plate(ui, false, |ui| {
                 ui.label(
                     egui::RichText::new(text)
                         .color(egui::Color32::from_rgb(255, 214, 70))
@@ -5255,7 +5255,7 @@ fn driver_notice(ui: &engine::ui::UiFrame, world: &World, open: &mut bool) {
     egui::Area::new(egui::Id::new("driver notice"))
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 44.0))
         .show(ui.ctx(), |ui| {
-            hw_client::uikit::alert_card().show(ui, |ui| {
+            hw_client::googie::plate(ui, true, |ui| {
                 ui.set_max_width(360.0);
                 ui.label(egui::RichText::new(warning).color(egui::Color32::WHITE));
                 if ui.button("OK").clicked() {
@@ -5277,7 +5277,7 @@ fn version_corner(
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
         .show(ui.ctx(), |ui| {
             // A dark backing keeps it readable against a bright sky.
-            hw_client::uikit::card().show(ui, |ui| {
+            hw_client::googie::plate(ui, false, |ui| {
                 ui.horizontal(|ui| {
                     if let Some(code) = room {
                         // What friends type to join this world (or its
@@ -5302,18 +5302,22 @@ fn version_corner(
                 });
             });
         });
-    ui.modal("What's new", open, |panel, open| {
+    hw_client::googie::modal(ui, "What's new", open, |ui, open| {
         egui::ScrollArea::vertical()
             .max_height(420.0)
-            .show(panel.ui(), |ui| {
+            .show(ui, |ui| {
                 ui.set_max_width(520.0);
                 for line in hw_core::WHATS_NEW
                     .lines()
                     .skip_while(|l| !l.starts_with("## "))
                 {
                     if let Some(h) = line.strip_prefix("## ") {
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new(h).strong().size(16.0));
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(h)
+                                .font(hw_client::uikit::ui_font(ui.ctx(), 16.0))
+                                .color(hw_client::uikit::GOLD),
+                        );
                     } else if let Some(item) = line.strip_prefix("- ") {
                         ui.label(format!("•  {item}"));
                     } else if !line.trim().is_empty() {
@@ -5321,7 +5325,8 @@ fn version_corner(
                     }
                 }
             });
-        if panel.button("Close") {
+        ui.add_space(8.0);
+        if ui.button("Close").clicked() {
             *open = false;
         }
     });
