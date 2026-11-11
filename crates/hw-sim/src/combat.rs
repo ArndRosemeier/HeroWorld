@@ -127,6 +127,15 @@ pub const RALLY_HASTE: f64 = 1.4;
 pub const RANK_RESIST: [f64; 3] = [1.0, 0.5, 0.15];
 /// A Guardian Angel catches a fatal blow once in this long (s).
 pub const ANGEL_EVERY: f64 = 120.0;
+/// Seconds between two second winds ([`powers::Fields::second_wind`]),
+/// and the share of health that sets one off.
+pub const SECOND_WIND_EVERY: f64 = 90.0;
+pub const SECOND_WIND_BELOW: f32 = 0.25;
+/// Seconds between two times a hero gets up on their own
+/// ([`powers::Fields::get_up`]).
+pub const GET_UP_EVERY: f64 = 120.0;
+/// A hero moving slower than this (m/s) stands still (a brace holds).
+pub const STILL_SPEED: f64 = 0.5;
 /// How far a bounce, a chain or a spread leaps (m).
 pub const SPREAD_REACH: f64 = 8.0;
 /// A burn deals its damage in steps this long (s).
@@ -616,6 +625,12 @@ pub struct Fighter {
     pub hidden_until: u64,
     /// The next tick a Guardian Angel may catch a fatal blow.
     pub angel_ready: u64,
+    /// The next tick a second wind may come.
+    pub wind_ready: u64,
+    /// The next tick the hero may get up on their own, and the tick they
+    /// last went down.
+    pub rise_ready: u64,
+    pub down_at: u64,
 }
 
 impl Fighter {
@@ -672,6 +687,9 @@ impl Fighter {
             buff_execute: false,
             hidden_until: 0,
             angel_ready: 0,
+            wind_ready: 0,
+            rise_ready: 0,
+            down_at: 0,
         }
     }
 
@@ -860,6 +878,7 @@ impl Fighter {
                 | (self.hidden(tick) as u32 * EFFECT_HIDDEN)
                 | (self.buffed(tick) as u32 * EFFECT_EMPOWERED)
                 | self.marks,
+            toggles: self.kit.toggles_on(),
         }
     }
 }
@@ -2153,9 +2172,23 @@ fn strike(
     if t.f.marks & EFFECT_ARMOURED != 0 {
         dealt *= robots::ARMOUR_LETS_THROUGH;
     }
-    // A hero's own toughness, buffs and friends' wards.
+    // A hero's own toughness, buffs and friends' wards (a sidekick has
+    // only the wards).
     if t.hero.is_some() {
-        reflected += dealt * t.f.kit.passive.reflect;
+        let p = t.f.kit.passive;
+        // A dodge: the blow misses (the same every run).
+        if p.dodge > 0.0 && roll(tick.wrapping_add((from_id.0 as u64) << 32), t.id) < p.dodge as f64
+        {
+            dealt = 0.0;
+        }
+        // Braced: standing still, the hero takes less.
+        let speed = DVec2::new(t.body.vel.x, t.body.vel.z).length();
+        if p.brace > 0.0 && speed < STILL_SPEED && t.body.grounded {
+            dealt *= 1.0 - p.brace;
+        }
+        reflected += dealt * p.reflect;
+        dealt *= t.f.takes(tick);
+    } else if t.sidekick.is_some() {
         dealt *= t.f.takes(tick);
     }
     let minion = t
@@ -2188,6 +2221,18 @@ fn strike(
     };
     t.f.health = (t.f.health - dealt).max(floor);
     t.f.last_combat = tick;
+    // A second wind: near defeat, a share of health comes back.
+    let wind = t.f.kit.passive.second_wind;
+    if t.hero.is_some()
+        && wind > 0.0
+        && t.f.health > 0.0
+        && t.f.health < t.f.max_health * SECOND_WIND_BELOW
+        && tick >= t.f.wind_ready
+    {
+        t.f.wind_ready = tick + ticks(SECOND_WIND_EVERY);
+        t.f.health = (t.f.health + t.f.max_health * wind).min(t.f.max_health);
+        t.saved = true;
+    }
     let mut push = DVec2::new(t.body.pos.x - from_pos.x, t.body.pos.z - from_pos.z);
     push = push.normalize_or(DVec2::X);
     let defeated = t.f.health <= 0.0;
@@ -2211,6 +2256,9 @@ fn strike(
         t.f.until = tick + ticks(MEDIC_DELAY);
         t.f.queued = None;
         t.f.revive = 0.0;
+        t.f.down_at = tick;
+        // A downed hero's toggles drop.
+        t.f.kit.set_toggles(0);
     } else if knock && villain {
         t.f.status = Status::Knocked;
         t.f.until = tick + ticks(KNOCKED_SECONDS);
@@ -2468,14 +2516,36 @@ fn blow(
     let d = def_of(power);
     let f = d.fields;
     let mut damage = damage;
-    if f.exploit > 0.0 && actors[t].f.helpless(tick) {
-        damage *= 1.0 + f.exploit;
+    let mine = actors[i].f.kit.passive;
+    let exploit = f.exploit + mine.exploit;
+    if exploit > 0.0 && actors[t].f.helpless(tick) {
+        damage *= 1.0 + exploit;
     }
-    let (knock, defeat, dealt) = if damage > 0.0 {
+    // An opening move: a villain not yet fighting this hero takes the
+    // first blow harder.
+    if mine.ambush > 0.0 && actors[t].f.target != Some(actors[i].id) {
+        damage *= 1.0 + mine.ambush;
+    }
+    let (knock, mut defeat, dealt) = if damage > 0.0 {
         strike(actors, i, t, damage, f.knock, tick, aimed)
     } else {
         (false, false, 0.0)
     };
+    // Cuffed: a minion beaten down this far gives up.
+    let minion = actors[t]
+        .enemy
+        .is_some_and(|e| rank_of(e.kind) == 0 && !e.kind.heavy());
+    if mine.cuff > 0.0
+        && dealt > 0.0
+        && !defeat
+        && minion
+        && actors[t].f.fighting()
+        && actors[t].f.health <= actors[t].f.max_health * mine.cuff
+    {
+        let rest = actors[t].f.health;
+        let (_, beaten, _) = strike(actors, i, t, rest, false, tick, false);
+        defeat = beaten;
+    }
     let charmed = riders(actors, i, t, dealt, defeat, &f, centre, tick);
     if dealt > 0.0 {
         element(actors, i, t, dealt, defeat, tick, out);
@@ -2895,8 +2965,12 @@ fn heroes_act(
         // fire (holding the mouse would otherwise swallow every key press).
         let waiting = actors[i].f.queued.map(|q| q.0);
         let quick = |p: PowerId| p == PowerId::STRIKE || Some(p) == kit.blast;
-        let key =
-            Some(PowerId(input.power)).filter(|p| p.0 != 0 && kit.has(*p) && !def_of(*p).passive());
+        // A toggle flips once a press: holding its key does not flip it
+        // back and forth.
+        let fresh = !actors[i].f.pressing;
+        let key = Some(PowerId(input.power))
+            .filter(|p| p.0 != 0 && kit.has(*p) && !def_of(*p).passive())
+            .filter(|p| fresh || !def_of(*p).toggle);
         let blast = kit
             .blast
             .filter(|_| input.blast)
@@ -2939,7 +3013,8 @@ fn heroes_act(
             ));
         }
         actors[i].f.pressing = pressing;
-        if input.power != 0 && key.is_none() {
+        let held_toggle = kit.has(PowerId(input.power)) && def_of(PowerId(input.power)).toggle;
+        if input.power != 0 && key.is_none() && !held_toggle {
             out.log.push(format!(
                 "server {tick}: power {} is not in this hero's kit (or passive)",
                 input.power
@@ -3509,7 +3584,19 @@ fn heroes_act(
                     }
                 }
             }
-            Delivery::Passive => {}
+            Delivery::Passive => {
+                // A toggle: switched on or off.
+                if d.toggle {
+                    let on = actors[i].f.kit.flip(power);
+                    let mut e = event_of(FxKind::Buff, me_id, actors[i].chest());
+                    e.knock = on;
+                    out.fx.push(e);
+                    out.log.push(format!(
+                        "server {tick}: {name} switched {}",
+                        if on { "on" } else { "off" }
+                    ));
+                }
+            }
         }
     }
 }
@@ -3627,9 +3714,13 @@ fn burst(
     caught
 }
 
-/// Who stands in a friend's aura this tick: every hero within
+/// The share of their own ward a warding hero gets.
+pub const OWN_WARD: f32 = 0.5;
+
+/// Who stands in a friend's aura this tick: every hero and sidekick within
 /// [`powers::AURA_RADIUS`] of a standing hero whose powers give one (their
-/// own too) hits harder; a ward makes friends (not the hero) take less.
+/// own too) hits harder; a ward makes friends take less (the warding hero
+/// [`OWN_WARD`] of it).
 fn rally(actors: &mut [Actor]) {
     let auras: Vec<(DVec3, f32, f32, NetId)> = actors
         .iter()
@@ -3640,16 +3731,16 @@ fn rally(actors: &mut [Actor]) {
     for a in actors.iter_mut() {
         a.f.rally = 0.0;
         a.f.warded = 0.0;
-        if a.hero.is_none() || !a.f.fighting() {
+        if (a.hero.is_none() && a.sidekick.is_none()) || !a.f.fighting() {
             a.f.rallied = false;
             continue;
         }
         for &(p, aura, ward, by) in &auras {
             if p.distance(a.body.pos) <= powers::AURA_RADIUS {
                 a.f.rally = a.f.rally.max(aura);
-                if by != a.id {
-                    a.f.warded = a.f.warded.max(ward);
-                }
+                // The one warding takes half the good of it.
+                let share = if by == a.id { OWN_WARD } else { 1.0 };
+                a.f.warded = a.f.warded.max(ward * share);
             }
         }
         a.f.rallied = a.f.rally > 0.0;
@@ -4479,6 +4570,20 @@ fn statuses(
                                 .push(event(tick, FxKind::Revived, a.id, a.id, a.chest()));
                         }
                     }
+                    _ if a.f.kit.passive.get_up > 0.0
+                        && !fetching
+                        && tick >= a.f.rise_ready
+                        && tick >= a.f.down_at + ticks(a.f.kit.passive.get_up) =>
+                    {
+                        // A lifeline: the hero gets up on their own.
+                        a.f.rise_ready = tick + ticks(GET_UP_EVERY);
+                        a.f.status = Status::Standing;
+                        a.f.health = a.f.max_health * REVIVE_HEALTH;
+                        a.f.revive = 0.0;
+                        a.f.last_combat = tick;
+                        out.fx
+                            .push(event(tick, FxKind::Revived, a.id, a.id, a.chest()));
+                    }
                     _ => {
                         a.f.revive = (a.f.revive - DT).max(0.0);
                         let asked = a.hero.is_some_and(|(_, inp)| inp.hospital);
@@ -4518,12 +4623,24 @@ fn regenerate(actors: &mut [Actor], tick: u64) {
             // (so level 20 heals as fast, for its size, as level 1);
             // regenerating powers add a share of it every second, and a
             // friend's aura brings energy back sooner.
+            // Toggles that are on take their share of the energy, and a
+            // hero in the air gets none back at all.
             let size = a.f.max_health / HERO_HEALTH;
             let vitality = a.f.kit.passive.regen * a.f.max_health;
             let rally = if a.f.rallied { RALLY_ENERGY } else { 1.0 };
+            let upkeep = 1.0 - a.f.kit.upkeep();
+            // (The town's own heroes are exempt: they fly to every fight.)
+            let flying = !a.npc
+                && a.hero.is_some_and(|(_, inp)| inp.fly)
+                && a.f.kit.travels(powers::travel::FLY)
+                && !a.body.grounded;
             (
                 [HEALTH_REGEN.0, HEALTH_REGEN.1][k] * size + vitality,
-                [ENERGY_REGEN.0, ENERGY_REGEN.1][k] * rally,
+                if flying {
+                    0.0
+                } else {
+                    [ENERGY_REGEN.0, ENERGY_REGEN.1][k] * rally * upkeep
+                },
             )
         };
         a.f.health = (a.f.health + h * DT as f32).min(a.f.max_health);

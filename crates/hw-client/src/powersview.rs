@@ -10,6 +10,7 @@ use crate::fightview::{element_ui_colour, power_ui_colour};
 use crate::tray::{self, Tray};
 use engine::ui::egui;
 use hw_net::{PowerId, Sheet};
+use hw_sim::combat;
 use hw_sim::powers::{self, def_of, Delivery, Element, Lands, PowerDef, Tree};
 use hw_sim::progress::{
     self, can_buy, can_give_up, karma_for_level, level_of, BuyError, MAX_LEVEL, ORIGINS, REFUND,
@@ -259,15 +260,34 @@ impl PowersView {
                 });
                 standing(ui, sheet);
                 ui.separator();
+                // Two big tabs: the origin's own powers, and the travel powers
+                // every hero can buy (they were easy to miss as small text).
                 ui.horizontal(|ui| {
-                    let mine = format!("{} tree", origin.tree.name());
+                    let tab = |text: String| {
+                        egui::RichText::new(text)
+                            .size(17.0)
+                            .strong()
+                            .color(egui::Color32::from_rgb(255, 214, 90))
+                    };
+                    let mine = tab(format!("{} powers", origin.tree.name()));
                     if ui.selectable_label(!self.travel, mine).clicked() {
                         self.travel = false;
                     }
-                    if ui.selectable_label(self.travel, "Travel tree").clicked() {
+                    ui.add_space(12.0);
+                    let travel = tab("Travel powers: Flight, Super Jump, Super Speed ...".into());
+                    if ui.selectable_label(self.travel, travel).clicked() {
                         self.travel = true;
                     }
                 });
+                ui.label(
+                    egui::RichText::new(if self.travel {
+                        "Travel powers are open to every origin, and cost karma like any other."
+                    } else {
+                        "Getting about (Flight, Super Jump, Super Speed, Glide, Wall Run) is on the Travel powers tab."
+                    })
+                    .size(12.5)
+                    .color(egui::Color32::from_gray(190)),
+                );
                 let tree = if self.travel { Tree::Common } else { origin.tree };
                 if self.selected.and_then(powers::get).is_none_or(|d| d.tree != tree) {
                     self.selected = powers::tree(tree).next().map(|d| d.id);
@@ -833,6 +853,7 @@ pub fn what_it_does(d: &PowerDef) -> String {
             f.summons.max(1),
             if f.summons > 1 { "s" } else { "" }
         ),
+        Delivery::Passive if d.toggle => "Switch on and off with its key".to_string(),
         Delivery::Passive => "Always on".to_string(),
     };
     let mut bits: Vec<String> = Vec::new();
@@ -902,8 +923,41 @@ pub fn what_it_does(d: &PowerDef) -> String {
     }
     if f.exploit > 0.0 {
         bits.push(format!(
-            "{} more on the held, frozen or afraid",
+            "{} more on the held, frozen, confused or afraid",
             pct(f.exploit)
+        ));
+    }
+    if f.ambush > 0.0 {
+        bits.push(format!(
+            "your first blow on a villain not yet fighting you does {} more",
+            pct(f.ambush)
+        ));
+    }
+    if f.dodge > 0.0 {
+        bits.push(format!("{} of villains' blows miss you", pct(f.dodge)));
+    }
+    if f.brace > 0.0 {
+        bits.push(format!("standing still you take {} less", pct(f.brace)));
+    }
+    if f.cuff > 0.0 {
+        bits.push(format!(
+            "a minion you beat down below {} of its health gives up",
+            pct(f.cuff)
+        ));
+    }
+    if f.second_wind > 0.0 {
+        bits.push(format!(
+            "once in {}, dropping below {} health gives {} of it back",
+            secs(combat::SECOND_WIND_EVERY),
+            pct(combat::SECOND_WIND_BELOW),
+            pct(f.second_wind)
+        ));
+    }
+    if f.get_up > 0.0 {
+        bits.push(format!(
+            "once in {}, you get up on your own {} after going down",
+            secs(combat::GET_UP_EVERY),
+            secs(f.get_up)
         ));
     }
     if f.heal > 0.0 {
@@ -956,15 +1010,10 @@ pub fn what_it_does(d: &PowerDef) -> String {
     }
     if f.ward > 0.0 {
         bits.push(format!(
-            "friends within {:.0} m take {} less",
+            "friends and sidekicks within {:.0} m take {} less, you {}",
             powers::AURA_RADIUS,
-            pct(f.ward)
-        ));
-    }
-    if f.rescue_speed > 0.0 {
-        bits.push(format!(
-            "frees trapped people {} faster",
-            pct(f.rescue_speed)
+            pct(f.ward),
+            pct(f.ward * combat::OWN_WARD)
         ));
     }
     if f.revive_reach > 0.0 {
@@ -984,7 +1033,10 @@ pub fn what_it_does(d: &PowerDef) -> String {
         (travel::JUMP, "jump seven metres, leap along fast"),
         (travel::SPRINT, "Shift to sprint"),
         (travel::GLIDE, "hold jump to glide down"),
-        (travel::FLY, "V to fly, Shift to go fast"),
+        (
+            travel::FLY,
+            "V to fly, Shift to go fast; no energy comes back while you are in the air",
+        ),
         (travel::SPEED, "Shift to run like the wind"),
         (travel::WALL, "run up walls"),
     ] {
@@ -1009,6 +1061,11 @@ pub fn what_it_does(d: &PowerDef) -> String {
     let energy = powers::energy(d);
     if d.id == PowerId::STRIKE {
         head.push_str(" Free.");
+    } else if d.toggle {
+        head.push_str(&format!(
+            " While on, it takes {} of your energy recovery.",
+            pct(f.upkeep)
+        ));
     } else if !d.passive() {
         head.push_str(&format!(
             " {energy:.0} energy, ready again after {}.",

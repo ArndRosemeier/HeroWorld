@@ -52,16 +52,21 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
     // Whom to fight: an orderly first (it mends the rest), then the
     // nearest; a shield bearer only when nothing else is left or it is
     // right there (blows from afar glance off its shield).
-    let rank = |k: EnemyKind, d: f64| match k {
+    // The colossus's hull shrugs blows off until it kneels: its weak
+    // points first.
+    let rank = |k: EnemyKind, d: f64, e: &crate::combat::Fighter| match k {
         EnemyKind::Orderly if d < 16.0 => 0,
         EnemyKind::Bulwark if d > SHIELD_REACH => 2,
+        EnemyKind::Colossus if e.marks & hw_net::EFFECT_KNEELING == 0 => 2,
         _ => 1,
     };
     let nearest = foes
         .iter()
         .min_by(|a, b| {
             let (da, db) = (a.2.distance(me), b.2.distance(me));
-            rank(a.1, da).cmp(&rank(b.1, db)).then(da.total_cmp(&db))
+            rank(a.1, da, &a.3)
+                .cmp(&rank(b.1, db, &b.3))
+                .then(da.total_cmp(&db))
         })
         .copied();
     let Some((target, kind, at, foe)) = nearest else {
@@ -104,7 +109,11 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
         ) && d.fields.damage >= 20.0
     });
     // Close in to fighting range; melee-only heroes go right up.
-    let keep = if wants_close || !ranged || f.energy < 15.0 {
+    // One out of sight (round a corner, behind a wall) cannot be shot:
+    // walk up to it.
+    let chest = DVec3::Y * (crate::collision::BODY_HEIGHT * 0.6);
+    let seen = crate::combat::in_sight(&sim.solids(), me + chest, at + chest);
+    let keep = if wants_close || !ranged || f.energy < 15.0 || !seen {
         strike_range - 0.5
     } else {
         14.0
@@ -139,6 +148,13 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
     if f.carrying.is_some() {
         pick = Some(f.lifted_with);
     }
+    // Toggles go on first, and stay on.
+    if pick.is_none() {
+        pick = owned
+            .iter()
+            .find(|d| d.toggle && !f.kit.is_on(d.id) && ready(sim, hero, d.id))
+            .map(|d| d.id);
+    }
     for &(id, how, fl) in &ids {
         if pick.is_some() {
             break;
@@ -147,11 +163,17 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
             continue;
         }
         let near = |r: f64| foes.iter().filter(|x| x.2.distance(me) < r).count();
+        let near_foe = |r: f64| foes.iter().filter(|x| x.2.distance(at) < r).count();
         let good = match how {
             Delivery::Allies if fl.heal > 0.0 => hurt,
             Delivery::Burst if fl.radius >= 12.0 => near(fl.radius * 0.75) >= 3,
             Delivery::Burst => {
                 near(fl.radius * 0.85) >= 2 || (fl.damage <= 0.0 && near(fl.radius) >= 1)
+            }
+            // A strike from the sky that only holds: on a group that can
+            // be held, not on a machine.
+            Delivery::Sky if fl.damage < 20.0 => {
+                d <= fl.range && !kind.heavy() && near_foe(fl.radius) >= 2 && !foe.held(tick)
             }
             Delivery::Sky => d <= fl.range,
             Delivery::Line => d <= fl.range - 6.0,

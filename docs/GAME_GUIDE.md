@@ -225,9 +225,10 @@ when they next play (the element card); then B to pick powers from their tree.
 
 ### Buying powers: the trees (`progress.rs`, `powers.rs`)
 
-Press **B**. The window shows the hero's origin tree and the travel tree (tabs). Boxes are
+Press **B**. The window shows the hero's origin tree and, on the second big tab ("Travel powers"), the travel tree every hero can buy from (Flight, Super Jump, Super Speed, Glide, Wall Run, Sprint, Hero's Return). Boxes are
 powers, arrows what they need: owned powers gold, ones to buy now lit blue, too dear grey,
-locked dark; helping powers have a green edge, capstones a star. Click a box for what it
+locked dark; helping powers have a green edge, capstones a star. A toggle's details say
+what share of energy recovery it takes while on. Click a box for what it
 does, what it needs, and Buy or Give up.
 
 - **Every power is one record** (`powers::PowerDef`): where it sits in the tree, what it
@@ -252,6 +253,32 @@ does, what it needs, and Buy or Give up.
 - **Strike** is everyone's free punch (20 damage, 3 m, 0.7 s) and carries the element.
   **Q** fires the hero's first bolt power.
 - The server checks every purchase against the hero file.
+- **Every power must help in a hard fight** (Arnd, 0.177): no power only makes an easy
+  thing easier. Rescues need no powers of their own; they stay a plain hold-E job, flavour
+  and easy karma for new heroes. The old rescue powers (faster freeing, rescue bubbles)
+  became fight powers in the same places in the trees.
+- **Toggles** (`PowerDef::toggle`): most defensive powers (resistances, regeneration,
+  dodging, bracing, reflection, wards) and the auras are switched on and off with their
+  key. While on, each takes its share of the hero's energy recovery
+  (`Fields::upkeep`, 15% to 40%; several add up, to none at all), so a hero chooses
+  between being hard to hurt and firing powers often. A toggle costs no energy to switch
+  and can be switched again after 1 s; holding its key flips it once. The tray shows a
+  toggle that is on in green with its share. A downed hero's toggles go off. Second
+  Wind, Guardian Angel, Lifeline and the small passives (Scanner Goggles, Opening Move,
+  Cuff 'Em, Martial Master, Gadget Belt) are always on.
+- **Flight costs energy recovery:** while a hero flies (in the air with Flight on), no
+  energy comes back at all, so hovering out of reach and firing down is no longer free.
+  Super jump, glide and wall run are not affected.
+- **The reworked powers in numbers:** Scanner Goggles +25% on held, frozen, confused or
+  afraid villains (adds to a power's own `exploit`); Spirit Sight 1 villain blow in 5
+  misses; Brace 30% less while standing still (under 0.5 m/s, on the ground); Second Wind
+  40% of health back once dropping below 25%, once in 90 s; Opening Move doubles the first
+  blow on a villain not yet fighting the hero; Guardian Orb a 40% shield on the hero for
+  8 s; Ring of Judgement 20 damage round the hero and 15% more taken for 8 s; Stasis Cage
+  holds a 5 m area 4 s; Ghost Lantern sends villains within 8 m fleeing 4 s; Lifeline
+  also gets the hero up on their own 10 s after going down, once in 120 s; Cuff 'Em also
+  makes a minion left below 20% of its health give up; Mobile Aegis and Martyr cover
+  sidekicks too, and the hero at half (`combat::OWN_WARD`).
 
 ### The powers
 
@@ -268,14 +295,14 @@ each one's numbers; the names and links:
 | 2 | **Flight** | flies anywhere | Super Jump |
 | 2 | **Super Speed** | runs like the wind | Sprint |
 | 3 | **Wall Run** | runs up walls | Super Speed or Super Jump |
-| 3 | **Hero's Return** | home to Hero Hall | – |
+| 3 | **Hero's Return** | home to Hero Hall | any 2 of its tree |
 
 #### Science
 
 | Row | Power | What it does | Needs |
 | --- | --- | --- | --- |
 | 1 | **Atomic Ray** | bolt, knocks down | – |
-| 1 | **Scanner Goggles** (helper) | frees people 1.5x fast | – |
+| 1 | **Scanner Goggles** | 25% more on helpless foes | – |
 | 2 | **Ray Burst** | a cone of rays | Atomic Ray |
 | 2 | **Gravity Cuffs** | holds one 7 s | Atomic Ray |
 | 2 | **Transmitter** | teleports 40 m | Scanner Goggles |
@@ -283,7 +310,7 @@ each one's numbers; the names and links:
 | 3 | **Cryo Ray** | freezes a cone, douses | Ray Burst |
 | 3 | **Sonic Boom** | blast, knocks down | Ray Burst, Gravity Cuffs |
 | 3 | **Tin Pal** | robot sidekick | Gravity Cuffs, Transmitter |
-| 3 | **Force Bubble** (helper) | floats people out | Transmitter, Force Field |
+| 3 | **Stasis Cage** | holds an area 4 s | Transmitter, Force Field |
 | 3 | **Vital Ray** | heals friends near | Force Field |
 | 4 | **Disintegrator** | beam through a line | Cryo Ray, Sonic Boom |
 | 4 | **Gravity Well** | pulls a crowd in | Sonic Boom |
@@ -302,17 +329,17 @@ each one's numbers; the names and links:
 | Row | Power | What it does | Needs |
 | --- | --- | --- | --- |
 | 1 | **Arcane Bolt** | bolt, knocks down | – |
-| 1 | **Spirit Sight** (helper) | frees people 1.5x fast | – |
+| 1 | **Spirit Sight** (toggle, 20% of energy recovery) | 1 blow in 5 misses you | – |
 | 2 | **Binding Sigils** | roots hold one 7 s | Arcane Bolt |
 | 2 | **Hex** | target takes 25% more | Arcane Bolt |
-| 2 | **Ghost Lantern** (helper) | floats people out | Spirit Sight |
+| 2 | **Ghost Lantern** | villains near flee 4 s | Spirit Sight |
 | 2 | **Aether Step** | teleports 40 m | Spirit Sight |
 | 2 | **Telekinesis** | lift and throw | Spirit Sight |
 | 3 | **Frost Sigil** | freezes a cone, douses | Binding Sigils |
 | 3 | **Charm** | a minion fights for you | Hex, Binding Sigils |
 | 3 | **Spirit Ward** | a strong barrier | Ghost Lantern |
 | 3 | **Void Grasp** | pulls in and burns | Aether Step, Telekinesis |
-| 3 | **Wraith Form** | takes 20% less | Telekinesis |
+| 3 | **Wraith Form** (toggle, 20% of energy recovery) | takes 20% less | Telekinesis |
 | 4 | **Spirit Lance** | beam through a line | Frost Sigil |
 | 4 | **Curse of Weakness** (fork 1) | an area takes 20% more | Charm |
 | 4 | **Circle of Sigils** (fork 1) | holds an area 4 s | Charm, Spirit Ward |
@@ -321,7 +348,7 @@ each one's numbers; the names and links:
 | 5 | **Starfall** | strike from the sky | Spirit Lance |
 | 5 | **Familiar** | a spirit hound fights | Curse of Weakness or Circle of Sigils |
 | 5 | **Void Tendrils** | holds a crowd 5 s | Soul Siphon |
-| 5 | **Aether Vitality** | 2% health a second | Aether Mend |
+| 5 | **Aether Vitality** (toggle, 25% of energy recovery) | 2% health a second | Aether Mend |
 | 6 | **Eclipse** (fork 2, capstone) | stars rain for 8 s | Starfall, Familiar |
 | 6 | **Void Rift** (fork 2, capstone) | swallows a street | Void Tendrils, Aether Vitality |
 
@@ -330,25 +357,25 @@ each one's numbers; the names and links:
 | Row | Power | What it does | Needs |
 | --- | --- | --- | --- |
 | 1 | **Haymaker** | big punch, knocks down | – |
-| 1 | **Brace** (helper) | props up rubble: frees 1.5x fast | – |
+| 1 | **Brace** (toggle, 15% of energy recovery) | standing still: 30% less | – |
 | 2 | **Uppercut** | launches a villain | Haymaker |
 | 2 | **Thunderclap** | blast, knocks down | Haymaker |
 | 2 | **Mighty Heave** | lift and throw | Haymaker, Brace |
-| 2 | **Tough** | takes 15% less | Brace |
-| 2 | **Dig Out** (helper) | frees people 2x fast | Brace |
+| 2 | **Tough** (toggle, 15% of energy recovery) | takes 15% less | Brace |
+| 2 | **Second Wind** | near defeat: 40% health back | Brace |
 | 3 | **Shoulder Charge** | dashes, bowls over | Uppercut |
 | 3 | **Stomp** | slows everyone round | Thunderclap |
 | 3 | **Lamp-post Swing** | sweeps all round you | Mighty Heave |
 | 3 | **Boulder Toss** | rips up the street | Mighty Heave, Tough |
-| 3 | **Iron Constitution** | 2% health a second | Tough, Dig Out |
+| 3 | **Iron Constitution** (toggle, 25% of energy recovery) | 2% health a second | Tough, Second Wind |
 | 4 | **Combo Flurry** | three quick blows | Shoulder Charge |
 | 4 | **Fissure** | cracks a line | Stomp |
 | 4 | **Giant Swing** | flings a villain far | Lamp-post Swing, Boulder Toss |
-| 4 | **Berserk** (fork 1) | 30% harder, 15% softer | Iron Constitution |
-| 4 | **Bulwark Stance** (fork 1) | never knocked down | Iron Constitution |
+| 4 | **Berserk** (fork 1, toggle, 20% of energy recovery) | 30% harder, 15% softer | Iron Constitution |
+| 4 | **Bulwark Stance** (fork 1, toggle, 15% of energy recovery) | never knocked down | Iron Constitution |
 | 5 | **Meteor Leap** | jump-slam from afar | Combo Flurry |
 | 5 | **Car Slam** | hurls a car | Fissure, Giant Swing |
-| 5 | **Steel Hide** | takes half | Berserk or Bulwark Stance |
+| 5 | **Steel Hide** (toggle, 40% of energy recovery) | takes half | Berserk or Bulwark Stance |
 | 6 | **Earthshaker** (fork 2, capstone) | huge blast, 16 m | Meteor Leap, Car Slam |
 | 6 | **Unstoppable** (fork 2, capstone) | a titan for 20 s | Car Slam, Steel Hide |
 
@@ -357,25 +384,25 @@ each one's numbers; the names and links:
 | Row | Power | What it does | Needs |
 | --- | --- | --- | --- |
 | 1 | **Light Lance** | bolt of light | – |
-| 1 | **Guardian Orb** (helper) | floats people out | – |
+| 1 | **Guardian Orb** | shields you 40%, 8 s | – |
 | 2 | **Shield Bash** | punch, knocks down | Light Lance |
 | 2 | **Healing Light** | heals friends near | Light Lance |
-| 2 | **Lifeline** (helper) | revives from 25 m | Guardian Orb |
+| 2 | **Lifeline** (helper) | revives from 25 m; gets you up | Guardian Orb |
 | 2 | **Guardian Aegis** | friends take half | Guardian Orb |
 | 2 | **Protector's Bond** | a strong barrier | Guardian Orb |
 | 3 | **Shield Throw** | bounces to three | Shield Bash |
 | 3 | **Halo Burst** | blast that heals | Shield Bash, Healing Light |
-| 3 | **Rescue Swarm** (helper) | floats three out | Lifeline |
+| 3 | **Ring of Judgement** | foes round you take 15% more | Lifeline |
 | 3 | **Sanctuary** | heals friends, slows foes | Guardian Aegis |
 | 3 | **Intercept** | leaps in, shields there | Protector's Bond |
 | 4 | **Radiant Beam** | beam through a line | Shield Throw |
 | 4 | **Light Pillar** | a burning column | Halo Burst |
-| 4 | **Steady Heart** | 2% health a second | Rescue Swarm, Sanctuary |
-| 4 | **Reflective Aegis** (fork 1) | sends 20% of blows back | Sanctuary |
-| 4 | **Mobile Aegis** (fork 1) | friends near take 15% less | Intercept |
-| 5 | **Heroic Aura** | friends near hit harder | Light Pillar |
+| 4 | **Steady Heart** (toggle, 25% of energy recovery) | 2% health a second | Ring of Judgement, Sanctuary |
+| 4 | **Reflective Aegis** (fork 1, toggle, 15% of energy recovery) | sends 20% of blows back | Sanctuary |
+| 4 | **Mobile Aegis** (fork 1, toggle, 15% of energy recovery) | friends near take 15% less | Intercept |
+| 5 | **Heroic Aura** (toggle, 25% of energy recovery) | friends near hit harder | Light Pillar |
 | 5 | **Guardian Angel** (fork 2) | survives a fatal blow | Steady Heart |
-| 5 | **Martyr** (fork 2) | friends near take 25% less | Steady Heart |
+| 5 | **Martyr** (fork 2, toggle, 25% of energy recovery) | friends near take 25% less | Steady Heart |
 | 5 | **Bulwark of Light** | a big barrier | Reflective Aegis or Mobile Aegis |
 | 6 | **Dawn** (fork 3, capstone) | heals and revives all | Heroic Aura, Guardian Angel or Martyr |
 | 6 | **Last Bastion** (fork 3, capstone) | a dome blows bounce off | Guardian Angel or Martyr, Bulwark of Light |
@@ -385,12 +412,12 @@ each one's numbers; the names and links:
 | Row | Power | What it does | Needs |
 | --- | --- | --- | --- |
 | 1 | **One-Two** | a quick double blow | – |
-| 1 | **Detective's Nose** (helper) | frees people 1.5x fast | – |
+| 1 | **Opening Move** | first blow on the unwary: double | – |
 | 2 | **Disarm** | gunmen can't shoot 6 s | One-Two |
 | 2 | **Combat Roll** | dodges almost all, 2 s | One-Two |
-| 2 | **Grapple Line** | swings you 35 m | One-Two, Detective's Nose |
-| 2 | **Smoke Bomb** | confuses, hides you | Detective's Nose |
-| 2 | **Cuff 'Em** (helper) | 25% more karma | Detective's Nose |
+| 2 | **Grapple Line** | swings you 35 m | One-Two, Opening Move |
+| 2 | **Smoke Bomb** | confuses, hides you | Opening Move |
+| 2 | **Cuff 'Em** | beaten-down minions give up | Opening Move |
 | 3 | **Takedown** | crushes held foes | Disarm |
 | 3 | **Sweep Kick** | knocks all round down | Combat Roll |
 | 3 | **Bolas** | tangles one 4 s | Grapple Line |
@@ -400,10 +427,10 @@ each one's numbers; the names and links:
 | 4 | **Martial Master** (fork 1) | punches leap on | Sweep Kick |
 | 4 | **Gadget Belt** (fork 1) | powers recharge 30% faster | Bolas |
 | 4 | **Flash Bang** | confuses a crowd | Intimidate |
-| 4 | **Unbreakable Will** | steadfast, 20% less | Shadow Cloak |
+| 4 | **Unbreakable Will** (toggle, 20% of energy recovery) | steadfast, 20% less | Shadow Cloak |
 | 5 | **Zip Line Strike** | dashes through a line | Trusty Partner |
 | 5 | **Stun Darts** | leap on to three | Martial Master or Gadget Belt |
-| 5 | **Rallying Cry** | friends near hit harder | Flash Bang |
+| 5 | **Rallying Cry** (toggle, 25% of energy recovery) | friends near hit harder | Flash Bang |
 | 5 | **Vanish** | villains lose you 10 s | Unbreakable Will |
 | 6 | **Final Verdict** (fork 2, capstone) | minions fall at a blow, 10 s | Zip Line Strike, Stun Darts |
 | 6 | **Reign of Fear** (fork 2, capstone) | every villain near flees | Rallying Cry, Vanish |
@@ -456,7 +483,8 @@ targeting, ragdolls, nobody dies.
   burst; an orderly's mending is a green beam with a "+N". The first time each happens a hint
   says what to do (see section 6).
 - **Regeneration:** health 14/s and energy 25/s out of combat; 1/s and 6/s while in
-  combat (within 6 s of the last blow given or taken).
+  combat (within 6 s of the last blow given or taken). Toggles that are on take their
+  share of the energy, and none comes back while flying.
 - **Knockdown:** knocked fighters tumble as ragdolls for 2.2 s and need 1.4 s to stand; they
   can be hit but cannot act.
 - **Defeated villains** lie in glowing energy cuffs; after 2 s a police drone lifts them away.
@@ -1344,7 +1372,7 @@ run, or put them in a `.bat`.
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
 | `HW_VIEW=fight` | Places a test group of minions near the spawn (the game starts without one). |
-| `HW_AUTOFIGHT=1` | The hero fights on its own (for screenshots); `HW_AUTOFIGHT=17,20` uses only those powers (codes: Freeze 17, Teleport 18, Bubble 19, Sidekick 20, Hypno 21). `HW_CAM_DIST`, `HW_CAM_PITCH` and `HW_CAM_YAW` (degrees round the hero) set the hero camera for close-ups. |
+| `HW_AUTOFIGHT=1` | The hero fights on its own (for screenshots); `HW_AUTOFIGHT=17,20` uses only those powers (power numbers, e.g. 16 Cryo Ray, 18 Tin Pal, 23 Hypno Spiral). `HW_CAM_DIST`, `HW_CAM_PITCH` and `HW_CAM_YAW` (degrees round the hero) set the hero camera for close-ups. |
 | `HW_WRECK=n` | n frames in, the cars near the camera are wrecked. |
 
 ### World and camera
@@ -1395,7 +1423,7 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | Time | Fixed mid-afternoon; `HW_HOUR` for others | A day/night cycle |
 | Zones | One villain quarter (+2/+3 levels), Jackets' band | Level bands across the world, robot armies, liberation that slips back |
 | Underground | Utility tunnels, Molehaven, the Aether Tube with stations, exits, mole homes, markets, shrines and burrows along it, the Doctor's lab, buried ruins, the Deeps | Sewers, more lairs, townsfolk riding the tube |
-| Heroes | 20 levels, a power tree per origin (22-23 powers each) plus a travel tree, powers as one parametrized record, six elements, a drag-and-drop power tray (0.164) | Villains on the same records, augments, balancing the trees |
+| Heroes | 20 levels, a power tree per origin (22-23 powers each) plus a travel tree, powers as one parametrized record, six elements, a drag-and-drop power tray (0.164), defensive toggles paid for with energy recovery and flight that brings no energy back (0.177) | Villains on the same records, augments, balancing the trees |
 | Looks | Creator with six costumes and sliders | Full costume creator, capes, masks (in progress) |
 | Combat | Minions with roles (shield bearer, grenadier, orderly), lieutenant, boss, colossus, drones, revive, hospital; Hero Hall's five heroes give tips and answer ignored fights | Teaming up with the town's heroes, the Doctor in person |
 | Factions | Eight factions, regard, turf warnings; mole folk, sky pirates and the Iron Legion with their own incidents and homes | Patrol units, turf changing hands |

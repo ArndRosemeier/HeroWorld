@@ -48,6 +48,8 @@ fn steps(sim: &mut Sim, seconds: f64) {
 /// on. Kept on its feet (healed every second): the chain is the test.
 fn fight(sim: &mut Sim, hero: NetId, k: usize, goal: DVec3) {
     let mut seconds = 0.0;
+    let mut last_at = DVec3::ZERO;
+    let mut still = 0;
     while sim.story.stage == FIGHT {
         for _ in 0..TICK_HZ {
             let tick = sim.tick;
@@ -73,6 +75,22 @@ fn fight(sim: &mut Sim, hero: NetId, k: usize, goal: DVec3) {
         });
         if let Some(p) = next.filter(|p| p.distance(me) > 25.0) {
             put(sim, hero, p + DVec3::new(6.0, 1.0, 0.0));
+            last_at = p;
+        }
+        // A bot that has not moved for 5 s is stuck (on furniture, in a
+        // corner: it cannot find a way round): put it where a villain
+        // stands, which is clear floor. Not against the colossus, where it
+        // hovers on purpose.
+        if me.distance(last_at) > 0.5 {
+            last_at = me;
+            still = 0;
+        } else {
+            still += 1;
+        }
+        let colossus = sim.enemies().iter().any(|e| e.1 == EnemyKind::Colossus);
+        if let Some(p) = next.filter(|_| still >= 5 && !colossus) {
+            put(sim, hero, p);
+            still = 0;
         }
         let mut f = sim.fighter(hero).unwrap();
         f.health = f.max_health;

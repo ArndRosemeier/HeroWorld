@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.177 (2026-11-11)
+
+- Every power now helps in a hard fight. The powers that only made rescues quicker are gone, and in their places are fight powers: Scanner Goggles hit helpless villains harder, Spirit Sight makes one blow in five miss you, Brace hardens you while you stand your ground, Second Wind gives you 40% health back near defeat, Opening Move doubles your first blow on a villain who hasn't noticed you, plus Guardian Orb, Ring of Judgement, Stasis Cage and Ghost Lantern.
+- Defensive powers and auras are now toggles: press their key to switch them on or off. While on, each one slows how fast your energy comes back, so choose between being hard to hurt and firing powers often. A toggle that is on shows green in the tray.
+- Flying now brings no energy back while you are in the air: hovering out of reach is no longer free.
+- Lifeline also gets you back up on your own after 10 s, Cuff 'Em makes beaten-down minions give up, and Mobile Aegis and Martyr now protect your sidekicks and yourself too.
+- Travel powers (Flight, Super Jump, Super Speed, Glide, Wall Run) are easier to find: the Powers window (B) now has a big "Travel powers" tab next to your origin's tree.
+
 ## 0.176 (2026-11-11)
 
 - Lamp and headlight highlights no longer make broken pixels when a light lines up with the camera, the likely source of the glowing specks (Engine 0.055)

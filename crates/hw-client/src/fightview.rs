@@ -855,8 +855,13 @@ impl FightView {
                 }
                 FxKind::Buff => {
                     let (core, _) = fx_colours(e);
-                    shell(world, at, core, 40);
-                    if e.from == e.to {
+                    // A toggle switched off shows nothing but the words.
+                    let toggle = fx_def(e).toggle;
+                    let on = !toggle || e.knock;
+                    if on {
+                        shell(world, at, core, 40);
+                    }
+                    if e.from == e.to && on {
                         self.act(e.from, "spell cast", 0.55);
                         self.play(world, |s| &s.shield, at, 0.9, 1.2);
                     }
@@ -864,7 +869,8 @@ impl FightView {
                         self.recharging(PowerId(e.theme));
                     }
                     if on_me {
-                        self.say(&format!("{}: on", fx_def(e).name));
+                        let state = if on { "on" } else { "off" };
+                        self.say(&format!("{}: {state}", fx_def(e).name));
                     }
                 }
                 FxKind::Bolt => {
@@ -2080,6 +2086,8 @@ impl FightView {
         let starter = hw_sim::progress::starter();
         let sheet = sheet.unwrap_or(&starter);
         let kit = Kit::of(sheet);
+        // The toggles the server says are on.
+        let toggles = me.and_then(|m| m.combat).map_or(0, |c| c.toggles);
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Background,
             egui::Id::new("fight hud"),
@@ -2339,8 +2347,11 @@ impl FightView {
                 let lift = spec.base == Power::Lift;
                 let cd = self.cooldown[power.0 as usize];
                 let ready = cd <= 0.0 && (energy + 0.5 >= cost || carrying && lift);
+                let on = spec.toggle && toggles & (1 << power.0) != 0;
                 let fill = if hovered {
                     egui::Color32::from_rgb(80, 86, 130)
+                } else if on {
+                    egui::Color32::from_rgb(40, 104, 70)
                 } else if ready {
                     egui::Color32::from_rgb(52, 60, 92)
                 } else {
@@ -2389,7 +2400,11 @@ impl FightView {
                     font(12.5),
                     egui::Color32::WHITE,
                 );
-                let cost = if cost > 0.0 {
+                let cost = if spec.toggle && on {
+                    format!("on, -{:.0}% energy", spec.fields.upkeep * 100.0)
+                } else if spec.toggle {
+                    "off".into()
+                } else if cost > 0.0 {
                     format!("{cost:.0} energy")
                 } else {
                     "free".into()

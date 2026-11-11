@@ -2641,6 +2641,8 @@ fn main() -> EngineResult<()> {
                     let every: Vec<u8> = my_kit
                         .owned()
                         .filter(|&p| p != hw_net::PowerId::STRIKE && hw_client::tray::keyed(p))
+                        // Toggles would only flip on and off.
+                        .filter(|&p| !hw_sim::powers::def_of(p).toggle)
                         .flat_map(|p| [blast, p.0])
                         .collect();
                     let turn = if !auto_turn.is_empty() {

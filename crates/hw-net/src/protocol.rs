@@ -578,6 +578,9 @@ pub struct CombatState {
     pub target: Option<NetId>,
     /// What powers do to it now ([`EFFECT_HELD`], [`EFFECT_SHIELD`], ...).
     pub effects: u32,
+    /// A hero's toggles that are on, as bits by power number (sent as a
+    /// short list of numbers).
+    pub toggles: u128,
 }
 
 /// Bound by a binding hold.
@@ -629,8 +632,8 @@ pub const EFFECT_DISARMED: u32 = 1 << 22;
 /// A self power is on (a titan's might, a dodge, a verdict).
 pub const EFFECT_EMPOWERED: u32 = 1 << 23;
 
-/// Bytes a [`CombatState`] takes.
-const COMBAT_BYTES: usize = 12;
+/// A fighter's state without its toggles (one byte each after these).
+const COMBAT_BYTES: usize = 13;
 
 /// No rotation.
 pub const NO_ROTATION: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -711,7 +714,9 @@ impl EntityState {
             + if f & F_VEL != 0 { 12 } else { 0 }
             + if f & F_ROT != 0 { 16 } else { 0 }
             + if f & F_OWNER != 0 { 2 } else { 0 }
-            + if f & F_COMBAT != 0 { COMBAT_BYTES } else { 0 }
+            + self
+                .combat
+                .map_or(0, |c| COMBAT_BYTES + c.toggles.count_ones() as usize)
             + if f & F_MOUNT != 0 { 5 } else { 0 }
     }
 
@@ -741,6 +746,11 @@ impl EntityState {
                 .u8(c.level)
                 .u32(c.target.map_or(0, |t| t.0))
                 .u32(c.effects);
+            let on: Vec<u8> = (0..128u8).filter(|i| c.toggles & (1 << i) != 0).collect();
+            w.u8(on.len() as u8);
+            for i in on {
+                w.u8(i);
+            }
         }
         if let Some((on, part)) = self.mount {
             w.u32(on.0).u8(part);
@@ -784,6 +794,17 @@ impl EntityState {
                     t => Some(NetId(t)),
                 },
                 effects: r.u32()?,
+                toggles: {
+                    let mut on = 0u128;
+                    for _ in 0..r.u8()? {
+                        let i = r.u8()?;
+                        if i >= 128 {
+                            return Err(WireError);
+                        }
+                        on |= 1 << i;
+                    }
+                    on
+                },
             })
         } else {
             None
@@ -2349,6 +2370,7 @@ mod tests {
                         level: 1,
                         target: Some(NetId(3)),
                         effects: EFFECT_HELD | EFFECT_SHIELD,
+                        toggles: 1 << 60 | 1 << 74,
                     }),
                     ..Default::default()
                 },

@@ -1743,7 +1743,10 @@ impl Sim {
             }
             if p.sheet != before {
                 p.changed = true;
+                // Toggles that are on stay on (those still owned).
+                let on = fighter.kit.toggles_on();
                 fighter.kit = Kit::of(&p.sheet);
+                fighter.kit.set_toggles(on);
                 // A power given up lets go of what it held.
                 if !fighter.kit.has(fighter.lifted_with) {
                     fighter.carrying = None;

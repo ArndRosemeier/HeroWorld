@@ -175,14 +175,29 @@ pub struct Fields {
     pub summon_power: f32,
     /// People a bubble floats out at once.
     pub rescues: u8,
-    /// Share faster at freeing trapped people.
-    pub rescue_speed: f32,
     /// Metres a downed friend can be revived from.
     pub revive_reach: f64,
     /// Share more karma for villains beaten.
     pub bounty: f32,
     /// Share of a punch that leaps on to one more villain near.
     pub chain: f32,
+    /// The first blow on a villain who is not fighting the hero lands
+    /// this share harder.
+    pub ambush: f32,
+    /// Share of villains' blows that miss the hero.
+    pub dodge: f32,
+    /// Share less taken while the hero stands still.
+    pub brace: f32,
+    /// A minion left at or below this share of its health gives up.
+    pub cuff: f32,
+    /// Once in a while, dropping below a quarter of health gives this
+    /// share of it back.
+    pub second_wind: f32,
+    /// Seconds after going down that the hero gets up on their own (once
+    /// in a while).
+    pub get_up: f64,
+    /// A toggle's share of the hero's energy recovery while it is on.
+    pub upkeep: f32,
     // ---- Movement ----
     /// [`travel`] bits.
     pub travel: u8,
@@ -236,10 +251,16 @@ impl Fields {
         summons: 0,
         summon_power: 0.0,
         rescues: 0,
-        rescue_speed: 0.0,
         revive_reach: 0.0,
         bounty: 0.0,
         chain: 0.0,
+        ambush: 0.0,
+        dodge: 0.0,
+        brace: 0.0,
+        cuff: 0.0,
+        second_wind: 0.0,
+        get_up: 0.0,
+        upkeep: 0.0,
         travel: 0,
         lands: Lands::Target,
         trail: 0.0,
@@ -257,7 +278,18 @@ impl Fields {
         self.aura = self.aura.max(o.aura);
         self.ward = self.ward.max(o.ward);
         self.reflect += o.reflect;
-        self.rescue_speed += o.rescue_speed;
+        self.exploit += o.exploit;
+        self.ambush += o.ambush;
+        self.dodge = 1.0 - (1.0 - self.dodge) * (1.0 - o.dodge);
+        self.brace = 1.0 - (1.0 - self.brace) * (1.0 - o.brace);
+        self.cuff = self.cuff.max(o.cuff);
+        self.second_wind = self.second_wind.max(o.second_wind);
+        self.get_up = if self.get_up > 0.0 && o.get_up > 0.0 {
+            self.get_up.min(o.get_up)
+        } else {
+            self.get_up.max(o.get_up)
+        };
+        self.upkeep += o.upkeep;
         self.revive_reach = self.revive_reach.max(o.revive_reach);
         self.bounty += o.bounty;
         self.chain = self.chain.max(o.chain);
@@ -344,6 +376,9 @@ pub struct PowerDef {
     pub helper: bool,
     /// A capstone: the bottom of a tree.
     pub capstone: bool,
+    /// Switched on and off with its key; while on it takes
+    /// [`Fields::upkeep`] of the hero's energy recovery.
+    pub toggle: bool,
     /// The mechanic it is built on (delivery and look).
     pub base: Power,
     /// What it is made of, in a word (fire, roots, void, ...).
@@ -358,7 +393,12 @@ impl PowerDef {
 
     /// Always on once owned (no key).
     pub fn passive(&self) -> bool {
-        self.delivery() == Delivery::Passive
+        self.delivery() == Delivery::Passive && !self.toggle
+    }
+
+    /// Switched on and off with its key (see [`PowerDef::toggle`]).
+    pub fn is_toggle(&self) -> bool {
+        self.toggle
     }
 
     /// Needs a villain (or a spot) to aim at.
@@ -397,6 +437,7 @@ const fn def(
         fork,
         helper: false,
         capstone: false,
+        toggle: false,
         base,
         noun,
         fields,
@@ -410,6 +451,13 @@ const fn helper(mut d: PowerDef) -> PowerDef {
 
 const fn capstone(mut d: PowerDef) -> PowerDef {
     d.capstone = true;
+    d
+}
+
+/// A toggle taking `upkeep` of the hero's energy recovery while on.
+const fn toggle(mut d: PowerDef, upkeep: f32) -> PowerDef {
+    d.toggle = true;
+    d.fields.upkeep = upkeep;
     d
 }
 
@@ -490,11 +538,6 @@ const FREEZE: Fields = Fields {
     ..F
 };
 const TELEPORT: Fields = Fields { range: 40.0, ..F };
-const BUBBLE: Fields = Fields {
-    range: 30.0,
-    rescues: 1,
-    ..F
-};
 const SIDEKICK: Fields = Fields {
     range: 40.0,
     summons: 1,
@@ -508,10 +551,6 @@ const HYPNO: Fields = Fields {
 };
 const REGEN: Fields = Fields { regen: 0.02, ..F };
 const RALLY: Fields = Fields { aura: 0.4, ..F };
-const FINDER: Fields = Fields {
-    rescue_speed: 0.5,
-    ..F
-};
 
 /// Strike's number.
 pub const STRIKE: PowerId = PowerId::STRIKE;
@@ -656,18 +695,18 @@ pub static POWERS: &[PowerDef] = &[
         "atomic",
         BOLT,
     ),
-    helper(def(
+    def(
         11,
         "Scanner Goggles",
-        "frees people 1.5x fast",
+        "25% more on helpless foes",
         Science,
         (0, 3),
         &[],
         0,
         B::Vitality,
         "gadget",
-        FINDER,
-    )),
+        Fields { exploit: 0.25, ..F },
+    ),
     def(
         12,
         "Ray Burst",
@@ -757,18 +796,25 @@ pub static POWERS: &[PowerDef] = &[
         "robot",
         SIDEKICK,
     ),
-    helper(def(
+    def(
         19,
-        "Force Bubble",
-        "floats people out",
+        "Stasis Cage",
+        "holds an area 4 s",
         Science,
         (2, 3),
         &[&[14], &[15]],
         0,
-        B::Bubble,
+        B::Meteor,
         "force",
-        BUBBLE,
-    )),
+        Fields {
+            damage: 8.0,
+            range: 30.0,
+            radius: 5.0,
+            delay: 0.2,
+            hold: 4.0,
+            ..F
+        },
+    ),
     def(
         20,
         "Vital Ray",
@@ -963,18 +1009,21 @@ pub static POWERS: &[PowerDef] = &[
         "arcane",
         BOLT,
     ),
-    helper(def(
-        33,
-        "Spirit Sight",
-        "frees people 1.5x fast",
-        Mystic,
-        (0, 3),
-        &[],
-        0,
-        B::Vitality,
-        "spirit",
-        FINDER,
-    )),
+    toggle(
+        def(
+            33,
+            "Spirit Sight",
+            "1 blow in 5 misses you",
+            Mystic,
+            (0, 3),
+            &[],
+            0,
+            B::Invulnerable,
+            "spirit",
+            Fields { dodge: 0.2, ..F },
+        ),
+        0.2,
+    ),
     def(
         34,
         "Binding Sigils",
@@ -1005,18 +1054,23 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    helper(def(
+    def(
         36,
         "Ghost Lantern",
-        "floats people out",
+        "villains near flee 4 s",
         Mystic,
         (1, 2),
         &[&[33]],
         0,
-        B::Bubble,
+        B::Shockwave,
         "spirit",
-        BUBBLE,
-    )),
+        Fields {
+            radius: 8.0,
+            fear: 4.0,
+            spare: true,
+            ..F
+        },
+    ),
     def(
         37,
         "Aether Step",
@@ -1102,17 +1156,20 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    def(
-        43,
-        "Wraith Form",
-        "takes 20% less",
-        Mystic,
-        (2, 4),
-        &[&[38]],
-        0,
-        B::Invulnerable,
-        "spirit",
-        Fields { resist: 0.2, ..F },
+    toggle(
+        def(
+            43,
+            "Wraith Form",
+            "takes 20% less",
+            Mystic,
+            (2, 4),
+            &[&[38]],
+            0,
+            B::Invulnerable,
+            "spirit",
+            Fields { resist: 0.2, ..F },
+        ),
+        0.2,
     ),
     def(
         44,
@@ -1241,17 +1298,20 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    def(
-        52,
-        "Aether Vitality",
-        "2% health a second",
-        Mystic,
-        (4, 4),
-        &[&[48]],
-        0,
-        B::Vitality,
-        "aether",
-        REGEN,
+    toggle(
+        def(
+            52,
+            "Aether Vitality",
+            "2% health a second",
+            Mystic,
+            (4, 4),
+            &[&[48]],
+            0,
+            B::Vitality,
+            "aether",
+            REGEN,
+        ),
+        0.25,
     ),
     capstone(def(
         53,
@@ -1313,18 +1373,21 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    helper(def(
-        56,
-        "Brace",
-        "props up rubble: frees 1.5x fast",
-        Might,
-        (0, 3),
-        &[],
-        0,
-        B::Invulnerable,
-        "stone",
-        FINDER,
-    )),
+    toggle(
+        def(
+            56,
+            "Brace",
+            "standing still: 30% less",
+            Might,
+            (0, 3),
+            &[],
+            0,
+            B::Invulnerable,
+            "stone",
+            Fields { brace: 0.3, ..F },
+        ),
+        0.15,
+    ),
     def(
         57,
         "Uppercut",
@@ -1367,22 +1430,25 @@ pub static POWERS: &[PowerDef] = &[
         "fist",
         LIFT,
     ),
-    def(
-        60,
-        "Tough",
-        "takes 15% less",
-        Might,
-        (1, 3),
-        &[&[56]],
-        0,
-        B::Invulnerable,
-        "skin",
-        Fields { resist: 0.15, ..F },
+    toggle(
+        def(
+            60,
+            "Tough",
+            "takes 15% less",
+            Might,
+            (1, 3),
+            &[&[56]],
+            0,
+            B::Invulnerable,
+            "skin",
+            Fields { resist: 0.15, ..F },
+        ),
+        0.15,
     ),
-    helper(def(
+    def(
         61,
-        "Dig Out",
-        "frees people 2x fast",
+        "Second Wind",
+        "near defeat: 40% health back",
         Might,
         (1, 4),
         &[&[56]],
@@ -1390,10 +1456,10 @@ pub static POWERS: &[PowerDef] = &[
         B::Vitality,
         "stone",
         Fields {
-            rescue_speed: 1.0,
+            second_wind: 0.4,
             ..F
         },
-    )),
+    ),
     def(
         62,
         "Shoulder Charge",
@@ -1467,17 +1533,20 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    def(
-        66,
-        "Iron Constitution",
-        "2% health a second",
-        Might,
-        (2, 4),
-        &[&[60], &[61]],
-        0,
-        B::Vitality,
-        "skin",
-        REGEN,
+    toggle(
+        def(
+            66,
+            "Iron Constitution",
+            "2% health a second",
+            Might,
+            (2, 4),
+            &[&[60], &[61]],
+            0,
+            B::Vitality,
+            "skin",
+            REGEN,
+        ),
+        0.25,
     ),
     def(
         67,
@@ -1533,37 +1602,43 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    def(
-        70,
-        "Berserk",
-        "30% harder, 15% softer",
-        Might,
-        (3, 3),
-        &[&[66]],
-        1,
-        B::Rally,
-        "rage",
-        Fields {
-            might: 0.3,
-            resist: -0.15,
-            ..F
-        },
+    toggle(
+        def(
+            70,
+            "Berserk",
+            "30% harder, 15% softer",
+            Might,
+            (3, 3),
+            &[&[66]],
+            1,
+            B::Rally,
+            "rage",
+            Fields {
+                might: 0.3,
+                resist: -0.15,
+                ..F
+            },
+        ),
+        0.2,
     ),
-    def(
-        71,
-        "Bulwark Stance",
-        "never knocked down",
-        Might,
-        (3, 4),
-        &[&[66]],
-        1,
-        B::Invulnerable,
-        "stone",
-        Fields {
-            steadfast: true,
-            resist: 0.1,
-            ..F
-        },
+    toggle(
+        def(
+            71,
+            "Bulwark Stance",
+            "never knocked down",
+            Might,
+            (3, 4),
+            &[&[66]],
+            1,
+            B::Invulnerable,
+            "stone",
+            Fields {
+                steadfast: true,
+                resist: 0.1,
+                ..F
+            },
+        ),
+        0.15,
     ),
     def(
         72,
@@ -1600,17 +1675,20 @@ pub static POWERS: &[PowerDef] = &[
             ..LIFT
         },
     ),
-    def(
-        74,
-        "Steel Hide",
-        "takes half",
-        Might,
-        (4, 3),
-        &[&[70, 71]],
-        0,
-        B::Invulnerable,
-        "steel",
-        Fields { resist: 0.5, ..F },
+    toggle(
+        def(
+            74,
+            "Steel Hide",
+            "takes half",
+            Might,
+            (4, 3),
+            &[&[70, 71]],
+            0,
+            B::Invulnerable,
+            "steel",
+            Fields { resist: 0.5, ..F },
+        ),
+        0.4,
     ),
     capstone(def(
         75,
@@ -1655,18 +1733,22 @@ pub static POWERS: &[PowerDef] = &[
         "light",
         BOLT,
     ),
-    helper(def(
+    def(
         78,
         "Guardian Orb",
-        "floats people out",
+        "shields you 40%, 8 s",
         Guardian,
         (0, 3),
         &[],
         0,
-        B::Bubble,
+        B::Shield,
         "light",
-        BUBBLE,
-    )),
+        Fields {
+            shield: 0.4,
+            lasts: 8.0,
+            ..F
+        },
+    ),
     def(
         79,
         "Shield Bash",
@@ -1699,7 +1781,7 @@ pub static POWERS: &[PowerDef] = &[
     helper(def(
         81,
         "Lifeline",
-        "revives from 25 m",
+        "revives from 25 m; gets you up",
         Guardian,
         (1, 2),
         &[&[78]],
@@ -1708,6 +1790,7 @@ pub static POWERS: &[PowerDef] = &[
         "light",
         Fields {
             revive_reach: 25.0,
+            get_up: 10.0,
             ..F
         },
     )),
@@ -1776,21 +1859,24 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    helper(def(
+    def(
         86,
-        "Rescue Swarm",
-        "floats three out",
+        "Ring of Judgement",
+        "foes round you take 15% more",
         Guardian,
         (2, 2),
         &[&[81]],
         0,
-        B::Bubble,
+        B::Shockwave,
         "light",
         Fields {
-            rescues: 3,
-            ..BUBBLE
+            damage: 20.0,
+            radius: 6.0,
+            weaken: 0.15,
+            lasts: 8.0,
+            ..F
         },
-    )),
+    ),
     def(
         87,
         "Sanctuary",
@@ -1859,53 +1945,65 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    def(
-        91,
-        "Steady Heart",
-        "2% health a second",
-        Guardian,
-        (3, 2),
-        &[&[86], &[87]],
-        0,
-        B::Vitality,
-        "light",
-        REGEN,
+    toggle(
+        def(
+            91,
+            "Steady Heart",
+            "2% health a second",
+            Guardian,
+            (3, 2),
+            &[&[86], &[87]],
+            0,
+            B::Vitality,
+            "light",
+            REGEN,
+        ),
+        0.25,
     ),
-    def(
-        92,
-        "Reflective Aegis",
-        "sends 20% of blows back",
-        Guardian,
-        (3, 3),
-        &[&[87]],
-        1,
-        B::Invulnerable,
-        "light",
-        Fields { reflect: 0.2, ..F },
+    toggle(
+        def(
+            92,
+            "Reflective Aegis",
+            "sends 20% of blows back",
+            Guardian,
+            (3, 3),
+            &[&[87]],
+            1,
+            B::Invulnerable,
+            "light",
+            Fields { reflect: 0.2, ..F },
+        ),
+        0.15,
     ),
-    def(
-        93,
-        "Mobile Aegis",
-        "friends near take 15% less",
-        Guardian,
-        (3, 4),
-        &[&[88]],
-        1,
-        B::Rally,
-        "light",
-        Fields { ward: 0.15, ..F },
+    toggle(
+        def(
+            93,
+            "Mobile Aegis",
+            "friends near take 15% less",
+            Guardian,
+            (3, 4),
+            &[&[88]],
+            1,
+            B::Rally,
+            "light",
+            Fields { ward: 0.15, ..F },
+        ),
+        0.15,
     ),
-    def(
-        94,
-        "Heroic Aura",
-        "friends near hit harder",
-        Guardian,
-        (4, 1),
-        &[&[90]],
-        0,
-        B::Rally,
-        "light",
-        RALLY,
+    toggle(
+        def(
+            94,
+            "Heroic Aura",
+            "friends near hit harder",
+            Guardian,
+            (4, 1),
+            &[&[90]],
+            0,
+            B::Rally,
+            "light",
+            RALLY,
+        ),
+        0.25,
     ),
     def(
         95,
@@ -1919,17 +2017,20 @@ pub static POWERS: &[PowerDef] = &[
         "light",
         Fields { angel: true, ..F },
     ),
-    def(
-        96,
-        "Martyr",
-        "friends near take 25% less",
-        Guardian,
-        (4, 3),
-        &[&[91]],
-        2,
-        B::Rally,
-        "light",
-        Fields { ward: 0.25, ..F },
+    toggle(
+        def(
+            96,
+            "Martyr",
+            "friends near take 25% less",
+            Guardian,
+            (4, 3),
+            &[&[91]],
+            2,
+            B::Rally,
+            "light",
+            Fields { ward: 0.25, ..F },
+        ),
+        0.25,
     ),
     def(
         97,
@@ -2000,18 +2101,18 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    helper(def(
+    def(
         101,
-        "Detective's Nose",
-        "frees people 1.5x fast",
+        "Opening Move",
+        "first blow on the unwary: double",
         Justice,
         (0, 3),
         &[],
         0,
         B::Vitality,
         "wits",
-        FINDER,
-    )),
+        Fields { ambush: 1.0, ..F },
+    ),
     def(
         102,
         "Disarm",
@@ -2076,18 +2177,22 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    helper(def(
+    def(
         106,
         "Cuff 'Em",
-        "25% more karma",
+        "beaten-down minions give up",
         Justice,
         (1, 4),
         &[&[101]],
         0,
         B::Vitality,
         "gadget",
-        Fields { bounty: 0.25, ..F },
-    )),
+        Fields {
+            bounty: 0.25,
+            cuff: 0.2,
+            ..F
+        },
+    ),
     def(
         107,
         "Takedown",
@@ -2226,21 +2331,24 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    def(
-        116,
-        "Unbreakable Will",
-        "steadfast, 20% less",
-        Justice,
-        (3, 4),
-        &[&[111]],
-        0,
-        B::Invulnerable,
-        "wits",
-        Fields {
-            steadfast: true,
-            resist: 0.2,
-            ..F
-        },
+    toggle(
+        def(
+            116,
+            "Unbreakable Will",
+            "steadfast, 20% less",
+            Justice,
+            (3, 4),
+            &[&[111]],
+            0,
+            B::Invulnerable,
+            "wits",
+            Fields {
+                steadfast: true,
+                resist: 0.2,
+                ..F
+            },
+        ),
+        0.2,
     ),
     def(
         117,
@@ -2280,17 +2388,20 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     ),
-    def(
-        119,
-        "Rallying Cry",
-        "friends near hit harder",
-        Justice,
-        (4, 3),
-        &[&[115]],
-        0,
-        B::Rally,
-        "wits",
-        RALLY,
+    toggle(
+        def(
+            119,
+            "Rallying Cry",
+            "friends near hit harder",
+            Justice,
+            (4, 3),
+            &[&[115]],
+            0,
+            B::Rally,
+            "wits",
+            RALLY,
+        ),
+        0.25,
     ),
     def(
         120,
@@ -2421,9 +2532,10 @@ pub fn value(d: &PowerDef) -> f32 {
     harm + control + help + moving + summon + rescue + f.wreck * 5.0
 }
 
-/// Energy a power takes (0 for Strike and passive powers).
+/// Energy a power takes (0 for Strike, passive powers and toggles: a
+/// toggle costs recovery instead, see [`Fields::upkeep`]).
 pub fn energy(d: &PowerDef) -> f32 {
-    if d.id == STRIKE || d.passive() {
+    if d.id == STRIKE || d.passive() || d.toggle {
         return 0.0;
     }
     (2.0 + 0.6 * value(d).powf(0.75)).round()
@@ -2436,6 +2548,9 @@ pub fn recharge(d: &PowerDef) -> f64 {
     }
     if d.passive() {
         return 0.0;
+    }
+    if d.toggle {
+        return TOGGLE_RECHARGE;
     }
     let f = &d.fields;
     // Area hits wait longer (a group down in one go is worth the wait), but
@@ -2466,6 +2581,9 @@ pub fn recharge(d: &PowerDef) -> f64 {
         .max(1.0);
     ((by_value.max(floor)) * 10.0).round() / 10.0
 }
+
+/// Seconds before a toggle can be switched again.
+pub const TOGGLE_RECHARGE: f64 = 1.0;
 
 // ---- Elements ----
 
@@ -2549,13 +2667,16 @@ pub const PSYCHIC_COOLDOWN: f64 = 4.0;
 
 // ---- A hero's kit ----
 
-/// The powers a hero owns and their element, with the passive ones summed,
-/// small enough to copy about every tick.
+/// The powers a hero owns and their element, with the passive ones (and
+/// the toggles switched on) summed, small enough to copy about every tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Kit {
     owned: u128,
+    /// The toggles switched on.
+    on: u128,
     pub element: Element,
-    /// Every owned passive power's fields, summed.
+    /// Every owned passive power's fields and every toggle's that is on,
+    /// summed.
     pub passive: Fields,
     /// The power the blast key fires (the hero's first bolt), if any.
     pub blast: Option<PowerId>,
@@ -2565,6 +2686,7 @@ impl Default for Kit {
     fn default() -> Self {
         Kit {
             owned: 1 << STRIKE.0,
+            on: 0,
             element: Element::None,
             passive: Fields::NONE,
             blast: None,
@@ -2590,6 +2712,9 @@ impl Kit {
         };
         self.owned |= 1 << id.0;
         if d.passive() {
+            self.passive.add_passive(&d.fields);
+        }
+        if d.toggle && self.is_on(id) {
             self.passive.add_passive(&d.fields);
         }
         let first_bolt = self.blast.is_none_or(|b| {
@@ -2633,6 +2758,50 @@ impl Kit {
     pub fn travels(self, bit: u8) -> bool {
         self.passive.travel & bit != 0
     }
+
+    /// Toggle `id` is owned and switched on.
+    pub fn is_on(self, id: PowerId) -> bool {
+        id.0 < 128 && self.on & (1 << id.0) != 0
+    }
+
+    /// The toggles switched on, as bits by power number.
+    pub fn toggles_on(self) -> u128 {
+        self.on
+    }
+
+    /// Switches the toggles in `on` on and every other one off (only
+    /// owned toggles count).
+    pub fn set_toggles(&mut self, on: u128) {
+        let owned: Vec<PowerId> = self.owned().collect();
+        let mut k = Kit {
+            element: self.element,
+            ..Kit::default()
+        };
+        k.on = on & self.owned & toggle_bits();
+        for id in owned {
+            k.add(id);
+        }
+        *self = k;
+    }
+
+    /// Switches toggle `id` (an owned one) on or off; true when it is on now.
+    pub fn flip(&mut self, id: PowerId) -> bool {
+        self.set_toggles(self.on ^ (1 << id.0));
+        self.is_on(id)
+    }
+
+    /// The share of energy recovery the toggles switched on take (0 to 1).
+    pub fn upkeep(self) -> f32 {
+        self.passive.upkeep.clamp(0.0, 1.0)
+    }
+}
+
+/// Every toggle, as bits by power number.
+fn toggle_bits() -> u128 {
+    POWERS
+        .iter()
+        .filter(|d| d.toggle)
+        .fold(0, |m, d| m | 1 << d.id.0)
 }
 
 #[cfg(test)]
@@ -2673,7 +2842,6 @@ mod tests {
             let caps: Vec<_> = tree(t).filter(|d| d.capstone).collect();
             assert_eq!(caps.len(), 2, "{t:?}");
             assert_eq!(caps[0].fork, caps[1].fork);
-            assert!(tree(t).any(|d| d.helper), "{t:?} has a helping power");
         }
     }
 
@@ -2706,7 +2874,10 @@ mod tests {
             );
         }
         assert_eq!(energy(def_of(STRIKE)), 0.0);
-        for d in POWERS.iter().filter(|d| !d.passive() && d.id != STRIKE) {
+        for d in POWERS
+            .iter()
+            .filter(|d| !d.passive() && !d.toggle && d.id != STRIKE)
+        {
             assert!(
                 energy(d) >= 3.0 && energy(d) <= 100.0,
                 "{}: {}",
@@ -2724,8 +2895,14 @@ mod tests {
 
     #[test]
     fn a_kit_sums_its_passives() {
-        let k = Kit::with(&[PowerId(60), PowerId(74), PowerId(2), PowerId(10)]);
+        let mut k = Kit::with(&[PowerId(60), PowerId(74), PowerId(2), PowerId(10)]);
+        // Toggles count only while on.
+        assert_eq!(k.passive.resist, 0.0);
+        k.set_toggles(u128::MAX);
         assert!((k.passive.resist - (1.0 - 0.85 * 0.5)).abs() < 1e-5);
+        assert!((k.upkeep() - 0.55).abs() < 1e-5);
+        assert_eq!(k.toggles_on(), 1 << 60 | 1 << 74);
+        assert!(!k.flip(PowerId(60)) && k.is_on(PowerId(74)));
         assert!(k.travels(travel::JUMP) && !k.travels(travel::FLY));
         assert_eq!(k.blast, Some(PowerId(10)));
         assert!(k.has(STRIKE));

@@ -59,10 +59,10 @@ fn passives_have_no_key() {
     let h = sim.spawn_hero_with(
         PlayerId(1),
         ground(0.0, 0.0),
-        hero_sheet(20, &[PowerId(52), PowerId(94)]),
+        hero_sheet(20, &[PowerId(113), PowerId(114)]),
     );
     sim.step();
-    for p in [PowerId(52), PowerId(94), PowerId(74)] {
+    for p in [PowerId(113), PowerId(114)] {
         assert!(def_of(p).passive());
         press(&mut sim, use_power(p, None), 3);
         assert_eq!(sim.fighter(h).unwrap().energy, 100.0);
@@ -192,6 +192,11 @@ fn a_nova_flattens_everyone_round_the_hero() {
 /// Health a level-16 hero loses to one brute's punches in `seconds`.
 fn punished(powers: &[PowerId], seconds: f64) -> f32 {
     let (mut sim, hero) = street(16, powers, 3.0);
+    // Toggles on first (set straight on: a key press would draw the
+    // villains' attention, and the plain hero presses nothing).
+    let mut f = sim.fighter(hero).unwrap();
+    f.kit.set_toggles(u128::MAX);
+    sim.set_fighter(hero, f);
     let before = sim.fighter(hero).unwrap();
     press(
         &mut sim,
@@ -208,6 +213,7 @@ fn invulnerable_and_vitality_keep_a_hero_on_their_feet() {
     let plain = punished(&[], 4.0);
     let tough = punished(&[PowerId(74)], 4.0);
     let vital = punished(&[PowerId(52)], 4.0);
+    eprintln!("VALS {plain} {tough} {vital}");
     assert!((0.2..0.9).contains(&plain), "the group hurts: {plain}");
     assert!(tough < plain * 0.6, "{tough} vs {plain}");
     // Two percent a second, four seconds.
@@ -230,6 +236,8 @@ fn rally_makes_friends_near_hit_harder() {
         hero_sheet(20, &[]),
     );
     sim.step();
+    // The aura is a toggle: on first.
+    press(&mut sim, use_power(PowerId(94), None), 1);
     sim.step();
     let rallied = |sim: &mut Sim, id| sim.fighter(id).unwrap().rallied;
     assert!(rallied(&mut sim, a) && rallied(&mut sim, b));

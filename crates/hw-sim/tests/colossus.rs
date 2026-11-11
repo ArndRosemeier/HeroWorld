@@ -33,8 +33,8 @@ fn hero(sim: &mut Sim, player: u16, at: DVec3) -> NetId {
     id
 }
 
-/// Hover 9 m up, 18 m from what we shoot; pick sentries first, then the
-/// core when it is open, else the knees.
+/// Hover 9 m up, 18 m from what we shoot (landing to get energy back);
+/// pick sentries first, then the core when it is open, else the knees.
 fn bot(sim: &mut Sim, me: NetId, tank: NetId, tick: u64) -> InputState {
     let at = sim.position(me).unwrap();
     let f = sim.fighter(me).unwrap();
@@ -85,6 +85,18 @@ fn bot(sim: &mut Sim, me: NetId, tank: NetId, tick: u64) -> InputState {
     input.aim = aim.as_vec3().to_array();
     if tick.is_multiple_of(4) && f.energy >= 10.0 {
         input.blast = true;
+    }
+    // No energy comes back in the air: down to the ground to get it back,
+    // well away from the tank, then up again.
+    let landed = at.y < GROUND_Y + 0.5;
+    if f.energy < 20.0 || (landed && f.energy < 70.0) {
+        input.fly = false;
+        input.blast = false;
+        input.move_y = 0.0;
+        if d < 30.0 {
+            input.move_x = -dir.x as f32;
+            input.move_z = -dir.y as f32;
+        }
     }
     input
 }
