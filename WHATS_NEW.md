@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.172 (2026-11-11)
+
+- Smoother busy streets: trees, props and other repeated things are now culled on the graphics card in a few passes instead of one per kind of thing, which frees up CPU time each frame (Engine 0.051)
+
 ## 0.171 (2026-11-11)
 
 - The streets come alive: street performers and odd folk turn up round town and draw a crowd. A soapbox prophet warns of the saucers, a theremin player plays eerie tunes, a chrome living statue stands perfectly still (get too close!), a juggler throws glowing atoms, a saucer spotter in a foil cap scans the sky, and the newsboy cries the headlines.
