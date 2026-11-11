@@ -19,6 +19,25 @@ use hw_gen::urban::comet;
 use hw_gen::urban::footprint::Footprint;
 use hw_gen::urban::landmarks::Landmark;
 
+/// How far an upright part sinks into a floor it ends on, and how far
+/// inside an outside wall's middle its cladding meets its plaster (m).
+const SINK: f64 = 0.02;
+const CLAD_SEAM: f64 = 0.06;
+
+/// How far a lift shaft's walls are drawn inside its outline (m).
+const SHAFT_IN: f64 = 0.065;
+
+/// A box in plan from corner to corner (heights are given where it is put).
+fn block(lo: DVec2, hi: DVec2) -> Footprint {
+    Footprint::Box {
+        at: (lo + hi) * 0.5,
+        dir: DVec2::Y,
+        half: (hi - lo) * 0.5,
+        y0: 0.0,
+        y1: 1.0,
+    }
+}
+
 /// The house colours of the three schemes: (cladding, band, accent).
 fn livery(s: Scheme) -> (Color, Color, Color) {
     match s {
@@ -56,6 +75,37 @@ fn put(b: &mut MeshBuilder, f: &Footprint, (y0, y1): (f64, f64), grow: f64, colo
     }
 }
 
+/// [`put`], but only what lies within `half` of the middle in plan: what
+/// is inside the building ends at the inner face of its outside walls.
+fn put_within(
+    b: &mut MeshBuilder,
+    f: &Footprint,
+    span: (f64, f64),
+    grow: f64,
+    color: Color,
+    half: DVec2,
+) {
+    let Footprint::Box {
+        at, dir, half: h, ..
+    } = *f
+    else {
+        return;
+    };
+    if dir.x.abs() > 1e-6 && dir.y.abs() > 1e-6 {
+        // Askew (a stair that is not square to the house): never at a wall.
+        return put(b, f, span, grow, color);
+    }
+    let h = if dir.x.abs() > 0.5 {
+        DVec2::new(h.y, h.x)
+    } else {
+        h
+    } + DVec2::splat(grow);
+    let (lo, hi) = ((at - h).max(-half), (at + h).min(half));
+    if lo.x < hi.x && lo.y < hi.y {
+        put(b, &block(lo, hi), span, 0.0, color);
+    }
+}
+
 /// The floor finish of a room: (texture, tint).
 fn finish(kind: SpaceKind, accent: Color) -> (Base, Color) {
     match kind {
@@ -70,6 +120,12 @@ fn finish(kind: SpaceKind, accent: Color) -> (Base, Color) {
 
 /// The whole building into `b`.
 pub fn building(b: &mut MeshBuilder, l: &Landmark, near: bool) {
+    build(b, l, near, &|_| true);
+}
+
+/// The building's parts that `keep` lets through (all of them in the game;
+/// the z-fighting check takes them kind by kind to name what clashes).
+fn build(b: &mut MeshBuilder, l: &Landmark, near: bool, keep: &dyn Fn(&Part) -> bool) {
     let Some(plan) = comet::layout(l) else { return };
     let parts = comet::parts(l);
     let (clad, band, accent) = livery(plan.scheme);
@@ -81,8 +137,138 @@ pub fn building(b: &mut MeshBuilder, l: &Landmark, near: bool) {
     let glass = rgb(150, 190, 200);
     let top = plan.height();
 
+    // Where floors lie: an upright part that ends on one sinks a little
+    // into it, so its end face is never in the floor's own plane.
+    let bounds = |f: &Footprint| {
+        let (x0, x1) = f.extent(DVec2::ZERO, DVec2::X);
+        let (z0, z1) = f.extent(DVec2::ZERO, DVec2::Y);
+        (DVec2::new(x0, z0), DVec2::new(x1, z1))
+    };
+    let floors: Vec<(DVec2, DVec2, f64)> = parts
+        .iter()
+        .filter(|p| matches!(p.part, Part::Floor(_) | Part::Deck))
+        .map(|p| {
+            let (lo, hi) = bounds(&p.shape);
+            (lo, hi, p.shape.span().1)
+        })
+        .collect();
+    let on_floor = |f: &Footprint, y: f64| {
+        let (lo, hi) = bounds(f);
+        floors.iter().any(|(a, c, top)| {
+            (top - y).abs() < 1e-3
+                && lo.x < c.x - 1e-3
+                && a.x < hi.x - 1e-3
+                && lo.y < c.y - 1e-3
+                && a.y < hi.y - 1e-3
+        })
+    };
+
+    let inside = plan.size * 0.5 - DVec2::splat(WALL * 0.5);
+    // The lift shafts' outlines: their walls are drawn a little inside.
+    let shafts: Vec<(DVec2, DVec2)> = plan
+        .spaces
+        .iter()
+        .filter(|s| s.kind == SpaceKind::Shaft)
+        .map(|s| {
+            let r = Footprint::Box {
+                at: s.rect.center(),
+                dir: DVec2::Y,
+                half: s.rect.size() * 0.5,
+                y0: 0.0,
+                y1: 1.0,
+            };
+            bounds(&comet::to_local(plan.size, r))
+        })
+        .collect();
+
     for Piece { part, shape } in &parts {
-        let (y0, y1) = shape.span();
+        let (mut y0, mut y1) = shape.span();
+        // No two kinds of part end in one plane: each sinks into the floors
+        // it touches by its own depth and is trimmed or stretched in plan
+        // by its own few centimetres. Stretched strips of one wall overlap
+        // each other, which shows nothing: they look the same.
+        let (lo, hi) = bounds(shape);
+        let size = hi - lo;
+        let shaft_wall = match part {
+            Part::Shaft => true,
+            Part::Glass => size.min_element() > 0.15,
+            _ => false,
+        };
+        let sink = match part {
+            Part::Wall => Some(SINK),
+            Part::Outer => Some(SINK + 0.015),
+            // (An outside wall's plaster takes SINK + 0.03.)
+            Part::Glass | Part::Rail if !shaft_wall => Some(SINK + 0.045),
+            Part::Glass | Part::Shaft => Some(SINK + 0.06),
+            _ => None,
+        };
+        if let Some(sink) = sink {
+            if on_floor(shape, y0) {
+                y0 -= sink;
+            }
+            if on_floor(shape, y1) {
+                y1 -= sink;
+            } else if shaft_wall {
+                // Up into the roof, past the tops of the walls beside it.
+                y1 += 0.03;
+            } else if *part == Part::Glass {
+                y1 += 0.015;
+            }
+        }
+        if *part == Part::Step && on_floor(shape, y1) {
+            // The top step lies under the landing it reaches.
+            y1 -= 0.015;
+        }
+        let (along, across) = match part {
+            Part::Wall => (0.015, -0.012),
+            Part::Glass if !shaft_wall => (-0.015, -0.02),
+            Part::Rail => (-0.015, -0.012),
+            _ => (0.0, 0.0),
+        };
+        let trimmed;
+        let shape = if shaft_wall {
+            let c = (lo + hi) * 0.5;
+            let Some((a, e)) = shafts.iter().find(|(a, e)| {
+                a.x - 0.5 < c.x && c.x < e.x + 0.5 && a.y - 0.5 < c.y && c.y < e.y + 0.5
+            }) else {
+                continue;
+            };
+            let (lo, hi) = (
+                lo.max(*a + DVec2::splat(SHAFT_IN)),
+                hi.min(*e - DVec2::splat(SHAFT_IN)),
+            );
+            trimmed = block(lo, hi);
+            &trimmed
+        } else if let (
+            true,
+            Footprint::Box {
+                at,
+                dir,
+                half,
+                y0,
+                y1,
+            },
+        ) = (along != 0.0 || across != 0.0, *shape)
+        {
+            let grow = if half.x < half.y {
+                DVec2::new(across, along)
+            } else {
+                DVec2::new(along, across)
+            };
+            trimmed = Footprint::Box {
+                at,
+                dir,
+                half: half + grow,
+                y0,
+                y1,
+            };
+            &trimmed
+        } else {
+            shape
+        };
+        if !keep(part) {
+            continue;
+        }
         if !near
             && !matches!(
                 part,
@@ -91,8 +277,26 @@ pub fn building(b: &mut MeshBuilder, l: &Landmark, near: bool) {
         {
             continue;
         }
+        // What is indoors stops at the outside walls' inner faces.
+        let indoors = !matches!(part, Part::Window | Part::Canopy | Part::Fin);
+        // Each kind reaches its own little way into the plaster, so no
+        // two kinds end in one plane there.
+        let reach = match part {
+            Part::Wall => 0.015,
+            Part::Shaft => 0.03,
+            Part::Glass | Part::Rail => 0.045,
+            Part::Step => 0.06,
+            _ => 0.0,
+        };
+        let put = |b: &mut MeshBuilder, f: &Footprint, span: (f64, f64), grow: f64, c: Color| {
+            if indoors {
+                put_within(b, f, span, grow, c, inside + DVec2::splat(reach));
+            } else {
+                put(b, f, span, grow, c);
+            }
+        };
         match *part {
-            Part::Outer => outer(b, shape, near, (clad, band, plaster), top),
+            Part::Outer => outer(b, shape, near, (clad, band, plaster), top, (y0, y1)),
             Part::Wall => {
                 skin(b, near, Base::CastStone);
                 put(b, shape, (y0, y1), 0.0, plaster);
@@ -199,7 +403,7 @@ pub fn building(b: &mut MeshBuilder, l: &Landmark, near: bool) {
     if near {
         lamps(b, &plan, brass);
     }
-    let _ = (RAIL, WALL);
+    let _ = RAIL;
 }
 
 /// An outside wall: cladding outside, plaster inside, a band of colour at
@@ -210,15 +414,9 @@ fn outer(
     near: bool,
     (clad, band, plaster): (Color, Color, Color),
     top: f64,
+    (y0, y1): (f64, f64),
 ) {
-    let Footprint::Box {
-        at,
-        dir,
-        half,
-        y0,
-        y1,
-    } = *f
-    else {
+    let Footprint::Box { at, dir, half, .. } = *f else {
         return;
     };
     // The thin way through the wall, pointing out of the building.
@@ -233,17 +431,26 @@ fn outer(
     } else {
         -through
     };
-    let quarter = half.x.min(half.y) * 0.5;
+    // The cladding is the thicker layer: where the two meet lies inside
+    // the floors' edges, which end on the wall's middle line.
+    let thin = half.x.min(half.y);
+    let seam = -CLAD_SEAM;
     let layer = |b: &mut MeshBuilder, side: f64, lo: f64, hi: f64, color: Color| {
         if hi - lo < 0.01 {
             return;
         }
-        let h = if thin_x {
-            DVec2::new(quarter, half.y)
+        let (a, c) = if side > 0.0 {
+            (seam, thin)
         } else {
-            DVec2::new(half.x, quarter)
+            (-thin, seam)
         };
-        let (c, u, hh) = frame(at + out * (quarter * side), dir, h, lo, hi);
+        let t = (c - a) * 0.5;
+        let h = if thin_x {
+            DVec2::new(t, half.y)
+        } else {
+            DVec2::new(half.x, t)
+        };
+        let (c, u, hh) = frame(at + out * ((a + c) * 0.5), dir, h, lo, hi);
         b.oriented_box(c, u, hh, color);
     };
     // Outside: a dark plinth course, the cladding, a band under the roof.
@@ -255,7 +462,9 @@ fn outer(
     layer(b, 1.0, crown, y1, band);
     if near {
         skin(b, near, Base::CastStone);
-        layer(b, -1.0, y0, y1, plaster);
+        // A little lower than the cladding, so at a corner the two walls'
+        // layers never end in one plane.
+        layer(b, -1.0, y0 - 0.015, y1 - 0.015, plaster);
     }
 }
 
@@ -664,10 +873,11 @@ mod tests {
     #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
     fn the_comet_buildings_have_no_z_fighting() {
         let mut bad = Vec::new();
-        for v in 0..3u8 {
+        // Each scheme on a few sites: the site is the plan's seed.
+        for (v, k) in (0..3u8).flat_map(|v| (0..4).map(move |k| (v, k))) {
             let l = Landmark {
                 kind: LandmarkKind::CometBuilding,
-                pos: DVec2::new(100.0, -40.0),
+                pos: DVec2::new(100.0 + 37.0 * k as f64, -40.0 + 11.0 * k as f64),
                 plaza: comet::plaza(0),
                 base: 3.0,
                 low: 2.0,
@@ -676,14 +886,62 @@ mod tests {
                 stairs: Vec::new(),
                 variant: v,
             };
-            let mut b = MeshBuilder::new();
-            building(&mut b, &l, true);
-            let report = engine::zfight::ZFightCheck::new()
-                .options(crate::zfight::city_options())
-                .with(comet::name(&l), &b.finish())
-                .run();
+            let mut check =
+                engine::zfight::ZFightCheck::new().options(crate::zfight::city_options());
+            let name = |p: &Part| {
+                let s = format!("{p:?}");
+                s.split('(').next().unwrap_or("").to_string()
+            };
+            let mut kinds: Vec<String> = comet::parts(&l).iter().map(|p| name(&p.part)).collect();
+            kinds.sort();
+            kinds.dedup();
+            for k in &kinds {
+                let mut b = MeshBuilder::new();
+                build(&mut b, &l, true, &|p| name(p) == *k);
+                check = check.with(k.clone(), &b.finish());
+            }
+            let report = check.run();
             if !report.is_clean() {
-                bad.push(format!("{}: {}", comet::name(&l), report.summary(40)));
+                // By the two kinds of part and the way the faces look: one
+                // line per kind of clash, with its area and a place to look.
+                let mut found: std::collections::BTreeMap<String, (f64, usize, DVec3)> =
+                    Default::default();
+                for c in report.fighting() {
+                    let axis = if c.normal.y > 0.9 {
+                        "up"
+                    } else if c.normal.y < -0.9 {
+                        "down"
+                    } else {
+                        "side"
+                    };
+                    let mut two = [
+                        format!(
+                            "{} {}",
+                            report.source_name(c.sources[0]),
+                            crate::zfight::hex(c.colors[0])
+                        ),
+                        format!(
+                            "{} {}",
+                            report.source_name(c.sources[1]),
+                            crate::zfight::hex(c.colors[1])
+                        ),
+                    ];
+                    two.sort();
+                    let e = found
+                        .entry(format!("{} / {} {axis}", two[0], two[1]))
+                        .or_insert((0.0, 0, c.at));
+                    e.0 += c.area;
+                    e.1 += 1;
+                }
+                let mut lines: Vec<_> = found.into_iter().collect();
+                lines.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
+                bad.push(format!("{} (site {k}):", comet::name(&l)));
+                for (k, (area, n, at)) in lines {
+                    bad.push(format!(
+                        "  {k}: {area:.1} m2 in {n}, e.g. ({:.2}, {:.2}, {:.2})",
+                        at.x, at.y, at.z
+                    ));
+                }
             }
         }
         assert!(bad.is_empty(), "{}", bad.join("\n"));

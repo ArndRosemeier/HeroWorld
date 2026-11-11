@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.191 (2026-11-11)
+
+- No more flickering surfaces in the Daily Comet building, the Atlas Assurance hall and the Zenith Radio house: walls, floors, rails and lift shafts no longer share a plane anywhere.
+
 ## 0.190 (2026-11-11)
 
 - The Orbit Room night club is a club inside now: a long bar with red leather stools, a mirrored back bar full of bottles, velvet booths and a little bandstand. Its neon sign and doorman are at that door.
