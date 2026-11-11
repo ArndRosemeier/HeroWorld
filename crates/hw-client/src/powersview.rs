@@ -160,27 +160,30 @@ impl PowersView {
         let level = level_of(sheet.lifetime);
         let w = 340.0;
         let r = egui::Rect::from_min_size(
-            egui::pos2(screen.center().x - w * 0.5, screen.bottom() - 12.0),
-            egui::vec2(w, 8.0),
+            egui::pos2(screen.center().x - w * 0.5, screen.bottom() - 13.0),
+            egui::vec2(w, 9.0),
         );
-        painter.rect_filled(r.expand(1.0), 3.0, egui::Color32::from_black_alpha(190));
         let (from, to) = (karma_for_level(level), karma_for_level(level + 1));
         let f = if level >= MAX_LEVEL {
             1.0
         } else {
             (sheet.lifetime - from) as f32 / (to - from).max(1) as f32
         };
-        painter.rect_filled(
-            egui::Rect::from_min_size(r.min, egui::vec2(r.width() * f.clamp(0.0, 1.0), r.height())),
-            3.0,
+        crate::uikit::gauge(
+            &painter,
+            r,
+            f,
             egui::Color32::from_rgb(170, 120, 255),
+            crate::uikit::now(ctx),
+            0.0,
         );
         let font = egui::FontId::proportional(12.0);
-        painter.text(
-            r.left_top() + egui::vec2(-8.0, 4.0),
+        crate::uikit::shadow_text(
+            &painter,
+            r.left_top() + egui::vec2(-10.0, 4.0),
             egui::Align2::RIGHT_CENTER,
-            format!("Level {level}"),
-            egui::FontId::proportional(14.0),
+            &format!("LEVEL {level}"),
+            crate::uikit::ui_font(ctx, 14.0),
             GOLD,
         );
         let spend = if sheet.karma > 0 {
@@ -188,12 +191,13 @@ impl PowersView {
         } else {
             "B: powers".into()
         };
-        painter.text(
-            r.right_top() + egui::vec2(8.0, 4.0),
+        crate::uikit::shadow_text(
+            &painter,
+            r.right_top() + egui::vec2(10.0, 4.0),
             egui::Align2::LEFT_CENTER,
-            spend,
+            &spend,
             font.clone(),
-            egui::Color32::from_rgb(210, 190, 255),
+            egui::Color32::from_rgb(220, 200, 255),
         );
         if fighting != level {
             painter.text(
@@ -211,7 +215,7 @@ impl PowersView {
         let origin = &ORIGINS[(sheet.origin as usize).min(ORIGINS.len() - 1)];
         let element = Element::from_code(sheet.element);
         let mut open = self.open;
-        egui::Window::new("Powers")
+        let shown = egui::Window::new("Powers")
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -336,6 +340,9 @@ impl PowersView {
                     .color(egui::Color32::from_gray(170)),
                 );
             });
+        if let Some(r) = shown {
+            crate::uikit::adorn(ctx, "powers", r.response.rect);
+        }
         self.open = open;
     }
 
@@ -636,7 +643,7 @@ impl PowersView {
     /// element riding on every blow, and the first power.
     fn origin_card(&mut self, ctx: &egui::Context) -> Option<Sheet> {
         let mut made = None;
-        egui::Window::new("Who are you?")
+        let shown = egui::Window::new("Who are you?")
             .collapsible(false)
             .resizable(false)
             .default_width(600.0)
@@ -691,6 +698,9 @@ impl PowersView {
                     made = Some(s);
                 }
             });
+        if let Some(r) = shown {
+            crate::uikit::adorn(ctx, "who are you", r.response.rect);
+        }
         made
     }
 
@@ -725,7 +735,7 @@ impl PowersView {
     /// pick an element once.
     fn element_card(&mut self, ctx: &egui::Context, sheet: &Sheet) -> Option<Element> {
         let mut picked = None;
-        egui::Window::new("The power trees are here")
+        let shown = egui::Window::new("The power trees are here")
             .collapsible(false)
             .resizable(false)
             .default_width(560.0)
@@ -753,6 +763,9 @@ impl PowersView {
                     picked = Some(self.element);
                 }
             });
+        if let Some(r) = shown {
+            crate::uikit::adorn(ctx, "trees here", r.response.rect);
+        }
         picked
     }
 
@@ -785,14 +798,15 @@ impl PowersView {
                 egui::Stroke::NONE,
             ));
         }
-        let big = egui::FontId::proportional(64.0 * pop);
+        // The title's comic lettering, with its red block shadow.
+        let big = crate::uikit::logo_font(ctx, 72.0 * pop);
         let text = format!("LEVEL {level}!");
         painter.text(
-            c + egui::vec2(4.0, 4.0),
+            c + egui::vec2(5.0, 6.0),
             egui::Align2::CENTER_CENTER,
             &text,
             big.clone(),
-            egui::Color32::from_black_alpha((200.0 * a) as u8),
+            crate::uikit::HERO_RED.gamma_multiply(a),
         );
         painter.text(
             c,
@@ -819,8 +833,8 @@ impl PowersView {
                 c + egui::vec2(0.0, 58.0 + k as f32 * 24.0),
                 egui::Align2::CENTER_CENTER,
                 l,
-                egui::FontId::proportional(19.0),
-                egui::Color32::from_white_alpha((235.0 * a) as u8),
+                crate::uikit::ui_font(ctx, 19.0),
+                crate::uikit::CREAM.gamma_multiply(a),
             );
         }
     }

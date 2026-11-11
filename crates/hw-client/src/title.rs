@@ -49,11 +49,8 @@ const UI_FONT: &[u8] = include_bytes!("../assets/fonts/TitanOne-Regular.ttf");
 const TYPE_FONT: &[u8] = include_bytes!("../assets/fonts/SpecialElite-Regular.ttf");
 const THEME: &[u8] = include_bytes!("../assets/title/title_theme.ogg");
 
-const NAVY: Color32 = Color32::from_rgb(22, 26, 64);
-const CREAM: Color32 = Color32::from_rgb(255, 246, 222);
-const HERO_RED: Color32 = Color32::from_rgb(226, 52, 48);
-const GOLD: Color32 = Color32::from_rgb(255, 198, 64);
-const AETHER: Color32 = Color32::from_rgb(120, 236, 255);
+// The comic palette is the whole game's (`uikit`).
+use crate::uikit::{mix, with_alpha, AETHER, CREAM, GOLD, HERO_RED, NAVY};
 
 /// What the player picked on the title.
 #[derive(Clone, Debug, PartialEq)]
@@ -1512,16 +1509,6 @@ fn hash01(a: u32, b: u32) -> f32 {
     x = x.wrapping_mul(0x297A_2D39);
     x ^= x >> 15;
     (x & 0xFF_FFFF) as f32 / 0x100_0000 as f32
-}
-
-fn with_alpha(c: Color32, a: f32) -> Color32 {
-    Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (a.clamp(0.0, 1.0) * 255.0) as u8)
-}
-
-fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
-    let t = t.clamp(0.0, 1.0);
-    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
-    Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
 }
 
 fn shadow_text(

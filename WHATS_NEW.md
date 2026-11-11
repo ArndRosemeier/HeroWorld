@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.208 (2026-11-11)
+
+- The game's screens got the title's comic look: navy panels with gold chrome rims and a bold drop shadow, the title's lettering on headings and buttons, red buttons with cream letters.
+- The power tray is a row of jukebox buttons: the key in a red pill, a shutter that lifts as a power recharges, and a glint now and then on the ones that are ready.
+- Health, energy and karma gauges have rolling stripes and a sweeping shine; health throbs red when it runs low. The compass, minimap, chat, wrist radio, taxi and tube menus, prompts and the Escape menu match.
+- "Less motion" in the title's settings stills the stars and glints.
+
 ## 0.207 (2026-11-11)
 
 - The lifts in the town's new office buildings run now: step into a waiting car and it takes you up, floor by floor, like in the Comet buildings.

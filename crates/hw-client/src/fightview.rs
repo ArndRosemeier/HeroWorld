@@ -11,6 +11,7 @@
 use crate::chat::{self, Said, Voice};
 use crate::speech::{Speech, SpeechBubbles};
 use crate::tray::{self, Tray};
+use crate::uikit;
 use engine::prelude::*;
 use engine::ui::egui;
 use glam::{Mat4, Vec3};
@@ -2255,6 +2256,7 @@ impl FightView {
         let mine = me.and_then(|m| m.combat).map_or(1, |c| c.level);
         let font = |s: f32| egui::FontId::proportional(s);
         let dark = egui::Color32::from_black_alpha(170);
+        let now = uikit::now(ctx);
 
         // Over villains: a slim health bar once hurt, the name when targeted.
         for e in all.iter().filter(|e| e.kind.is_enemy()) {
@@ -2338,40 +2340,39 @@ impl FightView {
                     name = crate::robotview::part_name(all, on, t.id);
                 }
                 let col = con_colour(c.level, mine);
-                let w = 300.0;
+                let w = 320.0;
                 let r = egui::Rect::from_min_size(
-                    egui::pos2(screen.center().x - w * 0.5, screen.top() + 14.0),
-                    egui::vec2(w, 58.0),
+                    egui::pos2(screen.center().x - w * 0.5, screen.top() + 22.0),
+                    egui::vec2(w, 62.0),
                 );
-                painter.rect_filled(r, 6.0, dark);
-                painter.rect_stroke(
-                    r,
-                    6.0,
-                    egui::Stroke::new(2.0_f32, col),
-                    egui::StrokeKind::Inside,
-                );
-                painter.text(
-                    r.min + egui::vec2(12.0, 8.0),
-                    egui::Align2::LEFT_TOP,
+                uikit::panel(&painter, r, 12.0, 1.0);
+                // The villain's name on a pennant in its con colour, with
+                // the rank and level on the panel.
+                uikit::ribbon(
+                    &painter,
+                    ctx,
+                    r.left_top() + egui::vec2(-10.0, 4.0),
                     name,
-                    font(18.0),
-                    col,
+                    16.0,
+                    uikit::mix(col, egui::Color32::BLACK, 0.25),
                 );
                 painter.text(
-                    egui::pos2(r.max.x - 12.0, r.min.y + 10.0),
+                    egui::pos2(r.max.x - 14.0, r.min.y + 13.0),
                     egui::Align2::RIGHT_TOP,
                     format!("{rank} · level {}", c.level),
                     font(13.0),
-                    egui::Color32::from_gray(210),
+                    uikit::DIM,
                 );
-                bar(
+                uikit::gauge(
                     &painter,
                     egui::Rect::from_min_size(
-                        r.min + egui::vec2(12.0, 36.0),
-                        egui::vec2(w - 24.0, 12.0),
+                        r.min + egui::vec2(14.0, 36.0),
+                        egui::vec2(w - 28.0, 14.0),
                     ),
-                    c.health,
+                    c.health as f32 / 255.0,
                     egui::Color32::from_rgb(214, 58, 48),
+                    now,
+                    0.0,
                 );
             }
         }
@@ -2386,35 +2387,40 @@ impl FightView {
             let extra = (rows - 1) as f32 * ROW_STEP;
             let base = egui::pos2(screen.center().x - w * 0.5, screen.bottom() - 112.0 - extra);
             let panel = egui::Rect::from_min_size(base, egui::vec2(w, 98.0 + extra));
-            painter.rect_filled(panel, 8.0, dark);
-            let label = |y: f32, t: &str| {
-                painter.text(
-                    base + egui::vec2(12.0, y),
+            uikit::panel(&painter, panel, 14.0, 1.0);
+            let label = |y: f32, text: &str| {
+                uikit::shadow_text(
+                    &painter,
+                    base + egui::vec2(14.0, y),
                     egui::Align2::LEFT_CENTER,
-                    t,
-                    font(12.0),
-                    egui::Color32::from_gray(220),
+                    text,
+                    uikit::ui_font(ctx, 12.5),
+                    uikit::GOLD,
                 );
             };
-            label(16.0, "Health");
-            bar(
+            label(17.0, "HEALTH");
+            uikit::gauge(
                 &painter,
                 egui::Rect::from_min_size(
-                    base + egui::vec2(66.0, 10.0),
-                    egui::vec2(w - 78.0, 12.0),
+                    base + egui::vec2(74.0, 10.0),
+                    egui::vec2(w - 88.0, 13.0),
                 ),
-                c.health,
-                egui::Color32::from_rgb(60, 200, 80),
+                c.health as f32 / 255.0,
+                egui::Color32::from_rgb(70, 200, 90),
+                now,
+                0.3,
             );
-            label(34.0, "Energy");
-            bar(
+            label(35.0, "ENERGY");
+            uikit::gauge(
                 &painter,
                 egui::Rect::from_min_size(
-                    base + egui::vec2(66.0, 28.0),
-                    egui::vec2(w - 78.0, 12.0),
+                    base + egui::vec2(74.0, 28.0),
+                    egui::vec2(w - 88.0, 13.0),
                 ),
-                c.energy,
-                egui::Color32::from_rgb(70, 140, 255),
+                c.energy as f32 / 255.0,
+                egui::Color32::from_rgb(70, 150, 255),
+                now,
+                0.0,
             );
             let energy = c.energy as f32 / 255.0 * 100.0;
             let carrying = c.effects & hw_net::EFFECT_CARRYING != 0;
@@ -2451,13 +2457,20 @@ impl FightView {
                                 egui::Id::new("tray drag"),
                             ));
                             let r = egui::Rect::from_center_size(at, egui::vec2(slot_w, 26.0));
-                            fg.rect_filled(r, 5.0, egui::Color32::from_rgb(52, 60, 92));
+                            fg.rect_filled(r.translate(egui::vec2(3.0, 4.0)), 7.0, dark);
+                            fg.rect_filled(r, 7.0, uikit::NAVY);
+                            fg.rect_stroke(
+                                r,
+                                7.0,
+                                egui::Stroke::new(2.0_f32, uikit::GOLD),
+                                egui::StrokeKind::Inside,
+                            );
                             fg.text(
                                 r.center(),
                                 egui::Align2::CENTER_CENTER,
                                 power_name(p),
-                                font(12.5),
-                                egui::Color32::WHITE,
+                                uikit::ui_font(ctx, 13.0),
+                                uikit::CREAM,
                             );
                         }
                     }
@@ -2469,26 +2482,15 @@ impl FightView {
                 }
                 let hovered = resp.dnd_hover_payload::<tray::Drag>().is_some();
                 let Some(power) = power else {
-                    // An empty slot: a dim outline and its key.
-                    painter.rect_stroke(
+                    // An empty slot: a dim well and its key.
+                    uikit::slot(
+                        &painter,
                         slot,
-                        5.0,
-                        egui::Stroke::new(
-                            1.0_f32,
-                            if hovered {
-                                egui::Color32::from_rgb(255, 214, 90)
-                            } else {
-                                egui::Color32::from_gray(60)
-                            },
-                        ),
-                        egui::StrokeKind::Inside,
-                    );
-                    painter.text(
-                        slot.min + egui::vec2(8.0, 6.0),
-                        egui::Align2::LEFT_TOP,
-                        tray::label(k),
-                        font(12.0),
-                        egui::Color32::from_gray(110),
+                        &tray::label(k),
+                        uikit::SlotLook::Empty,
+                        hovered,
+                        0.0,
+                        now + k as f32 * 0.37,
                     );
                     continue;
                 };
@@ -2498,57 +2500,46 @@ impl FightView {
                 let cd = self.cooldown[power.0 as usize];
                 let ready = cd <= 0.0 && (energy + 0.5 >= cost || carrying && lift);
                 let on = spec.toggle && toggles & (1 << power.0) != 0;
-                let fill = if hovered {
-                    egui::Color32::from_rgb(80, 86, 130)
-                } else if on {
-                    egui::Color32::from_rgb(40, 104, 70)
+                let look = if on {
+                    uikit::SlotLook::On
                 } else if ready {
-                    egui::Color32::from_rgb(52, 60, 92)
+                    uikit::SlotLook::Ready
                 } else {
-                    egui::Color32::from_rgb(40, 40, 46)
+                    uikit::SlotLook::Waiting
                 };
-                painter.rect_filled(slot, 5.0, fill);
-                if cd > 0.0 {
-                    let f = cd / powers::recharge(spec).max(0.1) as f32;
-                    let cover = egui::Rect::from_min_max(
-                        egui::pos2(slot.min.x, slot.max.y - slot.height() * f),
-                        slot.max,
-                    );
-                    painter.rect_filled(cover, 5.0, egui::Color32::from_black_alpha(140));
-                }
-                painter.rect_stroke(
-                    slot,
-                    5.0,
-                    egui::Stroke::new(
-                        1.5_f32,
-                        if ready || hovered {
-                            egui::Color32::from_rgb(255, 214, 90)
-                        } else {
-                            egui::Color32::from_gray(90)
-                        },
-                    ),
-                    egui::StrokeKind::Inside,
-                );
+                let recharge = if cd > 0.0 {
+                    cd / powers::recharge(spec).max(0.1) as f32
+                } else {
+                    0.0
+                };
                 let key = tray::label(k);
-                painter.text(
-                    slot.min + egui::vec2(8.0, 6.0),
-                    egui::Align2::LEFT_TOP,
+                let raised = hovered || resp.hovered();
+                let (at, name_x) = uikit::slot(
+                    &painter,
+                    slot,
                     &key,
-                    font(12.0),
-                    egui::Color32::from_rgb(255, 214, 90),
+                    look,
+                    raised,
+                    recharge,
+                    now + k as f32 * 0.37,
                 );
-                let name_x = if tray::alt(k) { 40.0 } else { 20.0 };
+                let slot = egui::Rect::from_min_size(at, slot.size());
                 let name = if lift && carrying {
                     "Throw!"
                 } else {
                     power_name(power)
                 };
-                painter.text(
-                    slot.min + egui::vec2(name_x, 6.0),
-                    egui::Align2::LEFT_TOP,
+                uikit::fit_text(
+                    &painter,
+                    slot.min + egui::vec2(name_x, 5.0),
                     name,
-                    font(12.5),
-                    egui::Color32::WHITE,
+                    uikit::ui_font(ctx, 12.5),
+                    if look == uikit::SlotLook::Waiting {
+                        uikit::DIM
+                    } else {
+                        uikit::CREAM
+                    },
+                    slot.width() - name_x - 5.0,
                 );
                 let cost = if spec.toggle && on {
                     format!("on, -{:.0}% energy", spec.fields.upkeep * 100.0)
@@ -2560,11 +2551,15 @@ impl FightView {
                     "free".into()
                 };
                 painter.text(
-                    slot.min + egui::vec2(name_x, 24.0),
+                    slot.min + egui::vec2(6.0, 24.0),
                     egui::Align2::LEFT_TOP,
                     cost,
                     font(11.0),
-                    egui::Color32::from_gray(180),
+                    if look == uikit::SlotLook::On {
+                        egui::Color32::from_rgb(170, 255, 200)
+                    } else {
+                        uikit::DIM
+                    },
                 );
             }
             // A slot dragged off the tray and let go: it leaves the tray.
@@ -2578,7 +2573,8 @@ impl FightView {
                     }
                 }
             }
-            painter.text(
+            uikit::shadow_text(
+                &painter,
                 egui::pos2(screen.center().x, base.y - 8.0),
                 egui::Align2::CENTER_BOTTOM,
                 &{
@@ -2600,18 +2596,19 @@ impl FightView {
                     }
                     hint
                 },
-                font(12.0),
-                egui::Color32::from_white_alpha(150),
+                font(12.5),
+                egui::Color32::from_white_alpha(200),
             );
 
             // Down: what now.
             if c.status == Status::Down {
                 let p = screen.center() - egui::vec2(0.0, 60.0);
-                painter.text(
+                uikit::shout(
+                    &painter,
+                    ctx,
                     p,
-                    egui::Align2::CENTER_CENTER,
                     "You are down!",
-                    font(34.0),
+                    44.0,
                     egui::Color32::from_rgb(255, 90, 70),
                 );
                 painter.text(
@@ -2660,26 +2657,17 @@ impl FightView {
 
         if let Some((text, left)) = &self.note {
             let a = left.min(1.0);
-            painter.text(
+            uikit::shadow_text(
+                &painter,
                 screen.center() + egui::vec2(0.0, 80.0),
                 egui::Align2::CENTER_CENTER,
                 text,
-                font(18.0),
-                egui::Color32::from_rgb(255, 230, 150).gamma_multiply(a),
+                uikit::ui_font(ctx, 20.0),
+                uikit::GOLD_LIGHT.gamma_multiply(a),
             );
         }
         changed
     }
-}
-
-fn bar(painter: &egui::Painter, r: egui::Rect, v: u8, colour: egui::Color32) {
-    painter.rect_filled(r, 3.0, egui::Color32::from_gray(30));
-    let f = v as f32 / 255.0;
-    painter.rect_filled(
-        egui::Rect::from_min_size(r.min, egui::vec2(r.width() * f, r.height())),
-        3.0,
-        colour,
-    );
 }
 
 fn pos(e: &EntityState) -> Vec3 {

@@ -138,10 +138,13 @@ pub fn compass(ctx: &egui::Context, eye: Vec3, look: Vec3, radio: &Radio, mine: 
     let top = 8.0;
     let rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, height));
     let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
+        // Under the windows (the powers window reaches the top).
+        egui::Order::Background,
         egui::Id::new("compass"),
     ));
-    painter.rect_filled(rect, 4.0, egui::Color32::from_black_alpha(140));
+    crate::uikit::panel(&painter, rect, 15.0, 0.9);
+    // Ticks and letters stay inside the rim.
+    let painter = painter.with_clip_rect(rect.shrink(4.0));
     let x_of = |b: f32| {
         let rel = (b - heading + PI).rem_euclid(TAU) - PI;
         (rel.abs() < fov * 0.5).then(|| rect.center().x + rel / fov * width)
@@ -159,11 +162,15 @@ pub fn compass(ctx: &egui::Context, eye: Vec3, look: Vec3, radio: &Radio, mine: 
         match label {
             Some(t) => {
                 painter.text(
-                    egui::pos2(x, rect.center().y),
+                    egui::pos2(x, rect.center().y + 1.0),
                     egui::Align2::CENTER_CENTER,
                     t,
-                    egui::FontId::proportional(16.0),
-                    egui::Color32::from_rgb(255, 214, 90),
+                    crate::uikit::ui_font(ctx, 17.0),
+                    if k == 0 {
+                        crate::uikit::HERO_RED
+                    } else {
+                        crate::uikit::GOLD
+                    },
                 );
             }
             None => {
@@ -172,7 +179,7 @@ pub fn compass(ctx: &egui::Context, eye: Vec3, look: Vec3, radio: &Radio, mine: 
                         egui::pos2(x, rect.bottom() - 8.0),
                         egui::pos2(x, rect.bottom() - 2.0),
                     ],
-                    egui::Stroke::new(1.0_f32, egui::Color32::from_gray(180)),
+                    egui::Stroke::new(1.0_f32, crate::uikit::DIM),
                 );
             }
         }

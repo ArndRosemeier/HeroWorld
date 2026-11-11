@@ -237,14 +237,15 @@ impl ChatLog {
         let screen = ctx.screen_rect();
         let mut sent = None;
         let mut close = false;
+        // The comic panel, but see-through: the street matters more.
         let frame = egui::Frame::new()
-            .fill(egui::Color32::from_rgba_unmultiplied(12, 14, 22, 170))
+            .fill(crate::uikit::with_alpha(crate::uikit::NAVY, 0.72))
             .stroke(egui::Stroke::new(
-                1.0_f32,
-                egui::Color32::from_rgba_unmultiplied(120, 130, 160, 90),
+                1.5_f32,
+                crate::uikit::with_alpha(crate::uikit::GOLD, 0.6),
             ))
-            .corner_radius(6.0)
-            .inner_margin(egui::Margin::symmetric(8, 6));
+            .corner_radius(10.0)
+            .inner_margin(egui::Margin::symmetric(10, 7));
         egui::Window::new("chat")
             .title_bar(false)
             .resizable(true)

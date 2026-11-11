@@ -602,6 +602,8 @@ fn main() -> EngineResult<()> {
     // hero picks an origin), the sheet as the host last confirmed it, and
     // the powers window.
     let mut powers = PowersView::new();
+    // `HW_POWERS_WINDOW=1` opens the powers window at start (screenshots).
+    powers.open = std::env::var_os("HW_POWERS_WINDOW").is_some();
     // Until when our hero strikes the level-up power pose.
     let mut power_pose_until = f32::NEG_INFINITY;
     // The hand goes to the temple to switch the police visor until then.
@@ -1767,6 +1769,10 @@ fn main() -> EngineResult<()> {
         hero_cam_yaw = 135.0;
     }
     let mut menu = hw_client::settings::GameMenu::new(&profile);
+    // The comic look for the game's windows and HUD, set on the first
+    // frame of play (the title keeps its own).
+    let mut ui_styled = false;
+    let mut still_ui = profile.reduced_motion;
     // The debug menu (Ctrl+Shift+F12). A hero it changed (or one from
     // HW_LEVEL) is not saved; weak points of the colossus it broke.
     let mut debug = hw_client::debugmenu::DebugMenu::new();
@@ -2246,6 +2252,7 @@ fn main() -> EngineResult<()> {
                     my_look = t.profile.look.clone();
                     t.profile.save();
                     menu = hw_client::settings::GameMenu::new(&t.profile);
+                    still_ui = t.profile.reduced_motion;
                     t.leave(world);
                     // The game goes on drawing cells on the workers.
                     hw_client::hitch::event("left the title");
@@ -2254,6 +2261,21 @@ fn main() -> EngineResult<()> {
                 return Ok(());
             }
             hw_client::hitch::mark("menus");
+            if !ui_styled {
+                let ctx = frame.ui.ctx();
+                if !ctx.fonts(|f| {
+                    f.families()
+                        .contains(&engine::ui::egui::FontFamily::Name("hw-ui".into()))
+                }) {
+                    // Started straight into the street: the fonts arrive
+                    // with the next frame, the style after them.
+                    hw_client::title::install_fonts(ctx);
+                } else {
+                    hw_client::uikit::install(ctx);
+                    hw_client::uikit::set_reduced_motion(ctx, still_ui);
+                    ui_styled = true;
+                }
+            }
             if music_fade_at.is_some_and(|at| frame.time > at) {
                 // The title theme fades, unless a colossus fight took over.
                 if !robots.music_on() {
@@ -4568,21 +4590,15 @@ fn main() -> EngineResult<()> {
                                 engine::ui::egui::vec2(0.0, -170.0),
                             )
                             .show(frame.ui.ctx(), |ui| {
-                                engine::ui::egui::Frame::new()
-                                    .fill(engine::ui::egui::Color32::from_black_alpha(170))
-                                    .corner_radius(4.0)
-                                    .inner_margin(engine::ui::egui::Margin::symmetric(10, 5))
-                                    .show(ui, |ui| {
-                                        ui.label(
-                                            engine::ui::egui::RichText::new(
-                                                hw_client::doorview::prompt(d.open, d.kind),
-                                            )
-                                            .color(engine::ui::egui::Color32::from_rgb(
-                                                255, 230, 140,
-                                            ))
-                                            .size(17.0),
-                                        );
-                                    });
+                                hw_client::uikit::card().show(ui, |ui| {
+                                    ui.label(
+                                        engine::ui::egui::RichText::new(
+                                            hw_client::doorview::prompt(d.open, d.kind),
+                                        )
+                                        .color(engine::ui::egui::Color32::from_rgb(255, 230, 140))
+                                        .size(17.0),
+                                    );
+                                });
                             });
                     }
                 }
@@ -5027,35 +5043,27 @@ fn taxi_panel(
     egui::Area::new(egui::Id::new("taxi"))
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
-            egui::Frame::new()
-                .fill(egui::Color32::from_rgba_unmultiplied(30, 26, 12, 230))
-                .stroke(egui::Stroke::new(
-                    2.0_f32,
-                    egui::Color32::from_rgb(255, 210, 60),
-                ))
-                .corner_radius(8.0)
-                .inner_margin(egui::Margin::same(14))
-                .show(ui, |ui| {
-                    ui.set_min_width(280.0);
-                    ui.label(
-                        egui::RichText::new("TAXI! Where to?")
-                            .color(egui::Color32::from_rgb(255, 214, 70))
-                            .strong()
-                            .size(20.0),
-                    );
-                    ui.add_space(6.0);
-                    for (i, s) in stands.iter().enumerate() {
-                        let b = egui::Button::new(egui::RichText::new(&s.name).size(15.0))
-                            .min_size(egui::vec2(260.0, 26.0));
-                        if ui.add(b).clicked() {
-                            picked = Some(i);
-                        }
+            hw_client::uikit::card().show(ui, |ui| {
+                ui.set_min_width(280.0);
+                ui.label(
+                    egui::RichText::new("TAXI! Where to?")
+                        .color(egui::Color32::from_rgb(255, 214, 70))
+                        .strong()
+                        .size(20.0),
+                );
+                ui.add_space(6.0);
+                for (i, s) in stands.iter().enumerate() {
+                    let b = egui::Button::new(egui::RichText::new(&s.name).size(15.0))
+                        .min_size(egui::vec2(260.0, 26.0));
+                    if ui.add(b).clicked() {
+                        picked = Some(i);
                     }
-                    ui.add_space(4.0);
-                    if ui.button("Never mind (G)").clicked() {
-                        *open = false;
-                    }
-                });
+                }
+                ui.add_space(4.0);
+                if ui.button("Never mind (G)").clicked() {
+                    *open = false;
+                }
+            });
         });
     if picked.is_some() {
         *open = false;
@@ -5077,50 +5085,42 @@ fn tube_panel(
     egui::Area::new(egui::Id::new("tube"))
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .show(ui.ctx(), |ui| {
-            egui::Frame::new()
-                .fill(egui::Color32::from_rgba_unmultiplied(24, 32, 30, 235))
-                .stroke(egui::Stroke::new(
-                    2.0_f32,
-                    egui::Color32::from_rgb(200, 60, 50),
-                ))
-                .corner_radius(8.0)
-                .inner_margin(egui::Margin::same(14))
-                .show(ui, |ui| {
-                    ui.set_min_width(300.0);
-                    ui.label(
-                        egui::RichText::new("AETHER TUBE")
-                            .color(egui::Color32::from_rgb(232, 196, 96))
-                            .strong()
-                            .size(20.0),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!("{}: where to?", net.stations[*from].name))
-                            .color(egui::Color32::from_rgb(236, 228, 206))
-                            .size(14.0),
-                    );
-                    ui.add_space(6.0);
-                    if list.is_empty() {
-                        ui.label("No line runs on from here yet.");
-                    }
-                    egui::ScrollArea::vertical()
-                        .max_height(360.0)
-                        .show(ui, |ui| {
-                            for &i in list {
-                                let s = &net.stations[i];
-                                let d = s.pos.distance(net.stations[*from].pos);
-                                let text = format!("{}  ·  {:.1} km", s.name, d / 1000.0);
-                                let b = egui::Button::new(egui::RichText::new(text).size(15.0))
-                                    .min_size(egui::vec2(280.0, 26.0));
-                                if ui.add(b).clicked() {
-                                    picked = Some(i);
-                                }
+            hw_client::uikit::alert_card().show(ui, |ui| {
+                ui.set_min_width(300.0);
+                ui.label(
+                    egui::RichText::new("AETHER TUBE")
+                        .color(egui::Color32::from_rgb(232, 196, 96))
+                        .strong()
+                        .size(20.0),
+                );
+                ui.label(
+                    egui::RichText::new(format!("{}: where to?", net.stations[*from].name))
+                        .color(egui::Color32::from_rgb(236, 228, 206))
+                        .size(14.0),
+                );
+                ui.add_space(6.0);
+                if list.is_empty() {
+                    ui.label("No line runs on from here yet.");
+                }
+                egui::ScrollArea::vertical()
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        for &i in list {
+                            let s = &net.stations[i];
+                            let d = s.pos.distance(net.stations[*from].pos);
+                            let text = format!("{}  ·  {:.1} km", s.name, d / 1000.0);
+                            let b = egui::Button::new(egui::RichText::new(text).size(15.0))
+                                .min_size(egui::vec2(280.0, 26.0));
+                            if ui.add(b).clicked() {
+                                picked = Some(i);
                             }
-                        });
-                    ui.add_space(4.0);
-                    if ui.button("Never mind (G)").clicked() {
-                        close = true;
-                    }
-                });
+                        }
+                    });
+                ui.add_space(4.0);
+                if ui.button("Never mind (G)").clicked() {
+                    close = true;
+                }
+            });
         });
     if picked.is_some() || close {
         *menu = None;
@@ -5150,17 +5150,13 @@ fn tube_status(
         .interactable(false)
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 44.0))
         .show(ui.ctx(), |ui| {
-            egui::Frame::new()
-                .fill(egui::Color32::from_black_alpha(160))
-                .corner_radius(4.0)
-                .inner_margin(egui::Margin::symmetric(10, 5))
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(text)
-                            .color(egui::Color32::from_rgb(232, 196, 96))
-                            .size(15.0),
-                    );
-                });
+            hw_client::uikit::card().show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(text)
+                        .color(egui::Color32::from_rgb(232, 196, 96))
+                        .size(15.0),
+                );
+            });
         });
 }
 
@@ -5195,17 +5191,13 @@ fn way_up_hint(ui: &engine::ui::UiFrame, eye: Vec3, look: Vec3, to: Option<DVec2
         .interactable(false)
         .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -150.0))
         .show(ui.ctx(), |ui| {
-            egui::Frame::new()
-                .fill(egui::Color32::from_black_alpha(150))
-                .corner_radius(4.0)
-                .inner_margin(egui::Margin::symmetric(10, 4))
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(format!("Way up to the street: {way}"))
-                            .color(egui::Color32::from_rgb(130, 255, 160))
-                            .size(14.0),
-                    );
-                });
+            hw_client::uikit::card().show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(format!("Way up to the street: {way}"))
+                        .color(egui::Color32::from_rgb(130, 255, 160))
+                        .size(14.0),
+                );
+            });
         });
 }
 
@@ -5223,17 +5215,13 @@ fn taxi_status(ui: &engine::ui::UiFrame, cab: bool, riding: bool, to: Option<&st
     egui::Area::new(egui::Id::new("taxi status"))
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 14.0))
         .show(ui.ctx(), |ui| {
-            egui::Frame::new()
-                .fill(egui::Color32::from_black_alpha(160))
-                .corner_radius(4.0)
-                .inner_margin(egui::Margin::symmetric(10, 5))
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(text)
-                            .color(egui::Color32::from_rgb(255, 214, 70))
-                            .size(15.0),
-                    );
-                });
+            hw_client::uikit::card().show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(text)
+                        .color(egui::Color32::from_rgb(255, 214, 70))
+                        .size(15.0),
+                );
+            });
         });
 }
 
@@ -5250,17 +5238,13 @@ fn driver_notice(ui: &engine::ui::UiFrame, world: &World, open: &mut bool) {
     egui::Area::new(egui::Id::new("driver notice"))
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 44.0))
         .show(ui.ctx(), |ui| {
-            egui::Frame::new()
-                .fill(egui::Color32::from_rgba_unmultiplied(120, 20, 20, 220))
-                .corner_radius(4.0)
-                .inner_margin(egui::Margin::symmetric(8, 6))
-                .show(ui, |ui| {
-                    ui.set_max_width(360.0);
-                    ui.label(egui::RichText::new(warning).color(egui::Color32::WHITE));
-                    if ui.button("OK").clicked() {
-                        *open = false;
-                    }
-                });
+            hw_client::uikit::alert_card().show(ui, |ui| {
+                ui.set_max_width(360.0);
+                ui.label(egui::RichText::new(warning).color(egui::Color32::WHITE));
+                if ui.button("OK").clicked() {
+                    *open = false;
+                }
+            });
         });
 }
 
@@ -5276,34 +5260,30 @@ fn version_corner(
         .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
         .show(ui.ctx(), |ui| {
             // A dark backing keeps it readable against a bright sky.
-            egui::Frame::new()
-                .fill(egui::Color32::from_black_alpha(150))
-                .corner_radius(4.0)
-                .inner_margin(egui::Margin::symmetric(8, 4))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        if let Some(code) = room {
-                            // What friends type to join this world (or its
-                            // address, when the router forwards our port).
-                            let text = match address {
-                                Some(a) => format!("Room {code} · {a}"),
-                                None => format!("Room {code}"),
-                            };
-                            ui.label(
-                                egui::RichText::new(text)
-                                    .color(egui::Color32::from_rgb(255, 214, 90))
-                                    .strong(),
-                            );
-                        }
+            hw_client::uikit::card().show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(code) = room {
+                        // What friends type to join this world (or its
+                        // address, when the router forwards our port).
+                        let text = match address {
+                            Some(a) => format!("Room {code} · {a}"),
+                            None => format!("Room {code}"),
+                        };
                         ui.label(
-                            egui::RichText::new(format!("HeroWorld {}", hw_core::version()))
-                                .color(egui::Color32::WHITE),
+                            egui::RichText::new(text)
+                                .color(egui::Color32::from_rgb(255, 214, 90))
+                                .strong(),
                         );
-                        if ui.button("What's new").clicked() {
-                            *open = true;
-                        }
-                    });
+                    }
+                    ui.label(
+                        egui::RichText::new(format!("HeroWorld {}", hw_core::version()))
+                            .color(egui::Color32::WHITE),
+                    );
+                    if ui.button("What's new").clicked() {
+                        *open = true;
+                    }
                 });
+            });
         });
     ui.modal("What's new", open, |panel, open| {
         egui::ScrollArea::vertical()

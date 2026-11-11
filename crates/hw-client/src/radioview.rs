@@ -1749,33 +1749,24 @@ impl Radio {
                 .interactable(false)
                 .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -170.0))
                 .show(ctx, |ui| {
-                    egui::Frame::new()
-                        .fill(egui::Color32::from_black_alpha(170))
-                        .corner_radius(4.0)
-                        .inner_margin(egui::Margin::symmetric(10, 5))
-                        .show(ui, |ui| {
-                            ui.label(
-                                egui::RichText::new(text)
-                                    .color(egui::Color32::from_rgb(255, 230, 140))
-                                    .size(17.0)
-                                    .strong(),
-                            );
-                            // How far along: fills while E is held.
-                            if help != Help::CarryThem {
-                                let bar = self.calls.get(&id).map_or(0.0, |c| c.bar);
-                                let fill = if held {
-                                    egui::Color32::from_rgb(255, 200, 70)
-                                } else {
-                                    egui::Color32::from_rgb(150, 125, 70)
-                                };
-                                ui.add(
-                                    egui::ProgressBar::new(bar)
-                                        .desired_width(280.0)
-                                        .desired_height(12.0)
-                                        .fill(fill),
-                                );
-                            }
-                        });
+                    crate::uikit::card().show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(text)
+                                .color(egui::Color32::from_rgb(255, 230, 140))
+                                .size(17.0)
+                                .strong(),
+                        );
+                        // How far along: fills while E is held.
+                        if help != Help::CarryThem {
+                            let bar = self.calls.get(&id).map_or(0.0, |c| c.bar);
+                            let fill = if held {
+                                egui::Color32::from_rgb(255, 200, 70)
+                            } else {
+                                egui::Color32::from_rgb(150, 125, 70)
+                            };
+                            crate::uikit::gauge_in(ui, 280.0, 15.0, bar, fill);
+                        }
+                    });
                 });
         }
         if self.calls.is_empty()
@@ -1792,95 +1783,86 @@ impl Radio {
             .interactable(false)
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(10.0, 10.0))
             .show(ctx, |ui| {
-                egui::Frame::new()
-                    .fill(egui::Color32::from_rgba_unmultiplied(20, 24, 30, 210))
-                    .stroke(egui::Stroke::new(
-                        1.5_f32,
-                        egui::Color32::from_rgb(255, 196, 60),
-                    ))
-                    .corner_radius(6.0)
-                    .inner_margin(egui::Margin::same(8))
-                    .show(ui, |ui| {
+                crate::uikit::card().show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("WRIST RADIO")
+                            .color(crate::uikit::GOLD)
+                            .font(crate::uikit::ui_font(ui.ctx(), 14.0)),
+                    );
+                    if let Some(st) = &self.story {
                         ui.label(
-                            egui::RichText::new("WRIST RADIO")
-                                .color(egui::Color32::from_rgb(255, 204, 70))
-                                .strong()
-                                .size(13.0),
+                            egui::RichText::new(&st.heading)
+                                .color(STORY_GOLD)
+                                .size(12.0),
                         );
-                        if let Some(st) = &self.story {
-                            ui.label(
-                                egui::RichText::new(&st.heading)
-                                    .color(STORY_GOLD)
-                                    .size(12.0),
-                            );
-                            let mut goal = st.goal.clone();
-                            if let Some(at) = st.at {
-                                let d = at - eye;
-                                let flat = glam::Vec2::new(d.x, d.z);
-                                let ahead = glam::Vec2::new(look.x, look.z).normalize_or_zero();
-                                goal += &format!(
-                                    "  {:.0} m at {} o'clock",
-                                    flat.length(),
-                                    clock(ahead, flat)
-                                );
-                            }
-                            ui.label(
-                                egui::RichText::new(goal)
-                                    .color(STORY_GOLD)
-                                    .size(15.0)
-                                    .strong(),
-                            );
-                            ui.separator();
-                        }
-                        if let Some(st) = &self.case {
-                            ui.label(
-                                egui::RichText::new(&st.heading)
-                                    .color(crate::missionview::CASE_TEAL)
-                                    .size(12.0),
-                            );
-                            let mut goal = st.goal.clone();
-                            if let Some(at) = st.at {
-                                let d = at - eye;
-                                let flat = glam::Vec2::new(d.x, d.z);
-                                let ahead = glam::Vec2::new(look.x, look.z).normalize_or_zero();
-                                goal += &format!(
-                                    "  {:.0} m at {} o'clock",
-                                    flat.length(),
-                                    clock(ahead, flat)
-                                );
-                            }
-                            ui.label(
-                                egui::RichText::new(goal)
-                                    .color(crate::missionview::CASE_TEAL)
-                                    .size(15.0)
-                                    .strong(),
-                            );
-                            ui.separator();
-                        }
-                        if let Some((text, _)) = &self.flash {
-                            ui.label(
-                                egui::RichText::new(text)
-                                    .color(egui::Color32::from_rgb(255, 240, 200))
-                                    .italics(),
-                            );
-                        }
-                        for (_, c) in calls {
-                            let d = c.at - eye;
+                        let mut goal = st.goal.clone();
+                        if let Some(at) = st.at {
+                            let d = at - eye;
                             let flat = glam::Vec2::new(d.x, d.z);
                             let ahead = glam::Vec2::new(look.x, look.z).normalize_or_zero();
-                            let hour = clock(ahead, flat);
-                            let col = con_colour(c.level, mine);
-                            let blink = c.age < 4.0 && (c.age * 3.0) as i32 % 2 == 0;
-                            let name = egui::RichText::new(format!(
-                                "{}  {:.0} m at {hour} o'clock",
-                                c.kind.name(),
-                                flat.length()
-                            ))
-                            .color(col)
-                            .size(15.0);
-                            ui.label(if blink { name.strong() } else { name });
+                            goal += &format!(
+                                "  {:.0} m at {} o'clock",
+                                flat.length(),
+                                clock(ahead, flat)
+                            );
                         }
-                    });
+                        ui.label(
+                            egui::RichText::new(goal)
+                                .color(STORY_GOLD)
+                                .size(15.0)
+                                .strong(),
+                        );
+                        ui.separator();
+                    }
+                    if let Some(st) = &self.case {
+                        ui.label(
+                            egui::RichText::new(&st.heading)
+                                .color(crate::missionview::CASE_TEAL)
+                                .size(12.0),
+                        );
+                        let mut goal = st.goal.clone();
+                        if let Some(at) = st.at {
+                            let d = at - eye;
+                            let flat = glam::Vec2::new(d.x, d.z);
+                            let ahead = glam::Vec2::new(look.x, look.z).normalize_or_zero();
+                            goal += &format!(
+                                "  {:.0} m at {} o'clock",
+                                flat.length(),
+                                clock(ahead, flat)
+                            );
+                        }
+                        ui.label(
+                            egui::RichText::new(goal)
+                                .color(crate::missionview::CASE_TEAL)
+                                .size(15.0)
+                                .strong(),
+                        );
+                        ui.separator();
+                    }
+                    if let Some((text, _)) = &self.flash {
+                        ui.label(
+                            egui::RichText::new(text)
+                                .color(egui::Color32::from_rgb(255, 240, 200))
+                                .italics(),
+                        );
+                    }
+                    for (_, c) in calls {
+                        let d = c.at - eye;
+                        let flat = glam::Vec2::new(d.x, d.z);
+                        let ahead = glam::Vec2::new(look.x, look.z).normalize_or_zero();
+                        let hour = clock(ahead, flat);
+                        let col = con_colour(c.level, mine);
+                        let blink = c.age < 4.0 && (c.age * 3.0) as i32 % 2 == 0;
+                        let name = egui::RichText::new(format!(
+                            "{}  {:.0} m at {hour} o'clock",
+                            c.kind.name(),
+                            flat.length()
+                        ))
+                        .color(col)
+                        .size(15.0);
+                        ui.label(if blink { name.strong() } else { name });
+                    }
+                });
             });
     }
 

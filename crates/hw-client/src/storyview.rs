@@ -116,25 +116,19 @@ impl StoryView {
                 .interactable(false)
                 .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 52.0))
                 .show(ctx, |ui| {
-                    egui::Frame::new()
-                        .fill(egui::Color32::from_rgba_unmultiplied(24, 20, 12, 225))
-                        .stroke(egui::Stroke::new(1.5_f32, STORY_GOLD))
-                        .corner_radius(6.0)
-                        .inner_margin(egui::Margin::symmetric(14, 8))
-                        .show(ui, |ui| {
-                            ui.set_max_width(620.0);
-                            ui.label(
-                                egui::RichText::new(format!("WRIST RADIO - {}", l.who))
-                                    .color(STORY_GOLD)
-                                    .size(12.0)
-                                    .strong(),
-                            );
-                            ui.label(
-                                egui::RichText::new(&l.text)
-                                    .color(egui::Color32::from_rgb(255, 244, 214))
-                                    .size(17.0),
-                            );
-                        });
+                    crate::uikit::card().show(ui, |ui| {
+                        ui.set_max_width(620.0);
+                        ui.label(
+                            egui::RichText::new(format!("WRIST RADIO - {}", l.who))
+                                .color(STORY_GOLD)
+                                .font(crate::uikit::ui_font(ui.ctx(), 13.0)),
+                        );
+                        ui.label(
+                            egui::RichText::new(&l.text)
+                                .color(egui::Color32::from_rgb(255, 244, 214))
+                                .size(17.0),
+                        );
+                    });
                 });
         }
         let Some(s) = self.state.filter(|s| s.stage == SEARCH) else {
@@ -149,23 +143,15 @@ impl StoryView {
             .interactable(false)
             .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -210.0))
             .show(ctx, |ui| {
-                egui::Frame::new()
-                    .fill(egui::Color32::from_black_alpha(180))
-                    .corner_radius(4.0)
-                    .inner_margin(egui::Margin::symmetric(10, 6))
-                    .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(c.search_goal)
-                                .color(STORY_GOLD)
-                                .size(17.0)
-                                .strong(),
-                        );
-                        ui.add(
-                            egui::ProgressBar::new(s.held)
-                                .desired_width(260.0)
-                                .fill(STORY_GOLD),
-                        );
-                    });
+                crate::uikit::card().show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(c.search_goal)
+                            .color(STORY_GOLD)
+                            .size(17.0)
+                            .strong(),
+                    );
+                    crate::uikit::gauge_in(ui, 260.0, 15.0, s.held, STORY_GOLD);
+                });
             });
     }
 

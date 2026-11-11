@@ -262,22 +262,35 @@ impl Minimap {
                 egui::Color32::WHITE,
             );
         }
-        // A chrome bezel, Googie style.
+        // A gold chrome bezel with hour ticks, Googie style.
         painter.circle_stroke(
             centre,
             RADIUS + 2.5,
-            egui::Stroke::new(5.0_f32, egui::Color32::from_rgb(196, 200, 206)),
+            egui::Stroke::new(5.0_f32, crate::uikit::GOLD),
         );
         painter.circle_stroke(
             centre,
-            RADIUS + 5.0,
-            egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(90, 96, 104)),
+            RADIUS + 1.0,
+            egui::Stroke::new(1.0_f32, crate::uikit::GOLD_LIGHT),
+        );
+        painter.circle_stroke(
+            centre,
+            RADIUS + 5.5,
+            egui::Stroke::new(2.0_f32, crate::uikit::DEEP),
         );
         painter.circle_stroke(
             centre,
             RADIUS,
-            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(120, 90, 50)),
+            egui::Stroke::new(1.0_f32, crate::uikit::GOLD_DARK),
         );
+        for k in 0..12 {
+            let a = k as f32 * std::f32::consts::TAU / 12.0;
+            let d = egui::vec2(a.sin(), -a.cos());
+            painter.line_segment(
+                [centre + d * (RADIUS + 0.5), centre + d * (RADIUS + 4.5)],
+                egui::Stroke::new(1.5_f32, crate::uikit::GOLD_DARK),
+            );
+        }
         // Map metres to the screen.
         let scale = RADIUS as f64 / reach;
         let to_screen = |p: DVec2| -> (egui::Pos2, bool) {
@@ -295,13 +308,14 @@ impl Minimap {
         // North on the rim.
         let (n, _) = to_screen(at + DVec2::new(0.0, -1e6));
         let n = centre + (n - centre).normalized() * (RADIUS + 2.5);
-        painter.circle_filled(n, 8.0, egui::Color32::from_rgb(200, 40, 40));
+        painter.circle_filled(n, 9.0, crate::uikit::HERO_RED);
+        painter.circle_stroke(n, 9.0, egui::Stroke::new(1.5_f32, crate::uikit::DEEP));
         painter.text(
-            n,
+            n + egui::vec2(0.0, 0.5),
             egui::Align2::CENTER_CENTER,
             "N",
-            egui::FontId::proportional(11.0),
-            egui::Color32::WHITE,
+            crate::uikit::ui_font(ctx, 11.5),
+            crate::uikit::CREAM,
         );
         for l in &town.landmarks {
             let (p, inside) = to_screen(l.pos);

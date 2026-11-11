@@ -84,6 +84,7 @@ pub mod trafficview;
 pub mod tray;
 pub mod tricks;
 pub mod tubenooks;
+pub mod uikit;
 pub mod undergroundview;
 pub mod visor;
 pub mod waterfrontview;

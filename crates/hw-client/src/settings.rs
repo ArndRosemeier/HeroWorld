@@ -174,22 +174,18 @@ pub fn settings_ui(ui: &mut egui::Ui, p: &mut Profile, accent: egui::Color32) ->
     changed
 }
 
-/// Bigger type, gold highlights and roomy rows, like the game's other
-/// panels.
+/// Bigger type and roomy rows; the colours and frames are the game's own
+/// comic look (`uikit::install`).
 fn menu_style(ui: &mut egui::Ui) {
     use egui::{FontId, TextStyle};
-    let gold = egui::Color32::from_rgb(255, 210, 60);
+    let button = crate::uikit::ui_font(ui.ctx(), 18.0);
     let st = ui.style_mut();
     st.text_styles
         .insert(TextStyle::Body, FontId::proportional(17.0));
-    st.text_styles
-        .insert(TextStyle::Button, FontId::proportional(18.0));
+    st.text_styles.insert(TextStyle::Button, button);
     st.spacing.item_spacing = egui::vec2(10.0, 8.0);
-    st.spacing.button_padding = egui::vec2(14.0, 6.0);
+    st.spacing.button_padding = egui::vec2(14.0, 7.0);
     st.spacing.slider_width = 220.0;
-    st.visuals.selection.bg_fill = egui::Color32::from_rgb(200, 150, 30);
-    st.visuals.selection.stroke = egui::Stroke::new(1.5_f32, gold);
-    st.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.5_f32, gold);
     ui.set_min_width(440.0);
 }
 
