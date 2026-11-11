@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.174 (2026-11-11)
+
+- Smoother busy streets: repeated props cut down to what you can see are drawn in a few combined calls, and the graphics library no longer rechecks thousands of textures every time it switches materials (Engine 0.053)
+
 ## 0.173 (2026-11-11)
 
 - Fixed a crash when continuing a hero ("no crowd agent 0"): people at bus stops and in cars could lose track of who they were when the street acts came near before the townsfolk had finished loading.

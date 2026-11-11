@@ -1198,7 +1198,7 @@ dependencies = [
 [[package]]
 name = "engine"
 version = "0.1.0"
-source = "git+https://github.com/ArndRosemeier/Engine?branch=main#db72f3394b6a1f7dd5670e5c35e0135326ac748f"
+source = "git+https://github.com/ArndRosemeier/Engine?branch=main#d421e504702a782f73ef6aab23758faed039ea2d"
 dependencies = [
  "bytemuck",
  "egui",
@@ -4684,7 +4684,7 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 [[package]]
 name = "wgpu"
 version = "25.0.2"
-source = "git+https://github.com/ArndRosemeier/Engine?branch=main#db72f3394b6a1f7dd5670e5c35e0135326ac748f"
+source = "git+https://github.com/ArndRosemeier/Engine?branch=main#d421e504702a782f73ef6aab23758faed039ea2d"
 dependencies = [
  "arrayvec",
  "bitflags 2.13.2",
@@ -4711,8 +4711,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "25.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7b882196f8368511d613c6aeec80655160db6646aebddf8328879a88d54e500"
+source = "git+https://github.com/ArndRosemeier/Engine?branch=main#d421e504702a782f73ef6aab23758faed039ea2d"
 dependencies = [
  "arrayvec",
  "bit-set",

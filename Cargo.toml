@@ -51,11 +51,13 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 serde_json = "1"
 
 # Engine runs a patched wgpu 25 (render bundles are freed when dropped; unpatched
-# they leak hundreds of MB a minute). A [patch] only applies in the workspace that
-# declares it, so we take Engine's copy (third_party/wgpu-25.0.2) the same way.
+# they leak hundreds of MB a minute) and wgpu-core (bind groups skip rechecking
+# every texture once all are initialized). A [patch] only applies in the workspace that
+# declares it, so we take Engine's copies (third_party/wgpu-25.0.2, wgpu-core-25.0.2) the same way.
 # Remove this when Engine drops its patch.
 [patch.crates-io]
 wgpu = { git = "https://github.com/ArndRosemeier/Engine", branch = "main" }
+wgpu-core = { git = "https://github.com/ArndRosemeier/Engine", branch = "main" }
 
 # Engine's generators and renderer crawl without optimisation; optimise
 # dependencies in debug builds so the game stays playable while our own code
