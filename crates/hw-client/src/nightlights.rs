@@ -153,40 +153,6 @@ impl NightLights {
                         ),
                     });
                 }
-                LandmarkKind::Hospital => {
-                    // The Recovery Hall glowing through its ribbon windows,
-                    // the canopy, and the sign on the pylon.
-                    use hw_gen::urban::hospital as h;
-                    for x in [-8.0, 8.0] {
-                        let p = l.to_plan(DVec2::new(x, h::HALL_Z));
-                        sources.push(Source {
-                            lamp: Lamp::point(
-                                Vec3::new(p.x as f32, (l.base + 4.6) as f32, p.y as f32),
-                                rgb(236, 246, 255),
-                                16.0,
-                                14.0,
-                            ),
-                        });
-                    }
-                    let c = l.to_plan(DVec2::new(0.0, h::HALL_Z + h::HALL_R + 3.0));
-                    sources.push(Source {
-                        lamp: Lamp::point(
-                            Vec3::new(c.x as f32, (l.base + 3.4) as f32, c.y as f32),
-                            rgb(255, 238, 200),
-                            12.0,
-                            12.0,
-                        ),
-                    });
-                    let t = l.to_plan(DVec2::new(0.0, h::TOWER_Z));
-                    sources.push(Source {
-                        lamp: Lamp::point(
-                            Vec3::new(t.x as f32, (l.base + h::PYLON_TOP - 3.0) as f32, t.y as f32),
-                            rgb(120, 255, 200),
-                            30.0,
-                            30.0,
-                        ),
-                    });
-                }
                 LandmarkKind::WeatherTower => {
                     // Floodlights washing up the mast from the pavilion's
                     // roof, and the saucer's windows. The globe's light

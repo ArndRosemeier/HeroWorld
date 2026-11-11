@@ -133,7 +133,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | T | Police visor on or off (a new call switches it on) |
 | N | Minimap on or off |
 | O | Free camera |
-| Enter or / | Chat: type a line, Enter says it (in a speech bubble over your head and in the chat window), Escape cancels |
+| Enter or / | Chat: type a line, Enter says it (over your head and in the chat window), Escape cancels |
 | K | Knock nearby townspeople over (a ragdoll test, still in the game) |
 | Escape | Menu: back, settings, controls, quit; frees a locked mouse first |
 
@@ -490,16 +490,7 @@ targeting, ragdolls, nobody dies.
 - **Defeated villains** lie in glowing energy cuffs; after 2 s a police drone lifts them away.
 - **Defeated heroes** lie down. A teammate holds E within 2.5 m for 3 s to revive them at
   half health. Otherwise press H, or wait 20 s, and a medical drone flies them to the
-  nearest hospital: it climbs over the roofs (at least 12 m over the hospital's 35 m
-  pylon), crosses town at 40 m/s, comes down at 7 m/s onto the landing ring in front of
-  the entrance, and puts them in a free recovery pod (six per hospital) for 5 s, health
-  filling up, after which they step out at full health inside the Recovery Hall. Without
-  a hospital (a bare test ground) they come back on the spawn street as before. Carrying
-  someone and getting knocked down drops them.
-- **Hospitals** (Aether Mercy): one per town, 250-750 m from the core and clear of the
-  villains' quarter; a city has one more per 300 000 people (at most 4, 1.2 km apart, at its
-  business districts and old villages). The hall's ground floor is open: desk, pods, healing
-  core, waiting corner, couches. Taxi stand "Aether Mercy Hospital".
+  hospital (beside the spawn line; below level 5, beside the rookies' street). Carrying someone and getting knocked down drops them.
 - **Villain AI:** villains notice heroes within their aggro range, walk round walls and
   houses on a grid A* path (`hw-sim/src/nav.rs`), and go home when the fight moves away.
   Ranged ones keep their distance.
@@ -1294,19 +1285,9 @@ on the way. Rides are free.
   hero. Gang warnings carry 70 m (`chat::SHOUT_RANGE`), other speech 35 m (`SAY_RANGE`):
   mole folk thanking you, Hero Hall's heroes giving tips, Commander Starling on the wrist
   radio (always heard), and what players type (Enter or `/` opens the line, Enter says it,
-  Escape cancels; your words also show over your hero). The same speaker repeating the same
+  Escape cancels; your words also float over your hero). The same speaker repeating the same
   words within 6 s is logged once; the log keeps the last 400 lines. Planned channels: team,
   police radio, combat log (each is one more `chat::Channel`).
-- **Speech bubbles** (`hw-client/src/speech.rs`, 0.179): what people say shows in a comic
-  balloon over their head, tail pointing at them, as far as it is heard (35 m, shouts 70 m).
-  Lines wrap at about 230 pt and the balloon grows to hold them; it stays up 2.4 s plus
-  0.06 s a letter (3.5 to 9 s). Shouts (anything that carries `SHOUT_RANGE`, such as gang
-  warnings) are spiky yellow bursts in red capitals. The nearest 8 show; nearer ones take the
-  spot over the head and the others step up or aside. A speaker off screen or behind the
-  camera gets a smaller balloon at the screen's edge on their side. A new line from the same
-  speaker replaces their balloon. Code: `fight.speech.add(Speech::say(feet, text, voice))`,
-  `Speech::shout(..)`, `.from(net_id)` to follow a moving speaker, or `fight.bubble(&said)`
-  for a chat line. `HW_SPEECH=1` puts a few round the hero to look at.
 - **Settings:** music and sound volume, reduced motion, picture quality Low to Ultra (each
   says what it shows), "keep it smooth" at 60 fps, VSync (vertical sync; off draws as many frames as the card can), field of view, look
   speed, inverted mouse.

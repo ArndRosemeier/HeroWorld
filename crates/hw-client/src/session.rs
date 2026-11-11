@@ -145,11 +145,6 @@ impl Session {
                 _ => None,
             };
         }
-        // `HW_POD=1`: our hero floats in a hospital's recovery pod.
-        host.sim
-            .world
-            .resource_mut::<hw_sim::combat::Fights>()
-            .pod_start = std::env::var_os("HW_POD").is_some();
         // `HW_CARRY=1`: that rescue starts with the hurt one in our arms.
         host.sim.incidents.carried_start = std::env::var_os("HW_CARRY").is_some();
         // `HW_BESIDE=1`: by the next one trapped (`HW_HOLD=1` holds E).

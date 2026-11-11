@@ -634,19 +634,6 @@ pub fn places(world: &Area, solids: &Obstacles) -> Vec<Place> {
             );
         }
     }
-    // Inside the nearest hospital, by its recovery pods.
-    if let Some(l) = crate::landmarkview::nearest(world, LandmarkKind::Hospital, spawn) {
-        if let Some(w) = l.ward() {
-            let pod = w.pods[0];
-            add(
-                &mut out,
-                "Town",
-                "Hospital, by the recovery pods".into(),
-                Some(pod.1),
-                DVec2::new(w.door.x, w.door.z),
-            );
-        }
-    }
     // A park: beside the fountain nearest the start.
     use hw_gen::urban::props::PropKind;
     if let Some(f) = world

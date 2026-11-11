@@ -296,6 +296,11 @@ impl Rect {
             && o.max.y <= self.max.y + eps
     }
 
+    /// Is `p` inside or on the outline?
+    pub fn contains_point(&self, p: DVec2) -> bool {
+        p.x >= self.min.x && p.x <= self.max.x && p.y >= self.min.y && p.y <= self.max.y
+    }
+
     /// Area shared with another rectangle.
     pub fn overlap(&self, o: &Rect) -> f64 {
         let lo = self.min.max(o.min);

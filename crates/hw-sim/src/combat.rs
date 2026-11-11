@@ -69,13 +69,6 @@ pub const DRONE_HANG: f64 = 2.4;
 pub const DRONE_SPEED: f64 = 12.0;
 pub const DRONE_LIFT_SPEED: f64 = 5.0;
 pub const DRONE_LIFT_HEIGHT: f64 = 30.0;
-/// The medical drone across town: its speed, how fast it comes down onto
-/// the hospital's bay, and how far it climbs again before it is gone.
-pub const DRONE_CRUISE: f64 = 40.0;
-pub const DRONE_DESCEND: f64 = 7.0;
-pub const DRONE_AWAY: f64 = 25.0;
-/// Seconds a hero floats in a recovery pod before stepping out healed.
-pub const POD_SECONDS: f64 = 5.0;
 /// Seconds before a beaten group's street corner fills again.
 pub const RESPAWN_SECONDS: f64 = 15.0;
 /// A group does not come back while a hero stands this close.
@@ -936,40 +929,6 @@ pub struct Drone {
     pub medical: bool,
     /// Has it picked them up yet, and from how high.
     pub lifting: Option<f64>,
-    /// Where it is on its way once it has them.
-    pub leg: Leg,
-}
-
-/// A drone's way once it has picked someone up.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum Leg {
-    /// Straight up (and gone, for the police and where there is no
-    /// hospital).
-    #[default]
-    Up,
-    /// Up to `high` and across town at that height to over the bay of
-    /// hospital `ward`, then down onto it.
-    ToHospital {
-        ward: usize,
-        high: f64,
-    },
-    Landing {
-        ward: usize,
-    },
-    /// The hero handed over: up and gone, from this height.
-    Away {
-        from: f64,
-    },
-}
-
-/// A hero healing in a hospital's recovery pod.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Patient {
-    pub id: NetId,
-    pub ward: usize,
-    pub pod: usize,
-    pub since: u64,
-    pub until: u64,
 }
 
 /// Something a hero lifted: it rides over their head until thrown.
@@ -1150,27 +1109,6 @@ pub struct Fights {
     /// town's centre).
     pub home: Option<DVec3>,
     pub home_is_hall: bool,
-    /// The town's hospitals: where the medical drone sets heroes down and
-    /// heals them (none on a bare test ground: heroes come back to the
-    /// spawn street there).
-    pub wards: Vec<hw_gen::urban::hospital::Ward>,
-    /// Heroes healing in the pods.
-    pub patients: Vec<Patient>,
-    /// The square round the heroes, for flying over its roofs.
-    pub area: Option<Skyline>,
-    /// Screenshots: the first hero goes straight into a recovery pod and
-    /// floats there for ten minutes.
-    pub pod_start: bool,
-}
-
-/// The heroes' square of the town, for flying over its roofs.
-#[derive(Clone)]
-pub struct Skyline(pub std::sync::Arc<hw_gen::urban::area::Area>);
-
-impl std::fmt::Debug for Skyline {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Skyline")
-    }
 }
 
 /// A grenadier's bomb on its way.
@@ -1225,10 +1163,6 @@ impl Default for Fights {
             bombs: Vec::new(),
             home: None,
             home_is_hall: false,
-            wards: Vec::new(),
-            patients: Vec::new(),
-            area: None,
-            pod_start: false,
         }
     }
 }
@@ -1778,199 +1712,50 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     }
     let mut fx = std::mem::take(&mut out.fx);
 
-    // Drones fly: down to whoever they fetch, then up and away; the medical
-    // one across town to the nearest hospital's bay.
+    // Drones fly: down to whoever they fetch, then up and away.
     let mut gone: Vec<(Entity, NetId)> = Vec::new();
     let mut back_to_hospital: Vec<NetId> = Vec::new();
-    let (wards, area) = {
-        let f = world.resource::<Fights>();
-        (f.wards.clone(), f.area.clone())
-    };
-    let mut patients = std::mem::take(&mut world.resource_mut::<Fights>().patients);
     for (de, did, body, d) in drones.iter_mut() {
         let Some(i) = actors.iter().position(|a| a.id == d.carry) else {
             gone.push((*de, *did));
             continue;
         };
-        if d.lifting.is_none() {
-            let want = actors[i].body.pos + DVec3::Y * DRONE_HANG;
-            let to = want - body.pos;
-            let step = DRONE_SPEED * DT;
-            if to.length() <= step {
-                body.pos = want;
-                body.vel = DVec3::ZERO;
-                d.lifting = Some(want.y);
-                d.leg = match nearest_ward(&wards, want) {
-                    Some(ward) if d.medical => Leg::ToHospital {
-                        ward,
-                        high: cruise_height(area.as_ref().map(|a| &*a.0), want, wards[ward].bay),
-                    },
-                    _ => Leg::Up,
-                };
-                let a = &mut actors[i];
-                a.f.status = Status::Carried;
-                a.body.vel = DVec3::ZERO;
-                fx.push(event(tick, FxKind::Lifted, *did, a.id, a.chest()));
-            } else {
-                body.vel = to.normalize() * DRONE_SPEED;
-                body.pos += body.vel * DT;
+        match d.lifting {
+            None => {
+                let want = actors[i].body.pos + DVec3::Y * DRONE_HANG;
+                let to = want - body.pos;
+                let step = DRONE_SPEED * DT;
+                if to.length() <= step {
+                    body.pos = want;
+                    body.vel = DVec3::ZERO;
+                    d.lifting = Some(want.y);
+                    let a = &mut actors[i];
+                    a.f.status = Status::Carried;
+                    a.body.vel = DVec3::ZERO;
+                    fx.push(event(tick, FxKind::Lifted, *did, a.id, a.chest()));
+                } else {
+                    body.vel = to.normalize() * DRONE_SPEED;
+                    body.pos += body.vel * DT;
+                }
             }
-            continue;
-        }
-        let from = d.lifting.unwrap_or(body.pos.y);
-        match d.leg {
-            Leg::Up => {
+            Some(from) => {
                 body.vel = DVec3::Y * DRONE_LIFT_SPEED;
                 body.pos += body.vel * DT;
+                let a = &mut actors[i];
+                a.body.pos = body.pos - DVec3::Y * DRONE_HANG;
+                a.body.vel = body.vel;
+                a.body.grounded = false;
                 if body.pos.y > from + DRONE_LIFT_HEIGHT {
                     gone.push((*de, *did));
                     if d.medical {
-                        back_to_hospital.push(actors[i].id);
+                        back_to_hospital.push(a.id);
                     } else {
-                        gone.push((actors[i].e, actors[i].id));
+                        gone.push((a.e, a.id));
                     }
                 }
             }
-            Leg::ToHospital { ward, high } => {
-                let bay = wards[ward].bay + DVec3::Y * DRONE_HANG;
-                if body.pos.y < high - 0.01 {
-                    // Up first, drifting off towards the hospital.
-                    body.vel = DVec3::Y * DRONE_LIFT_SPEED * 2.0;
-                    body.pos.y = (body.pos.y + body.vel.y * DT).min(high);
-                } else {
-                    let flat = DVec3::new(bay.x - body.pos.x, 0.0, bay.z - body.pos.z);
-                    let left = flat.length();
-                    // Easing in over the last stretch.
-                    let speed = DRONE_CRUISE.min(left * 0.8 + 2.0);
-                    if left <= speed * DT {
-                        body.pos.x = bay.x;
-                        body.pos.z = bay.z;
-                        body.vel = DVec3::ZERO;
-                        d.leg = Leg::Landing { ward };
-                    } else {
-                        body.vel = flat / left * speed;
-                        body.pos += body.vel * DT;
-                    }
-                }
-            }
-            Leg::Landing { ward } => {
-                let bay = wards[ward].bay + DVec3::Y * DRONE_HANG;
-                let down = (body.pos.y - bay.y).max(0.0);
-                let speed = DRONE_DESCEND.min(down * 0.9 + 0.6);
-                if down <= speed * DT {
-                    // Set down at the bay: the hero goes into a pod.
-                    body.pos = bay;
-                    body.vel = DVec3::ZERO;
-                    d.leg = Leg::Away { from: bay.y };
-                    let pod = free_pod(&patients, ward, wards[ward].pods.len());
-                    let a = &mut actors[i];
-                    a.body.pos = wards[ward].pods[pod].0;
-                    a.body.vel = DVec3::ZERO;
-                    patients.retain(|p| p.id != a.id);
-                    patients.push(Patient {
-                        id: a.id,
-                        ward,
-                        pod,
-                        since: tick,
-                        until: tick + ticks(POD_SECONDS),
-                    });
-                    fx.push(event(tick, FxKind::Admitted, a.id, a.id, a.chest()));
-                    continue;
-                }
-                body.vel = -DVec3::Y * speed;
-                body.pos += body.vel * DT;
-            }
-            Leg::Away { from } => {
-                body.vel = DVec3::Y * DRONE_LIFT_SPEED * 1.5;
-                body.pos += body.vel * DT;
-                if body.pos.y > from + DRONE_AWAY {
-                    gone.push((*de, *did));
-                }
-                // The hero is in the pod now, not under the drone.
-                continue;
-            }
-        }
-        let a = &mut actors[i];
-        a.body.pos = body.pos - DVec3::Y * DRONE_HANG;
-        a.body.vel = body.vel;
-        a.body.grounded = false;
-    }
-    if world.resource::<Fights>().pod_start {
-        let hero = actors.iter().position(|a| a.hero.is_some());
-        if let Some((a, ward)) =
-            hero.and_then(|i| Some((i, nearest_ward(&wards, actors[i].body.pos)?)))
-        {
-            let a = &mut actors[a];
-            world.resource_mut::<Fights>().pod_start = false;
-            a.f.status = Status::Carried;
-            a.f.health = a.f.max_health * 0.3;
-            let pod = free_pod(&patients, ward, wards[ward].pods.len());
-            patients.push(Patient {
-                id: a.id,
-                ward,
-                pod,
-                since: tick,
-                until: tick + ticks(600.0),
-            });
         }
     }
-    // A hero left hanging with no drone and no pod (a drone lost when
-    // the host changed): straight into a pod, or home where there is no
-    // hospital.
-    for a in actors.iter_mut() {
-        let held = drones.iter().any(|d| {
-            d.3.carry == a.id
-                && !matches!(d.3.leg, Leg::Away { .. })
-                && !gone.iter().any(|g| g.0 == d.0)
-        });
-        if a.hero.is_none()
-            || a.f.status != Status::Carried
-            || held
-            || patients.iter().any(|p| p.id == a.id)
-            || back_to_hospital.contains(&a.id)
-        {
-            continue;
-        }
-        match nearest_ward(&wards, a.body.pos) {
-            Some(ward) => {
-                let pod = free_pod(&patients, ward, wards[ward].pods.len());
-                patients.push(Patient {
-                    id: a.id,
-                    ward,
-                    pod,
-                    since: tick,
-                    until: tick + ticks(POD_SECONDS),
-                });
-                fx.push(event(tick, FxKind::Admitted, a.id, a.id, a.chest()));
-            }
-            None => back_to_hospital.push(a.id),
-        }
-    }
-    // Heroes in the pods float there, getting better; out they step when
-    // their time is up.
-    let mut healed: Vec<(NetId, DVec3)> = Vec::new();
-    patients.retain(|p| {
-        let Some(a) = actors.iter_mut().find(|a| a.id == p.id) else {
-            return false;
-        };
-        let Some(&(at, out, _)) = wards.get(p.ward).and_then(|w| w.pods.get(p.pod)) else {
-            return false;
-        };
-        if a.f.status != Status::Carried {
-            return false;
-        }
-        a.body.pos = at;
-        a.body.vel = DVec3::ZERO;
-        a.body.grounded = true;
-        let k = (tick.saturating_sub(p.since)) as f32 / (p.until - p.since).max(1) as f32;
-        a.f.health = a.f.health.max(a.f.max_health * k.min(1.0));
-        if tick >= p.until {
-            healed.push((p.id, out));
-            return false;
-        }
-        true
-    });
-    world.resource_mut::<Fights>().patients = patients;
 
     // Heroes reach for something to lift: the nearest loose thing, or a
     // chunk torn out of the street.
@@ -2171,7 +1956,6 @@ pub(crate) fn step(world: &mut World, tick: u64) {
                 carry,
                 medical,
                 lifting: None,
-                leg: Leg::Up,
             },
             LastChange(tick),
         ));
@@ -2189,30 +1973,6 @@ pub(crate) fn step(world: &mut World, tick: u64) {
             }
         }
         world.despawn(*e);
-    }
-    for (id, out) in healed {
-        let found = world
-            .query::<(Entity, &Net, &Fighter)>()
-            .iter(world)
-            .find(|(_, n, _)| n.0 == id)
-            .map(|(e, _, _)| e);
-        let Some(e) = found else {
-            continue;
-        };
-        let mut em = world.entity_mut(e);
-        if let Some(mut m) = em.get_mut::<Motion>() {
-            m.0 = Body {
-                pos: out,
-                vel: DVec3::ZERO,
-                grounded: true,
-            };
-        }
-        if let Some(mut f) = em.get_mut::<Fighter>() {
-            let mut fresh = Fighter::hero_at(f.level, f.kit);
-            fresh.last_combat = tick;
-            *f = fresh;
-            fx.push(event(tick, FxKind::Healed, id, id, out.as_vec3()));
-        }
     }
     for id in back_to_hospital {
         let found = world
@@ -4742,34 +4502,6 @@ fn doctor_storm(
         }
         _ => {}
     }
-}
-
-/// The hospital whose bay is nearest `at`.
-fn nearest_ward(wards: &[hw_gen::urban::hospital::Ward], at: DVec3) -> Option<usize> {
-    let flat = |p: DVec3| DVec2::new(p.x, p.z);
-    (0..wards.len()).min_by(|&a, &b| {
-        flat(wards[a].bay)
-            .distance(flat(at))
-            .total_cmp(&flat(wards[b].bay).distance(flat(at)))
-    })
-}
-
-/// The first pod of hospital `ward` nobody floats in (the first one if
-/// they are all taken).
-fn free_pod(patients: &[Patient], ward: usize, pods: usize) -> usize {
-    (0..pods)
-        .find(|k| !patients.iter().any(|p| p.ward == ward && p.pod == *k))
-        .unwrap_or(0)
-}
-
-/// How high the medical drone crosses town from `a` to `b`: well over the
-/// roofs and landmarks near the way (those the heroes' square knows),
-/// and over the hospital's own tower.
-fn cruise_height(area: Option<&hw_gen::urban::area::Area>, a: DVec3, b: DVec3) -> f64 {
-    let tower = b.y + hw_gen::urban::hospital::PYLON_TOP + 12.0;
-    crate::taxi::express_height(area, a, b)
-        .max(tower)
-        .max(a.y + 15.0)
 }
 
 fn statuses(

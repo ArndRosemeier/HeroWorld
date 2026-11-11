@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.181 (2026-11-11)
+
+- Behind the scenes: the first piece of a new interior designer. Buildings will get much roomier insides built for heroes: tall lobbies, atriums with galleries and bridges, split levels, real stairs and lifts. Nothing in the game changes yet.
+
 ## 0.180 (2026-11-11)
 
 - Every town now has a hospital, the Aether Mercy: a streamline hall with a round ward tower, a drone deck and a glowing ring-and-cross you can see across town. Big cities get one for each 300 000 people

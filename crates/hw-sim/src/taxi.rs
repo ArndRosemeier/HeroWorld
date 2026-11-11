@@ -440,7 +440,7 @@ fn yaw_quat(yaw: f64) -> [f32; 4] {
 
 /// A height to cross from `a` to `b` above every roof and landmark near
 /// the straight way, in round tens of metres.
-pub(crate) fn express_height(town: Option<&Area>, a: DVec3, b: DVec3) -> f64 {
+fn express_height(town: Option<&Area>, a: DVec3, b: DVec3) -> f64 {
     let mut top = a.y.max(b.y) + 40.0;
     if let Some(t) = town {
         let (a2, b2) = (DVec2::new(a.x, a.z), DVec2::new(b.x, b.z));
@@ -481,7 +481,6 @@ pub fn stands(world: &Area) -> Vec<Stand> {
             LandmarkKind::AtomicPlant => "Atomic plant gate",
             LandmarkKind::MoleDrill => "The mole drill",
             LandmarkKind::WeatherTower => "The weather tower",
-            LandmarkKind::Hospital => "Aether Mercy Hospital",
             // No taxi will take you there.
             LandmarkKind::TeslaTower | LandmarkKind::RobotWorks => continue,
         };

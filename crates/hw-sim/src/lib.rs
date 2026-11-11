@@ -157,8 +157,7 @@ pub struct LastChange(pub u64);
 struct Ids(NetIdAllocator);
 
 /// The street where heroes appear (its middle and direction), and the one
-/// new heroes start on; without a hospital (a bare test ground) the
-/// medical drone brings heroes back to theirs.
+/// new heroes start on; the hospital sends heroes back to theirs for now.
 #[derive(Resource, Clone, Copy)]
 struct SpawnLine(DVec2, DVec2, Option<(DVec2, DVec2)>);
 
@@ -614,17 +613,6 @@ impl Sim {
         sim.airships = airships::Airships::with_raids(&town.world);
         sim.street = props::PropDamage::new(town.world.clone()).with_solids(town.obstacles.clone());
         sim.area = Some(town.area.clone());
-        {
-            // The medical drone flies beaten heroes to the nearest of these.
-            let mut f = sim.world.resource_mut::<Fights>();
-            f.area = Some(combat::Skyline(town.area.clone()));
-            f.wards = town
-                .world
-                .landmarks
-                .iter()
-                .filter_map(|l| l.ward())
-                .collect();
-        }
         sim.taxis = taxi::Taxis::new(town.area.clone());
         sim.tubes = tube::Tubes::new(town.world.clone());
         sim.rockets = rocket::pads(&town.world);
@@ -780,7 +768,6 @@ impl Sim {
         self.wrecks.set_traffic(traffic, centre);
         self.taxis.set_town(area.clone());
         self.incidents.set_town(area.clone());
-        self.world.resource_mut::<combat::Fights>().area = Some(combat::Skyline(area.clone()));
         self.area = Some(area);
         self.area_moved = true;
     }
@@ -2014,12 +2001,7 @@ impl Sim {
                 &Motion,
                 Option<&Hero>,
                 Option<&Orientation>,
-                (
-                    Has<Prop>,
-                    Option<&Enemy>,
-                    Option<&Drone>,
-                    Option<&CombatView>,
-                ),
+                (Has<Prop>, Option<&Enemy>, Has<Drone>, Option<&CombatView>),
                 (
                     &LastChange,
                     Option<&taxi::Fare>,
@@ -2051,7 +2033,7 @@ impl Sim {
                                 EntityKind::Capsule
                             } else if let Some(e) = enemy {
                                 e.kind.entity_kind()
-                            } else if drone.is_some() {
+                            } else if drone {
                                 EntityKind::Drone
                             } else if bystander {
                                 EntityKind::Bystander
@@ -2075,10 +2057,7 @@ impl Sim {
                             mount: mount
                                 .map(|m| (m.on, m.part))
                                 .or(npc.map(|h| (n.0, h.index)))
-                                .or(sidekick.map(|s| (s.owner, s.theme)))
-                                // A drone: whom it fetches, and medical (1)
-                                // or police (0).
-                                .or(drone.map(|d| (d.carry, d.medical as u8))),
+                                .or(sidekick.map(|s| (s.owner, s.theme))),
                         },
                         c.0,
                     )
