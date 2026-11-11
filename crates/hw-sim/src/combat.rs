@@ -1343,6 +1343,7 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
         );
     }
     let count = group.len();
+    let mut taken: Vec<DVec2> = Vec::new();
     for (k, (kind, level)) in group.into_iter().enumerate() {
         // Brutes in a loose front row, shooters a few metres behind.
         let row = match kind {
@@ -1355,7 +1356,13 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
         } else {
             (k as f64 - (count as f64 - 1.0) * 0.5) * 1.6
         };
-        let p = DVec2::new(spot.center.x, spot.center.z) + spot.facing * row + side * across;
+        let mut p = DVec2::new(spot.center.x, spot.center.z) + spot.facing * row + side * across;
+        // On open ground in sight of the spot, never inside a house or a
+        // wall (a shop's robbers stand in front of it, not in its rooms).
+        if !spot.perch && kind != EnemyKind::Colossus {
+            p = open_stand(&solids, spot.center, p, &taken);
+            taken.push(p);
+        }
         let y = if spot.perch {
             solids.floor_under(p, spot.center.y + 1.0)
         } else {
@@ -1393,6 +1400,67 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
     s.members = n;
     s.respawn_at = None;
     n
+}
+
+/// Is there room for a body standing on the ground at `p` (no wall, house,
+/// closed door or rock round its feet, middle or head)?
+pub fn room_to_stand(solids: &Obstacles, p: DVec2, y: f64) -> bool {
+    let r = crate::collision::BODY_RADIUS;
+    [0.3, 1.0, 1.6].iter().all(|&h| {
+        [(0.0, 0.0), (r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r)]
+            .iter()
+            .all(|&(x, z)| !solids.solid_at(DVec3::new(p.x + x, y + h, p.y + z)))
+    })
+}
+
+/// Where a villain of a group at `center` stands, near `want`: `want`
+/// itself if there is room there, on the spot's own ground, in sight of the
+/// spot and clear of the others (`taken`); else the nearest such place
+/// within 12 m; else `want`. Every crook of a call stands where a hero can
+/// see and reach them.
+pub fn open_stand(solids: &Obstacles, center: DVec3, want: DVec2, taken: &[DVec2]) -> DVec2 {
+    let ground = |p: DVec2| {
+        let street = solids.ground_at(p).max(GROUND_Y);
+        let floor = solids.ground_for(p, center.y + 1.0);
+        if floor < street - 1.0 {
+            floor
+        } else {
+            street
+        }
+    };
+    let chest = DVec3::Y * (BODY_HEIGHT * 0.6);
+    let anchor = center + chest;
+    // A spot that is itself in a wall has no sight to keep: just get out.
+    let seen = room_to_stand(solids, DVec2::new(center.x, center.z), center.y);
+    let ok = |p: DVec2| {
+        let y = ground(p);
+        (y - center.y).abs() < 1.5
+            && room_to_stand(solids, p, y)
+            && taken.iter().all(|t| t.distance(p) >= 1.0)
+            && (!seen || in_sight(solids, anchor, DVec3::new(p.x, y, p.y) + chest))
+    };
+    if ok(want) {
+        return want;
+    }
+    const RINGS: u32 = 24;
+    const ANGLES: u32 = 24;
+    for ring in 1..=RINGS {
+        let r = ring as f64 * 0.5;
+        // Nearest first round each ring, starting on the side towards the
+        // spot (out of the house, back to the street).
+        let to = (DVec2::new(center.x, center.z) - want).normalize_or(DVec2::X);
+        let a0 = hw_core::det::atan2(to.y, to.x);
+        for k in 0..ANGLES {
+            let step = k.div_ceil(2);
+            let sign = if k % 2 == 0 { 1.0 } else { -1.0 };
+            let a = a0 + sign * step as f64 * std::f64::consts::TAU / ANGLES as f64;
+            let p = want + DVec2::new(hw_core::det::cos(a), hw_core::det::sin(a)) * r;
+            if ok(p) {
+                return p;
+            }
+        }
+    }
+    want
 }
 
 /// Spawns one villain of `kind` at `home` for `spot`; returns its ID.

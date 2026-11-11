@@ -682,6 +682,9 @@ keeps it waiting: while they get nearer it lasts at least their running time fro
 them (they stop waiting 12 s after the hero stops closing in).
 A fight's call stands only while its crooks do: with none of them left, or none (standing) within
 80 m of it for 30 s, they got away and the call ends, so the visor never marks an empty street.
+Crooks start on open ground in sight of their spot (the spot itself moves out of any wall):
+where the usual line would put one inside a house, a wall or a closed door, they take the nearest
+clear place within 12 m instead.
 
 | Incident | Chance | Who / what | Level | Reach | Bonus |
 | --- | --- | --- | --- | --- | --- |

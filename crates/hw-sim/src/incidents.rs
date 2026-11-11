@@ -1519,7 +1519,15 @@ impl Incidents {
         {
             return;
         }
-        let y = world.resource::<Solids>().0.ground_at(p).max(GROUND_Y);
+        let solids = world.resource::<Solids>().0.clone();
+        let y = solids.ground_at(p).max(GROUND_Y);
+        // On open ground: a fight's spot never sits in a house's wall.
+        let p = if kind.trapped() > 0 {
+            p
+        } else {
+            combat::open_stand(&solids, DVec3::new(p.x, y, p.y), p, &[])
+        };
+        let y = solids.ground_at(p).max(GROUND_Y);
         let at = DVec3::new(p.x, y, p.y);
         // A fight faces the hero who will come; a rescue the way its place
         // does (across the road, out of the house).

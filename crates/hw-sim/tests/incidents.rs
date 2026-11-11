@@ -720,3 +720,89 @@ fn a_car_crash_traps_one_person_and_holds_up_the_traffic() {
         "no car stop at the crash"
     );
 }
+
+/// Crooks stand on open ground in front of the place they hit, in sight of
+/// it: never inside a house, a wall or a closed door, where they could not
+/// get out and no hero could reach them.
+#[test]
+fn crooks_never_start_inside_a_house() {
+    use hw_sim::combat::{room_to_stand, Enemy, Fighter};
+    use hw_sim::Motion;
+    let town = GeneratedTown::generate(Seed(1), 20_000.0);
+    let mut sim = Sim::for_town(Seed(1), &town);
+    let hero = sim.spawn_hero(PlayerId(1), sim.spawn_point(1));
+    let solids = town.obstacles.clone();
+    let mut news = Vec::new();
+    run(&mut sim, 1.0, &mut news);
+    let mut seen = std::collections::BTreeSet::new();
+    let mut crooks = 0;
+    for round in 0..40 {
+        // Each time from somewhere else, so the places vary.
+        let a = round as f64 * 2.4;
+        let from = sim.spawn_point(1) + DVec3::new(a.cos(), 0.0, a.sin()) * (round as f64 * 9.0);
+        sim.set_body(
+            hero,
+            Body {
+                pos: DVec3::new(
+                    from.x,
+                    solids.ground_at(glam::DVec2::new(from.x, from.z)) + 0.1,
+                    from.z,
+                ),
+                vel: DVec3::ZERO,
+                grounded: false,
+            },
+        );
+        sim.incidents.forced = Some(if round % 2 == 0 {
+            incidents::IncidentKind::Robbery
+        } else {
+            incidents::IncidentKind::Mugging
+        });
+        run(&mut sim, 1.0, &mut news);
+        let open: Vec<_> = sim
+            .incidents
+            .open
+            .iter()
+            .filter(|i| i.spot.is_some() && seen.insert(i.id))
+            .cloned()
+            .collect();
+        for inc in &open {
+            let spot = inc.spot.unwrap();
+            let at = glam::DVec2::new(inc.at.x, inc.at.z);
+            assert!(
+                room_to_stand(&solids, at, inc.at.y),
+                "{:?} {} marked inside something at {at:?}",
+                inc.kind,
+                inc.id
+            );
+            let mut q = sim.world.query::<(&Enemy, &Motion, &Fighter)>();
+            for (e, m, _) in q.iter(&sim.world).filter(|(e, _, _)| e.spot == spot) {
+                // Where it was put (it may have taken a step since).
+                let p = e.home;
+                assert!(m.0.pos.distance(p) < 3.0, "{:?} wandered off", e.kind);
+                crooks += 1;
+                assert!(
+                    room_to_stand(&solids, glam::DVec2::new(p.x, p.z), p.y),
+                    "{:?} {} has a {:?} inside something at {p:?}",
+                    inc.kind,
+                    inc.id,
+                    e.kind
+                );
+                assert!(p.distance(inc.at) < 15.0, "{:?} far from its call", e.kind);
+            }
+        }
+        // Clear them away for the next (the call ends with them gone).
+        let gone: Vec<_> = sim
+            .world
+            .query::<(bevy_ecs::entity::Entity, &Enemy)>()
+            .iter(&sim.world)
+            .filter(|(_, e)| open.iter().any(|i| i.spot == Some(e.spot)))
+            .map(|(x, _)| x)
+            .collect();
+        for x in gone {
+            sim.world.despawn(x);
+        }
+        run(&mut sim, 1.5, &mut news);
+    }
+    assert!(seen.len() >= 20, "only {} fights started", seen.len());
+    assert!(crooks >= 60, "only {crooks} crooks looked at");
+}

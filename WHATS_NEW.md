@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.167 (2026-11-11)
+
+- Robbers and muggers no longer start inside a house or a wall. They now stand on open ground in front of the place they hit, where you can see and reach them.
+
 ## 0.166 (2026-11-11)
 
 - Smoother frame rate in the thick of the city. Buildings show their full detail (window frames, sills, piers) only within about 150 m, block by block, and their lighter drawing beyond; parts of town hidden behind facades are skipped in smaller pieces.
