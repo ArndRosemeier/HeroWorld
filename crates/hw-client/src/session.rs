@@ -97,6 +97,7 @@ fn is_world_news(m: &ToClient) -> bool {
         ToClient::Damage { .. }
             | ToClient::Repaired { .. }
             | ToClient::Doors { .. }
+            | ToClient::Gates { .. }
             | ToClient::Impact { .. }
             | ToClient::PropsBroken { .. }
             | ToClient::PropsRepaired { .. }
@@ -351,6 +352,11 @@ impl Session {
                             looks.whole.insert(player, l);
                         }
                     } else if is_world_news(&m) || matches!(m, ToClient::Chat { .. }) {
+                        // Portals carry our hero when the guess walks into
+                        // one, as the server does.
+                        if let (ToClient::Gates { gates }, Some(p)) = (&m, predictor.as_mut()) {
+                            p.gates = gates.iter().map(hw_sim::gates::Pair::from_view).collect();
+                        }
                         news.push(m);
                     } else {
                         if let ToClient::Joined { player, name } = &m {

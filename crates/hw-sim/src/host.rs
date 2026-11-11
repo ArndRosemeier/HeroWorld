@@ -235,6 +235,7 @@ impl Host {
             for m in crate::doors::Doors::snapshot(&self.sim.solids()) {
                 r.rel_out.push(m);
             }
+            r.rel_out.push(self.sim.gates_snapshot());
             for m in self.sim.damage.snapshot() {
                 r.rel_out.push(m);
             }

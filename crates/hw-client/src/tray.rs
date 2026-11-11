@@ -114,8 +114,11 @@ impl Tray {
                 }
             }
         }
-        // Strike first, then the rest in the order they were bought.
-        let owned = std::iter::once(PowerId::STRIKE).chain(sheet.powers.iter().map(|o| o.power));
+        // Strike first, the portal's two buttons, then the rest in the
+        // order they were bought.
+        let owned = PowerId::FREE
+            .into_iter()
+            .chain(sheet.powers.iter().map(|o| o.power));
         for p in owned {
             if !keyed(p) || self.known.contains(&p) {
                 continue;
@@ -124,8 +127,16 @@ impl Tray {
             if self.slot_of(p).is_some() {
                 continue;
             }
-            let free = (p == PowerId::STRIKE && self.slots[0].is_none())
-                .then_some(0)
+            // Strike keeps 1; the portal's buttons go to 9 and 0, out of
+            // the way of the fighting powers.
+            let usual = match p {
+                PowerId::STRIKE => Some(0),
+                PowerId::GATE_MARK => Some(8),
+                PowerId::GATE_OPEN => Some(9),
+                _ => None,
+            };
+            let free = usual
+                .filter(|&u| self.slots[u].is_none())
                 .or_else(|| self.slots.iter().position(|s| s.is_none()));
             if let Some(f) = free {
                 self.slots[f] = Some(p);
@@ -229,6 +240,9 @@ mod tests {
         assert_eq!(t.slots[1], Some(PowerId(10)));
         assert_eq!(t.slots[2], Some(PowerId(30)));
         assert_eq!(t.slot_of(PowerId(2)), None, "passive powers need no key");
+        // Every hero's portal sits on 9 and 0.
+        assert_eq!(t.slots[8], Some(PowerId::GATE_MARK));
+        assert_eq!(t.slots[9], Some(PowerId::GATE_OPEN));
     }
 
     #[test]

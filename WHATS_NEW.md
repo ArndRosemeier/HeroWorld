@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.192 (2026-11-11)
+
+- Every hero has a portal now, free, on keys 9 and 0. **Portal Home** (9) marks where your portal leads. **Open Portal** (0) tears a portal open a stride ahead of you: step in and you walk out at home, step back in and you are back where you were. Friends can walk through it too.
+- You see through it: the other place shows in the portal, framed by a rippling rim of violet and sea green light with tendrils crawling off it. From behind it is a swirling disc.
+- Marking home sends a beam of light to the floor; a closing portal sucks its light in; walking through wraps you in rising rings of light. No room for a portal (a wall in the way, a steep slope) and it fizzles, at no cost.
+- Your portal home is kept with your hero, so it is still there next time you play in the same town.
+
 ## 0.191 (2026-11-11)
 
 - No more flickering surfaces in the Daily Comet building, the Atlas Assurance hall and the Zenith Radio house: walls, floors, rails and lift shafts no longer share a plane anywhere.

@@ -92,7 +92,7 @@ pub fn bot_input(sim: &mut Sim, hero: NetId, tick: u64, goal: Option<DVec3>) -> 
         .kit
         .owned()
         .map(def_of)
-        .filter(|d| !d.passive() && d.id != powers::STRIKE)
+        .filter(|d| !d.passive() && !powers::is_free(d.id))
         .collect();
     let of = |want: Delivery| owned.iter().filter(move |d| d.delivery() == want);
     // Up close only while a burst is ready to go off there.
@@ -512,7 +512,7 @@ pub fn run() -> Vec<PowerResult> {
 pub fn run_all() -> Vec<PowerResult> {
     let list: Vec<(PowerId, u8)> = powers::POWERS
         .iter()
-        .filter(|d| d.id != powers::STRIKE)
+        .filter(|d| !powers::is_free(d.id))
         .map(|d| (d.id, d.row + 1 + (d.row >= 4) as u8))
         .collect();
     run_over(&list)

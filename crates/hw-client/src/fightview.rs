@@ -41,6 +41,8 @@ pub fn fizzle_text(power: PowerId, why: u16) -> String {
         }
         fizzle::NO_SPOT => "Nobody to rescue nearby".into(),
         fizzle::BUSY => format!("{name}: too soon after the last power"),
+        fizzle::NO_ROOM => "No room for a portal there".into(),
+        fizzle::NO_HOME => "Mark your portal's home first (Portal Home)".into(),
         _ => format!("{name} did not fire"),
     }
 }
@@ -397,6 +399,11 @@ pub struct FightView {
     pub solids: Option<std::sync::Arc<hw_sim::collision::Obstacles>>,
     /// A short recoil per struck villain: (direction, seconds since).
     recoils: BTreeMap<NetId, (Vec3, f32)>,
+    /// Open portals and their light (see `crate::gateview`).
+    pub gates: crate::gateview::Gates,
+    /// Our hero stepped through a portal: how far to turn the camera
+    /// (degrees), taken by the camera.
+    pub gate_turn: Option<f32>,
 }
 
 impl Default for FightView {
@@ -455,6 +462,8 @@ impl FightView {
             told_shield: false,
             solids: None,
             recoils: BTreeMap::new(),
+            gates: crate::gateview::Gates::new(),
+            gate_turn: None,
         }
     }
 
@@ -1337,7 +1346,54 @@ impl FightView {
                         );
                     }
                 }
+                FxKind::GateMark => {
+                    self.act(e.from, "spell cast", 0.8);
+                    self.gates.mark(world, at);
+                    beam(
+                        world,
+                        origin,
+                        at + Vec3::Y * 0.2,
+                        crate::gateview::teal(),
+                        crate::gateview::violet(),
+                    );
+                    self.play(world, |s| &s.chime, at, 1.0, 0.7);
+                    self.play(world, |s| &s.teleport, at, 0.6, 0.6);
+                    if mine {
+                        self.recharging(PowerId(e.theme));
+                        self.say("Portal home marked");
+                    }
+                }
+                FxKind::GateOpen => {
+                    self.act(e.from, "spell cast", 0.8);
+                    let yaw = hw_sim::gates::turns_yaw(e.amount) as f32;
+                    self.gates.tear_open(world, at, yaw, 1.0);
+                    self.play(world, |s| &s.hum, at, 1.0, 0.55);
+                    self.play(world, |s| &s.teleport, at, 1.0, 0.7);
+                    if mine {
+                        self.recharging(PowerId(e.theme));
+                    }
+                }
+                FxKind::GateShut => {
+                    let yaw = hw_sim::gates::turns_yaw(e.amount) as f32;
+                    self.gates.shut(world, at, yaw);
+                    self.play(world, |s| &s.whoosh, at, 0.8, 0.6);
+                }
+                FxKind::GateCross => {
+                    self.gates.cross(world, at);
+                    self.play(world, |s| &s.teleport, at, 0.8, 1.25);
+                    self.play(world, |s| &s.whoosh, at, 0.6, 1.4);
+                    if on_me {
+                        let turn = hw_sim::gates::turns_yaw(e.amount).to_degrees() as f32;
+                        self.gate_turn = Some(self.gate_turn.unwrap_or(0.0) + turn);
+                    }
+                }
                 FxKind::Fizzle => {
+                    if PowerId(e.theme) == PowerId::GATE_OPEN
+                        && matches!(e.amount & 0xff, fizzle::NO_ROOM | fizzle::NO_HOME)
+                    {
+                        self.gates.fizzle(world, at);
+                        self.play(world, |s| &s.hum, at, 0.7, 0.4);
+                    }
                     // A power we asked for did not fire: say why.
                     if on_me && powers::get(PowerId(e.theme)).is_some() {
                         let text = fizzle_text(PowerId(e.theme), e.amount & 0xff);
@@ -1936,6 +1992,14 @@ impl FightView {
         me: Option<&EntityState>,
     ) {
         self.clock += dt;
+        // Portals: their materials made early (no hitch at the first one).
+        if let Err(e) = self.gates.install(world) {
+            crate::devlog::add(format!("client: portal materials: {e}"));
+        }
+        let eye = world.camera().eye();
+        if let Err(e) = self.gates.update(world, dt, eye) {
+            crate::devlog::add(format!("client: portals: {e}"));
+        }
         self.shake = (self.shake - dt * 2.2).max(0.0);
         self.hurt = (self.hurt - dt * 2.0).max(0.0);
         for c in &mut self.cooldown {

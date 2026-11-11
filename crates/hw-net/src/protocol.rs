@@ -65,6 +65,15 @@ pub struct PowerId(pub u8);
 
 impl PowerId {
     pub const STRIKE: PowerId = PowerId(1);
+    /// The portal power's first button: marks where its portals lead
+    /// (every hero's, free; see `hw_sim::gates`).
+    pub const GATE_MARK: PowerId = PowerId(124);
+    /// The portal power's second button: opens a portal to that mark.
+    pub const GATE_OPEN: PowerId = PowerId(125);
+
+    /// Every hero owns these from the start, free: Strike and the portal's
+    /// two buttons.
+    pub const FREE: [PowerId; 3] = [Self::STRIKE, Self::GATE_MARK, Self::GATE_OPEN];
 }
 
 /// Power numbers are below this.
@@ -524,14 +533,80 @@ pub struct Sheet {
     pub story: u8,
     /// Briefed on the next chapter at Hero Hall.
     pub briefed: bool,
+    /// Where the hero's portals lead (see `hw_sim::gates`), if marked.
+    pub gate_home: Option<GateHome>,
 }
+
+/// Where a hero's portals lead: a spot on the floor and the way through
+/// it, in whole centimetres and 1/65536 turns so a hero file compares
+/// exactly. `world` says which world it was marked in (a mark from
+/// another world is not used).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GateHome {
+    pub world: u64,
+    pub at: [i32; 3],
+    pub yaw: u16,
+}
+
+impl GateHome {
+    /// A mark at `at` (m), its way through `yaw` (radians: 0 faces +Z,
+    /// a quarter turn +X).
+    pub fn new(world: u64, at: [f64; 3], yaw: f64) -> Self {
+        let cm = |v: f64| (v * 100.0).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32;
+        let turn = yaw / std::f64::consts::TAU;
+        Self {
+            world,
+            at: [cm(at[0]), cm(at[1]), cm(at[2])],
+            yaw: ((turn - turn.floor()) * 65536.0).round() as u32 as u16,
+        }
+    }
+
+    /// The spot in metres.
+    pub fn pos(&self) -> [f64; 3] {
+        self.at.map(|v| v as f64 / 100.0)
+    }
+
+    /// The way through, in radians.
+    pub fn yaw(&self) -> f64 {
+        self.yaw as f64 / 65536.0 * std::f64::consts::TAU
+    }
+}
+
+/// An open pair of portals as clients see it (see `hw_sim::gates`): whose,
+/// the home side and the far side (floor spot, way through in radians),
+/// their size (of a whole one) and the tick they opened.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GateView {
+    pub owner: PlayerId,
+    pub home: [f64; 3],
+    pub home_yaw: f32,
+    pub far: [f64; 3],
+    pub far_yaw: f32,
+    pub size: f32,
+    pub opened: u64,
+}
+
+/// Bytes a [`GateView`] takes.
+const GATE_BYTES: usize = 2 + 24 + 4 + 24 + 4 + 4 + 8;
 
 /// Most powers a sheet carries over the wire.
 pub const MAX_POWERS: usize = 32;
 
 impl Sheet {
     pub fn wire_size(&self) -> usize {
-        4 + 4 + 1 + 1 + FACTIONS + 2 + 1 + 5 * self.powers.len().min(MAX_POWERS)
+        4 + 4
+            + 1
+            + 1
+            + FACTIONS
+            + 2
+            + 1
+            + 5 * self.powers.len().min(MAX_POWERS)
+            + 1
+            + if self.gate_home.is_some() {
+                8 + 12 + 2
+            } else {
+                0
+            }
     }
 
     pub fn write(&self, w: &mut Writer) {
@@ -545,6 +620,18 @@ impl Sheet {
         w.u8(n as u8);
         for p in &self.powers[..n] {
             w.u8(p.power.0).u32(p.paid);
+        }
+        match self.gate_home {
+            Some(g) => {
+                w.u8(1).u64(g.world);
+                for v in g.at {
+                    w.u32(v as u32);
+                }
+                w.u16(g.yaw);
+            }
+            None => {
+                w.u8(0);
+            }
         }
     }
 
@@ -574,6 +661,15 @@ impl Sheet {
                 paid: r.u32()?,
             });
         }
+        let gate_home = match r.u8()? {
+            0 => None,
+            1 => Some(GateHome {
+                world: r.u64()?,
+                at: [r.u32()? as i32, r.u32()? as i32, r.u32()? as i32],
+                yaw: r.u16()?,
+            }),
+            _ => return Err(WireError),
+        };
         Ok(Self {
             lifetime,
             karma,
@@ -583,12 +679,13 @@ impl Sheet {
             regard,
             story,
             briefed,
+            gate_home,
         })
     }
 
-    /// Whether the hero owns this power (Strike: always).
+    /// Whether the hero owns this power (Strike and the portal: always).
     pub fn has(&self, power: PowerId) -> bool {
-        power == PowerId::STRIKE || self.powers.iter().any(|p| p.power == power)
+        PowerId::FREE.contains(&power) || self.powers.iter().any(|p| p.power == power)
     }
 }
 
@@ -1015,6 +1112,17 @@ pub enum FxKind {
     /// Heroes overloaded the cannon while the lance charged: it fizzles at
     /// `at` and the machine reels.
     Overload,
+    /// Hero `from` marked its portals' home at `at` (the floor; `amount`:
+    /// the way through, in 1/65536 turns).
+    GateMark,
+    /// Hero `from` tore a portal open at `at` (the floor).
+    GateOpen,
+    /// A portal of `from`'s closed at `at` (the floor; `amount`: its way
+    /// through, in 1/65536 turns).
+    GateShut,
+    /// `to` stepped through a portal of `from`'s and came out at `at` (its
+    /// feet), turned by `amount` (1/65536 turns).
+    GateCross,
 }
 
 /// What a villain carries off ([`FxKind::Loot`]).
@@ -1046,6 +1154,11 @@ pub mod fizzle {
     pub const NO_SPOT: u16 = 6;
     /// The last power is still playing out.
     pub const BUSY: u16 = 7;
+    /// No room for a portal there (a wall, a slope, water, too high up,
+    /// or too close to its home).
+    pub const NO_ROOM: u16 = 8;
+    /// A portal with no home marked yet.
+    pub const NO_HOME: u16 = 9;
 }
 
 impl FxKind {
@@ -1117,6 +1230,10 @@ impl FxKind {
             FxKind::SmashWindup => 64,
             FxKind::Smash => 65,
             FxKind::Overload => 66,
+            FxKind::GateMark => 67,
+            FxKind::GateOpen => 68,
+            FxKind::GateShut => 69,
+            FxKind::GateCross => 70,
         }
     }
 
@@ -1188,6 +1305,10 @@ impl FxKind {
             64 => FxKind::SmashWindup,
             65 => FxKind::Smash,
             66 => FxKind::Overload,
+            67 => FxKind::GateMark,
+            68 => FxKind::GateOpen,
+            69 => FxKind::GateShut,
+            70 => FxKind::GateCross,
             _ => return Err(WireError),
         })
     }
@@ -1371,7 +1492,15 @@ pub enum ToClient {
         slot: i64,
         state: u8,
     },
+    /// Every open pair of portals (see `hw_sim::gates`), sent whole when
+    /// one opens or closes, and to a joining player.
+    Gates {
+        gates: Vec<GateView>,
+    },
 }
+
+/// Most open pairs of portals in one [`ToClient::Gates`] (one a player).
+pub const MAX_GATES: usize = 16;
 
 /// Most broken elements in one [`ToClient::Damage`] (it must fit a packet
 /// next to everything else).
@@ -1448,6 +1577,7 @@ impl ToClient {
             ToClient::AreaMoved { .. } => 16,
             ToClient::Story { .. } => 1 + 1 + 12 + 1 + 1,
             ToClient::Crime { .. } => 8 + 8 + 1,
+            ToClient::Gates { gates } => 1 + GATE_BYTES * gates.len().min(MAX_GATES),
         }
     }
 
@@ -1633,6 +1763,21 @@ impl ToClient {
             ToClient::Crime { place, slot, state } => {
                 w.u8(22).u64(*place).u64(*slot as u64).u8(*state);
             }
+            ToClient::Gates { gates } => {
+                let n = gates.len().min(MAX_GATES);
+                w.u8(23).u8(n as u8);
+                for g in &gates[..n] {
+                    w.u16(g.owner.0);
+                    for v in g.home {
+                        w.f64(v);
+                    }
+                    w.f32(g.home_yaw);
+                    for v in g.far {
+                        w.f64(v);
+                    }
+                    w.f32(g.far_yaw).f32(g.size).u64(g.opened);
+                }
+            }
         }
     }
 
@@ -1808,6 +1953,25 @@ impl ToClient {
                 slot: r.u64()? as i64,
                 state: r.u8()?,
             },
+            23 => {
+                let n = r.u8()? as usize;
+                if n > MAX_GATES {
+                    return Err(WireError);
+                }
+                let mut gates = Vec::with_capacity(n);
+                for _ in 0..n {
+                    gates.push(GateView {
+                        owner: PlayerId(r.u16()?),
+                        home: [r.f64()?, r.f64()?, r.f64()?],
+                        home_yaw: r.f32()?,
+                        far: [r.f64()?, r.f64()?, r.f64()?],
+                        far_yaw: r.f32()?,
+                        size: r.f32()?,
+                        opened: r.u64()?,
+                    });
+                }
+                ToClient::Gates { gates }
+            }
             15 => ToClient::Incident {
                 id: r.u32()?,
                 kind: r.u8()?,
@@ -2266,6 +2430,11 @@ mod tests {
             regard: [0, 5, -40, -100, 12, 127, -7, 60, -30],
             story: 3,
             briefed: true,
+            gate_home: Some(GateHome::new(
+                0xfeed_beef_1234_5678,
+                [-1234.56, 7.25, 98765.4],
+                4.0,
+            )),
         }
     }
 
@@ -2418,6 +2587,20 @@ mod tests {
                         place: 0xdead_beef_0123,
                         slot: -3,
                         state: 1,
+                    },
+                ),
+                (
+                    9,
+                    ToClient::Gates {
+                        gates: vec![GateView {
+                            owner: PlayerId(3),
+                            home: [1.5, -2.25, 1e6],
+                            home_yaw: 1.25,
+                            far: [-40.0, 3.0, 7.5],
+                            far_yaw: -2.0,
+                            size: 0.86,
+                            opened: 123_456,
+                        }],
                     },
                 ),
                 (

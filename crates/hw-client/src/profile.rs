@@ -195,6 +195,23 @@ fn sheet_to_json(s: &Sheet) -> Value {
             "power": p.power.0,
             "paid": p.paid,
         })).collect::<Vec<_>>(),
+        // Where the hero's portals lead, in the world it was marked in
+        // (a string: JSON numbers lose bits past 2^53).
+        "portal_home": s.gate_home.map(|g| json!({
+            "world": g.world.to_string(),
+            "at": g.at,
+            "yaw": g.yaw,
+        })),
+    })
+}
+
+fn gate_home_from_json(v: &Value) -> Option<hw_net::GateHome> {
+    let at = v.get("at")?.as_array()?;
+    let c = |i: usize| -> Option<i32> { i32::try_from(at.get(i)?.as_i64()?).ok() };
+    Some(hw_net::GateHome {
+        world: v.get("world")?.as_str()?.parse().ok()?,
+        at: [c(0)?, c(1)?, c(2)?],
+        yaw: u16::try_from(v.get("yaw")?.as_u64()?).ok()?,
     })
 }
 
@@ -235,6 +252,7 @@ fn sheet_from_json(v: &Value) -> Option<Sheet> {
         regard,
         story: num("story").min(255) as u8,
         briefed: o.get("briefed").and_then(|b| b.as_bool()).unwrap_or(false),
+        gate_home: o.get("portal_home").and_then(gate_home_from_json),
     };
     if num("version") < 2 {
         // Before the power trees: every power back, nothing picked.

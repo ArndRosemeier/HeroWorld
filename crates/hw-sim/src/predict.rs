@@ -33,6 +33,12 @@ pub struct Predictor {
     pub riding: bool,
     /// What our hero's movement powers allow (from the server's state).
     pub moves: Moves,
+    /// The open portals (from the server's news): stepping through one is
+    /// predicted like the rest, so it never snaps.
+    pub gates: Vec<crate::gates::Pair>,
+    /// How far our hero turned stepping through portals since the camera
+    /// last took it (radians, see [`Predictor::take_turn`]).
+    turned: f64,
 }
 
 impl Predictor {
@@ -45,12 +51,36 @@ impl Predictor {
             started: false,
             riding: false,
             moves: Moves::ON_FOOT,
+            gates: Vec::new(),
+            turned: 0.0,
         }
     }
 
     /// Forgets everything (a new host: sequence numbers start again).
     pub fn reset(&mut self) {
         *self = Self::new(self.solids.clone());
+    }
+
+    /// How far our hero turned stepping through portals since the last
+    /// call (radians, as a portal's yaw: add it to the camera's).
+    pub fn take_turn(&mut self) -> f64 {
+        std::mem::take(&mut self.turned)
+    }
+
+    /// One predicted step: moving, then through a portal if it stepped
+    /// into one. Returns how far it turned.
+    fn step(&mut self, input: InputState) -> f64 {
+        let before = self.body;
+        step_moving(&mut self.body, input, &self.solids, self.moves);
+        match crate::gates::pass(&self.gates, &before, &self.body) {
+            Some((b, turn)) => {
+                self.body = b;
+                // The drawn hero jumps with it: nothing to fade out.
+                self.error = DVec3::ZERO;
+                turn
+            }
+            None => 0.0,
+        }
     }
 
     /// Call each tick after sending `input` with sequence number `seq`.
@@ -64,7 +94,7 @@ impl Predictor {
             self.pending.pop_front();
         }
         if !self.riding {
-            step_moving(&mut self.body, input, &self.solids, self.moves);
+            self.turned += self.step(input);
         }
     }
 
@@ -103,8 +133,9 @@ impl Predictor {
         }
         let shown = self.body.pos + self.error;
         self.body = server_body;
-        for (_, input) in &self.pending {
-            step_moving(&mut self.body, *input, &self.solids, self.moves);
+        let pending: Vec<InputState> = self.pending.iter().map(|p| p.1).collect();
+        for input in pending {
+            self.step(input);
         }
         self.error = shown - self.body.pos;
         if self.error.length() > SNAP_DISTANCE {

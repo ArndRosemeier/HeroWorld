@@ -306,6 +306,35 @@ impl PowersView {
                     .size(12.0)
                     .color(egui::Color32::from_gray(170)),
                 );
+                ui.separator();
+                // Every hero's own, free: Strike and the portal's two keys.
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new("Every hero's, free:")
+                            .size(13.0)
+                            .strong()
+                            .color(egui::Color32::from_gray(220)),
+                    );
+                    for p in PowerId::FREE {
+                        let d = def_of(p);
+                        ui.label(
+                            egui::RichText::new(d.name)
+                                .size(13.0)
+                                .color(power_ui_colour(p, sheet.element)),
+                        )
+                        .on_hover_text(what_it_does(d));
+                        self.tray_handle(ui, p);
+                        ui.add_space(8.0);
+                    }
+                });
+                ui.label(
+                    egui::RichText::new(
+                        "The portal: Portal Home marks where it leads, Open Portal tears it open ahead of you. \
+                         Step in, come out at home; step back in to return.",
+                    )
+                    .size(12.0)
+                    .color(egui::Color32::from_gray(170)),
+                );
             });
         self.open = open;
     }
@@ -841,6 +870,14 @@ pub fn what_it_does(d: &PowerDef) -> String {
             Lands::Start => format!("Blink {:.0} m, with a blast where you were", f.range),
             Lands::Arrival => format!("Leap {:.0} m, with a blast where you land", f.range),
             Lands::Target => format!("Blink up to {:.0} m to where you aim", f.range),
+            Lands::GateMark => {
+                "Marks where your portal home stands: a step ahead, facing the way you face"
+                    .to_string()
+            }
+            Lands::GateOpen => {
+                "Opens a portal a stride ahead; step in and come out at your portal home, and back"
+                    .to_string()
+            }
         },
         Delivery::Rescue => format!(
             "Floats {} trapped {} within {:.0} m out to safety",
@@ -1059,7 +1096,7 @@ pub fn what_it_does(d: &PowerDef) -> String {
     }
     head.push('.');
     let energy = powers::energy(d);
-    if d.id == PowerId::STRIKE {
+    if powers::is_free(d.id) {
         head.push_str(" Free.");
     } else if d.toggle {
         head.push_str(&format!(

@@ -18,6 +18,7 @@ pub mod deepspots;
 pub mod destruction;
 pub mod doors;
 pub mod factions;
+pub mod gates;
 pub mod host;
 pub mod hostthread;
 pub mod incidents;
@@ -1251,6 +1252,7 @@ impl Sim {
         }
         self.world.resource::<Solids>().0.set_movers(movers);
         self.walk_through_doors();
+        self.keep_gate_homes();
         self.pay_karma();
         self.sync_levels();
         self.clear_rubble();
@@ -1442,7 +1444,58 @@ impl Sim {
         news.extend(self.story.take_news());
         news.extend(self.damage.take_news());
         news.extend(self.doors.take_news());
+        news.extend(self.world.resource_mut::<Fights>().gates.take_news());
         news
+    }
+
+    /// Which world a portal home was marked in: the seed and the town's
+    /// size (the same seed at another size is another town).
+    pub fn world_key(&self) -> u64 {
+        self.seed.0 ^ self.town_population.to_bits().rotate_left(17)
+    }
+
+    /// The open portals, for a joining player.
+    pub fn gates_snapshot(&self) -> ToClient {
+        self.world.resource::<Fights>().gates.snapshot()
+    }
+
+    /// Portal homes marked this tick go into their heroes' files (so they
+    /// are kept on the player's PC); a home from a joining hero's file is
+    /// used if it was marked in this world on open ground. Pairs of
+    /// players who left close.
+    fn keep_gate_homes(&mut self) {
+        let marks = self.world.resource_mut::<Fights>().gates.take_marks();
+        let key = self.world_key();
+        for (owner, s) in marks {
+            let home = hw_net::GateHome::new(key, s.at.to_array(), s.yaw);
+            self.change_sheet(owner, |sheet| sheet.gate_home = Some(home));
+        }
+        if !self.tick.is_multiple_of(TICK_HZ as u64) {
+            return;
+        }
+        let here: Vec<(PlayerId, Option<hw_net::GateHome>)> = self
+            .world
+            .query::<(&Hero, &Progress)>()
+            .iter(&self.world)
+            .map(|(h, p)| (h.owner, p.sheet.gate_home))
+            .collect();
+        let solids = self.solids();
+        let mut fights = self.world.resource_mut::<Fights>();
+        let owners: Vec<PlayerId> = here.iter().map(|h| h.0).collect();
+        let _ = fights.gates.keep_only(&owners);
+        for (owner, home) in here {
+            let Some(h) = home.filter(|h| h.world == key) else {
+                continue;
+            };
+            let s = gates::Side {
+                at: DVec3::from_array(h.pos()),
+                yaw: h.yaw(),
+            };
+            let open = !solids.solid_at(s.at + DVec3::Y * 1.0);
+            if open && fights.gates.home(owner).is_none() {
+                fights.gates.remember_home(owner, s);
+            }
+        }
     }
 
     /// Player `player`'s hero opens (`open`) or shuts a door it stands at.
@@ -2205,9 +2258,10 @@ type WalkingHero = (With<Hero>, Without<taxi::Riding>);
 
 fn move_heroes(
     solids: Res<Solids>,
-    mut q: Query<(&Control, &mut Motion, Option<&mut Fighter>), WalkingHero>,
+    mut fights: ResMut<Fights>,
+    mut q: Query<(&Net, &Control, &mut Motion, Option<&mut Fighter>), WalkingHero>,
 ) {
-    for (control, mut motion, mut fighter) in &mut q {
+    for (net, control, mut motion, mut fighter) in &mut q {
         let moves = fighter
             .as_ref()
             .map_or(Moves::ON_FOOT, |f| Moves::of(&f.kit, f.level));
@@ -2221,6 +2275,9 @@ fn move_heroes(
         let mut body = motion.0;
         let before = body;
         step_moving(&mut body, input, &solids.0, moves);
+        // Into a portal's front, out of its twin's (the client predicts the
+        // same, see `predict`).
+        let _ = fights.gates.carry(net.0, &before, &mut body);
         // A super jump's take-off and hard landing: the fight shows them
         // and the landing stomps (`combat::step` answers them this tick).
         if moves.super_jump {

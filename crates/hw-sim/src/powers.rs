@@ -74,6 +74,11 @@ pub enum Lands {
     Path,
     /// Home to Hero Hall.
     Home,
+    /// The portal's first button: marks where its portals lead (see
+    /// [`crate::gates`]); the hero stays.
+    GateMark,
+    /// The portal's second button: opens a portal to the mark.
+    GateOpen,
 }
 
 /// Travel bits ([`Fields::travel`]).
@@ -2452,7 +2457,47 @@ pub static POWERS: &[PowerDef] = &[
             ..F
         },
     )),
+    // ---- The portal: every hero's, free (see `crate::gates`) ----
+    def(
+        124,
+        "Portal Home",
+        "marks where your portals lead",
+        Basic,
+        (0, 1),
+        &[],
+        0,
+        B::Teleport,
+        "aether",
+        Fields {
+            lands: Lands::GateMark,
+            ..F
+        },
+    ),
+    def(
+        125,
+        "Open Portal",
+        "tears a portal open to your mark",
+        Basic,
+        (0, 2),
+        &[],
+        0,
+        B::Teleport,
+        "aether",
+        Fields {
+            lands: Lands::GateOpen,
+            ..F
+        },
+    ),
 ];
+
+/// The portal power's two buttons (every hero's, free).
+pub const GATE_MARK: PowerId = PowerId::GATE_MARK;
+pub const GATE_OPEN: PowerId = PowerId::GATE_OPEN;
+
+/// Strike and the portal's buttons: every hero owns them, free.
+pub fn is_free(id: PowerId) -> bool {
+    PowerId::FREE.contains(&id)
+}
 
 /// The table from numbers to powers, built once.
 fn table() -> &'static [Option<&'static PowerDef>; POWER_IDS] {
@@ -2535,7 +2580,7 @@ pub fn value(d: &PowerDef) -> f32 {
 /// Energy a power takes (0 for Strike, passive powers and toggles: a
 /// toggle costs recovery instead, see [`Fields::upkeep`]).
 pub fn energy(d: &PowerDef) -> f32 {
-    if d.id == STRIKE || d.passive() || d.toggle {
+    if is_free(d.id) || d.passive() || d.toggle {
         return 0.0;
     }
     (2.0 + 0.6 * value(d).powf(0.75)).round()
@@ -2545,6 +2590,11 @@ pub fn energy(d: &PowerDef) -> f32 {
 pub fn recharge(d: &PowerDef) -> f64 {
     if d.id == STRIKE {
         return 0.7;
+    }
+    match d.fields.lands {
+        Lands::GateMark => return GATE_MARK_RECHARGE,
+        Lands::GateOpen => return GATE_OPEN_RECHARGE,
+        _ => {}
     }
     if d.passive() {
         return 0.0;
@@ -2581,6 +2631,10 @@ pub fn recharge(d: &PowerDef) -> f64 {
         .max(1.0);
     ((by_value.max(floor)) * 10.0).round() / 10.0
 }
+
+/// Seconds before the portal's buttons can be pressed again.
+pub const GATE_MARK_RECHARGE: f64 = 2.0;
+pub const GATE_OPEN_RECHARGE: f64 = 4.0;
 
 /// Seconds before a toggle can be switched again.
 pub const TOGGLE_RECHARGE: f64 = 1.0;
@@ -2685,7 +2739,7 @@ pub struct Kit {
 impl Default for Kit {
     fn default() -> Self {
         Kit {
-            owned: 1 << STRIKE.0,
+            owned: PowerId::FREE.iter().fold(0, |o, p| o | 1 << p.0),
             on: 0,
             element: Element::None,
             passive: Fields::NONE,
@@ -2876,7 +2930,7 @@ mod tests {
         assert_eq!(energy(def_of(STRIKE)), 0.0);
         for d in POWERS
             .iter()
-            .filter(|d| !d.passive() && !d.toggle && d.id != STRIKE)
+            .filter(|d| !d.passive() && !d.toggle && !is_free(d.id))
         {
             assert!(
                 energy(d) >= 3.0 && energy(d) <= 100.0,

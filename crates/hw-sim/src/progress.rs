@@ -136,7 +136,7 @@ impl std::fmt::Display for BuyError {
 /// Is `power` open to this hero (their trees, what it needs met, its fork
 /// free), whatever it costs?
 pub fn open(sheet: &Sheet, power: PowerId) -> Result<(), BuyError> {
-    let Some(d) = powers::get(power).filter(|d| d.id != powers::STRIKE) else {
+    let Some(d) = powers::get(power).filter(|d| !powers::is_free(d.id)) else {
         return Err(BuyError::NotForSale);
     };
     if sheet.has(power) {
@@ -298,7 +298,7 @@ pub fn sanitize(mut s: Sheet) -> Sheet {
     let mine = Tree::of_origin(s.origin);
     let mut kept: Vec<OwnedPower> = Vec::new();
     for p in &s.powers {
-        let Some(d) = powers::get(p.power).filter(|d| d.id != powers::STRIKE) else {
+        let Some(d) = powers::get(p.power).filter(|d| !powers::is_free(d.id)) else {
             continue;
         };
         let forked = d.fork != 0

@@ -81,7 +81,8 @@ the last run is pointed out once on the title.
   menu can switch it). It rides on every blow the hero lands (section 4).
 - **First power:** the top-left attack of the origin's tree (Atomic Ray, Arcane Bolt,
   Haymaker, Light Lance or One-Two), bought with the starting karma.
-- **Start:** 960 karma (exactly one first-row power), level 1, no powers except Strike. A hero
+- **Start:** 960 karma (exactly one first-row power), level 1, no powers except Strike and
+  the portal (Portal Home and Open Portal). A hero
   below level 5 starts on the **rookies' street**: the side street
   nearest the town centre that lies 120-300 m from a Chrome Jackets hangout and at least
   180 m out of the mad scientist's quarter (and clear of the pirates' landing), off the
@@ -122,6 +123,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | Tab | Target the nearest villain in view; again: the next nearest not yet picked, round and round |
 | Left click on a villain | Target that villain, up to 150 m away (Tab reaches 60 m); within punching reach (3 m) it also punches |
 | Left mouse | Strike |
+| 9 / 0 | Portal Home (mark where your portal leads) / Open Portal (tear it open ahead) |
 | Q | The first bolt power of your tree (Atomic Ray, Arcane Bolt, ...) |
 | 1 to 0, Alt+1 to Alt+0 | The power in that slot of the power tray (see below) |
 | B | Powers and karma window (also faction standings) |
@@ -145,7 +147,8 @@ a jump at once.
 **The power tray** (`hw-client/src/tray.rs`): twenty slots at the bottom of the screen, 1 to 0
 and Alt+1 to Alt+0 (the Alt row shows above the number row once it holds anything, or while
 something is dragged). A power you buy takes its usual key if that is free (Strike 1, Bolt 2,
-Hold 3, Shield 4, Lift 5, Shockwave 6, Mend 7, Beam 8, Meteor 9, Nova 0), otherwise the first
+Hold 3, Shield 4, Lift 5, Shockwave 6, Mend 7, Beam 8, Meteor 9, Nova 0; the portal's two
+keys come on 9 and 0 for every hero, so Meteor and Nova go elsewhere unless it is moved), otherwise the first
 free slot. Rearrange it with the mouse: drag a power from the powers window (B, the "⠿" handle)
 onto a slot, drag a slot onto another (they swap), or drag a slot off the tray (it stays off
 until you drag it back). Clicking a slot fires its power. The tray is saved with the profile on
@@ -252,6 +255,28 @@ does, what it needs, and Buy or Give up.
   owned power needs cannot be given up until that one is.
 - **Strike** is everyone's free punch (20 damage, 3 m, 0.7 s) and carries the element.
   **Q** fires the hero's first bolt power.
+- **The portal** (0.192, after MasterWorld's portal stone; `hw-sim/src/gates.rs`,
+  `hw-client/src/gateview.rs`): every hero has it, free, as two powers on keys 9 and 0.
+  **Portal Home** (124, 2 s recharge) marks home on the floor 1.3 m ahead, its way in facing
+  the way the hero faces; it is kept in the hero file (`portal_home`, per town: seed and
+  size) and a new mark closes the open portal. **Open Portal** (125, 4 s recharge) tears a
+  portal open on the floor 2.7 m ahead, facing the hero; a hero has one open at a time (a new
+  one moves its far side). Each opening is an ellipse 2.6 m wide and 3.5 m high, shrunk to
+  86%, 74% or 64% where a full one has no room; under that, or with a wall, a floor more
+  than 0.55 m out of level or home within 6 m, it fizzles ("No room for a portal there") and costs
+  nothing. Anyone (heroes, not villains) walking into either front comes out of the other,
+  turned with it and keeping their speed; the camera turns with the hero and looks back
+  through the portal for a moment, so the step never cuts. Portals close when their hero
+  leaves (16 open at most in a world).
+- How it looks: each side is an Engine portal, the other place seen through it (drawn
+  while the camera is within 160 m), opening from its middle over 1.8 s. Round it a ragged
+  rim of violet and sea green ripples with a bright edge and crawling tendrils (custom
+  material `portal rim`), wisps and rune motes crawl round it, and a lamp in its colour
+  (home green, far side blue) glows on the street. From behind (or too far off) it is a
+  swirling disc (`portal haze`). Marking home sends a beam down to glowing rings on the
+  floor; a closing portal sucks its light in; a failed one spits sparks and a dark puff;
+  whoever steps through rises in rings of light. `HW_PORTAL=1` runs it on its own
+  (`HW_PORTAL_SHOT=<dir>` saves `open.png` and `through.png`).
 - The server checks every purchase against the hero file.
 - **Every power must help in a hard fight** (Arnd, 0.177): no power only makes an easy
   thing easier. Rescues need no powers of their own; they stay a plain hold-E job, flavour

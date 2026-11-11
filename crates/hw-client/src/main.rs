@@ -189,6 +189,9 @@ struct HeroCamera {
     look: (f32, f32),
     /// The boom as drawn, kept out of walls (see `camclip`).
     boom: hw_client::camclip::Boom,
+    /// The yaw the camera looked with last frame (degrees): `yaw`, or
+    /// turned when looking from beyond a portal.
+    view_yaw: f32,
 }
 
 impl HeroCamera {
@@ -205,6 +208,7 @@ impl HeroCamera {
         target: Vec3,
         solids: &Obstacles,
         open_above: Option<f64>,
+        gates: &[hw_sim::gates::Pair],
     ) {
         let input = &frame.input;
         if input.mouse_down(MouseButton::Right) || world.pointer_lock() {
@@ -226,7 +230,82 @@ impl HeroCamera {
         let clear = camclip::clear_length(solids, head, dir, self.distance, open_above);
         let length = self.boom.follow(clear, frame.dt);
         let eye = camclip::eye(head, dir, length);
+        // A boom reaching back through a portal looks from beyond its twin,
+        // so the hero just through never vanishes behind the rift.
+        if let Some((eye, turn)) = hw_client::gateview::eye_through(gates, head, eye) {
+            self.view_yaw = self.yaw + turn;
+            world.look_first_person(eye, self.view_yaw, self.pitch);
+            return;
+        }
+        self.view_yaw = self.yaw;
         world.look_first_person(eye, self.yaw, self.pitch);
+    }
+}
+
+/// `HW_PORTAL=1`: the portal power on its own, for screenshots. Half a
+/// second in the hero marks home behind it (facing back the way the
+/// camera looks from); walks on `HW_PORTAL_WALK` seconds (1.2); opens a
+/// portal ahead (seen through: the street behind, out of home); and walks
+/// through it. With `HW_PORTAL_SHOT=<dir>`
+/// it saves `open.png` (the portal open, seen through) and `through.png`
+/// (just out at home), then quits.
+#[derive(Default)]
+struct PortalScript {
+    /// Aim behind the hero this frame (marking home).
+    back: bool,
+    clock: f32,
+    stage: u8,
+    shots: u8,
+}
+
+impl PortalScript {
+    fn walk_secs() -> f32 {
+        std::env::var("HW_PORTAL_WALK")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.2)
+    }
+
+    fn walking(&self) -> bool {
+        let w = Self::walk_secs();
+        (1.0..1.0 + w).contains(&self.clock) || (w + 6.0..w + 7.6).contains(&self.clock)
+    }
+
+    /// The power to press now.
+    fn press(&mut self) -> Option<hw_net::PowerId> {
+        let w = Self::walk_secs();
+        match self.stage {
+            0 if self.clock >= 0.5 => {
+                self.stage = 1;
+                self.back = true;
+                Some(hw_net::PowerId::GATE_MARK)
+            }
+            1 if self.clock >= w + 1.8 => {
+                self.stage = 2;
+                Some(hw_net::PowerId::GATE_OPEN)
+            }
+            _ => None,
+        }
+    }
+
+    /// A screenshot to take now.
+    fn shot(&mut self) -> Option<std::path::PathBuf> {
+        let dir = std::path::PathBuf::from(std::env::var("HW_PORTAL_SHOT").ok()?);
+        let w = Self::walk_secs();
+        let (at, name) = match self.shots {
+            0 => (w + 4.6, "open.png"),
+            1 => (w + 9.5, "through.png"),
+            _ => return None,
+        };
+        if self.clock < at {
+            return None;
+        }
+        self.shots += 1;
+        Some(dir.join(name))
+    }
+
+    fn done(&self) -> bool {
+        self.shots >= 2 && self.clock > Self::walk_secs() + 10.5
     }
 }
 
@@ -280,6 +359,9 @@ fn main() -> EngineResult<()> {
                 && std::env::var_os("HW_HOST").is_none()));
     let mut name = std::env::var("HW_NAME").unwrap_or_else(|_| profile.name.clone());
     let auto_walk = std::env::var_os("HW_WALK").is_some();
+    // `HW_PORTAL=1` (screenshots): the hero marks a portal home, walks on,
+    // opens a portal and walks through it (see `PortalScript`).
+    let mut portal_script = std::env::var_os("HW_PORTAL").map(|_| PortalScript::default());
     // R: the hero runs on by itself until S or R.
     let mut autorun = false;
     let auto_fight = std::env::var_os("HW_AUTOFIGHT").is_some();
@@ -600,6 +682,10 @@ fn main() -> EngineResult<()> {
     // Occlusion culling over the measured part: frames, meshes tested, hidden.
     let mut bench_occlusion = (0u64, 0u64, 0u64);
     let mut hero_cam_yaw = 30.0f32;
+    if portal_script.is_some() {
+        // Down the street, where there is room for a portal.
+        hero_cam_yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
+    }
     let mut fly = match view.as_str() {
         "street" | "citizen" | "alpha" | "riders" | "act" => {
             let p = spawn - spawn_dir * 8.0;
@@ -1617,6 +1703,7 @@ fn main() -> EngineResult<()> {
         },
         distance: 7.0,
         boom: Default::default(),
+        view_yaw: hero_cam_yaw,
     };
     // `HW_CAM_DIST` and `HW_CAM_PITCH` set the hero camera (close-up screenshots),
     // `HW_CAM_TURN` turns it (degrees, to the left).
@@ -2646,6 +2733,14 @@ fn main() -> EngineResult<()> {
                     autorun = false;
                 }
                 let mut dir = input.move_dir_xz(hero_cam.yaw);
+                if let Some(s) = portal_script.as_mut() {
+                    if session.my_hero().is_some() {
+                        s.clock += frame.dt;
+                    }
+                    if s.walking() {
+                        dir = Camera::facing_xz(hero_cam.yaw);
+                    }
+                }
                 if auto_walk || autorun {
                     dir = autorun_dir(dir, Camera::facing_xz(hero_cam.yaw));
                 }
@@ -2721,7 +2816,7 @@ fn main() -> EngineResult<()> {
                     let blast = my_kit.blast.map_or(1, |b| b.0);
                     let every: Vec<u8> = my_kit
                         .owned()
-                        .filter(|&p| p != hw_net::PowerId::STRIKE && hw_client::tray::keyed(p))
+                        .filter(|&p| !hw_sim::powers::is_free(p) && hw_client::tray::keyed(p))
                         // Toggles would only flip on and off.
                         .filter(|&p| !hw_sim::powers::def_of(p).toggle)
                         .flat_map(|p| [blast, p.0])
@@ -2748,6 +2843,21 @@ fn main() -> EngineResult<()> {
                     });
                     if force_trick.is_some() && (have_pal || fight.target.is_some()) {
                         pending_power = 0;
+                    }
+                }
+                if let Some(s) = portal_script.as_mut() {
+                    if let Some(p) = s.press() {
+                        pending_power = p.0;
+                    }
+                    if std::mem::take(&mut s.back) {
+                        let a = hero_input.aim;
+                        hero_input.aim = [-a[0], a[1], -a[2]];
+                    }
+                    if let Some(shot) = s.shot() {
+                        world.queue_screenshot(shot);
+                    }
+                    if s.done() {
+                        world.request_exit();
                     }
                 }
                 let f = fightview::FightInput {
@@ -3157,6 +3267,10 @@ fn main() -> EngineResult<()> {
                         traffic_view.clear_wreck(world, &mut traffic, id);
                         riders.towed(id);
                     }
+                    false
+                }
+                hw_net::ToClient::Gates { gates } => {
+                    let _ = fight.gates.apply(world, gates);
                     false
                 }
                 hw_net::ToClient::Doors { doors, live } => {
@@ -4180,11 +4294,27 @@ fn main() -> EngineResult<()> {
                             hero_cam.distance.max(10.0)
                         };
                     }
-                    hero_cam.update(world, frame, p.as_vec3(), &solids, open_above);
+                    // Stepped through a portal: the camera turns as the
+                    // hero did, so the walking keys still go the same way.
+                    if let Some(turn) = fight.gate_turn.take() {
+                        hero_cam.yaw = (hero_cam.yaw + turn).rem_euclid(360.0);
+                    }
+                    hero_cam.update(
+                        world,
+                        frame,
+                        p.as_vec3(),
+                        &solids,
+                        open_above,
+                        fight.gates.pairs(),
+                    );
                     let shake = fight.shake();
                     if shake != Vec3::ZERO {
                         let cam = world.camera();
-                        world.look_first_person(cam.eye() + shake, hero_cam.yaw, hero_cam.pitch);
+                        world.look_first_person(
+                            cam.eye() + shake,
+                            hero_cam.view_yaw,
+                            hero_cam.pitch,
+                        );
                     }
                 }
                 _ => {

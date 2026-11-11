@@ -31,6 +31,7 @@ pub mod extras;
 pub mod facades;
 pub mod factionview;
 pub mod fightview;
+pub mod gateview;
 pub mod grassview;
 pub mod heroview;
 pub mod hitch;

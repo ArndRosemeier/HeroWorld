@@ -1229,6 +1229,8 @@ pub struct Fights {
     /// Screenshots: the first hero goes straight into a recovery pod and
     /// floats there for ten minutes.
     pub pod_start: bool,
+    /// Every hero's portal home and open pair (see [`crate::gates`]).
+    pub gates: crate::gates::Gates,
 }
 
 /// The heroes' square of the town, for flying over its roofs.
@@ -1297,6 +1299,7 @@ impl Default for Fights {
             patients: Vec::new(),
             area: None,
             pod_start: false,
+            gates: Default::default(),
         }
     }
 }
@@ -1403,6 +1406,8 @@ fn why_words(why: u16) -> &'static str {
         fizzle::ENERGY => "not enough energy",
         fizzle::NO_SPOT => "no spot",
         fizzle::BUSY => "the last power still plays out",
+        fizzle::NO_ROOM => "no room for a portal",
+        fizzle::NO_HOME => "no portal home marked",
         _ => "no reason noted",
     }
 }
@@ -1788,7 +1793,28 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     rally(&mut actors);
     let rescue_points = std::mem::take(&mut world.resource_mut::<Fights>().rescue_points);
     let home = world.resource::<Fights>().home;
-    heroes_act(&mut actors, &solids, &rescue_points, home, tick, &mut out);
+    let mut gates = std::mem::take(&mut world.resource_mut::<Fights>().gates);
+    // Who stepped through a portal this tick (heroes move before combat).
+    for c in gates.take_crossed() {
+        let owner = actors
+            .iter()
+            .find(|a| a.hero.is_some_and(|h| h.0 == c.owner) && !a.npc)
+            .map_or(c.hero, |a| a.id);
+        let mut e = event(tick, FxKind::GateCross, owner, c.hero, c.at);
+        e.theme = PowerId::GATE_OPEN.0;
+        e.amount = crate::gates::yaw_turns(c.turn);
+        out.fx.push(e);
+    }
+    heroes_act(
+        &mut actors,
+        &solids,
+        &rescue_points,
+        home,
+        &mut gates,
+        tick,
+        &mut out,
+    );
+    world.resource_mut::<Fights>().gates = gates;
     leaps(&mut actors, &solids, tick, &mut out);
     world.resource_mut::<Fights>().rescue_points = rescue_points;
     npc_heroes_act(&mut actors, &solids, tick, &mut out);
@@ -3256,11 +3282,13 @@ fn allies(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn heroes_act(
     actors: &mut [Actor],
     solids: &Obstacles,
     rescue_points: &[DVec3],
     home: Option<DVec3>,
+    gates: &mut crate::gates::Gates,
     tick: u64,
     out: &mut Out,
 ) {
@@ -3488,9 +3516,62 @@ fn heroes_act(
             })
             .collect();
         let commanding = delivery == Delivery::Summon && my_sidekicks.len() >= f.summons as usize;
+        // The portal's buttons: where its home or its far side would
+        // stand. Where it cannot, it fizzles at once (as the stone's did),
+        // costing nothing.
+        let gate = match f.lands {
+            Lands::GateMark | Lands::GateOpen if delivery == Delivery::Blink => {
+                let Some(owner) = actors[i].hero.map(|h| h.0).filter(|_| !actors[i].npc) else {
+                    actors[i].f.queued = None;
+                    continue;
+                };
+                let feet = actors[i].body.pos;
+                let flat = DVec3::new(actors[i].body.vel.x, 0.0, actors[i].body.vel.z);
+                let yaw = crate::gates::yaw_of(aim)
+                    .or_else(|| crate::gates::yaw_of(flat))
+                    .unwrap_or(0.0);
+                let spot = if f.lands == Lands::GateMark {
+                    crate::gates::mark_spot(solids, feet, yaw)
+                        .map(|s| (s, 1.0))
+                        .ok_or(fizzle::NO_ROOM)
+                } else {
+                    match crate::gates::open_spot(solids, feet, yaw) {
+                        None => Err(fizzle::NO_ROOM),
+                        Some(s) => gates
+                            .can_open(owner, solids, &s)
+                            .map(|k| (s, k))
+                            .map_err(|e| match e {
+                                crate::gates::Refused::NoHome => fizzle::NO_HOME,
+                                crate::gates::Refused::NoRoom => fizzle::NO_ROOM,
+                            }),
+                    }
+                };
+                match spot {
+                    Ok(s) => Some((owner, s)),
+                    Err(why) => {
+                        out.log
+                            .push(format!("server {tick}: {name} fizzled: {}", why_words(why)));
+                        actors[i].f.queued = None;
+                        actors[i].f.told = tick;
+                        let me = actors[i].id;
+                        // Where it tried to open (the fizzle's light).
+                        let (s, c) = hw_core::det::sin_cos(yaw);
+                        let tried = feet
+                            + DVec3::new(s, 0.0, c) * crate::gates::OPEN_AHEAD
+                            + DVec3::Y * 1.3;
+                        let mut e = event(tick, FxKind::Fizzle, me, me, tried);
+                        e.amount = why;
+                        e.theme = power.0;
+                        out.fx.push(e);
+                        continue;
+                    }
+                }
+            }
+            _ => None,
+        };
         // Where a move lands, and which rescues a bubble goes to: none,
         // and the power waits (and then lapses) without costing anything.
-        let blink = if delivery == Delivery::Blink {
+        let blink = if delivery == Delivery::Blink && gate.is_none() {
             let to = match f.lands {
                 Lands::Home => home,
                 _ => {
@@ -3774,6 +3855,33 @@ fn heroes_act(
                 actors[i].f.last_combat = tick;
                 out.fx
                     .push(event_of(FxKind::Throw, tid.unwrap_or(me_id), from));
+            }
+            Delivery::Blink if gate.is_some() => {
+                let Some((owner, (side, size))) = gate else {
+                    continue;
+                };
+                let turn = crate::gates::yaw_turns;
+                let shut = |s: &crate::gates::Side, out: &mut Out| {
+                    let mut e = event_of(FxKind::GateShut, me_id, s.at);
+                    e.amount = turn(s.yaw);
+                    out.fx.push(e);
+                };
+                if f.lands == Lands::GateMark {
+                    if let Some(old) = gates.mark(owner, side) {
+                        shut(&old.home, out);
+                        shut(&old.far, out);
+                    }
+                    let mut e = event_of(FxKind::GateMark, me_id, side.at);
+                    e.amount = turn(side.yaw);
+                    out.fx.push(e);
+                } else if let Some((_, closed)) = gates.open(owner, side, size, tick) {
+                    if let Some(old) = closed {
+                        shut(&old, out);
+                    }
+                    let mut e = event_of(FxKind::GateOpen, me_id, side.at);
+                    e.amount = turn(side.yaw);
+                    out.fx.push(e);
+                }
             }
             Delivery::Blink => {
                 let Some(to) = blink else {
