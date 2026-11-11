@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.169 (2026-11-11)
+
+- Buses! Streamline buses with fins, chrome, a roof rocket and a lit route sign now run on the main roads and call at every bus stop.
+- People wait at the stops, get off and climb aboard while the doors stand open. Cars queue behind a bus at its stop.
+
 ## 0.168 (2026-11-11)
 
 - Carrying someone hurt looks right now: they lie across your arms, knees over one forearm and back over the other, with an arm round your neck and their head at your shoulder. They no longer hang down through your hero.

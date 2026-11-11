@@ -6,7 +6,7 @@
 use engine::prelude::*;
 use glam::{DQuat, DVec2, DVec3};
 use hw_gen::urban::props::{CarModel, CAR_PAINTS};
-use hw_sim::traffic::{Traffic, Vehicle, VehicleKind};
+use hw_sim::traffic::{Traffic, Vehicle, VehicleKind, BUS_LIVERIES, DWELL};
 use std::collections::BTreeMap;
 
 /// Vehicles are shown within this distance of the camera...
@@ -15,6 +15,25 @@ pub const SHOW_RADIUS: f64 = 700.0;
 pub const MAX_SHOWN: usize = 700;
 /// Wheels are turned only on cars this close.
 const WHEEL_RADIUS: f64 = 120.0;
+/// Bus doors are drawn on their own this close (further off the bus's far
+/// model has them shut in its body).
+const LEAF_RADIUS: f64 = 150.0;
+
+/// Whose wheels: a car model's, or a bus's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WheelOf {
+    Car(CarModel),
+    Bus,
+}
+
+/// How far a bus's doors stand open after `standing` seconds at a stop:
+/// they open as it comes to rest and shut a moment before it leaves.
+pub fn doors_open(standing: f64) -> f64 {
+    let opening = ((standing - 0.6) / 1.0).clamp(0.0, 1.0);
+    let shutting = ((DWELL - 1.0 - standing) / 1.0).clamp(0.0, 1.0);
+    let t = opening.min(shutting);
+    t * t * (3.0 - 2.0 * t)
+}
 
 /// A wrecked car's doors: each one's LOD levels, hinge, axis and how far
 /// it opens (see `propview::car_door_levels`).
@@ -23,7 +42,9 @@ type DoorSets = Vec<(Vec<LodLevel>, DVec3, DVec3, f64)>;
 /// A vehicle model made on the worker thread (see [`Models`]).
 enum Made {
     Body(VehicleKind, Vec<LodLevel>),
-    Wheel(CarModel, Vec<LodLevel>),
+    Wheel(WheelOf, Vec<LodLevel>),
+    /// A bus door leaf: (livery, door).
+    Leaf((u8, usize), Vec<LodLevel>),
     Shell(VehicleKind, Vec<LodLevel>),
     Doors(VehicleKind, DoorSets),
 }
@@ -35,7 +56,8 @@ enum Made {
 struct Models {
     rx: std::sync::mpsc::Receiver<Made>,
     bodies: BTreeMap<VehicleKind, Vec<LodLevel>>,
-    wheels: BTreeMap<CarModel, Vec<LodLevel>>,
+    wheels: BTreeMap<WheelOf, Vec<LodLevel>>,
+    leaves: BTreeMap<(u8, usize), Vec<LodLevel>>,
     shells: BTreeMap<VehicleKind, Vec<LodLevel>>,
     doors: BTreeMap<VehicleKind, DoorSets>,
 }
@@ -51,11 +73,13 @@ impl Models {
             let mut bodies = cars.clone();
             bodies.push(VehicleKind::Taxi);
             bodies.extend((0..CAR_PAINTS).map(VehicleKind::SkyCar));
+            bodies.extend((0..BUS_LIVERIES).map(VehicleKind::Bus));
             for kind in bodies {
                 let levels = match kind {
                     VehicleKind::Car(m, paint) => crate::propview::moving_car_levels(m, paint),
                     VehicleKind::SkyCar(paint) => crate::propview::sky_car_levels(paint),
                     VehicleKind::Taxi => crate::propview::taxi_levels(),
+                    VehicleKind::Bus(livery) => crate::propview::bus_levels(livery),
                 };
                 if tx.send(Made::Body(kind, levels)).is_err() {
                     return;
@@ -63,7 +87,19 @@ impl Models {
             }
             for m in [CarModel::Cruiser, CarModel::Bubble, CarModel::Hover] {
                 if let Some(levels) = crate::propview::wheel_levels(m) {
-                    if tx.send(Made::Wheel(m, levels)).is_err() {
+                    if tx.send(Made::Wheel(WheelOf::Car(m), levels)).is_err() {
+                        return;
+                    }
+                }
+            }
+            let bus_wheels = crate::propview::bus_wheel_levels();
+            if tx.send(Made::Wheel(WheelOf::Bus, bus_wheels)).is_err() {
+                return;
+            }
+            for livery in 0..BUS_LIVERIES {
+                for door in 0..crate::carmesh::BUS_DOORS.len() {
+                    let levels = crate::propview::bus_leaf_levels(livery, door);
+                    if tx.send(Made::Leaf((livery, door), levels)).is_err() {
                         return;
                     }
                 }
@@ -84,6 +120,7 @@ impl Models {
             rx,
             bodies: BTreeMap::new(),
             wheels: BTreeMap::new(),
+            leaves: BTreeMap::new(),
             shells: BTreeMap::new(),
             doors: BTreeMap::new(),
         }
@@ -98,6 +135,9 @@ impl Models {
                 }
                 Made::Wheel(k, l) => {
                     self.wheels.insert(k, l);
+                }
+                Made::Leaf(k, l) => {
+                    self.leaves.insert(k, l);
                 }
                 Made::Shell(k, l) => {
                     self.shells.insert(k, l);
@@ -133,7 +173,9 @@ fn spawn_made<K: Ord + Copy>(
 pub struct TrafficView {
     models: Models,
     bodies: BTreeMap<VehicleKind, LodId>,
-    wheels: BTreeMap<CarModel, LodId>,
+    wheels: BTreeMap<WheelOf, LodId>,
+    /// Bus door leaves by (livery, door).
+    leaves: BTreeMap<(u8, usize), LodId>,
     /// Who is near enough to show (looked up twice a second, placed every
     /// frame).
     near: Vec<u64>,
@@ -157,6 +199,7 @@ impl Default for TrafficView {
             models: Models::start(),
             bodies: BTreeMap::new(),
             wheels: BTreeMap::new(),
+            leaves: BTreeMap::new(),
             near: Vec::new(),
             refresh: 0.0,
             wrecks: BTreeMap::new(),
@@ -179,6 +222,7 @@ impl TrafficView {
         let doors = self.doors.values().flatten().map(|d| d.0);
         let sets: Vec<LodId> = (self.bodies.values().copied())
             .chain(self.wheels.values().copied())
+            .chain(self.leaves.values().copied())
             .chain(self.shells.values().copied())
             .chain(doors)
             .collect();
@@ -279,7 +323,8 @@ impl TrafficView {
                 .collect();
         }
         let mut bodies: BTreeMap<VehicleKind, Vec<Place>> = BTreeMap::new();
-        let mut wheels: BTreeMap<CarModel, Vec<Place>> = BTreeMap::new();
+        let mut wheels: BTreeMap<WheelOf, Vec<Place>> = BTreeMap::new();
+        let mut leaves: BTreeMap<(u8, usize), Vec<Place>> = BTreeMap::new();
         let mut riding = Vec::new();
         for &id in &self.near {
             if self.wrecks.contains_key(&id) {
@@ -289,10 +334,27 @@ impl TrafficView {
                 continue;
             };
             bodies.entry(v.kind).or_default().push(body_place(&v));
-            if let VehicleKind::Car(model, _) = v.kind {
-                if DVec2::new(v.pos.x, v.pos.z).distance(eye) < WHEEL_RADIUS {
-                    wheel_places(&v, model, wheels.entry(model).or_default());
+            let far = DVec2::new(v.pos.x, v.pos.z).distance(eye);
+            match v.kind {
+                VehicleKind::Car(model, _) if far < WHEEL_RADIUS => {
+                    wheel_places(
+                        &v,
+                        WheelOf::Car(model),
+                        wheels.entry(WheelOf::Car(model)).or_default(),
+                    );
                 }
+                VehicleKind::Bus(livery) => {
+                    if far < WHEEL_RADIUS {
+                        wheel_places(&v, WheelOf::Bus, wheels.entry(WheelOf::Bus).or_default());
+                    }
+                    if far < LEAF_RADIUS {
+                        let open = traffic
+                            .bus_at_stop(id)
+                            .map_or(0.0, |a| doors_open(a.standing));
+                        leaf_places(&v, livery, open, &mut leaves);
+                    }
+                }
+                _ => {}
             }
             if DVec2::new(v.pos.x, v.pos.z).distance(eye) < crate::riderview::RIDER_RADIUS {
                 riding.push(v);
@@ -302,6 +364,7 @@ impl TrafficView {
             eye,
             bodies,
             wheels,
+            leaves,
             riding,
         }
     }
@@ -313,6 +376,7 @@ impl TrafficView {
             eye,
             mut bodies,
             mut wheels,
+            mut leaves,
             riding,
         } = plan;
         let mut shells: BTreeMap<VehicleKind, Vec<Place>> = BTreeMap::new();
@@ -327,6 +391,18 @@ impl TrafficView {
                 ..p
             };
             let body = crumpled(body_place(v));
+            if let VehicleKind::Bus(livery) = v.kind {
+                // A wrecked bus: its doors sprung half open.
+                wheel_places(v, WheelOf::Bus, wheels.entry(WheelOf::Bus).or_default());
+                let mut sprung = BTreeMap::new();
+                leaf_places(v, livery, 0.3 + (id % 5) as f64 * 0.1, &mut sprung);
+                for (k, list) in sprung {
+                    leaves
+                        .entry(k)
+                        .or_default()
+                        .extend(list.into_iter().map(crumpled));
+                }
+            }
             let VehicleKind::Car(model, paint) = v.kind else {
                 bodies.entry(v.kind).or_default().push(body);
                 continue;
@@ -345,7 +421,11 @@ impl TrafficView {
                 }
                 e.insert(sets);
             }
-            wheel_places(v, model, wheels.entry(model).or_default());
+            wheel_places(
+                v,
+                WheelOf::Car(model),
+                wheels.entry(WheelOf::Car(model)).or_default(),
+            );
             shells.entry(v.kind).or_default().push(body);
             let (yaw, pitch, roll) = angles(v);
             let q = DQuat::from_rotation_y(yaw)
@@ -380,6 +460,13 @@ impl TrafficView {
             let places = wheels.get(model).map_or(&[][..], |v| &v[..]);
             world.set_lod_places(*id, places)?;
         }
+        for key in leaves.keys() {
+            spawn_made(world, &mut self.leaves, &mut self.models.leaves, *key)?;
+        }
+        for (key, id) in &self.leaves {
+            let places = leaves.get(key).map_or(&[][..], |v| &v[..]);
+            world.set_lod_places(*id, places)?;
+        }
         for kind in shells.keys() {
             spawn_made(world, &mut self.shells, &mut self.models.shells, *kind)?;
         }
@@ -401,7 +488,8 @@ impl TrafficView {
 pub struct TrafficPlan {
     eye: DVec2,
     bodies: BTreeMap<VehicleKind, Vec<Place>>,
-    wheels: BTreeMap<CarModel, Vec<Place>>,
+    wheels: BTreeMap<WheelOf, Vec<Place>>,
+    leaves: BTreeMap<(u8, usize), Vec<Place>>,
     /// The vehicles near enough to show who sits in them (`riderview`).
     riding: Vec<Vehicle>,
 }
@@ -439,8 +527,12 @@ pub fn body_place(v: &Vehicle) -> Place {
         .with_roll_deg(roll.to_degrees() as f32)
 }
 
-fn wheel_places(v: &Vehicle, model: CarModel, out: &mut Vec<Place>) {
-    let Some((x, zs, r)) = crate::propview::wheel_layout(model) else {
+fn wheel_places(v: &Vehicle, of: WheelOf, out: &mut Vec<Place>) {
+    let layout = match of {
+        WheelOf::Car(model) => crate::propview::wheel_layout(model),
+        WheelOf::Bus => Some(crate::carmesh::BUS_WHEELS),
+    };
+    let Some((x, zs, r)) = layout else {
         return;
     };
     let (yaw, pitch, roll) = angles(v);
@@ -458,5 +550,21 @@ fn wheel_places(v: &Vehicle, model: CarModel, out: &mut Vec<Place>) {
                     .with_roll_deg(roll.to_degrees() as f32),
             );
         }
+    }
+}
+
+/// A bus's door leaves, its doors `open` (0 to 1).
+fn leaf_places(v: &Vehicle, livery: u8, open: f64, out: &mut BTreeMap<(u8, usize), Vec<Place>>) {
+    let (yaw, pitch, roll) = angles(v);
+    let q =
+        DQuat::from_rotation_y(yaw) * DQuat::from_rotation_x(pitch) * DQuat::from_rotation_z(roll);
+    for (door, at) in crate::carmesh::bus_door_leaves(open) {
+        let p = v.pos + q * at;
+        out.entry((livery, door)).or_default().push(
+            Place::new(p.x as f32, p.y as f32, p.z as f32)
+                .with_yaw_deg(yaw.to_degrees() as f32)
+                .with_pitch_deg(pitch.to_degrees() as f32)
+                .with_roll_deg(roll.to_degrees() as f32),
+        );
     }
 }

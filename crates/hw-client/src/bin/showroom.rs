@@ -1,7 +1,7 @@
 //! A showroom for vehicles and props: one model (or a row of them) on a
 //! plain floor in daylight, for close-up screenshots while modelling.
 //!
-//! HW_SHOW=cruiser|bubble|hover|taxi|ambulance|wheel|cars|street|lamps|barricades|plaza|life|fences,
+//! HW_SHOW=cruiser|bubble|hover|taxi|ambulance|bus|bus_open|wheel|cars|street|lamps|barricades|plaza|life|fences,
 //! or one prop (kiosk, pillar, fountain, jersey, drum, ...; default cars)
 //! HW_LOD=near|mid|far  HW_PAINT=0..7  HW_YAW=degrees  HW_DIST=metres  HW_PITCH=degrees
 //! HW_LOOK_Y=metres (what the camera looks at). Airships float: `airship`
@@ -36,6 +36,8 @@ fn model(name: &str, lod: Lod, paint: u8) -> Mesh {
         "bubble_open" => car_shell_into(&mut b, CarModel::Bubble, paint, lod, true),
         "hover_open" => car_shell_into(&mut b, CarModel::Hover, paint, lod, true),
         "ambulance" => hw_client::carmesh::ambulance_into(&mut b, lod),
+        // The bus in livery HW_PAINT, its doors shut (bus) or open (bus_open).
+        "bus" | "bus_open" => hw_client::carmesh::bus_into(&mut b, paint, lod, true),
         "wheel" => wheel(&mut b, DVec3::new(0.0, 0.36, 0.0), 0.36, 0.22, lod),
         _ => return prop(name, lod),
     }
@@ -159,6 +161,13 @@ fn main() -> EngineResult<()> {
                 "hover_open" => car_doors(CarModel::Hover, paint, lod),
                 _ => vec![],
             };
+            if show == "bus" || show == "bus_open" {
+                let open = if show == "bus" { 0.0 } else { open };
+                for (door, at) in hw_client::carmesh::bus_door_leaves(open) {
+                    let leaf = hw_client::carmesh::bus_door_leaf(paint, door, lod);
+                    world.place(leaf, Place::new(at.x as f32, at.y as f32, at.z as f32))?;
+                }
+            }
             for d in doors {
                 let deg = (d.open * open).to_degrees() as f32;
                 let a = d.axis;

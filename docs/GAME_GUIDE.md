@@ -1108,6 +1108,18 @@ Heroes cannot target townsfolk.
   a phase, never enter a junction they cannot leave, follow the car ahead and queue. A car
   stuck a minute turns off and comes back where there is room. Cars stop for heroes, for
   people standing or lying in the road, and short of a fight or collapse.
+- **Buses** (`traffic.rs`, model `hw-client/src/carmesh/bus.rs`): every lane loop that
+  passes a bus stop runs buses, one per 1600 m of loop (at least one, at most a third of its
+  cars). A bus is 11.2 m long, keeps to 10.5 m/s, pulls in beside each shelter on its side of
+  the road (stops within 10 m of the lane, not inside a junction), stands 16 s (`DWELL`) with
+  its doors open and drives on; cars queue behind it. Four two-tone liveries; streamline body
+  with a wraparound windscreen, lit route sign, quad headlamps, an atom on the nose, tail fins
+  and a rocket on the roof. Two to fifteen passengers sit inside; on wrecks they leave by the
+  nearest kerb-side door.
+- **At the stops** (`hw-client/src/busview.rs`): within 90 m of the camera up to five
+  townsfolk wait under each shelter, more stroll up every 35 s or so. When a bus calls, up to
+  three get off at the middle door and walk off along the pavement; those waiting walk to the
+  front door and get on. Only a show on each PC: the server knows the buses, not who waits.
 - **Sky lanes:** hover cars and flying taxis cruise over the main roads at 34, 46 and 58 m,
   banking into turns.
 - Cars are placed every drawn frame from the game clock (`Session::time`: every server tick

@@ -627,6 +627,45 @@ pub fn wheel_levels(model: CarModel) -> Option<Vec<LodLevel>> {
     ])
 }
 
+/// The streamliner bus in `livery`: close up (its inside and every bit of
+/// chrome), down the street (still with seats behind the glass, for the
+/// passengers drawn to 110 m) and far (wheels in the body, doors shut).
+pub fn bus_levels(livery: u8) -> Vec<LodLevel> {
+    let make = |lod: Lod| {
+        let mut b = MeshBuilder::new();
+        crate::carmesh::bus_into(&mut b, livery, lod, lod == Lod::Far);
+        b.finish()
+    };
+    vec![
+        LodLevel::new(make(Lod::Near), 45.0),
+        LodLevel::new(make(Lod::Mid), 150.0),
+        LodLevel::new(make(Lod::Far), 800.0),
+    ]
+}
+
+/// A bus's wheel (its own instances, so it turns).
+pub fn bus_wheel_levels() -> Vec<LodLevel> {
+    let (_, _, r) = crate::carmesh::BUS_WHEELS;
+    let make = |lod: Lod| {
+        let mut b = MeshBuilder::new();
+        wheel(&mut b, DVec3::ZERO, r, 0.3, lod);
+        b.finish()
+    };
+    vec![
+        LodLevel::new(make(Lod::Near), 45.0),
+        LodLevel::new(make(Lod::Mid), 260.0),
+    ]
+}
+
+/// One leaf of door `door` of a bus in `livery`.
+pub fn bus_leaf_levels(livery: u8, door: usize) -> Vec<LodLevel> {
+    use crate::carmesh::bus_door_leaf;
+    vec![
+        LodLevel::new(bus_door_leaf(livery, door, Lod::Near), 45.0),
+        LodLevel::new(bus_door_leaf(livery, door, Lod::Far), 160.0),
+    ]
+}
+
 /// Flying taxis: close up, in the next lane, far.
 pub fn taxi_levels() -> Vec<LodLevel> {
     taxi_body(true)

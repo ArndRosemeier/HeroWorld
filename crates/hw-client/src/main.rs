@@ -363,6 +363,7 @@ fn main() -> EngineResult<()> {
         env_num("HW_TAXI").map(|d| (d as usize, env_num("HW_TAXI_SECS").unwrap_or(0)));
     let mut traffic_view = hw_client::trafficview::TrafficView::new();
     let mut riders = hw_client::riderview::RiderView::new();
+    let mut bus_folk = hw_client::busview::BusView::new();
     // Hero taxis this frame, for their cabbies.
     let mut cabs: Vec<hw_sim::traffic::Vehicle> = Vec::new();
     // The square with people and traffic follows the heroes: when the
@@ -1786,6 +1787,7 @@ fn main() -> EngineResult<()> {
                     signal.clear(world);
                     story.clear(world);
                     riders.clear(world, &crowd);
+                    bus_folk.clear(world, &crowd);
                     crowd.clear(world);
                     sweepers.clear(world);
                     // The new town's extras come in like the first ones.
@@ -2790,6 +2792,7 @@ fn main() -> EngineResult<()> {
                         stands = next_stands;
                         traffic_view.clear(world);
                         riders.clear(world, &crowd);
+                        bus_folk.clear(world, &crowd);
                         crowd.clear(world);
                         sweepers.clear(world);
                         if let Some(s) = extras.signals.as_mut() {
@@ -3756,6 +3759,17 @@ fn main() -> EngineResult<()> {
                 eye.as_dvec3(),
                 frame.dt as f64,
             )?;
+            // People waiting at the bus stops, getting on and off.
+            bus_folk.update(
+                world,
+                &crowd,
+                &traffic,
+                &citizens,
+                traffic_view.riding(),
+                eye2,
+                game_time,
+                frame.dt as f64,
+            )?;
             // `HW_VIEW=riders`: beside the driver of the nearest car (of
             // `HW_RIDER=cruiser|bubble|hover|taxi`, if given), looking in.
             if view == "riders" {
@@ -3765,6 +3779,7 @@ fn main() -> EngineResult<()> {
                         hw_sim::traffic::VehicleKind::Car(m, _) => format!("{m:?}"),
                         hw_sim::traffic::VehicleKind::SkyCar(_) => "Hover".into(),
                         hw_sim::traffic::VehicleKind::Taxi => "Taxi".into(),
+                        hw_sim::traffic::VehicleKind::Bus(_) => "Bus".into(),
                     };
                     want.is_empty() || name.eq_ignore_ascii_case(&want)
                 });

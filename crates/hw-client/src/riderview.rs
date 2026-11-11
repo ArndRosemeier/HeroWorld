@@ -69,12 +69,19 @@ pub fn riders(v: &Vehicle, sits: impl Fn(u32) -> Option<bool>) -> Vec<(usize, u3
         None
     };
     let r = seed.child("n").unit();
-    let model = model_of(v.kind);
-    let seats = crate::carmesh::seats(model).len();
+    let seats = seats_of(v.kind).len();
     // Passenger seats in the order they fill: beside the driver, then
     // behind. Taxi fares sit in the back.
     let (order, n): (Vec<usize>, usize) = if v.id & CAB_BIT != 0 {
         (vec![], 0)
+    } else if matches!(v.kind, VehicleKind::Bus(_)) {
+        // A bus: a few to a dozen and more, spread over the seats.
+        let mut order: Vec<(u64, usize)> = (1..seats)
+            .map(|s| (seed.child("seat").child(s as u64).0, s))
+            .collect();
+        order.sort();
+        let n = 2 + (r * r * 13.0) as usize;
+        (order.into_iter().map(|o| o.1).collect(), n)
     } else if v.kind == VehicleKind::Taxi {
         let n = if r < 0.35 {
             0
@@ -140,17 +147,25 @@ pub fn fits_seats(model: &engine::anim::AnimatedModel) -> bool {
     })
 }
 
-/// The body a vehicle is built on.
+/// The body a vehicle is built on (a bus is built on its own).
 pub fn model_of(kind: VehicleKind) -> CarModel {
     match kind {
         VehicleKind::Car(m, _) => m,
-        VehicleKind::SkyCar(_) | VehicleKind::Taxi => CarModel::Hover,
+        VehicleKind::SkyCar(_) | VehicleKind::Taxi | VehicleKind::Bus(_) => CarModel::Hover,
+    }
+}
+
+/// A vehicle's seats, the driver's first.
+pub fn seats_of(kind: VehicleKind) -> Vec<crate::carmesh::Seat> {
+    match kind {
+        VehicleKind::Bus(_) => crate::carmesh::bus_seats(),
+        _ => crate::carmesh::seats(model_of(kind)),
     }
 }
 
 /// Where seat `seat` of `v` puts its sitter's hips, turned with the car.
 pub fn seat_place(v: &Vehicle, seat: usize) -> Option<Place> {
-    let s = *crate::carmesh::seats(model_of(v.kind)).get(seat)?;
+    let s = *seats_of(v.kind).get(seat)?;
     let (yaw, pitch, roll) = crate::trafficview::angles(v);
     let q =
         DQuat::from_rotation_y(yaw) * DQuat::from_rotation_x(pitch) * DQuat::from_rotation_z(roll);
@@ -299,7 +314,8 @@ impl RiderView {
             }
         };
         let model = model_of(wreck.kind);
-        let seats = crate::carmesh::seats(model);
+        let bus = matches!(wreck.kind, VehicleKind::Bus(_));
+        let seats = seats_of(wreck.kind);
         let at = DVec2::new(wreck.pos.x, wreck.pos.z);
         let trouble = at - DVec2::new(blow.sin(), blow.cos()) * 4.0;
         let (yaw, pitch, roll) = crate::trafficview::angles(wreck);
@@ -330,7 +346,16 @@ impl RiderView {
             // middle of a bench.
             let hip = seats[seat].hip;
             let side = if hip.x >= 0.0 { 1.0 } else { -1.0 };
-            let out = DVec3::new(side * (car_half_width(model) + 0.45), 0.0, hip.z);
+            let out = if bus {
+                // Out of the nearest door, on the kerb side.
+                let (dz, _) = crate::carmesh::BUS_DOORS
+                    .into_iter()
+                    .min_by(|a, b| (a.0 - hip.z).abs().total_cmp(&(b.0 - hip.z).abs()))
+                    .unwrap_or_default();
+                DVec3::new(-(hw_sim::traffic::BUS_WIDTH * 0.5 + 0.45), 0.0, dz)
+            } else {
+                DVec3::new(side * (car_half_width(model) + 0.45), 0.0, hip.z)
+            };
             let door = wreck.pos + q * out;
             let door = DVec3::new(door.x, ground + STANDING_HIPS, door.z);
             let escape = citizens.escape(DVec2::new(door.x, door.z), trouble, RUN_MAX);

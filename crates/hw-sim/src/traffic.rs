@@ -17,12 +17,18 @@
 //!
 //! The sky lanes follow the main roads at set heights above them (three
 //! layers), so fliers keep clear of the buildings; most fliers are taxis.
+//!
+//! Buses run on the street lanes that pass bus stops: a few cars of such a
+//! lane are buses. A bus pulls up with its middle door at each stop on its
+//! lane (on the kerb side), stands there [`DWELL`] seconds while people get
+//! off and on (drawn by the client), and drives on; the lane queues behind
+//! it as behind any car.
 
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
 use hw_gen::urban::area::Area;
 use hw_gen::urban::lanes::{plan_lanes, street_lanes, LaneLoop};
-use hw_gen::urban::props::{CarModel, CAR_PAINTS};
+use hw_gen::urban::props::{CarModel, PropKind, CAR_PAINTS};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -45,6 +51,23 @@ const CAR_LEN: f64 = 4.8;
 /// A street car's width and roof height (m), for bumping into.
 const CAR_WIDTH: f64 = 2.0;
 const CAR_HEIGHT: f64 = 1.45;
+/// A bus: its length, width and roof height (m).
+pub const BUS_LEN: f64 = 11.2;
+pub const BUS_WIDTH: f64 = 2.55;
+pub const BUS_HEIGHT: f64 = 3.2;
+/// Liveries buses come in.
+pub const BUS_LIVERIES: u8 = 4;
+/// Seconds a bus stands at a stop.
+pub const DWELL: f64 = 16.0;
+/// A bus's top speed (m/s).
+const BUS_SPEED: f64 = 10.5;
+/// About one bus per this much lane (m), on lanes that pass stops.
+const BUS_EVERY: f64 = 1600.0;
+/// A bus stop serves the kerb lane within this distance of its shelter (m).
+const STOP_REACH: f64 = 10.0;
+/// Bit set in the `waited` of a bus sent to a friend ([`Traffic::sync_out`])
+/// once it has served the stop it stands at.
+const SERVED: u32 = 1 << 31;
 /// Lanes closer than this where they cross (m) conflict.
 const CONFLICT: f64 = 2.4;
 /// How far ahead a driver looks for a junction to give way at (m).
@@ -229,6 +252,18 @@ pub enum VehicleKind {
     SkyCar(u8),
     /// A flying taxi.
     Taxi,
+    /// A streamliner bus on a route through the stops (livery).
+    Bus(u8),
+}
+
+impl VehicleKind {
+    /// Its length, width and roof height (m).
+    pub fn size(self) -> (f64, f64, f64) {
+        match self {
+            VehicleKind::Bus(_) => (BUS_LEN, BUS_WIDTH, BUS_HEIGHT),
+            _ => (CAR_LEN, CAR_WIDTH, CAR_HEIGHT),
+        }
+    }
 }
 
 /// A vehicle as seen at one moment.
@@ -273,6 +308,72 @@ struct Lane {
     phase: f64,
     /// Height above the road (0 on the ground).
     lift: f64,
+    /// Which of its cars are buses (empty if none are).
+    buses: Vec<bool>,
+    /// The bus stops on it: where a bus's middle stands (round the loop,
+    /// sorted) and the stop's number in [`Traffic::bus_stops`].
+    stops: Vec<(f64, u32)>,
+}
+
+impl Lane {
+    fn is_bus(&self, k: usize) -> bool {
+        self.buses.get(k).copied().unwrap_or(false)
+    }
+
+    /// Half the length of car `k`.
+    fn half(&self, k: usize) -> f64 {
+        if self.is_bus(k) {
+            BUS_LEN * 0.5
+        } else {
+            CAR_LEN * 0.5
+        }
+    }
+
+    /// Car `k`'s top speed.
+    fn top(&self, k: usize) -> f64 {
+        if self.is_bus(k) {
+            self.speed.min(BUS_SPEED)
+        } else {
+            self.speed
+        }
+    }
+
+    /// The next stop a bus at `s` that has served every stop before `left`
+    /// pulls up at: where its middle stands (unwrapped near `s`), and the
+    /// stop's number.
+    fn next_stop(&self, s: f64, left: f64) -> Option<(f64, u32)> {
+        if self.stops.is_empty() {
+            return None;
+        }
+        let len = self.path.len();
+        // A stop more than a little behind is gone by.
+        let from = left.max(s - 1.5);
+        let base = from - from.rem_euclid(len);
+        let m = from.rem_euclid(len);
+        let i = self.stops.partition_point(|st| st.0 < m);
+        Some(match self.stops.get(i) {
+            Some(&(at, n)) => (base + at, n),
+            None => (base + len + self.stops[0].0, self.stops[0].1),
+        })
+    }
+}
+
+/// A bus stop the buses serve: where its shelter stands, the way it faces
+/// (to the road) and the height of its foot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BusStop {
+    pub pos: DVec2,
+    pub dir: DVec2,
+    pub y: f64,
+}
+
+/// A bus standing at a stop (see [`Traffic::bus_at_stop`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct AtStop {
+    /// The stop's number in [`Traffic::bus_stops`].
+    pub stop: u32,
+    /// Seconds it has stood there (it leaves at [`DWELL`]).
+    pub standing: f64,
 }
 
 /// A stretch of lane in a grid cell: (sky, lane, from, to).
@@ -292,6 +393,8 @@ struct Car {
     wrecked: bool,
     /// Off the road for now (out of a jam).
     parked: bool,
+    /// A bus: it has served every stop before this distance along.
+    left: f64,
 }
 
 /// Where another lane crosses this one: the stretch of this lane
@@ -369,6 +472,8 @@ pub struct Traffic {
     /// wrecks): no street car is on the road within them (see
     /// [`Self::set_blocked`]).
     blocked: Vec<(DVec2, f64)>,
+    /// The bus stops buses serve.
+    bus_stops: Vec<BusStop>,
     /// The street cars now and one step ago, by lane, in order along it.
     cars: Vec<Vec<Car>>,
     prev: Vec<Vec<Car>>,
@@ -436,6 +541,8 @@ impl Traffic {
                 phase: rng.range(0.0, len),
                 lift,
                 path,
+                buses: Vec::new(),
+                stops: Vec::new(),
             }
         };
         let ground: Vec<Lane> = ground_loops
@@ -470,6 +577,7 @@ impl Traffic {
             prev: Vec::new(),
             holds: Vec::new(),
             blocked: Vec::new(),
+            bus_stops: Vec::new(),
             time: 0.0,
             world,
         }
@@ -632,8 +740,110 @@ impl Traffic {
         }
         self.zones = zones;
         self.light_junctions();
+        self.plan_buses();
         self.reset_at(0.0);
         self
+    }
+
+    /// Finds the kerb lane each bus stop serves, and makes a few cars of
+    /// every lane with stops buses.
+    fn plan_buses(&mut self) {
+        let shelters: Vec<BusStop> = (self.world.props.iter())
+            .filter(|p| p.kind == PropKind::BusStop)
+            .map(|p| BusStop {
+                pos: p.pos,
+                dir: p.dir.normalize_or(DVec2::Y),
+                y: p.y,
+            })
+            .collect();
+        for stop in shelters {
+            // The nearest stretch of lane on the road side of the shelter.
+            let mut best: Option<(f64, usize, f64)> = None;
+            let r = DVec2::splat(STOP_REACH);
+            let (c0, c1) = (cell_of(stop.pos - r), cell_of(stop.pos + r));
+            for x in c0.0..=c1.0 {
+                for (_, list) in self.grid.range((x, c0.1)..=(x, c1.1)) {
+                    for &(flies, li, s0, s1) in list {
+                        if flies {
+                            continue;
+                        }
+                        let path = &self.ground[li as usize].path;
+                        let mut s = s0;
+                        while s <= s1 {
+                            let (p, d) = path.sample(s);
+                            let off = p - stop.pos;
+                            let far = off.length();
+                            // In front of it, running along the kerb.
+                            if far < STOP_REACH
+                                && off.dot(stop.dir) > 1.0
+                                && d.dot(stop.dir).abs() < 0.3
+                                && best.is_none_or(|b| (far, li as usize, s) < b)
+                            {
+                                best = Some((far, li as usize, s));
+                            }
+                            s += 0.5;
+                        }
+                    }
+                }
+            }
+            let Some((_, li, s)) = best else {
+                continue;
+            };
+            // Not in a junction: a bus standing there would block it.
+            let len = self.ground[li].path.len();
+            let s = s.rem_euclid(len);
+            let clear = BUS_LEN * 0.5 + CROSSWALK + 2.0;
+            let in_junction = self.zones[li].iter().any(|z| {
+                let zl = ahead(z.from, z.to, len);
+                ahead(z.from, s, len) < zl + clear || ahead(s, z.from, len) < clear
+            });
+            if in_junction {
+                continue;
+            }
+            let n = self.bus_stops.len() as u32;
+            self.bus_stops.push(stop);
+            self.ground[li].stops.push((s, n));
+        }
+        for l in &mut self.ground {
+            if l.stops.is_empty() || l.count == 0 {
+                continue;
+            }
+            l.stops
+                .sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            let n = l.count as usize;
+            let want = ((l.path.len() / BUS_EVERY).round() as usize).clamp(1, n.div_ceil(3));
+            l.buses = vec![false; n];
+            for i in 0..want {
+                l.buses[i * n / want] = true;
+            }
+        }
+    }
+
+    /// The bus stops buses serve (see [`Self::bus_at_stop`]).
+    pub fn bus_stops(&self) -> &[BusStop] {
+        &self.bus_stops
+    }
+
+    /// How many buses run.
+    pub fn bus_count(&self) -> usize {
+        self.ground
+            .iter()
+            .map(|l| l.buses.iter().filter(|b| **b).count())
+            .sum()
+    }
+
+    /// Street car `id` standing at a bus stop, if it is a bus doing so.
+    pub fn bus_at_stop(&self, id: u64) -> Option<AtStop> {
+        let (li, k) = Self::street_slot(id)?;
+        let l = self.ground.get(li)?;
+        let c = self.cars.get(li)?.get(k)?;
+        if !l.is_bus(k) || c.parked || c.wrecked {
+            return None;
+        }
+        let (at, stop) = l.next_stop(c.s, c.left)?;
+        let standing = c.wait();
+        ((at - c.s).abs() < 1.5 && c.v < 0.3 && standing < DWELL)
+            .then_some(AtStop { stop, standing })
     }
 
     /// Groups crossings into junctions and gives each junction two-phase
@@ -816,12 +1026,14 @@ impl Traffic {
                 let len = l.path.len();
                 (0..l.count as usize)
                     .map(|k| {
+                        let s = l.phase + l.speed * time + len * k as f64 / l.count as f64;
                         let mut c = Car {
-                            s: l.phase + l.speed * time + len * k as f64 / l.count as f64,
-                            v: l.speed,
+                            s,
+                            v: l.top(k),
                             waited: 0,
                             wrecked: false,
                             parked: false,
+                            left: s - 4.0,
                         };
                         if let Some(w) = old.get(i).and_then(|o| o.get(k)).filter(|w| w.wrecked) {
                             c = *w;
@@ -903,16 +1115,35 @@ impl Traffic {
                     out.push(self.come_back(li, k));
                     continue;
                 }
+                let top = l.top(k);
+                let half = l.half(k);
                 // The car ahead (round the loop for the last one).
                 let mut gap = f64::MAX;
-                let mut lead_v = l.speed;
+                let mut lead_v = top;
                 if let Some((j, d)) = Self::next_active(cars, k, len) {
-                    gap = d - CAR_LEN;
+                    gap = d - half - l.half(j);
                     lead_v = cars[j].v;
                 }
                 let room = gap;
+                // A bus pulls up at its next stop, its middle at the
+                // shelter, and stands there a while.
+                let mut left = c.left;
+                if l.is_bus(k) {
+                    if let Some((at, _)) = l.next_stop(c.s, c.left) {
+                        let here = (at - c.s).abs() < 1.5 && c.v < 0.3;
+                        if here && c.wait() >= DWELL {
+                            left = at + 0.5;
+                        } else {
+                            let stop = at - c.s + STANDSTILL;
+                            if stop < gap {
+                                gap = stop;
+                                lead_v = 0.0;
+                            }
+                        }
+                    }
+                }
                 // A crossing ahead someone else has: stop before it.
-                if let Some(stop) = self.give_way(&order, li as u32, k, c, (gap, lead_v)) {
+                if let Some(stop) = self.give_way(&order, li as u32, k, c, (gap, lead_v), half) {
                     if stop < gap {
                         gap = stop;
                         lead_v = 0.0;
@@ -922,7 +1153,7 @@ impl Traffic {
                 // and never drive on into them.
                 let mut room = room;
                 if let Some(d) = self.hold_ahead(li, c.s) {
-                    let short = d - CAR_LEN * 0.5 - HOLD_GAP;
+                    let short = d - half - HOLD_GAP;
                     if short < gap {
                         gap = short;
                         lead_v = 0.0;
@@ -933,13 +1164,13 @@ impl Traffic {
                 let want = STANDSTILL
                     + (c.v * HEADWAY + c.v * (c.v - lead_v) / (2.0 * (ACCEL * BRAKE).sqrt()))
                         .max(0.0);
-                let free = 1.0 - (c.v / l.speed).powi(4);
+                let free = 1.0 - (c.v / top).powi(4);
                 let a = if gap > 0.0 {
                     ACCEL * (free - (want / gap).powi(2))
                 } else {
                     -BRAKE * 3.0
                 };
-                let v = (c.v + a.clamp(-BRAKE * 3.0, ACCEL) * STEP).clamp(0.0, l.speed);
+                let v = (c.v + a.clamp(-BRAKE * 3.0, ACCEL) * STEP).clamp(0.0, top);
                 // Never into the car ahead.
                 let moved = ((c.v + v) * 0.5 * STEP).min((room + CAR_LEN * 0.1).max(0.0));
                 let waited = if v < 0.3 { c.waited + 1 } else { 0 };
@@ -949,6 +1180,7 @@ impl Traffic {
                     waited,
                     wrecked: false,
                     parked: waited as f64 * STEP >= PARK,
+                    left,
                 });
             }
             next.push(out);
@@ -1112,10 +1344,11 @@ impl Traffic {
         let s = if (b as i64) < k as i64 { s } else { s - len };
         Car {
             s,
-            v: self.ground[li].speed * 0.6,
+            v: self.ground[li].top(k) * 0.6,
             waited: 0,
             wrecked: false,
             parked: false,
+            left: s - 1.5,
         }
     }
 
@@ -1149,9 +1382,11 @@ impl Traffic {
         k: usize,
         c: &Car,
         room: (f64, f64),
+        half: f64,
     ) -> Option<f64> {
         let len = self.ground[li as usize].path.len();
-        let front = c.s + CAR_LEN * 0.5;
+        let front = c.s + half;
+        let long = half * 2.0;
         let mine = c.wait() >= PATIENT;
         // In a junction already: drive on out of it.
         let fm = front.rem_euclid(len);
@@ -1159,8 +1394,8 @@ impl Traffic {
         let i = zs.partition_point(|z| z.from <= fm);
         let inside = (1..=zs.len())
             .map(|b| &zs[(i + zs.len() - b) % zs.len()])
-            .take_while(|z| ahead(z.from, fm, len) < MAX_ZONE + CAR_LEN)
-            .any(|z| ahead(z.from, fm, len) < ahead(z.from, z.to, len) + CAR_LEN);
+            .take_while(|z| ahead(z.from, fm, len) < MAX_ZONE + long)
+            .any(|z| ahead(z.from, fm, len) < ahead(z.from, z.to, len) + long);
         // A red light ahead, seen from afar: stop before the crosswalk,
         // unless too close to stop. Even a car stuck for long waits while
         // people cross.
@@ -1195,7 +1430,7 @@ impl Traffic {
         let (first, _) = *cluster.first()?;
         let stop = Some((first - CROSSWALK).max(0.0));
         // No room past it: wait before it, whatever the others do.
-        if room.1 < 3.0 && room.0 + room.1 * 2.0 < end + CAR_LEN + 1.0 {
+        if room.1 < 3.0 && room.0 + room.1 * 2.0 < end + long + 1.0 {
             return stop;
         }
         if c.wait() >= IMPATIENT {
@@ -1209,8 +1444,8 @@ impl Traffic {
             let others = &self.cars[z.other as usize];
             let yields = in_stretch(
                 &order[z.other as usize],
-                z.other_from - LOOK - CAR_LEN,
-                LOOK + olen_z + CAR_LEN * 2.0,
+                z.other_from - LOOK - BUS_LEN,
+                LOOK + olen_z + BUS_LEN * 2.0,
                 olen,
             )
             .map(|j| (j, &others[j]))
@@ -1220,9 +1455,10 @@ impl Traffic {
                 if o.parked || z.other == li && (j == k || ahead(c.s, o.s, len) > len * 0.5) {
                     return false;
                 }
-                let of = (o.s + CAR_LEN * 0.5).rem_euclid(olen);
+                let oh = self.ground[z.other as usize].half(j);
+                let of = (o.s + oh).rem_euclid(olen);
                 // In the crossing now.
-                if ahead(z.other_from, of, olen) < olen_z + CAR_LEN {
+                if ahead(z.other_from, of, olen) < olen_z + oh * 2.0 {
                     return true;
                 }
                 let od = ahead(of, z.other_from, olen);
@@ -1345,7 +1581,13 @@ impl Traffic {
                     cars: chunk
                         .iter()
                         .map(|c| {
-                            let waited = if c.parked { u32::MAX } else { c.waited };
+                            let waited = if c.parked {
+                                u32::MAX
+                            } else if c.left > c.s - 1.5 {
+                                c.waited.min(SERVED - 1) | SERVED
+                            } else {
+                                c.waited.min(SERVED - 1)
+                            };
                             (c.s - base, c.v, waited)
                         })
                         .collect(),
@@ -1369,7 +1611,13 @@ impl Traffic {
                 c.s = s;
                 c.v = v;
                 c.parked = wait == u32::MAX;
-                c.waited = if c.parked { 0 } else { wait };
+                c.waited = if c.parked { 0 } else { wait & !SERVED };
+                // A bus that has served the stop it stands at: past it.
+                c.left = if !c.parked && wait & SERVED != 0 {
+                    s + 6.0
+                } else {
+                    s - 1.5
+                };
             }
         }
         self.prev[chunk.lane as usize] = self.cars[chunk.lane as usize].clone();
@@ -1509,14 +1757,15 @@ impl Traffic {
                     continue;
                 }
                 let fwd = DVec2::new(v.dir.x, v.dir.z).normalize_or(DVec2::Y);
+                let (long, wide, tall) = v.kind.size();
                 out.push(crate::collision::Solid {
                     origin: DVec2::new(v.pos.x, v.pos.z),
                     along: -fwd.perp(),
                     inward: fwd,
-                    min: DVec2::new(-CAR_WIDTH * 0.5, -CAR_LEN * 0.5),
-                    max: DVec2::new(CAR_WIDTH * 0.5, CAR_LEN * 0.5),
+                    min: DVec2::new(-wide * 0.5, -long * 0.5),
+                    max: DVec2::new(wide * 0.5, long * 0.5),
                     y0: v.pos.y,
-                    y1: v.pos.y + CAR_HEIGHT,
+                    y1: v.pos.y + tall,
                 });
             }
         }
@@ -1561,6 +1810,8 @@ impl Traffic {
             } else {
                 VehicleKind::SkyCar(rng.range_int(0, CAR_PAINTS as i64) as u8)
             }
+        } else if l.is_bus(k as usize) {
+            VehicleKind::Bus(rng.range_int(0, BUS_LIVERIES as i64) as u8)
         } else {
             let model = [CarModel::Cruiser, CarModel::Bubble, CarModel::Hover]
                 [rng.weighted(&[0.45, 0.35, 0.2])];
@@ -1585,8 +1836,10 @@ impl Traffic {
             let bob = hw_core::det::sin(time * 1.3 + (id % 97) as f64) * 0.25;
             (DVec3::new(p.x, h(s) + bob, p.y), dir, roll)
         } else {
-            let (pf, _) = l.path.sample(s + 1.6);
-            let (pb, _) = l.path.sample(s - 1.6);
+            // Its axles' points on the road.
+            let base = if l.is_bus(k as usize) { 3.05 } else { 1.6 };
+            let (pf, _) = l.path.sample(s + base);
+            let (pb, _) = l.path.sample(s - base);
             // Wheels on the drawn carriageway, not the bare road height.
             let (yf, yb) = (self.world.surface(pf), self.world.surface(pb));
             let lift = if matches!(kind, VehicleKind::Car(CarModel::Hover, _)) {
@@ -1614,7 +1867,8 @@ pub const SYNC_CHUNK: usize = 48;
 
 /// Some street cars of one lane as they are, for a friend who joins: the
 /// time, the lane, the first car's number and each car's (distance along,
-/// speed, steps waited, or `u32::MAX` while off the road).
+/// speed, steps waited, or `u32::MAX` while off the road; a bus that has
+/// served the stop it stands at has the top bit set).
 #[derive(Clone, Debug, PartialEq)]
 pub struct TrafficChunk {
     pub time: f64,
@@ -1717,14 +1971,22 @@ mod tests {
         for _ in 0..60 {
             t.advance_to(t.time() + 2.0);
             for (i, cars) in t.cars.iter().enumerate() {
-                let len = t.ground[i].path.len();
-                let on: Vec<&Car> = cars.iter().filter(|c| !c.parked).collect();
+                let l = &t.ground[i];
+                let len = l.path.len();
+                let on: Vec<(usize, &Car)> =
+                    cars.iter().enumerate().filter(|(_, c)| !c.parked).collect();
+                // Bumper to bumper, buses as long as they are.
+                let room = |a: usize, b: usize| (l.half(a) + l.half(b)) * 0.85;
                 for k in 0..on.len().saturating_sub(1) {
-                    assert!(on[k + 1].s - on[k].s > CAR_LEN * 0.85, "a crash");
+                    let (a, b) = (on[k], on[k + 1]);
+                    assert!(b.1.s - a.1.s > room(a.0, b.0), "a crash");
                 }
                 if on.len() > 1 {
                     let (a, b) = (on[on.len() - 1], on[0]);
-                    assert!(b.s + len - a.s > CAR_LEN * 0.85, "a crash round the loop");
+                    assert!(
+                        b.1.s + len - a.1.s > room(a.0, b.0),
+                        "a crash round the loop"
+                    );
                 }
             }
         }
@@ -1944,6 +2206,76 @@ mod tests {
                 t.time()
             );
         }
+    }
+
+    #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
+    fn buses_call_at_their_stops_and_drive_on() {
+        let mut t = traffic();
+        let shelters = (t.world.props.iter())
+            .filter(|p| p.kind == PropKind::BusStop)
+            .count();
+        assert!(shelters > 0, "the town has bus stops");
+        assert!(
+            t.bus_stops().len() * 10 >= shelters * 8,
+            "{} of {shelters} stops served",
+            t.bus_stops().len()
+        );
+        let buses: Vec<u64> = (t.ground.iter().enumerate())
+            .flat_map(|(li, l)| {
+                (0..l.buses.len())
+                    .filter(|&k| l.is_bus(k))
+                    .map(move |k| id_of(false, li as u32, k as u64))
+            })
+            .collect();
+        assert!(!buses.is_empty(), "no buses");
+        assert_eq!(buses.len(), t.bus_count());
+        // Every stop is on the kerb side of its bus: the shelter to the
+        // bus's right, a few metres from its middle.
+        let mut calls: BTreeMap<u64, std::collections::BTreeSet<u32>> = BTreeMap::new();
+        let mut left_again = 0;
+        let mut longest: f64 = 0.0;
+        let steps = (480.0 / STEP) as usize;
+        for _ in 0..steps {
+            t.advance_to(t.time() + STEP);
+            for &id in &buses {
+                let Some(at) = t.bus_at_stop(id) else {
+                    continue;
+                };
+                // Its last moment there: it leaves next step.
+                if at.standing + STEP >= DWELL {
+                    left_again += 1;
+                }
+                longest = longest.max(at.standing);
+                if at.standing > 3.0 {
+                    let v = t.vehicle(id, t.time()).expect("the bus");
+                    let stop = t.bus_stops()[at.stop as usize];
+                    let mid = DVec2::new(v.pos.x, v.pos.z);
+                    let fwd = DVec2::new(v.dir.x, v.dir.z).normalize();
+                    let to = stop.pos - mid;
+                    assert!(
+                        to.length() < STOP_REACH,
+                        "{:.1} m from its stop",
+                        to.length()
+                    );
+                    // Its right is -x, the lanes' perp.
+                    assert!(to.dot(fwd.perp()) > 1.0, "the stop is on the far side");
+                    assert!(
+                        to.dot(fwd).abs() < 2.0,
+                        "the middle door misses the shelter"
+                    );
+                    calls.entry(id).or_default().insert(at.stop);
+                }
+            }
+        }
+        assert!(
+            longest < DWELL + 0.5,
+            "a bus stood {longest:.1} s at a stop"
+        );
+        // With one stop in this square a bus may pass it only now and
+        // then: some bus calls, and none stays.
+        assert!(!calls.is_empty(), "no bus called at a stop");
+        assert!(left_again > 0, "no bus left a stop");
     }
 
     #[test]

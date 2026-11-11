@@ -45,9 +45,17 @@ pub struct Wrecks {
 }
 
 /// Distance from `at` to a car's body (0 inside it).
+/// A bus is a row of such posts along its length, as tall as it is.
 fn reach(v: &Vehicle, at: DVec3) -> f64 {
-    let y = at.y.clamp(v.pos.y, v.pos.y + TALL);
-    let d = (DVec3::new(v.pos.x, y, v.pos.z) - at).length();
+    let (long, _, tall) = v.kind.size();
+    let tall = tall.max(TALL);
+    let y = at.y.clamp(v.pos.y, v.pos.y + tall);
+    // The nearest point of its middle line, a post's radius in from the ends.
+    let fwd = DVec3::new(v.dir.x, 0.0, v.dir.z).normalize_or(DVec3::Z);
+    let reach = (long * 0.5 - ROUND).max(0.0);
+    let along = (at - v.pos).dot(fwd).clamp(-reach, reach);
+    let c = v.pos + fwd * along;
+    let d = (DVec3::new(c.x, y, c.z) - at).length();
     (d - ROUND).max(0.0)
 }
 

@@ -5,6 +5,7 @@
 pub mod atomview;
 pub mod bench;
 pub mod buildingmesh;
+pub mod busview;
 pub mod camclip;
 pub mod carmesh;
 pub mod chat;
