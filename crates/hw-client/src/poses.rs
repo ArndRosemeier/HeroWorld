@@ -426,24 +426,47 @@ pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
     let carried = make_clip(model, "carried", 2.0, |t| {
         // Swaying with the hero's steps.
         let w = (t * TAU).sin();
-        // Aimed as if standing, then tipped back 72 degrees about the
-        // hips: the thighs come out level over the hero's arm, the shins
-        // hang, one arm hangs limp and the other lies across the belly.
+        // Cradled in both arms (see `add_carry_clips`): tipped back about
+        // the hips so the thighs rise over the hero's arm and the shins
+        // hang, the back curled up so the head rests by the hero's
+        // shoulder, turned to them. The arm on the hero's side reaches
+        // round their neck, the other hangs. Aims come first and the turns
+        // carry them along, so each is aimed in the body as it will be.
+        let hips = -1.25;
+        let curl = 0.1;
+        let arms = Quat::from_axis_angle(Vec3::X, -(hips + curl));
+        let arm = |bone, child, d: Vec3| Aim {
+            bone,
+            child,
+            dir: arms * d,
+        };
         Pose {
             aims: vec![
                 aim("thigh_l", "calf_l", 0.1, -0.78, 0.63),
                 aim("thigh_r", "calf_r", -0.06, -0.78, 0.63),
                 aim("calf_l", "foot_l", 0.05, -0.46, -0.9 + 0.05 * w),
                 aim("calf_r", "foot_r", -0.03, -0.46, -0.9 - 0.05 * w),
-                aim("upperarm_l", "lowerarm_l", 0.15, -0.22, -0.98),
-                aim("lowerarm_l", "hand_l", 0.05, -0.2 + 0.08 * w, -1.0),
-                aim("upperarm_r", "lowerarm_r", -0.2, -0.87, 0.39),
-                aim("lowerarm_r", "hand_r", 0.9, -0.08, 0.4),
+                // Round the hero's neck (the hero is on the left, +x).
+                arm("upperarm_l", "lowerarm_l", Vec3::new(0.7, 0.3, 0.35)),
+                arm("lowerarm_l", "hand_l", Vec3::new(0.5, -0.05, 0.85)),
+                // Limp, swinging a little.
+                arm(
+                    "upperarm_r",
+                    "lowerarm_r",
+                    Vec3::new(-0.25, -1.0, 0.1 + 0.08 * w),
+                ),
+                arm(
+                    "lowerarm_r",
+                    "hand_r",
+                    Vec3::new(-0.1, -1.0, 0.25 + 0.1 * w),
+                ),
             ],
             turns: vec![
-                ("pelvis", Vec3::X, -1.25),
-                ("neck_01", Vec3::X, -0.25),
-                ("head", Vec3::X, -0.3 - 0.05 * w),
+                ("pelvis", Vec3::X, hips),
+                ("spine_01", Vec3::X, curl),
+                ("neck_01", Vec3::X, 0.05),
+                ("head", Vec3::Z, -0.45),
+                ("head", Vec3::X, -0.05 - 0.04 * w),
             ],
             lift: 0.0,
             seated: false,
@@ -542,7 +565,7 @@ pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
 
 /// The hero's clips for carrying someone hurt in both arms: "carry idle",
 /// "carry walk", "carry jog" and "carry sprint", each its plain clip with
-/// the arms held forward as a cradle at chest height (see
+/// the forearms held out level at the waist as a cradle (see
 /// [`add_rescue_clips`]'s "carried") and the back leaning a little against
 /// the weight.
 pub fn add_carry_clips(model: &mut AnimatedModel) -> Result<(), String> {
@@ -554,10 +577,12 @@ pub fn add_carry_clips(model: &mut AnimatedModel) -> Result<(), String> {
         let name = format!("carry {base}");
         let clip = make_clip_over(model, base, &name, None, |_| Pose {
             aims: vec![
-                aim("upperarm_l", "lowerarm_l", 0.35, -0.55, 0.75),
-                aim("lowerarm_l", "hand_l", -0.55, 0.15, 0.82),
-                aim("upperarm_r", "lowerarm_r", -0.35, -0.55, 0.75),
-                aim("lowerarm_r", "hand_r", 0.55, 0.15, 0.82),
+                // Upper arms down by the sides, forearms out level at the
+                // waist: the right under the back, the left under the knees.
+                aim("upperarm_l", "lowerarm_l", 0.3, -0.9, 0.3),
+                aim("lowerarm_l", "hand_l", 0.02, -0.08, 1.0),
+                aim("upperarm_r", "lowerarm_r", -0.3, -0.9, 0.3),
+                aim("lowerarm_r", "hand_r", -0.02, -0.08, 1.0),
             ],
             turns: vec![("spine_03", Vec3::X, -0.06)],
             lift: 0.0,

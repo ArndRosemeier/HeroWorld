@@ -707,7 +707,7 @@ prompt fills while you hold it (4 s for a crash, 5 s digging out of rubble, 3 s 
 of that at a fire put out with a freeze ray). Let go and it drains again. Freed people turn to
 their hero, thank them out loud (over their head and in the Local chat) with a hand on the heart
 and a wave for about 3 s, then walk off out of the way. The last one out is hurt, and an **ambulance** drives up the street and parks
-at a kerb about 50 m away: the hero who freed them carries them there in both arms (a red cross
+at a kerb about 50 m away: the hero who freed them carries them there in both arms (knees over one forearm, back over the other) (a red cross
 on the compass, "Carry them to the ambulance, N m"); within 5 m the medic in white takes them
 (double Guardian karma), the hurt one and the medic say a word of thanks, they are lifted in at the back and the ambulance drives off down the
 street. A carrier who is knocked down drops them; anyone lifts them again by holding E for a

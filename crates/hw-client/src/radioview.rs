@@ -1421,10 +1421,13 @@ impl Radio {
             let a = yaw.to_radians();
             let ahead = Vec3::new(a.sin(), 0.0, a.cos());
             let place = if h.real {
-                // Across the hero's arms (see `poses::add_carry_clips`): the
-                // hips just in front of the chest, legs to the hero's left.
-                let p = feet + ahead * 0.4 + Vec3::Y * 0.98;
-                Place::new(p.x, p.y, p.z).with_yaw_deg(yaw + 90.0)
+                // In the hero's arms (see `poses::add_carry_clips`): the
+                // hips in front of the hero, the thighs over the left
+                // forearm, the back over the right one, the head by the
+                // right shoulder (measured on the townsfolk and the heroes:
+                // forearms about 1.26 m up, 0.3 m either side).
+                let p = feet + ahead * 0.44 + Vec3::Y * 1.28;
+                Place::new(p.x, p.y, p.z).with_yaw_deg(yaw + 80.0)
             } else {
                 let p = feet + ahead * 0.45 + Vec3::Y * 1.0;
                 Place::new(p.x, p.y, p.z).with_yaw_deg(yaw)
