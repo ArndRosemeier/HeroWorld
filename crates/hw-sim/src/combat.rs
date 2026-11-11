@@ -1202,6 +1202,9 @@ pub struct Fights {
     pub city: Vec<(DVec3, f32, f32)>,
     /// The streets the colossus walks (none on a bare test ground).
     pub streets: Option<std::sync::Arc<crate::streets::Streets>>,
+    /// The route maps of the buildings with game-scale interiors:
+    /// villains find their way through rooms and up stairs by them.
+    pub floors: Option<std::sync::Arc<crate::floornav::Floors>>,
     /// Each colossus's route along them: (planned at tick, points left).
     pub routes: BTreeMap<NetId, (u64, Vec<DVec2>)>,
     /// Where people wait to be rescued (trapped, or lying hurt), set by the
@@ -1288,6 +1291,7 @@ impl Default for Fights {
             paths: BTreeMap::new(),
             city: Vec::new(),
             streets: None,
+            floors: None,
             routes: BTreeMap::new(),
             rescue_points: Vec::new(),
             rescues: Vec::new(),
@@ -1823,9 +1827,11 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     throws.append(&mut out.throws);
     land_sky(&mut actors, &mut sky, &solids, tick, &mut out);
     sky.append(&mut out.sky);
+    let floors = world.resource::<Fights>().floors.clone();
     enemies_act(
         &mut actors,
         &solids,
+        floors.as_deref(),
         tick,
         &mut out.fx,
         &mut paths,
@@ -4376,6 +4382,7 @@ const LOOK_AHEAD: f64 = 40.0;
 fn heading(
     paths: &mut BTreeMap<NetId, Path>,
     solids: &Obstacles,
+    floors: Option<&crate::floornav::Floors>,
     id: NetId,
     tick: u64,
     here: DVec3,
@@ -4383,6 +4390,40 @@ fn heading(
 ) -> DVec2 {
     let flat = |a: DVec3, b: DVec3| DVec2::new(b.x - a.x, b.z - a.z);
     let direct = flat(here, goal).normalize_or_zero();
+    // In (or into, or out of) a building with a route map: through its
+    // doorways and up its stairs.
+    if let Some(fl) =
+        floors.filter(|f| f.building_at(here).is_some() || f.building_at(goal).is_some())
+    {
+        let stale = paths
+            .get(&id)
+            .is_none_or(|p| tick >= p.made + ticks(1.5) || p.goal.distance(goal) > 3.0);
+        if stale {
+            match fl.way(solids, here, goal) {
+                Some(points) if !points.is_empty() => {
+                    paths.insert(
+                        id,
+                        Path {
+                            made: tick,
+                            goal,
+                            points,
+                        },
+                    );
+                }
+                _ => {
+                    paths.remove(&id);
+                    return direct;
+                }
+            }
+        }
+        let Some(p) = paths.get_mut(&id) else {
+            return direct;
+        };
+        while p.points.len() > 1 && flat(here, p.points[0]).length() < 0.8 {
+            p.points.remove(0);
+        }
+        return flat(here, p.points[0]).normalize_or(direct);
+    }
     // Far away (a villain flung across town walking home): find the way
     // over the next stretch only, so a long walk costs no more each tick
     // than a short one.
@@ -4429,6 +4470,7 @@ fn heading(
 fn enemies_act(
     actors: &mut [Actor],
     solids: &Obstacles,
+    floors: Option<&crate::floornav::Floors>,
     tick: u64,
     fx: &mut Vec<Fx>,
     paths: &mut BTreeMap<NetId, Path>,
@@ -4597,7 +4639,7 @@ fn enemies_act(
                     } else if flat.length() > 1.0 {
                         // Walking back to its corner; making off at a jog.
                         let pace = if en.leaving { 0.62 } else { 0.3 };
-                        let d = heading(paths, solids, id, tick, here, en.home) * pace;
+                        let d = heading(paths, solids, floors, id, tick, here, en.home) * pace;
                         input.move_x = d.x as f32;
                         input.move_z = d.y as f32;
                     } else {
@@ -4682,7 +4724,7 @@ fn enemies_act(
                                 }
                             }
                         } else if dist > far || !seen {
-                            go = heading(paths, solids, id, tick, here, there) * spec.speed;
+                            go = heading(paths, solids, floors, id, tick, here, there) * spec.speed;
                         } else if dist < near {
                             go = -dir * spec.speed * 0.8;
                         }

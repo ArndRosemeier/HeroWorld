@@ -14,6 +14,9 @@ const CELL: f64 = 1.0;
 const MARGIN: f64 = 14.0;
 /// At most this many cells across (paths longer than this are not looked for).
 const MAX_SPAN: i32 = 120;
+/// How far out from a walker's middle its shoulders reach (m): a little
+/// under its body's radius, so a doorway it fits through counts as free.
+const SHOULDER: f64 = crate::collision::BODY_RADIUS * 0.85;
 /// Highest step up or down between neighbouring cells (m).
 const MAX_STEP: f64 = 0.6;
 
@@ -24,20 +27,44 @@ fn standable(solids: &Obstacles, p: DVec2, near_y: f64) -> Option<f64> {
     if (y - near_y).abs() > 3.0 {
         return None;
     }
-    let free = solids.passable_at(DVec3::new(p.x, y + 0.5, p.y))
-        && solids.passable_at(DVec3::new(p.x, y + 1.5, p.y));
+    // Room for a body: the middle and a ring round it, at knee and head.
+    let r = SHOULDER;
+    let d = r * std::f64::consts::FRAC_1_SQRT_2;
+    let free = [
+        (0.0, 0.0),
+        (r, 0.0),
+        (-r, 0.0),
+        (0.0, r),
+        (0.0, -r),
+        (d, d),
+        (d, -d),
+        (-d, d),
+        (-d, -d),
+    ]
+    .iter()
+    .all(|(dx, dz)| {
+        solids.passable_at(DVec3::new(p.x + dx, y + 0.5, p.y + dz))
+            && solids.passable_at(DVec3::new(p.x + dx, y + 1.5, p.y + dz))
+    });
     free.then_some(y)
 }
 
 /// Is the straight walk from `a` to `b` (feet) free? Checks every half metre
-/// at knee and head height. Doors count as open: people open a closed one
-/// as they come to it (see [`crate::doors`]).
+/// at knee and head height, down the middle and at both shoulders (a walk
+/// that grazes a desk's corner with the body is not free). Doors count as
+/// open: people open a closed one as they come to it (see
+/// [`crate::doors`]).
 pub fn walkable_line(solids: &Obstacles, a: DVec3, b: DVec3) -> bool {
     let d = b - a;
-    let n = (DVec2::new(d.x, d.z).length() / 0.5).ceil().max(1.0) as usize;
+    let flat = DVec2::new(d.x, d.z);
+    let n = (flat.length() / 0.5).ceil().max(1.0) as usize;
+    let side = flat.normalize_or_zero().perp() * SHOULDER;
+    let side = DVec3::new(side.x, 0.0, side.y);
     (1..=n).all(|i| {
         let p = a + d * (i as f64 / n as f64);
-        solids.passable_at(p + DVec3::Y * 0.5) && solids.passable_at(p + DVec3::Y * 1.5)
+        [p, p + side, p - side].iter().all(|q| {
+            solids.passable_at(*q + DVec3::Y * 0.5) && solids.passable_at(*q + DVec3::Y * 1.5)
+        })
     })
 }
 

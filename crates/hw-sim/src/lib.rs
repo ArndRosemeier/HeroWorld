@@ -18,6 +18,7 @@ pub mod deepspots;
 pub mod destruction;
 pub mod doors;
 pub mod factions;
+pub mod floornav;
 pub mod gates;
 pub mod host;
 pub mod hostthread;
@@ -709,6 +710,8 @@ impl Sim {
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.area.clone()));
         sim.incidents = incidents::Incidents::new(town.area.clone());
         sim.crimes.set_area(town.area.clone());
+        sim.world.resource_mut::<Fights>().floors =
+            Some(Arc::new(floornav::Floors::new(&town.world)));
         sim.world.resource_mut::<Fights>().streets = Some(Arc::new(streets::Streets::new(
             &town.world,
             streets::TANK_STREET,

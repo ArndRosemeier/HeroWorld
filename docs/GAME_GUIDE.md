@@ -567,8 +567,8 @@ targeting, ragdolls, nobody dies.
   Assurance hall (grand hall) and the Zenith Radio house (split levels); a tight town gets
   fewer or smaller ones. Storeys 5.5-8 m high, halls at least 10 m across, steps 0.2 m high
   and 0.35 m deep, rails 1.1 m. Every wall, floor, step, rail and column is one solid box
-  the game both draws and collides with (`hw_gen::layout::solid`). Villains cannot
-  path between floors yet. Views:
+  the game both draws and collides with (`hw_gen::layout::solid`). Villains find their way
+  between rooms and floors by a route map of each plan (see Villain AI). Views:
   `HW_VIEW=comet|cometlobby|cometgallery|cometstairs|comethall|cometlift`, `HW_COMET=0|1|2`.
 - **Furniture** in those buildings (`hw_gen::layout::furnish`): 850 to 1 400 pieces a
   building, every one solid (rugs excepted). Office halls have desks in blocks of two rows,
@@ -583,9 +583,17 @@ targeting, ragdolls, nobody dies.
   apart. Walk in while the doors are open and stand: the car carries you. Shut doors are
   solid, so nobody falls into a shaft. Server and clients work the cars out from the same
   clock (`hw_gen::layout::lifts`, `hw_sim::lifts`), nothing is sent.
-- **Villain AI:** villains notice heroes within their aggro range, walk round walls and
-  houses on a grid A* path (`hw-sim/src/nav.rs`), and go home when the fight moves away.
-  Ranged ones keep their distance.
+- **Villain AI:** villains notice heroes within their aggro range and in sight, walk round
+  walls and houses on a grid A* path (`hw-sim/src/nav.rs`), and go home when the fight
+  moves away. Ranged ones keep their distance. A walk counts as free only if the body fits
+  (the line is checked at both shoulders, 0.34 m out), and grid cells need that much room
+  round them. In a building with a floor plan (the Comet buildings) they use its route map
+  (`hw-sim/src/floornav.rs`): points on both sides of every doorway (0.9 m out), the foot
+  and head of every flight (0.7 m off the steps), where landings meet, off the corners of
+  stairs standing in a room, the street 2 m out of each entrance; any two points on one
+  floor area are joined unless a stair is in the way. The route is found again every
+  1.5 s; inside a room the grid path goes round desks. Lifts are on the map but villains
+  take the stairs for now.
 - **Co-op level:** everyone fights at the **host's** level (health, damage and new groups
   follow it), so friends of any level can play together. Group size grows with players
   (5 minions alone, +1 per extra hero, up to 8), not their toughness.

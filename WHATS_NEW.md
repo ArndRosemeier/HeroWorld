@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.199 (2026-11-11)
+
+- Villains find their way through the Daily Comet building, the Atlas Assurance hall and the Zenith Radio house: run upstairs and the ones who saw you follow, through the doorways, round the desks and up the stairs.
+- Villains everywhere get stuck less on corners and furniture: they only take a way their whole body fits through.
+
 ## 0.198 (2026-11-11)
 
 - Portals work from both sides now: you can see through the back too, and walking into the back brings you out of the back of the other portal.
