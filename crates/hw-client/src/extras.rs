@@ -124,6 +124,9 @@ pub struct ExtrasParts {
     props: Vec<Vec<LodLevel>>,
     landmarks: Vec<(Vec<LodLevel>, Place)>,
     grass: Vec<Vec<LodLevel>>,
+    /// The furniture of the Comet buildings: a model per look and where
+    /// each stands.
+    furniture: Vec<(Vec<LodLevel>, Vec<Place>)>,
     roost: Option<RoostParts>,
 }
 
@@ -135,6 +138,7 @@ impl ExtrasParts {
             props: PropView::models(threads)?,
             landmarks: LandmarkView::models(town),
             grass: GrassView::models(green)?,
+            furniture: crate::cometmesh::furniture_models(town),
             roost: factionview::roost_parts(town),
         })
     }
@@ -145,6 +149,7 @@ enum Step {
     Prop(Vec<LodLevel>),
     Landmark(Vec<LodLevel>, Place),
     Grass(Vec<LodLevel>),
+    Furniture(Vec<LodLevel>, Vec<Place>),
     Roost(Box<RoostParts>),
     /// The ground stream (needs every prop set: the woods use the trees').
     Stream,
@@ -158,6 +163,7 @@ impl Step {
             Step::Prop(_) => "a prop model",
             Step::Landmark(..) => "a landmark",
             Step::Grass(_) => "a grass clump",
+            Step::Furniture(..) => "a piece of furniture",
             Step::Roost(_) => "the roost",
             Step::Stream => "the ground stream",
             Step::Ground(_) => "the ground",
@@ -285,6 +291,11 @@ impl ExtrasLoad {
         self.steps
             .extend(p.landmarks.into_iter().map(|(l, at)| Step::Landmark(l, at)));
         self.steps.extend(p.grass.into_iter().map(Step::Grass));
+        self.steps.extend(
+            p.furniture
+                .into_iter()
+                .map(|(l, at)| Step::Furniture(l, at)),
+        );
         self.steps.extend(p.roost.map(|r| Step::Roost(Box::new(r))));
         self.steps.push_back(Step::Stream);
         self.steps.push_back(Step::Ground(None));
@@ -302,6 +313,9 @@ impl ExtrasLoad {
                 self.landmark_sets.push(world.spawn_lod_at(levels, &[at])?)
             }
             Step::Grass(levels) => self.grass_sets.push(GrassView::install(world, levels)?),
+            Step::Furniture(levels, at) => {
+                self.landmark_sets.push(world.spawn_lod_at(levels, &at)?)
+            }
             Step::Roost(r) => {
                 let (lods, entities) = factionview::install_roost(world, *r)?;
                 self.roost_lods = lods;

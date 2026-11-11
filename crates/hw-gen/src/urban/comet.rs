@@ -21,6 +21,7 @@ use super::footprint::Footprint;
 use super::landmarks::{best_spot, landmark_at, Landmark, LandmarkKind};
 use super::roadgrid::RoadGrid;
 use super::world::TownWorld;
+use crate::layout::furnish::{items, Item};
 use crate::layout::office::plan_scheme;
 use crate::layout::solid::{pieces, Piece};
 use crate::layout::{Layout, Scheme};
@@ -96,13 +97,29 @@ pub fn parts(l: &Landmark) -> Vec<Piece> {
         .collect()
 }
 
+/// The building's furniture in the landmark's local frame.
+pub fn furniture(l: &Landmark) -> Vec<Item> {
+    let Some(plan) = layout(l) else {
+        return Vec::new();
+    };
+    items(&plan)
+        .into_iter()
+        .map(|i| Item {
+            at: point_to_local(plan.size, i.at),
+            face: -i.face,
+            ..i
+        })
+        .collect()
+}
+
 /// What stands still: everything but the lifts' landing doors, which
-/// open and shut with their cars ([`lifts`]).
+/// open and shut with their cars ([`lifts`]); and the furniture.
 pub(super) fn footprints(l: &Landmark) -> Vec<Footprint> {
     parts(l)
         .into_iter()
         .filter(|p| p.part != crate::layout::solid::Part::LiftDoor)
         .map(|p| p.shape)
+        .chain(furniture(l).iter().filter_map(Item::footprint))
         .collect()
 }
 

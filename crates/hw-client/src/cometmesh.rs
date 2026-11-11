@@ -123,6 +123,147 @@ pub fn building(b: &mut MeshBuilder, l: &Landmark, near: bool) {
     build(b, l, near, &|_| true);
 }
 
+/// A look of a kind of furniture: the kind, its width in centimetres and
+/// which of the house's three colour sets it wears.
+type Look = (hw_gen::layout::furnish::ItemKind, u32, u8);
+
+fn look(it: &hw_gen::layout::furnish::Item) -> Look {
+    // One colour set per room, so a room's seats and desks match.
+    let room = (it.space as u64).wrapping_mul(0x9E37_79B9) >> 7;
+    (it.kind, (it.w * 100.0).round() as u32, (room % 3) as u8)
+}
+
+/// One piece of furniture at the maker's origin, its front to +z, in the
+/// house colours of `scheme`.
+fn piece(m: &mut crate::interior::pieces::Maker, scheme: Scheme, (kind, w, c): Look) {
+    use crate::interior::pieces::{self as pc, Cover};
+    use hw_gen::layout::furnish::ItemKind as K;
+    let (_, band, accent) = livery(scheme);
+    let c = c as usize;
+    let w = w as f64 / 100.0;
+    let walnut = rgb(104, 62, 38);
+    let blond = rgb(196, 150, 100);
+    let steel = [rgb(120, 140, 130), rgb(140, 140, 136), rgb(110, 124, 140)][c];
+    let top = [rgb(70, 110, 90), rgb(60, 70, 64), rgb(150, 110, 70)][c];
+    let cloth = [
+        band,
+        accent,
+        rgb(60, 70, 110),
+        rgb(150, 100, 80),
+        rgb(90, 110, 70),
+    ];
+    let cover = Cover {
+        main: cloth[c],
+        second: cloth[c + 2],
+        wood: walnut,
+    };
+    let seed = c as u64 + 1;
+    match kind {
+        K::Desk => pc::desk(m, steel, top, 0, seed),
+        K::SwivelChair => pc::swivel_chair(m, &cover),
+        K::Chair => pc::chair(m, &cover),
+        K::Cabinet => pc::filing_cabinet(m, steel),
+        K::Bookcase => pc::bookcase(m, w, 2.0, walnut, seed),
+        K::Shelves => pc::gondola(m, w, rgb(150, 150, 140), seed, true),
+        K::Sofa => pc::sofa(m, w, &cover),
+        K::Armchair => pc::armchair(m, &cover),
+        K::CoffeeTable => {
+            let top = pc::kidney(1.3, 0.7, 32);
+            let legs = [
+                DVec2::new(-0.45, 0.16),
+                DVec2::new(0.46, 0.12),
+                DVec2::new(0.0, -0.13),
+            ];
+            pc::coffee_table(m, &top, blond, &legs);
+        }
+        K::Table => pc::dining_table(m, w, 1.0, walnut),
+        K::Counter => pc::shop_counter(m, w, rgb(236, 226, 204), band),
+        K::Case => pc::display_case(m, w, walnut, seed),
+        K::Plant => pc::plant(
+            m,
+            1.1 + c as f64 * 0.15,
+            [rgb(170, 90, 60), rgb(226, 220, 204), accent][c],
+            seed,
+        ),
+        K::WaterCooler => pc::water_cooler(m),
+        K::Rug => {
+            let pts = pc::oval(w, w, 40);
+            pc::rug(m, &pts, accent, band, 0.35);
+        }
+    }
+}
+
+/// The furniture's levels of detail: sides of round parts, and how far
+/// from the eye each level is drawn (m).
+const FURNITURE_SEGS: [usize; 3] = [24, 10, 6];
+const FURNITURE_REACH: [f32; 3] = [12.0, 32.0, 90.0];
+
+/// A look's mesh with round parts of `seg` sides.
+fn piece_mesh(scheme: Scheme, look: Look, seg: usize) -> Mesh {
+    // The display case's chrome frame only clears its glass top when its
+    // round parts are fine; it is a few hundred triangles either way.
+    let seg = if look.0 == hw_gen::layout::furnish::ItemKind::Case {
+        24
+    } else {
+        seg
+    };
+    let mut b = MeshBuilder::new();
+    let mut m =
+        crate::interior::pieces::Maker::new(&mut b, DVec3::ZERO, DVec3::Z, seg, Wear::Fresh);
+    piece(&mut m, scheme, look);
+    b.finish()
+}
+
+/// The furniture of every Comet building (`hw_gen::layout::furnish`): one
+/// model per look, close-up to far, and where each of them stands. Every
+/// piece is drawn where its solid box is.
+pub fn furniture_models(
+    town: &hw_gen::urban::world::TownWorld,
+) -> Vec<(Vec<LodLevel>, Vec<Place>)> {
+    use hw_gen::urban::landmarks::LandmarkKind;
+    let mut out = Vec::new();
+    for l in town
+        .landmarks
+        .iter()
+        .filter(|l| l.kind == LandmarkKind::CometBuilding)
+    {
+        let Some(plan) = comet::layout(l) else {
+            continue;
+        };
+        let mut places: std::collections::BTreeMap<(u8, u32, u8), (Look, Vec<Place>)> =
+            Default::default();
+        for it in comet::furniture(l) {
+            let lk = look(&it);
+            let p = l.to_plan(it.at);
+            let f = l.to_plan(it.at + it.face) - p;
+            // Chairs stand a little askew, as people leave them.
+            let askew = match it.kind {
+                hw_gen::layout::furnish::ItemKind::SwivelChair => (it.seed % 7) as f64 * 5.0 - 15.0,
+                hw_gen::layout::furnish::ItemKind::Chair => (it.seed % 5) as f64 * 3.0 - 6.0,
+                _ => 0.0,
+            };
+            let yaw = f.x.atan2(f.y).to_degrees() + askew;
+            places
+                .entry((lk.0 as u8, lk.1, lk.2))
+                .or_insert_with(|| (lk, Vec::new()))
+                .1
+                .push(
+                    Place::new(p.x as f32, (l.base + it.y) as f32, p.y as f32)
+                        .with_yaw_deg(yaw as f32),
+                );
+        }
+        for (lk, at) in places.into_values() {
+            let levels = FURNITURE_SEGS
+                .into_iter()
+                .zip(FURNITURE_REACH)
+                .map(|(seg, reach)| LodLevel::new(piece_mesh(plan.scheme, lk, seg), reach))
+                .collect();
+            out.push((levels, at));
+        }
+    }
+    out
+}
+
 /// The building's parts that `keep` lets through (all of them in the game;
 /// the z-fighting check takes them kind by kind to name what clashes).
 fn build(b: &mut MeshBuilder, l: &Landmark, near: bool, keep: &dyn Fn(&Part) -> bool) {
@@ -868,6 +1009,10 @@ mod tests {
     use super::*;
     use hw_gen::urban::landmarks::LandmarkKind;
 
+    fn plan_of(l: &Landmark) -> Scheme {
+        comet::layout(l).expect("a plan").scheme
+    }
+
     /// No two faces of a Comet building lie in one plane over each other.
     #[test]
     #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
@@ -900,7 +1045,23 @@ mod tests {
                 build(&mut b, &l, true, &|p| name(p) == *k);
                 check = check.with(k.clone(), &b.finish());
             }
+            let mut f = MeshBuilder::new();
+            for it in comet::furniture(&l) {
+                let o = DVec3::new(it.at.x, it.y, it.at.y);
+                let front = DVec3::new(it.face.x, 0.0, it.face.y);
+                let mut m = crate::interior::pieces::Maker::new(&mut f, o, front, 24, Wear::Fresh);
+                piece(&mut m, plan_of(&l), look(&it));
+            }
+            check = check.with("Furniture", &f.finish());
             let report = check.run();
+            if k == 0 {
+                eprintln!(
+                    "{}: {} triangles, {} pieces of furniture",
+                    comet::name(&l),
+                    report.triangles,
+                    comet::furniture(&l).len()
+                );
+            }
             if !report.is_clean() {
                 // By the two kinds of part and the way the faces look: one
                 // line per kind of clash, with its area and a place to look.
@@ -941,6 +1102,43 @@ mod tests {
                         "  {k}: {area:.1} m2 in {n}, e.g. ({:.2}, {:.2}, {:.2})",
                         at.x, at.y, at.z
                     ));
+                }
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    /// Every look of furniture at every level of detail, each on its own.
+    #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
+    fn furniture_has_no_z_fighting_at_any_detail() {
+        use hw_gen::layout::furnish::ItemKind as K;
+        let mut bad = Vec::new();
+        for (kind, w) in [
+            (K::Desk, 155),
+            (K::SwivelChair, 60),
+            (K::Chair, 50),
+            (K::Cabinet, 48),
+            (K::Bookcase, 180),
+            (K::Shelves, 240),
+            (K::Sofa, 200),
+            (K::Armchair, 90),
+            (K::CoffeeTable, 130),
+            (K::Table, 240),
+            (K::Counter, 400),
+            (K::Case, 160),
+            (K::Plant, 50),
+            (K::WaterCooler, 40),
+            (K::Rug, 460),
+        ] {
+            for seg in FURNITURE_SEGS {
+                let mesh = piece_mesh(Scheme::Atrium, (kind, w, 1), seg);
+                let report = engine::zfight::ZFightCheck::new()
+                    .options(crate::zfight::city_options())
+                    .with("piece", &mesh)
+                    .run();
+                if !report.is_clean() {
+                    bad.push(format!("{kind:?} at {seg} sides: {}", report.summary(3)));
                 }
             }
         }

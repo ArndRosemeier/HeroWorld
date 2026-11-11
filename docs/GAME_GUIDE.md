@@ -565,6 +565,13 @@ targeting, ragdolls, nobody dies.
   the game both draws and collides with (`hw_gen::layout::solid`). Villains cannot
   path between floors yet. Views:
   `HW_VIEW=comet|cometlobby|cometgallery|cometstairs|comethall|cometlift`, `HW_COMET=0|1|2`.
+- **Furniture** in those buildings (`hw_gen::layout::furnish`): 850 to 1 400 pieces a
+  building, every one solid (rugs excepted). Office halls have desks in blocks of two rows,
+  runs of four with 2.6 m gaps and 3.4 m aisles; other halls are archives (rows of shelves)
+  or canteens (long tables, six chairs); lobbies have a front desk facing the doors and up
+  to four seating groups; galleries have benches, plants and display cases along their real
+  walls. Kept clear: 2.8 m at doorways, 3.2 m at the foot and head of stairs, 0.9 m round
+  stairs, columns and lift shafts, a 2.2 m walk along a hall's walls.
 - **Lifts** in those buildings run on a timetable from the game clock (no call button): a
   car waits 7 s at a floor with its doors open (they take 0.9 s to slide), rides at up to
   3 m/s to the next floor, up to the top and down again; neighbouring cars leave 11 s

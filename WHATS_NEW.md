@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.197 (2026-11-11)
+
+- The Daily Comet building, the Atlas Assurance hall and the Zenith Radio house are furnished: office halls full of desks in blocks with wide aisles, archives, canteens, lobbies with a front desk and seats, benches and plants on the galleries.
+- All of it is solid: jump on a desk, duck behind a row of shelves.
+
 ## 0.196 (2026-11-11)
 
 - The cloud over the weather tower no longer flickers. Its puffs (and smoke and dust everywhere) are now drawn from the farthest to the nearest every frame, so they blend the same way from one frame to the next (Engine 0.057).
