@@ -1573,7 +1573,13 @@ impl FightView {
                 }
                 // The machines' and bosses' blows on heroes: numbers and a
                 // shake here, the big effects in `robotview`.
-                FxKind::Shell | FxKind::Stomp | FxKind::Pulse | FxKind::Leap
+                FxKind::Shell
+                | FxKind::Stomp
+                | FxKind::Pulse
+                | FxKind::Leap
+                | FxKind::Charge
+                | FxKind::Lance
+                | FxKind::Smash
                     if e.from != e.to && e.amount > 0 =>
                 {
                     self.blow(e, at, false, on_me, egui::Color32::from_rgb(255, 90, 70));
@@ -1588,7 +1594,14 @@ impl FightView {
                 | FxKind::Leap
                 | FxKind::PartBroken
                 | FxKind::Rise
-                | FxKind::Kneel => {}
+                | FxKind::Kneel
+                | FxKind::ChargeWindup
+                | FxKind::Charge
+                | FxKind::LanceWindup
+                | FxKind::Lance
+                | FxKind::SmashWindup
+                | FxKind::Smash
+                | FxKind::Overload => {}
             }
         }
     }

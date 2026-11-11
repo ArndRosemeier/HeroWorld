@@ -949,6 +949,12 @@ impl Obstacles {
             .collect()
     }
 
+    /// Building `i`'s ground box (lowest and highest x, z corners), without
+    /// making its plan.
+    pub fn building_bounds(&self, i: ColliderId) -> Option<(DVec2, DVec2)> {
+        self.find(i).map(|c| (c.lo, c.hi))
+    }
+
     /// A fixed collider by id.
     fn fixed(&self, i: ColliderId) -> Option<&Collider> {
         if i & FIXED != FIXED {

@@ -996,6 +996,25 @@ pub enum FxKind {
     /// of m/s and `knock` says the stomp caught someone; on a villain `to`
     /// the stomp hit, `amount` is the damage.
     Landing,
+    /// The colossus lowers its head to charge down a lane from where it
+    /// stands to `at` (`amount`: the lane's length in metres).
+    ChargeWindup,
+    /// The colossus charges (`from` == `to`, at where it starts), or runs a
+    /// hero down (`to`, `amount` dealt).
+    Charge,
+    /// The colossus plants itself and charges its Aether lance at the line
+    /// from it towards `at` (`amount`: the line's far end in metres).
+    LanceWindup,
+    /// The lance fires and rakes its line (`from` == `to`, `at` its far end),
+    /// or burns a hero (`to`, `amount` dealt).
+    Lance,
+    /// The colossus rears to ram the building at `at`.
+    SmashWindup,
+    /// It rams the building (`from` == `to`), or a hero by it (`to`).
+    Smash,
+    /// Heroes overloaded the cannon while the lance charged: it fizzles at
+    /// `at` and the machine reels.
+    Overload,
 }
 
 /// What a villain carries off ([`FxKind::Loot`]).
@@ -1091,6 +1110,13 @@ impl FxKind {
             FxKind::Loot => 57,
             FxKind::Launch => 58,
             FxKind::Landing => 59,
+            FxKind::ChargeWindup => 60,
+            FxKind::Charge => 61,
+            FxKind::LanceWindup => 62,
+            FxKind::Lance => 63,
+            FxKind::SmashWindup => 64,
+            FxKind::Smash => 65,
+            FxKind::Overload => 66,
         }
     }
 
@@ -1155,6 +1181,13 @@ impl FxKind {
             57 => FxKind::Loot,
             58 => FxKind::Launch,
             59 => FxKind::Landing,
+            60 => FxKind::ChargeWindup,
+            61 => FxKind::Charge,
+            62 => FxKind::LanceWindup,
+            63 => FxKind::Lance,
+            64 => FxKind::SmashWindup,
+            65 => FxKind::Smash,
+            66 => FxKind::Overload,
             _ => return Err(WireError),
         })
     }

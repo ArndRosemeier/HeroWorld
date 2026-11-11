@@ -214,3 +214,49 @@ fn the_colossus_walks_down_main_roads() {
         "it keeps to the street: {off_street:.1} m"
     );
 }
+
+/// With a hero in sight it rampages: it leaves the streets, comes for the
+/// hero through the houses and smashes buildings on its way.
+#[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
+fn the_colossus_smashes_its_way_through_town() {
+    use hw_sim::streets::{Streets, TANK_STREET};
+    let town = hw_sim::GeneratedTown::generate(Seed(1), hw_sim::DEFAULT_POPULATION);
+    let streets = Streets::new(&town.world, TANK_STREET);
+    let mut sim = Sim::for_town(Seed(1), &town);
+    // In the middle of town, by where heroes start.
+    let middle = sim.spawn_point(0);
+    let start = streets.node(streets.nearest(DVec2::new(middle.x, middle.z)).unwrap())
+        + DVec2::new(60.0, 0.0);
+    let start = streets.node(streets.nearest(start).unwrap());
+    let tank = sim.add_colossus(DVec3::new(start.x, GROUND_Y, start.y), DVec2::X);
+    // A hero 140 m off, across the blocks, who just watches (and takes
+    // what it throws at them: down, they still see it).
+    let hero_at = DVec3::new(start.x - 100.0, GROUND_Y, start.y + 100.0);
+    let me = hero(&mut sim, 1, hero_at);
+    let mut last = sim.position(tank).unwrap();
+    let mut walked = 0.0;
+    let (mut rams, mut charges, mut lances) = (0, 0, 0);
+    for _ in 0..TICK_HZ as u64 * 90 {
+        sim.step();
+        let now = sim.position(tank).unwrap();
+        walked += now.distance(last);
+        last = now;
+        for e in sim.fx() {
+            match e.kind {
+                FxKind::Smash if e.from == e.to => rams += 1,
+                FxKind::Charge if e.from == e.to => charges += 1,
+                FxKind::Lance if e.from == e.to => lances += 1,
+                _ => {}
+            }
+        }
+    }
+    let wrecked = sim.damage.broken().len();
+    println!(
+        "walked {walked:.0} m, {wrecked} buildings damaged, {rams} rams, {charges} charges, {lances} lances; hero {:?}",
+        sim.fighter(me).map(|f| f.status)
+    );
+    assert!(walked > 120.0, "it strides: {walked:.0} m");
+    assert!(wrecked >= 4, "it wrecks buildings: {wrecked}");
+    assert!(charges + lances > 0, "it uses its big moves");
+}

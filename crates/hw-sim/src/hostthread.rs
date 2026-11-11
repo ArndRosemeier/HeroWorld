@@ -347,6 +347,11 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
     let colossus_break = std::env::var("HW_COLOSSUS_BREAK")
         .ok()
         .and_then(|v| v.parse::<u8>().ok());
+    // `HW_COLOSSUS_RAMPAGE=1`: it smashes its way through town even with
+    // no hero near (screenshots).
+    if std::env::var("HW_COLOSSUS_RAMPAGE").is_ok_and(|v| v == "1") {
+        crate::robots::rampage_unseen(true);
+    }
     let mut busy = Duration::ZERO;
     let mut ticks = 0u32;
     let mut players: Option<BTreeMap<PlayerId, PlayerInfo>> = None;

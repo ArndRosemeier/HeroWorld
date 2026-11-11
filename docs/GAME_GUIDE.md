@@ -601,7 +601,7 @@ Numbers at level 1; health and damage scale with the villain's level like a hero
 | Syndicate Gunsel | Syndicate | Minion | 36 | 6.5 every 2.4 s | 24 m | 6 | Pinstripes and a ray pistol. Robberies. |
 | Robo-Sentry | Lab | Lieutenant | 150 | 10 every 2.4 s | 26 m | 20 | A walking robot with a ray cannon; the dish on its back shields every villain within 9 m. Break the dish first (a weak point). |
 | Mutant Alpha | Lab | Boss | 300 | 14 every 2 s | 2.8 m | 45 | Bald, dark, tusked, blazing eyes. Leads rampages and some corners. Every 9 s or so it **crouches (0.9 s) and leaps** 7–24 m onto a hero, hitting everyone within 4.5 m of where it lands. Get out of the way. |
-| The Doctor's Colossus | Lab | Colossus | 1 300 core | 20 | 140 m | 400 | The walking tank (below). |
+| The Doctor's Colossus | Lab | Colossus | 1 300 core | 26 | 170 m | 400 | The walking tank (below). |
 | Delver | Moles | Minion | 50 | 6.5 every 2 s | 2.4 m | 6 | Pale, goggled mole miner with a pick. |
 | Buccaneer | Sky Pirates | Minion | 42 | 6.5 every 1.7 s | 2.5 m | 6 | Striped shirt, cutlass. |
 | Deck Gunner | Sky Pirates | Minion | 34 | 6.5 every 2.4 s | 26 m | 6 | Long coat, ray musket. |
@@ -628,19 +628,36 @@ The **mad scientist** himself, the Doctor, shows only at the end of his story (b
 
 ### The colossus (`hw-sim/src/robots.rs`)
 
-A set piece in three acts, best with friends. It marches out of the robot works' gate (the Tesla tower's in a town without works) once the team
-is level 3 or more, at most every 25 minutes, and the Hero Signal calls everyone. It keeps
-to main roads at least 11 m wide (A* along road centre lines), and its feet and hull break
-what they walk into. Its health grows with the number of heroes.
+A set piece in three acts and a rampage, best with friends. It marches out of the robot works' gate (the Tesla tower's in a town without works) once the team
+is level 3 or more, at most every 25 minutes, and the Hero Signal calls everyone. It strides
+at 3 m/s (2.4 on two legs) and turns 30° a second. Out of every hero's sight (450 m) it keeps
+to main roads at least 11 m wide (A* along road centre lines); with a hero in sight it leaves
+the streets: it heads straight for the nearest hero within 220 m, through the houses, or from
+building to building when nobody is that near. Its feet and hull break what they walk into,
+and every 4 s (9 s in a fight) it rams a building within 18 m ahead (1.3 s warning: an orange
+ring on the wall; a column of 4.5 m blows from 1.5 to 9 m up, and heroes within 6 m take
+1.2× its damage). Its damage is 26 a blow at level 1, and grows with level like everyone's.
+Its health grows with the number of heroes.
 
-1. **Walking, armoured:** blows on the hull glance off (10% gets through). It shells heroes
-   with its cannon (a 1.8 s warning, 5 m blast, 10–140 m range, every 7 s) and stomps
-   heroes under it (1.2 s warning, 12 m). Its **four glowing knee actuators** and the
-   **cannon** are weak points (240 health each).
+1. **Walking, armoured:** blows on the hull glance off (5% gets through; the game says so).
+   Its moves, each warned on the ground first:
+   - **Shells:** 1.8 s warning (red ring), 7 m blast, 10–170 m, every 5 s; 1× damage.
+   - **Stomp** on heroes under it: 1.2 s warning, 12 m, every 5 s; 1.5×.
+   - **Charge:** at a hero on the ground 24–90 m off, every 16 s: it lowers its head for
+     1.8 s while a red lane shows where it runs, then runs it at 9 m/s (up to 80 m, 15 m past
+     the hero), bulldozing a lane through buildings; heroes within 7 m of it take 1.8×.
+   - **Aether lance:** at a hero 20–110 m off, every 15 s: it plants itself and charges the
+     cannon for 2.6 s while a violet line shows on the ground, then a beam from the muzzle rakes
+     the line from near to far in 1.2 s; heroes within 2.5 m of the beam take 2.2×, and it
+     scores the street and cuts the floors it passes. **Overload:** knock 15% off the
+     cannon's health while it charges and the beam fizzles, the cannon loses another 30%, and the
+     machine reels for 4 s (no moves).
+   Its **four glowing knee actuators** and the **cannon** are weak points (240 health each).
 2. **Down:** with two knees gone it drops on its belly, the clamshell opens and the
    **Aether core** takes full damage. Two robo-sentries per hero drop from the hatch, and
-   the core discharges every 7 s (13 m; fly or jump more than 2.5 m up to be clear).
-3. **Enraged:** after 25 s it hauls itself up on two legs, limping but firing every 4.5 s.
+   the core discharges every 7 s (13 m, 1.2×; fly or jump more than 2.5 m up to be clear).
+3. **Enraged:** after 25 s it hauls itself up on two legs: shells come in salvos of three
+   (8 m apart) every 4 s, charges every 11 s, the lance every 10 s.
    Break the other two knees and it goes down for good. Its wreck smokes for 45 s and is
    hauled off.
 
@@ -1494,6 +1511,7 @@ run, or put them in a `.bat`.
 | `HW_VISOR=1` | The police visor stays down; `HW_VISOR=0.4` freezes it part way in (screenshots). |
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
+| `HW_COLOSSUS_RAMPAGE=1` | The colossus smashes its way through town even with no hero near (screenshots). |
 | `HW_VIEW=fight` | Places a test group of minions near the spawn (the game starts without one). |
 | `HW_AUTOFIGHT=1` | The hero fights on its own (for screenshots); `HW_AUTOFIGHT=17,20` uses only those powers (power numbers, e.g. 16 Cryo Ray, 18 Tin Pal, 23 Hypno Spiral). `HW_CAM_DIST`, `HW_CAM_PITCH` and `HW_CAM_YAW` (degrees round the hero) set the hero camera for close-ups. |
 | `HW_WRECK=n` | n frames in, the cars near the camera are wrecked. |

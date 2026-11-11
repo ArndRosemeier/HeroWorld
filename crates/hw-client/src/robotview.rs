@@ -8,7 +8,9 @@
 //! A weak point that breaks blows its part off (an explosion, the part in
 //! flying pieces, smoke from the stump after). The colossus's attacks are
 //! telegraphed: a red ring where a shell will land, a ring round its feet
-//! before a stomp, a green ring round the core before a discharge.
+//! before a stomp, a green ring round the core before a discharge, a red
+//! lane before it charges, a violet line before its Aether lance rakes it,
+//! an orange ring on a wall before it rams the building.
 
 use crate::fightview::{self, FightView};
 use engine::prelude::*;
@@ -166,9 +168,21 @@ struct Drawn {
     /// A stomp or a discharge charging: seconds left.
     rear: f32,
     charge: f32,
+    /// The lance charging in the barrel: seconds left.
+    lance: f32,
     /// Beaten: seconds since, and the fire on its back.
     dead: Option<f32>,
     fire: Option<Fire>,
+}
+
+/// The Aether lance raking its line: the colossus, the line on the
+/// ground, seconds since it fired, and when the last fire was lit.
+struct Rake {
+    from: NetId,
+    near: Vec3,
+    far: Vec3,
+    t: f32,
+    lit: f32,
 }
 
 /// A shell in the air: from, to, seconds flown, seconds it takes.
@@ -197,6 +211,11 @@ pub struct RobotView {
     tried: bool,
     drawn: BTreeMap<NetId, Drawn>,
     shells: Vec<Shell>,
+    rakes: Vec<Rake>,
+    /// Seconds before the next tip about its armour, and whether the
+    /// first sight of one was told.
+    tip_in: f32,
+    told: bool,
     /// Warning rings on the ground: decal and seconds left.
     rings: Vec<(DecalId, f32)>,
     sounds: Option<Sounds>,
@@ -337,6 +356,37 @@ impl RobotView {
             );
         }
         self.shells.retain(|s| s.t < s.span);
+        // The lance charging: light gathers at the muzzle.
+        let muzzles = self.muzzles(world);
+        for (id, d) in &mut self.drawn {
+            if d.lance <= 0.0 {
+                continue;
+            }
+            d.lance = (d.lance - dt).max(0.0);
+            if let Some(&m) = muzzles.get(id) {
+                let k = 1.0 - d.lance / geo::LANCE_WINDUP as f32;
+                fightview::glow_at(world, m, rgb(200, 120, 255), 0.6 + 2.2 * k);
+            }
+        }
+        // The lance raking its line.
+        for r in &mut self.rakes {
+            r.t += dt;
+            let s = (r.t / geo::LANCE_SECONDS as f32).min(1.0);
+            let g = r.near.lerp(r.far, s);
+            let from = muzzles.get(&r.from).copied().unwrap_or(g + Vec3::Y * 15.0);
+            lance_beam(world, from, g);
+            fightview::glow_at(world, from, rgb(230, 170, 255), 2.4);
+            if r.t - r.lit > 0.12 {
+                r.lit = r.t;
+                let _ = world.explosion(g, 1.6);
+                let scar = Decal::new(DecalKind::Scorch, g + Vec3::Y * 0.2, Vec3::Y, 2.2)
+                    .depth(0.8)
+                    .fade(0.1, 8.0);
+                let _ = world.spawn_decal(scar);
+            }
+        }
+        self.rakes.retain(|r| r.t < geo::LANCE_SECONDS as f32);
+        self.tip_in = (self.tip_in - dt).max(0.0);
         for (id, left) in &mut self.rings {
             *left -= dt;
             if *left <= 0.0 {
@@ -508,6 +558,7 @@ impl RobotView {
             raise: 0.0,
             kick: 0.0,
             rear: 0.0,
+            lance: 0.0,
             charge: 0.0,
             dead: None,
             fire: None,
@@ -797,7 +848,7 @@ impl RobotView {
         let hull_y = hull_height(kneel) as f32 + bob;
         // It rears before a stomp, and lists when it is down on broken legs.
         let rear = if d.rear > 0.0 {
-            -6.0 * (d.rear / 1.2)
+            -6.0 * (d.rear / 1.2).min(1.5)
         } else {
             0.0
         };
@@ -946,6 +997,7 @@ impl RobotView {
         muzzles: &BTreeMap<NetId, Vec3>,
         me: Option<NetId>,
     ) {
+        self.tips(fight, events, all, me);
         for e in events {
             let at = Vec3::from(e.at);
             let whole = e.from == e.to;
@@ -1066,6 +1118,141 @@ impl RobotView {
                         );
                     }
                 }
+                FxKind::ChargeWindup => {
+                    // Head down, servos whining: a red lane to where it runs.
+                    let from = all.iter().find(|s| s.id == e.from).map_or(at, pos);
+                    if let Some(d) = self.drawn.get_mut(&e.from) {
+                        d.rear = geo::CHARGE_WINDUP as f32;
+                    }
+                    self.lane(
+                        world,
+                        from,
+                        at,
+                        geo::CHARGE_WIDTH as f32 * 0.7,
+                        rgb(255, 40, 30),
+                        3.6,
+                    );
+                    if let Some(s) = &self.sounds {
+                        world.play_sound(
+                            &s.servo,
+                            PlaySound::at(from)
+                                .volume(1.4)
+                                .pitch(0.6)
+                                .range(10.0, 300.0),
+                        );
+                        world.play_sound(
+                            &s.klaxon,
+                            PlaySound::at(from).volume(1.0).range(10.0, 260.0),
+                        );
+                    }
+                    if near_me(all, me, from, 160.0) {
+                        fight.say("It's charging! Get out of the red lane!");
+                    }
+                }
+                FxKind::Charge if whole => {
+                    dust(world, at, 10.0);
+                    fight.add_shake(0.8);
+                    if let Some(s) = &self.sounds {
+                        world.play_sound(
+                            &s.thud,
+                            PlaySound::at(at).volume(1.5).pitch(0.5).range(10.0, 400.0),
+                        );
+                    }
+                }
+                FxKind::LanceWindup => {
+                    // The lance charges: a violet line where it will rake.
+                    let from = all.iter().find(|s| s.id == e.from).map_or(at, pos);
+                    if let Some(d) = self.drawn.get_mut(&e.from) {
+                        d.lance = geo::LANCE_WINDUP as f32;
+                    }
+                    let way = Vec3::new(at.x - from.x, 0.0, at.z - from.z).normalize_or_zero();
+                    let near = from + way * geo::LANCE_NEAR as f32;
+                    self.lane(
+                        world,
+                        near,
+                        at,
+                        geo::LANCE_WIDTH as f32,
+                        rgb(190, 80, 255),
+                        4.0,
+                    );
+                    if let Some(s) = &self.sounds {
+                        world.play_sound(
+                            &s.hum,
+                            PlaySound::at(from)
+                                .volume(1.5)
+                                .pitch(0.7)
+                                .range(10.0, 300.0),
+                        );
+                    }
+                    if near_me(all, me, from, 160.0) {
+                        fight.say("Aether lance! Leave the violet line, or hit the cannon to overload it!");
+                    }
+                }
+                FxKind::Lance if whole => {
+                    let from = all.iter().find(|s| s.id == e.from).map_or(at, pos);
+                    let way = Vec3::new(at.x - from.x, 0.0, at.z - from.z).normalize_or_zero();
+                    let near = from + way * geo::LANCE_NEAR as f32;
+                    if let Some(d) = self.drawn.get_mut(&e.from) {
+                        d.lance = 0.0;
+                        d.kick = 1.0;
+                    }
+                    self.rakes.push(Rake {
+                        from: e.from,
+                        near,
+                        far: at,
+                        t: 0.0,
+                        lit: -1.0,
+                    });
+                    fight.add_shake(0.7);
+                    if let Some(s) = &self.sounds {
+                        world.play_sound(
+                            &s.zap,
+                            PlaySound::at(near)
+                                .volume(1.6)
+                                .pitch(0.6)
+                                .range(15.0, 500.0),
+                        );
+                    }
+                }
+                FxKind::SmashWindup => {
+                    let from = all.iter().find(|s| s.id == e.from).map_or(at, pos);
+                    if let Some(d) = self.drawn.get_mut(&e.from) {
+                        d.rear = geo::SMASH_WINDUP as f32;
+                    }
+                    self.ring(world, at, geo::SMASH_AREA as f32, rgb(255, 140, 30), 1.8);
+                    if let Some(s) = &self.sounds {
+                        world.play_sound(
+                            &s.servo,
+                            PlaySound::at(from).volume(1.2).range(10.0, 260.0),
+                        );
+                    }
+                }
+                FxKind::Smash if whole => {
+                    let _ = world.explosion(at + Vec3::Y * 4.0, 3.0);
+                    dust(world, at, 9.0);
+                    fight.add_shake(0.9);
+                    if let Some(s) = &self.sounds {
+                        world.play_sound(
+                            &s.crash,
+                            PlaySound::at(at).volume(1.6).pitch(0.8).range(10.0, 450.0),
+                        );
+                    }
+                }
+                FxKind::Overload => {
+                    if let Some(d) = self.drawn.get_mut(&e.from) {
+                        d.lance = 0.0;
+                    }
+                    let _ = world.explosion(at, 2.5);
+                    fightview::sparks(world, at, Vec3::Y, 120, rgb(220, 150, 255));
+                    fight.add_shake(0.6);
+                    if let Some(s) = &self.sounds {
+                        world.play_sound(
+                            &s.zap,
+                            PlaySound::at(at).volume(1.4).pitch(1.4).range(10.0, 300.0),
+                        );
+                    }
+                    fight.say("Cannon overloaded! It's reeling: hit it hard!");
+                }
                 FxKind::PartBroken => {
                     if let Some(s) = &self.sounds {
                         world
@@ -1163,6 +1350,59 @@ impl RobotView {
             .map(|d| (d.last, d.yaw))
     }
 
+    /// Tips for the colossus fight: on first sight, and when my blows glance
+    /// off its armour.
+    fn tips(
+        &mut self,
+        fight: &mut FightView,
+        events: &[Fx],
+        all: &[EntityState],
+        me: Option<NetId>,
+    ) {
+        let Some(me) = me else { return };
+        let Some(mine) = all.iter().find(|e| e.id == me).map(pos) else {
+            return;
+        };
+        let near = all
+            .iter()
+            .find(|e| e.kind == EntityKind::Colossus && pos(e).distance(mine) < 200.0);
+        let Some(tank) = near else { return };
+        let armoured = tank
+            .combat
+            .is_some_and(|c| c.effects & EFFECT_ARMOURED != 0 && c.status != Status::Down);
+        if !self.told {
+            self.told = true;
+            self.tip_in = 12.0;
+            fight.say(
+                "The colossus! Its armour turns blows: break the glowing knees and the cannon.",
+            );
+            return;
+        }
+        let glanced = events.iter().any(|e| e.from == me && e.to == tank.id);
+        if armoured && glanced && self.tip_in <= 0.0 {
+            self.tip_in = 15.0;
+            fight.say("Armour! Your blows glance off: aim for the glowing knees.");
+        }
+    }
+
+    /// A warning lane on the ground from `a` to `b`, `half` wide each side.
+    fn lane(
+        &mut self,
+        world: &mut World,
+        a: Vec3,
+        b: Vec3,
+        half: f32,
+        colour: Color,
+        seconds: f32,
+    ) {
+        let len = Vec3::new(b.x - a.x, 0.0, b.z - a.z).length();
+        let n = ((len / (half * 1.4)).ceil() as usize).clamp(1, 40);
+        for k in 0..=n {
+            let p = a.lerp(b, k as f32 / n as f32);
+            self.ring(world, p, half, colour, seconds);
+        }
+    }
+
     fn ring(&mut self, world: &mut World, at: Vec3, radius: f32, colour: Color, seconds: f32) {
         // On the ground only: a deep, bright decal would paint the robot and
         // everyone standing in it white.
@@ -1179,23 +1419,44 @@ impl RobotView {
 
 fn blank() -> geo::Colossus {
     geo::Colossus {
-        yaw: 0.0,
-        aim: 0.0,
-        walked: 0.0,
-        steps: 0,
-        kneel: 0.0,
-        down_at: None,
-        risen: false,
-        shell: None,
-        next_shell: 0,
-        stomp: None,
-        next_stomp: 0,
-        pulse: None,
-        next_pulse: 0,
-        goal: DVec3::ZERO,
-        wreck_at: None,
-        drop: 0,
         heroes: 1,
+        ..geo::Colossus::default()
+    }
+}
+
+/// Is my hero within `reach` of `at`?
+fn near_me(all: &[EntityState], me: Option<NetId>, at: Vec3, reach: f32) -> bool {
+    all.iter()
+        .find(|e| Some(e.id) == me)
+        .is_some_and(|e| pos(e).distance(at) < reach)
+}
+
+/// The Aether lance's beam: a thick violet column from the muzzle down to
+/// where it scores the ground.
+fn lance_beam(world: &mut World, a: Vec3, b: Vec3) {
+    let len = a.distance(b);
+    if !len.is_finite() || len < 0.05 {
+        return;
+    }
+    let n = ((len / 0.5) as usize).clamp(2, 200);
+    let p = world.particles_mut();
+    for i in 0..=n {
+        let at = a.lerp(b, i as f32 / n as f32);
+        let _ = p.burst(
+            ParticleEmitter::new(at)
+                .with_mode(ParticleMode::Burst)
+                .with_burst_count(2)
+                .with_size(0.75)
+                .with_size_variation(0.4)
+                .with_lifetime(0.12)
+                .with_spread(Vec3::splat(0.15))
+                .with_velocity_jitter(Vec3::splat(0.6))
+                .with_color(rgb(240, 200, 255))
+                .with_secondary_color(rgb(150, 50, 255))
+                .with_size_over_life(SizeOverLife::Shrink)
+                .with_seed(i as u32)
+                .with_emissive_intensity(9.0),
+        );
     }
 }
 
