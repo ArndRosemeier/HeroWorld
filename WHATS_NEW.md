@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.215 (2026-11-11)
+
+- The town's new office buildings are no longer empty: in working hours people stand at the desks, in the shops, the lobby and along the galleries, on every floor.
+
 ## 0.214 (2026-11-11)
 
 - A metropolis or megalopolis builds again: the title screen no longer hangs at 0% "building the metropolis". Working out which roads lie a hair above which at junctions took minutes for a big city; it now takes a moment, and every road ends up exactly where it did.

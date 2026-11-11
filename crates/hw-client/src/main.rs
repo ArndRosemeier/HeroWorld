@@ -4140,10 +4140,11 @@ fn main() -> EngineResult<()> {
                         })
                 })
                 .collect();
+            // (Nearest in space: a building of halls has people on every
+            // floor, and those on the camera's floor come first.)
+            let eye3 = eye.as_dvec3();
             indoor.sort_by(|a, b| {
-                let d = |c: &hw_sim::citizens::Citizen| {
-                    DVec2::new(c.pos.x, c.pos.z).distance_squared(eye2)
-                };
+                let d = |c: &hw_sim::citizens::Citizen| c.pos.distance_squared(eye3);
                 d(a).total_cmp(&d(b)).then(a.id.cmp(&b.id))
             });
             indoor.truncate(INDOOR_SHOWN_MAX);

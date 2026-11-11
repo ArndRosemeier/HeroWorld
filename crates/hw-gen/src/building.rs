@@ -472,6 +472,32 @@ impl BuildingPlan {
             .unwrap_or_default()
     }
 
+    /// Where people stand in a building of halls, in building
+    /// coordinates, storey by storey (lowest first): each place with the
+    /// use of its room.
+    pub fn standing(&self) -> Vec<Vec<(RoomKind, crate::layout::people::Stand)>> {
+        use crate::layout::SpaceKind;
+        let Some(l) = self.layout.as_ref() else {
+            return Vec::new();
+        };
+        let levels = l.levels();
+        let mut out = vec![Vec::new(); levels.len()];
+        for st in crate::layout::people::standing(l) {
+            let room = match l.spaces[st.space].kind {
+                SpaceKind::Hall | SpaceKind::Boardroom => RoomKind::Office,
+                SpaceKind::Shop => RoomKind::Shop,
+                SpaceKind::Gallery | SpaceKind::Arcade | SpaceKind::Concourse => RoomKind::Gallery,
+                _ => RoomKind::Lobby,
+            };
+            let level = levels
+                .iter()
+                .rposition(|y| *y <= st.at.y + 1e-6)
+                .unwrap_or(0);
+            out[level].push((room, st));
+        }
+        out
+    }
+
     pub fn height(&self) -> f64 {
         self.floors
             .last()

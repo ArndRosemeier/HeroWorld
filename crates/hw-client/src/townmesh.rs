@@ -317,6 +317,10 @@ struct BlockMeshes {
     far: Vec<PreparedMesh>,
 }
 
+/// The most places on one floor of a building (their number is part of
+/// the id of whoever stands there: `Citizens::indoors`).
+const INDOOR_PLACES: usize = 256;
+
 /// The places to stand on one building's floor drawn open.
 #[derive(Clone, Debug)]
 pub struct IndoorSpots {
@@ -485,6 +489,30 @@ fn make_cell(job: CellJob) -> CellMeshes {
                         level: level.min(plan.floors.len().saturating_sub(1) as u32),
                         spots: list,
                     });
+                }
+            }
+            // A building of halls is never cut open: people stand on
+            // every one of its floors while it is drawn in full.
+            if blocked {
+                for (level, places) in plan.standing().into_iter().enumerate() {
+                    let list: Vec<crate::citymesh::Spot> = places
+                        .iter()
+                        .take(INDOOR_PLACES)
+                        .map(|(room, st)| crate::citymesh::Spot {
+                            room: *room,
+                            at: wb
+                                .site
+                                .to_city(DVec3::new(st.at.x, wb.base + st.at.y, st.at.z)),
+                            facing: wb.site.along * st.face.x + wb.site.inward * st.face.y,
+                        })
+                        .collect();
+                    if !list.is_empty() {
+                        spots.push(IndoorSpots {
+                            building: cb.id,
+                            level: level as u32,
+                            spots: list,
+                        });
+                    }
                 }
             }
             if blocked {

@@ -590,6 +590,12 @@ targeting, ragdolls, nobody dies.
   and the rooms on one side are one open hall. In an atrium plan a wing on about a third of
   the storeys has no gallery (one open hall up to the rail), the middle of the front merges
   with a corner now and then, and bridges cross on about half the storeys from the second up.
+- **People in those buildings** (`hw_gen::layout::people`): places to stand on every floor,
+  on open floor at least 0.55 m from anything solid, 0.9 m from walls and 2.6 m from a
+  doorway's middle; one to every 22 m2 of a hall or boardroom, 16 m2 of a shop, 30 m2 of a
+  lobby or atrium floor, 40 m2 of a gallery, arcade or concourse. Who stands there follows the
+  hours of the people indoors (halls as offices: 60% of places taken from 8 to 18 o'clock);
+  the 120 nearest the camera in space are shown.
 - **Furniture** in those buildings (`hw_gen::layout::furnish`): 850 to 1 400 pieces a
   building, every one solid (rugs excepted). Office halls have desks in blocks of two rows,
   runs of four with 2.6 m gaps and 3.4 m aisles; other halls are archives (rows of shelves)

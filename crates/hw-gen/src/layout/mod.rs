@@ -24,6 +24,7 @@
 pub mod furnish;
 pub mod lifts;
 pub mod office;
+pub mod people;
 pub mod solid;
 mod stairs;
 #[cfg(test)]
