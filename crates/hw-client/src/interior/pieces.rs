@@ -2229,7 +2229,9 @@ pub fn back_bar(m: &mut Maker, w: f64, wood: Color) {
 /// bass leaning on the rail.
 pub fn bandstand(m: &mut Maker) {
     m.slab(Mat::Paint(rgb(150, 30, 40)), &oval(1.9, 1.5, 24), 0.0, 0.22);
-    m.slab(Mat::Chrome, &oval(1.94, 1.54, 24), 0.18, 0.22);
+    // The chrome band stops short of the stage top, so the two tops never
+    // lie in one plane.
+    m.slab(Mat::Chrome, &oval(1.94, 1.54, 24), 0.15, 0.2);
     let rail: Vec<DVec3> = (0..=12)
         .map(|k| {
             let a = PI * k as f64 / 12.0;

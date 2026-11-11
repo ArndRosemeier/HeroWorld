@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.193 (2026-11-11)
+
+- The night clubs' bandstand no longer flickers: its chrome band sat flush with the red stage top.
+
 ## 0.192 (2026-11-11)
 
 - Every hero has a portal now, free, on keys 9 and 0. **Portal Home** (9) marks where your portal leads. **Open Portal** (0) tears a portal open a stride ahead of you: step in and you walk out at home, step back in and you are back where you were. Friends can walk through it too.
