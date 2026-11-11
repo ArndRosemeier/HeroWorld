@@ -260,6 +260,9 @@ impl Host {
             for m in self.sim.story.snapshot() {
                 r.rel_out.push(m);
             }
+            for m in self.sim.missions.snapshot() {
+                r.rel_out.push(m);
+            }
             for m in self.sim.alarms.snapshot() {
                 r.rel_out.push(m);
             }

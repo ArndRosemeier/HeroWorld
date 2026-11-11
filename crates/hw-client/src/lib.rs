@@ -47,6 +47,7 @@ pub mod mastview;
 pub mod menacemesh;
 pub mod menaceview;
 pub mod minimap;
+pub mod missionview;
 pub mod nightlights;
 pub mod people;
 pub mod poses;

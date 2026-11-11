@@ -83,6 +83,8 @@ struct Pad {
     nodes: Vec<usize>,
     /// Stairs in the way of walking across it.
     blocks: Vec<Rect>,
+    /// What the space is (None for a stair's landing).
+    kind: Option<SpaceKind>,
 }
 
 /// A flight as a walk: its points from foot to head.
@@ -103,6 +105,8 @@ pub struct FloorGraph {
     nodes: Vec<DVec3>,
     /// Points on the street in front of an entrance.
     outside: Vec<usize>,
+    /// The widest entrance's street point (and its width).
+    main: Option<(f64, usize)>,
     edges: Vec<Vec<Edge>>,
     pads: Vec<Pad>,
     steps: Vec<Steps>,
@@ -133,6 +137,7 @@ impl FloorGraph {
             size: l.size,
             nodes: Vec::new(),
             outside: Vec::new(),
+            main: None,
             edges: Vec::new(),
             pads: Vec::new(),
             steps: Vec::new(),
@@ -149,6 +154,7 @@ impl FloorGraph {
                 host: s.within.unwrap_or(i),
                 nodes: Vec::new(),
                 blocks: Vec::new(),
+                kind: Some(s.kind),
             });
         }
         for st in &l.stairs {
@@ -159,6 +165,7 @@ impl FloorGraph {
                     host: st.host,
                     nodes: Vec::new(),
                     blocks: Vec::new(),
+                    kind: None,
                 });
             }
         }
@@ -198,6 +205,9 @@ impl FloorGraph {
                         at.y + n.y * OUT_FRONT,
                     ));
                     g.outside.push(out);
+                    if g.main.is_none_or(|(w, _)| link.width > w + 1e-6) {
+                        g.main = Some((link.width, out));
+                    }
                     if let Some(i) = inside {
                         g.join(i, out, Via::Walk);
                     }
@@ -675,6 +685,23 @@ impl FloorGraph {
             .filter(|i| !self.outside.contains(i))
             .map(|i| self.nodes[i])
             .collect()
+    }
+
+    /// The rooms: each space's kind, floor plan and floor height.
+    pub fn rooms(&self) -> Vec<(SpaceKind, Rect, f64)> {
+        self.pads
+            .iter()
+            .filter_map(|p| p.kind.map(|k| (k, p.rect, p.y)))
+            .collect()
+    }
+
+    /// The street in front of the main way in (the widest; the first of
+    /// equals).
+    pub fn front(&self) -> DVec3 {
+        self.main
+            .map_or(DVec3::new(self.size.x * 0.5, 0.0, -OUT_FRONT), |(_, i)| {
+                self.nodes[i]
+            })
     }
 
     /// How many points the map has.

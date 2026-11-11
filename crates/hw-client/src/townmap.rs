@@ -11,7 +11,7 @@
 //! pictures. At most [`MAX_TILES`] are kept (the farthest from the view go
 //! first), so a megacity's map costs no more than a village's.
 
-use crate::dispatchview::star;
+use crate::dispatchview::{diamond, star};
 use crate::fightview::con_colour;
 use crate::mapraster::{self, TileKey, LEVEL_SPAN, TILE_PX};
 use crate::radioview::Radio;
@@ -310,6 +310,11 @@ impl TownMap {
                 st.goal.clone(),
                 egui::Color32::from_rgb(110, 70, 0),
             ));
+        }
+        if let Some((st, at)) = radio.case.as_ref().and_then(|s| s.at.map(|a| (s, a))) {
+            let p = to_screen(DVec2::new(at.x as f64, at.z as f64));
+            diamond(&painter, p, 8.0);
+            names.push((p, 9.0, st.goal.clone(), egui::Color32::from_rgb(0, 95, 90)));
         }
         for c in radio.calls.values() {
             let p = to_screen(DVec2::new(c.at.x as f64, c.at.z as f64));

@@ -24,6 +24,7 @@ pub mod host;
 pub mod hostthread;
 pub mod incidents;
 pub mod lifts;
+pub mod missions;
 pub mod nav;
 pub mod npcheroes;
 pub mod physics;
@@ -643,6 +644,8 @@ pub struct Sim {
     pub crimes: crimes::Crimes,
     /// The Doctor's story: the chain of chapters (see [`story`]).
     pub story: story::Story,
+    /// Indoor cases from Hero Hall (see [`missions`]).
+    pub missions: missions::Missions,
     /// Trouble bystanders notice: they run, stare, cars stop (see
     /// [`alarms`]).
     pub alarms: alarms::Alarms,
@@ -710,8 +713,9 @@ impl Sim {
         sim.wrecks = wrecks::Wrecks::new(traffic::Traffic::new(town.area.clone()));
         sim.incidents = incidents::Incidents::new(town.area.clone());
         sim.crimes.set_area(town.area.clone());
-        sim.world.resource_mut::<Fights>().floors =
-            Some(Arc::new(floornav::Floors::new(&town.world)));
+        let floors = Arc::new(floornav::Floors::new(&town.world));
+        sim.world.resource_mut::<Fights>().floors = Some(floors.clone());
+        sim.missions = missions::Missions::plan(&town.world, floors, seed.0);
         sim.world.resource_mut::<Fights>().streets = Some(Arc::new(streets::Streets::new(
             &town.world,
             streets::TANK_STREET,
@@ -1006,6 +1010,7 @@ impl Sim {
             incidents: incidents::Incidents::default(),
             crimes: crimes::Crimes::default(),
             story: story::Story::default(),
+            missions: missions::Missions::default(),
             alarms: alarms::Alarms::default(),
             crime_alarms: BTreeMap::new(),
             deep: deepspots::DeepSpots::default(),
@@ -1190,6 +1195,7 @@ impl Sim {
             &mut self.alarms,
         );
         self.story.step(&mut self.world, self.tick);
+        self.missions.step(&mut self.world, self.tick);
         self.raise_crime_alarms();
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
@@ -1445,6 +1451,7 @@ impl Sim {
         news.extend(self.incidents.take_news());
         news.extend(self.crimes.take_news());
         news.extend(self.story.take_news());
+        news.extend(self.missions.take_news());
         news.extend(self.damage.take_news());
         news.extend(self.doors.take_news());
         news.extend(self.world.resource_mut::<Fights>().gates.take_news());

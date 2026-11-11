@@ -211,6 +211,17 @@ pub fn compass(ctx: &egui::Context, eye: Vec3, look: Vec3, radio: &Radio, mine: 
         });
         star(&painter, egui::pos2(x, rect.top() + 11.0), 9.0);
     }
+    // The case's objective: a teal diamond.
+    if let Some(at) = radio.case.as_ref().and_then(|s| s.at) {
+        let b = bearing(glam::Vec2::new(at.x - eye.x, at.z - eye.z));
+        let rel = (b - heading + PI).rem_euclid(TAU) - PI;
+        let x = x_of(b).unwrap_or(if rel < 0.0 {
+            rect.left() + 8.0
+        } else {
+            rect.right() - 8.0
+        });
+        diamond(&painter, egui::pos2(x, rect.top() + 11.0), 7.0);
+    }
     for c in radio.calls.values() {
         let d = glam::Vec2::new(c.at.x - eye.x, c.at.z - eye.z);
         let b = bearing(d);
@@ -264,6 +275,21 @@ pub fn star(painter: &egui::Painter, c: egui::Pos2, r: f32) {
     painter.add(egui::Shape::line(
         rim,
         egui::Stroke::new(1.2_f32, egui::Color32::from_rgb(90, 50, 0)),
+    ));
+}
+
+/// The case's mark: a teal diamond with a dark rim.
+pub fn diamond(painter: &egui::Painter, c: egui::Pos2, r: f32) {
+    let pts = vec![
+        c + egui::vec2(0.0, -r),
+        c + egui::vec2(r, 0.0),
+        c + egui::vec2(0.0, r),
+        c + egui::vec2(-r, 0.0),
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        pts,
+        crate::missionview::CASE_TEAL,
+        egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(10, 40, 40)),
     ));
 }
 

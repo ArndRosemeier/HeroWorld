@@ -374,6 +374,8 @@ pub struct Radio {
     /// The Doctor's story, shown on the radio and the compass (see
     /// [`crate::storyview`]).
     pub story: Option<StoryMark>,
+    /// The indoor case, shown under it (see [`crate::missionview`]).
+    pub case: Option<StoryMark>,
     /// Who rescues draw their people from.
     pub cast: Cast,
     leaving: Vec<Leaving>,
@@ -1776,7 +1778,11 @@ impl Radio {
                         });
                 });
         }
-        if self.calls.is_empty() && self.flash.is_none() && self.story.is_none() {
+        if self.calls.is_empty()
+            && self.flash.is_none()
+            && self.story.is_none()
+            && self.case.is_none()
+        {
             return;
         }
         let mut calls: Vec<(&u32, &Call)> = self.calls.iter().collect();
@@ -1821,6 +1827,31 @@ impl Radio {
                             ui.label(
                                 egui::RichText::new(goal)
                                     .color(STORY_GOLD)
+                                    .size(15.0)
+                                    .strong(),
+                            );
+                            ui.separator();
+                        }
+                        if let Some(st) = &self.case {
+                            ui.label(
+                                egui::RichText::new(&st.heading)
+                                    .color(crate::missionview::CASE_TEAL)
+                                    .size(12.0),
+                            );
+                            let mut goal = st.goal.clone();
+                            if let Some(at) = st.at {
+                                let d = at - eye;
+                                let flat = glam::Vec2::new(d.x, d.z);
+                                let ahead = glam::Vec2::new(look.x, look.z).normalize_or_zero();
+                                goal += &format!(
+                                    "  {:.0} m at {} o'clock",
+                                    flat.length(),
+                                    clock(ahead, flat)
+                                );
+                            }
+                            ui.label(
+                                egui::RichText::new(goal)
+                                    .color(crate::missionview::CASE_TEAL)
                                     .size(15.0)
                                     .strong(),
                             );

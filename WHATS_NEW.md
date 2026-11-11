@@ -3,10 +3,17 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.201 (2026-11-11)
+
+- Cases: Atomic Annie at Hero Hall now hands out building cases. A gang has taken over the Daily Comet, Atlas Assurance or Zenith Radio: clear it room by room and beat their boss on the top floor, or search the floors for three clues.
+- Gangs inside buildings keep to their rooms: you can clear one room without the whole gang coming for you.
+- The radio, compass and map show the case in teal.
+
 ## 0.200 (2026-11-11)
 
 - The town map (M) now shows what the minimap shows: every house and street up close, blocks further out, parks, water and the villains' quarter.
 - Drag the map with the mouse to look around, and zoom with the wheel. "Back to me" brings you home; a scale bar shows the distances.
+
 ## 0.199 (2026-11-11)
 
 - Villains find their way through the Daily Comet building, the Atlas Assurance hall and the Zenith Radio house: run upstairs and the ones who saw you follow, through the doorways, round the desks and up the stairs.

@@ -787,6 +787,34 @@ the **host's** story, as it fights at the host's level: anyone near can be brief
 a chapter for the team, and it is written into the host's file and into the files of those
 who were there; a guest further along keeps their own place.
 
+### Building cases (`hw-sim/src/missions.rs`, `hw-client/src/missionview.rs`)
+
+**Atomic Annie** (Hero Hall's second hero) hands out cases: hold **E** near her (3.5 m). One
+case runs at a time for the whole team, in one of the three Comet buildings (Daily Comet,
+Atlas Assurance, Zenith Radio), against one of five gangs (the Doctor's sentries, Jackets or
+Syndicate, sky pirates, the Iron Legion, the Zorrak; the last two only from their levels on).
+The radio shows the case in teal under the story, with a teal diamond on the compass and map
+and a teal beacon over the building's way in until you get there.
+
+- **Takeover**: the gang holds up to **6 rooms** (halls, boardrooms, lobbies, shops,
+  concourses; at least 8 m a side), spread over the floors, **3 villains a room** for one
+  hero and one more for each friend. The **boss** waits in the top floor's boardroom (or its
+  biggest room) with 3 guards, **1 level over the team**. Beating the boss closes the case.
+- **Evidence**: the same gang, plus **3 clues** hidden in far corners of rooms on different
+  floors. Hold **E** within 2.8 m of a clue for 3 s to search it (sparkles mark them);
+  finding all three closes the case.
+- **Room by room**: each room is its own group with its own sight. A group notices a hero
+  only in aggro range and in sight, and only its own room's friends come along, so a floor
+  can be cleared one room at a time without bringing the whole gang. Villains who saw you
+  follow you through doors and up stairs by the building's route map (see Villain AI).
+- The gang moves in when a hero comes within **90 m** of the building, and leaves if no
+  hero is within **250 m** for **30 s** (the case stays; it comes back when you do).
+- **Reward**: every hero within 150 m when it closes gets **40 %** of the karma their next
+  level takes.
+
+Not yet: hostages, villains riding lifts, cases in ordinary town offices, and cases kept in
+the save file (a case in progress is dropped when the host quits).
+
 ---
 
 ## 7. Incidents: trouble comes to you (`hw-sim/src/incidents.rs`)
@@ -1578,6 +1606,7 @@ run, or put them in a `.bat`.
 | `HW_VIEW=getaway` | With `HW_INCIDENT` and `HW_TIMEOUT`: follows the crooks making off. |
 | `HW_VISOR=1` | The police visor stays down; `HW_VISOR=0.4` freezes it part way in (screenshots). |
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
+| `HW_CASE=takeover\|evidence` | A case of that kind in the first Comet building starts at once (Jackets), the hero at its way in; with `HW_VIEW=hero`. |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
 | `HW_COLOSSUS_RAMPAGE=1` | The colossus smashes its way through town even with no hero near (screenshots). |
 | `HW_VIEW=fight` | Places a test group of minions near the spawn (the game starts without one). |

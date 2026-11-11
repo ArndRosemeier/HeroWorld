@@ -575,6 +575,7 @@ fn main() -> EngineResult<()> {
     let hold_help = std::env::var_os("HW_HOLD").is_some();
     let mut signal = hw_client::dispatchview::Signal::default();
     let mut story = hw_client::storyview::StoryView::default();
+    let mut cases = hw_client::missionview::MissionView::default();
     // The chat window (bottom left): what is said near the hero.
     let mut chat = hw_client::chat::ChatLog::new();
     // The pointer was locked when the chat line opened: lock it again after.
@@ -2003,6 +2004,7 @@ fn main() -> EngineResult<()> {
                     radio.clear(world);
                     signal.clear(world);
                     story.clear(world);
+                    cases.clear(world);
                     riders.clear(world, &crowd);
                     bus_folk.clear(world, &crowd);
                     crowd.clear(world);
@@ -3132,6 +3134,10 @@ fn main() -> EngineResult<()> {
                 hw_net::ToClient::Chat { .. } => false,
                 hw_net::ToClient::Story { .. } => {
                     story.hear(m);
+                    false
+                }
+                hw_net::ToClient::Case { .. } => {
+                    cases.hear(m);
                     false
                 }
                 hw_net::ToClient::Incident {
@@ -4523,6 +4529,7 @@ fn main() -> EngineResult<()> {
                 });
                 signal.update(world, &generated.world, &radio);
                 story.update(world, &mut radio, frame.dt);
+                cases.update(world, &generated.world, &mut radio, frame.dt);
                 story.statue(
                     world,
                     actors.as_ref(),
@@ -4533,6 +4540,7 @@ fn main() -> EngineResult<()> {
                 let cam = world.camera();
                 let hero_at = session.my_position(&heroes).map(|p| p.as_vec3());
                 story.panel(frame.ui.ctx(), hero_at);
+                cases.panel(frame.ui.ctx(), hero_at);
                 // The chat window: what was said near the hero this frame,
                 // Starling on the wrist radio, and what the player types.
                 {
@@ -4593,6 +4601,9 @@ fn main() -> EngineResult<()> {
                         chat.hear(&s, hero_at);
                     }
                     for l in story.heard.drain(..) {
+                        chat.add(Channel::Local, l.who, &l.text, Voice::Ally);
+                    }
+                    for l in cases.heard.drain(..) {
                         chat.add(Channel::Local, l.who, &l.text, Voice::Ally);
                     }
                     chat.update(frame.dt);

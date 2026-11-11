@@ -1497,7 +1497,26 @@ pub enum ToClient {
     Gates {
         gates: Vec<GateView>,
     },
+    /// The team's indoor case (see `hw_sim::missions`): its stage, cases
+    /// closed so far, its kind and gang, where to go, rooms cleared of
+    /// rooms held, the boss (0 none yet, 1 standing, 2 beaten), the clues
+    /// (where, found) and how far along holding the help key is (0-255).
+    Case {
+        stage: u8,
+        closed: u16,
+        kind: u8,
+        gang: u8,
+        at: [f32; 3],
+        cleared: u8,
+        groups: u8,
+        boss: u8,
+        clues: Vec<([f32; 3], bool)>,
+        held: u8,
+    },
 }
+
+/// Most clues one [`ToClient::Case`] carries.
+pub const MAX_CLUES: usize = 8;
 
 /// Most open pairs of portals in one [`ToClient::Gates`] (one a player).
 pub const MAX_GATES: usize = 16;
@@ -1578,6 +1597,9 @@ impl ToClient {
             ToClient::Story { .. } => 1 + 1 + 12 + 1 + 1,
             ToClient::Crime { .. } => 8 + 8 + 1,
             ToClient::Gates { gates } => 1 + GATE_BYTES * gates.len().min(MAX_GATES),
+            ToClient::Case { clues, .. } => {
+                1 + 2 + 1 + 1 + 12 + 1 + 1 + 1 + 1 + 13 * clues.len().min(MAX_CLUES) + 1
+            }
         }
     }
 
@@ -1778,6 +1800,33 @@ impl ToClient {
                     w.f32(g.far_yaw).f32(g.size).u64(g.opened);
                 }
             }
+            ToClient::Case {
+                stage,
+                closed,
+                kind,
+                gang,
+                at,
+                cleared,
+                groups,
+                boss,
+                clues,
+                held,
+            } => {
+                w.u8(24).u8(*stage).u16(*closed).u8(*kind).u8(*gang);
+                for v in at {
+                    w.f32(*v);
+                }
+                w.u8(*cleared).u8(*groups).u8(*boss);
+                let n = clues.len().min(MAX_CLUES);
+                w.u8(n as u8);
+                for (p, found) in &clues[..n] {
+                    for v in p {
+                        w.f32(*v);
+                    }
+                    w.bool(*found);
+                }
+                w.u8(*held);
+            }
         }
     }
 
@@ -1971,6 +2020,36 @@ impl ToClient {
                     });
                 }
                 ToClient::Gates { gates }
+            }
+            24 => {
+                let stage = r.u8()?;
+                let closed = r.u16()?;
+                let kind = r.u8()?;
+                let gang = r.u8()?;
+                let at = [r.f32()?, r.f32()?, r.f32()?];
+                let cleared = r.u8()?;
+                let groups = r.u8()?;
+                let boss = r.u8()?;
+                let n = r.u8()? as usize;
+                if n > MAX_CLUES {
+                    return Err(WireError);
+                }
+                let mut clues = Vec::with_capacity(n);
+                for _ in 0..n {
+                    clues.push(([r.f32()?, r.f32()?, r.f32()?], r.bool()?));
+                }
+                ToClient::Case {
+                    stage,
+                    closed,
+                    kind,
+                    gang,
+                    at,
+                    cleared,
+                    groups,
+                    boss,
+                    clues,
+                    held: r.u8()?,
+                }
             }
             15 => ToClient::Incident {
                 id: r.u32()?,
@@ -2579,6 +2658,21 @@ mod tests {
                         at: [10.0, 2.5, -40.0],
                         level: 5,
                         held: 128,
+                    },
+                ),
+                (
+                    9,
+                    ToClient::Case {
+                        stage: 2,
+                        closed: 300,
+                        kind: 1,
+                        gang: 3,
+                        at: [1.0, 7.5, -2.0],
+                        cleared: 2,
+                        groups: 6,
+                        boss: 1,
+                        clues: vec![([3.0, 12.5, 4.0], true), ([-1.0, 0.25, 9.5], false)],
+                        held: 112,
                     },
                 ),
                 (

@@ -1528,14 +1528,7 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
         let y = if spot.perch {
             solids.floor_under(p, spot.center.y + 1.0)
         } else {
-            // The street, or the floor of the tunnel or cavern it is in.
-            let street = solids.ground_at(p).max(GROUND_Y);
-            let floor = solids.ground_for(p, spot.center.y + 1.0);
-            if floor < street - 1.0 {
-                floor
-            } else {
-                street
-            }
+            stand_height(&solids, p, spot.center.y)
         };
         let home = DVec3::new(p.x, y, p.y);
         let id = spawn_enemy(world, tick, kind, level, spot_index, home, heroes);
@@ -1564,6 +1557,21 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
     n
 }
 
+/// Where a villain of a group whose spot stands at height `near` stands at
+/// `p`: the street, the floor of the tunnel or cavern the spot is down in,
+/// or the floor of the building it is up in (an indoor mission's room).
+fn stand_height(solids: &Obstacles, p: DVec2, near: f64) -> f64 {
+    let street = solids.ground_at(p).max(GROUND_Y);
+    let floor = solids.ground_for(p, near + 1.0);
+    if floor < street - 1.0 {
+        floor
+    } else if near > street + 1.0 {
+        solids.floor_under(p, near + 1.0)
+    } else {
+        street
+    }
+}
+
 /// Is there room for a body standing on the ground at `p` (no wall, house,
 /// closed door or rock round its feet, middle or head)?
 pub fn room_to_stand(solids: &Obstacles, p: DVec2, y: f64) -> bool {
@@ -1581,15 +1589,7 @@ pub fn room_to_stand(solids: &Obstacles, p: DVec2, y: f64) -> bool {
 /// within 12 m; else `want`. Every crook of a call stands where a hero can
 /// see and reach them.
 pub fn open_stand(solids: &Obstacles, center: DVec3, want: DVec2, taken: &[DVec2]) -> DVec2 {
-    let ground = |p: DVec2| {
-        let street = solids.ground_at(p).max(GROUND_Y);
-        let floor = solids.ground_for(p, center.y + 1.0);
-        if floor < street - 1.0 {
-            floor
-        } else {
-            street
-        }
-    };
+    let ground = |p: DVec2| stand_height(solids, p, center.y);
     let chest = DVec3::Y * (BODY_HEIGHT * 0.6);
     let anchor = center + chest;
     // A spot that is itself in a wall has no sight to keep: just get out.
