@@ -49,6 +49,9 @@ pub enum LandmarkKind {
     /// under cranes, and the dock his walking tanks come out of (see
     /// [`super::robotworks`]).
     RobotWorks,
+    /// The Aether Mercy Hospital, where the medical drone flies beaten
+    /// heroes to be healed (see [`super::hospital`]).
+    Hospital,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -283,6 +286,7 @@ impl Landmark {
             LandmarkKind::MooringMast => super::mast::mast_footprints(),
             LandmarkKind::AtomicPlant => super::atomic::footprints(),
             LandmarkKind::WeatherTower => super::weather_tower::footprints(self),
+            LandmarkKind::Hospital => super::hospital::footprints(),
         };
         local
             .into_iter()
@@ -319,6 +323,12 @@ impl Landmark {
             glam::DVec3::new(p.x, self.base + HALL_PLINTH.1, p.y),
             self.dir,
         ))
+    }
+
+    /// A hospital's ward: where the drone sets heroes down and the pods
+    /// they are healed in. None for other landmarks.
+    pub fn ward(&self) -> Option<super::hospital::Ward> {
+        super::hospital::ward(self)
     }
 
     /// The plinth's top where `p` is on it.
@@ -581,6 +591,8 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
     if let Some(t) = super::weather_tower::plan(w, &roads, core, &out) {
         out.push(t);
     }
+    let hospitals = super::hospital::plan(w, core, &out);
+    out.extend(hospitals);
     for l in &mut out {
         l.stairs = plan_stairs(w, &roads, l);
     }

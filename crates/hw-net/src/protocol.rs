@@ -851,6 +851,9 @@ pub enum FxKind {
     Lifted,
     /// A hero came back from hospital.
     Healed,
+    /// The medical drone set a hero down at a hospital: they float in a
+    /// recovery pod now.
+    Admitted,
     /// A binding hold took (`to` is held).
     Hold,
     /// A force shield went up round `to`.
@@ -1035,6 +1038,7 @@ impl FxKind {
             FxKind::Element => 53,
             FxKind::Buff => 54,
             FxKind::Burn => 55,
+            FxKind::Admitted => 56,
         }
     }
 
@@ -1095,6 +1099,7 @@ impl FxKind {
             53 => FxKind::Element,
             54 => FxKind::Buff,
             55 => FxKind::Burn,
+            56 => FxKind::Admitted,
             _ => return Err(WireError),
         })
     }

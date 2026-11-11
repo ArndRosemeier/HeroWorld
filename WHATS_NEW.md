@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.180 (2026-11-11)
+
+- Every town now has a hospital, the Aether Mercy: a streamline hall with a round ward tower, a drone deck and a glowing ring-and-cross you can see across town. Big cities get one for each 300 000 people
+- When you are beaten, the medical drone really flies you there: up over the roofs, across town, down onto the hospital's landing ring. You float in a glowing recovery pod for a few seconds, then step out healed inside the Recovery Hall and walk out the front door
+- Walk in any time: reception desk, recovery pods, the healing core, a waiting corner and examination couches. You can take a taxi to it too
+- Teammates can still revive you before the drone comes
+
 ## 0.179 (2026-11-11)
 
 - People now talk in comic speech bubbles over their heads, with a tail pointing at whoever speaks. Long lines wrap and the bubble grows to fit; shouts burst out in red capitals. Several people talking at once get bubbles that step aside instead of covering each other, and someone talking behind you or off screen gets a bubble at the edge of the screen pointing their way

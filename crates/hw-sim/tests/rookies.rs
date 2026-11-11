@@ -26,7 +26,7 @@ fn flat(p: DVec3) -> DVec2 {
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn a_new_hero_starts_near_the_jackets_and_a_seasoned_one_in_the_centre() {
-    let (_, mut sim) = town();
+    let (town, mut sim) = town();
     let line = sim
         .rookie_line()
         .expect("a town with a gang has a rookie street");
@@ -41,7 +41,8 @@ fn a_new_hero_starts_near_the_jackets_and_a_seasoned_one_in_the_centre() {
         sim.incidents.is_hot(at),
         "the start is not in rough streets"
     );
-    // Knocked out, the medical drone brings them back to that street.
+    // Knocked out, the medical drone flies them to the nearest hospital,
+    // where they step out of a recovery pod (see tests/hospital.rs).
     let mut f = sim.fighter(rookie).unwrap();
     f.health = 0.0;
     f.status = Status::Down;
@@ -62,17 +63,27 @@ fn a_new_hero_starts_near_the_jackets_and_a_seasoned_one_in_the_centre() {
             ..Default::default()
         },
     );
-    for _ in 0..TICK_HZ * 60 {
+    for _ in 0..TICK_HZ * 240 {
         sim.step();
         if sim.fighter(rookie).unwrap().status == Status::Standing {
             break;
         }
     }
     let back = flat(sim.position(rookie).unwrap());
+    let ward = town
+        .world
+        .landmarks
+        .iter()
+        .filter_map(|l| l.ward())
+        .min_by(|a, b| {
+            let d = |w: &hw_gen::urban::hospital::Ward| flat(w.bay).distance(flat(at + away));
+            d(a).total_cmp(&d(b))
+        })
+        .expect("a hospital");
     assert!(
-        back.distance(line.0) < 10.0,
-        "back {:.0} m from the rookies' street",
-        back.distance(line.0)
+        ward.pods.iter().any(|p| flat(p.1).distance(back) < 1.0),
+        "back {:.0} m from the hospital",
+        flat(ward.bay).distance(back)
     );
     // A hero who can fly starts in the centre as before.
     let vet = sim.spawn_at_start(PlayerId(2));

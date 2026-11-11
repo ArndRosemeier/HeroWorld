@@ -344,6 +344,7 @@ pub fn map(
             LandmarkKind::MoleDrill => "Mole drill",
             LandmarkKind::WeatherTower => "Weather tower",
             LandmarkKind::RobotWorks => "Robot works",
+            LandmarkKind::Hospital => "Hospital",
         };
         let p = to_screen(l.pos);
         painter.circle_filled(p, 4.0, egui::Color32::from_rgb(60, 60, 70));

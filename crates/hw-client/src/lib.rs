@@ -32,6 +32,7 @@ pub mod fightview;
 pub mod grassview;
 pub mod heroview;
 pub mod hitch;
+pub mod hospitalmesh;
 pub mod interior;
 pub mod landmarkview;
 pub mod lawnmesh;

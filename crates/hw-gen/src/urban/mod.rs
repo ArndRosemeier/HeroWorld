@@ -30,6 +30,7 @@ pub mod gantry;
 pub mod graph;
 pub mod greenery;
 pub mod growth;
+pub mod hospital;
 pub mod land;
 pub mod landmarks;
 pub mod lanes;

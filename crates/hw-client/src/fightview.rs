@@ -1514,6 +1514,14 @@ impl FightView {
                 FxKind::Lifted => {
                     self.play(world, |s| &s.whoosh, at, 0.8, 1.0);
                 }
+                FxKind::Admitted => {
+                    // Set down at the hospital: into a recovery pod.
+                    rise(world, at, rgb(120, 255, 200));
+                    self.play(world, |s| &s.chime, at, 0.7, 0.8);
+                    if on_me || mine {
+                        self.say("Into a recovery pod at Aether Mercy");
+                    }
+                }
                 FxKind::Healed => {
                     rise(world, at, rgb(140, 255, 170));
                     self.play(world, |s| &s.chime, at, 1.0, 1.25);

@@ -490,7 +490,16 @@ targeting, ragdolls, nobody dies.
 - **Defeated villains** lie in glowing energy cuffs; after 2 s a police drone lifts them away.
 - **Defeated heroes** lie down. A teammate holds E within 2.5 m for 3 s to revive them at
   half health. Otherwise press H, or wait 20 s, and a medical drone flies them to the
-  hospital (beside the spawn line; below level 5, beside the rookies' street). Carrying someone and getting knocked down drops them.
+  nearest hospital: it climbs over the roofs (at least 12 m over the hospital's 35 m
+  pylon), crosses town at 40 m/s, comes down at 7 m/s onto the landing ring in front of
+  the entrance, and puts them in a free recovery pod (six per hospital) for 5 s, health
+  filling up, after which they step out at full health inside the Recovery Hall. Without
+  a hospital (a bare test ground) they come back on the spawn street as before. Carrying
+  someone and getting knocked down drops them.
+- **Hospitals** (Aether Mercy): one per town, 250-750 m from the core and clear of the
+  villains' quarter; a city has one more per 300 000 people (at most 4, 1.2 km apart, at its
+  business districts and old villages). The hall's ground floor is open: desk, pods, healing
+  core, waiting corner, couches. Taxi stand "Aether Mercy Hospital".
 - **Villain AI:** villains notice heroes within their aggro range, walk round walls and
   houses on a grid A* path (`hw-sim/src/nav.rs`), and go home when the fight moves away.
   Ranged ones keep their distance.

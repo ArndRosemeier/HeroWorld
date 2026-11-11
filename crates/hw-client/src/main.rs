@@ -54,7 +54,7 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; by default
 //! the city picked in the title's city window; joining players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the first call on the police visor, with `HW_INCIDENT`; `HW_VISOR=1` keeps the visor down, `HW_VISOR=0.4` freezes it part way in), `far` (a main road across town, where people and traffic must follow) or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `hospital`, `ward`, `pods`, `hospitaldoor` (the nearest hospital: across its plaza, in its Recovery Hall, at its pods, at its door), `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the first call on the police visor, with `HW_INCIDENT`; `HW_VISOR=1` keeps the visor down, `HW_VISOR=0.4` freezes it part way in), `far` (a main road across town, where people and traffic must follow) or
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
 //! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `weather` (the weather tower and its shower; `weathertop`, `weatherfoot`, `weatherstreet` close up; `HW_WEATHER=brew|rain|clear|bow|fair` picks the moment), `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `far` (a main road across town, where people and traffic must follow) or
@@ -749,6 +749,32 @@ fn main() -> EngineResult<()> {
             let yaw = d.x.atan2(d.y).to_degrees() as f32;
             let eye = base + 1.9;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, 4.0)
+        }
+        "hospital" | "ward" | "pods" | "hospitaldoor" => {
+            // The hospital nearest the start: from across its plaza, inside
+            // its Recovery Hall (`ward` from the door end, `pods` close at
+            // the recovery pods), or at its entrance.
+            use hw_gen::urban::landmarks::LandmarkKind;
+            let l =
+                hw_client::landmarkview::nearest(&generated.world, LandmarkKind::Hospital, spawn);
+            match l {
+                Some(l) => {
+                    let (from, up, at, at_y) = match view.as_str() {
+                        "ward" => (DVec2::new(-9.0, -1.0), 2.4, DVec2::new(4.0, -10.5), 1.4),
+                        "pods" => (DVec2::new(-1.5, -7.2), 1.7, DVec2::new(-6.0, -11.8), 1.3),
+                        "hospitaldoor" => (DVec2::new(5.0, 14.0), 2.0, DVec2::new(0.0, 1.0), 3.0),
+                        _ => (DVec2::new(26.0, 44.0), 14.0, DVec2::new(0.0, -8.0), 10.0),
+                    };
+                    let p = l.to_plan(from);
+                    let t = l.to_plan(at);
+                    let d = t - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    let eye = l.base + up;
+                    let pitch = ((l.base + at_y - eye) / d.length()).atan().to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
+                }
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
         }
         "spire" | "lighthouse" | "tesla" | "hall" | "rocket" => {
             // Looking up at a landmark from across its plaza.
@@ -3249,28 +3275,32 @@ fn main() -> EngineResult<()> {
                         .with_pitch_deg(x.to_degrees())
                         .with_roll_deg(z.to_degrees());
                     if h.kind == hw_net::EntityKind::Drone {
-                        // A drone turns slowly as it flies, bobbing a little.
+                        // A drone turns slowly while it hovers, bobbing a
+                        // little; crossing town it faces the way it flies,
+                        // leaning into it.
                         let t = frame.time + h.id.0 as f32;
+                        let v = Vec3::from(h.vel);
+                        let flat = glam::Vec2::new(v.x, v.z);
                         place = Place::new(
                             h.pos[0] as f32,
                             h.pos[1] as f32 + (t * 2.3).sin() * 0.06,
                             h.pos[2] as f32,
-                        )
-                        .with_yaw_deg(t * 40.0);
+                        );
+                        place = if flat.length() > 4.0 {
+                            place
+                                .with_yaw_deg(flat.x.atan2(flat.y).to_degrees())
+                                .with_pitch_deg((flat.length() * 0.4).min(14.0))
+                        } else {
+                            place.with_yaw_deg(t * 40.0)
+                        };
                     }
                     match hero_entities.get(&h.id) {
                         Some(&(e, _)) => world.set_place(e, place)?,
                         None => {
                             let mesh = if h.kind == hw_net::EntityKind::Drone {
-                                // A medical drone fetches heroes, police ones villains.
-                                let medical = heroes.iter().any(|o| {
-                                    o.kind == hw_net::EntityKind::Hero
-                                        && at_of(o.id).unwrap_or(Vec3::ZERO).distance(Vec3::new(
-                                            h.pos[0] as f32,
-                                            h.pos[1] as f32,
-                                            h.pos[2] as f32,
-                                        )) < 3.0
-                                });
+                                // A medical drone fetches heroes, police ones
+                                // villains: the server says which.
+                                let medical = h.mount.is_some_and(|m| m.1 == 1);
                                 fightview::drone_mesh(medical)
                             } else {
                                 citymesh::crate_mesh()
