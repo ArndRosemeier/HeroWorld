@@ -44,9 +44,11 @@ pub const HERO_CLIPS: &[&str] = &[
     "fight stance",
     "hit to chest",
 ];
-/// A sidekick walks, runs, jumps and punches.
+/// A sidekick walks, runs, jumps and punches, and does a jig now and
+/// then (its other tricks are made here: [`poses::add_sidekick_clips`]).
 pub const SIDEKICK_CLIPS: &[&str] = &[
     "idle",
+    "dance",
     "walk",
     "jog",
     "sprint",
@@ -1895,6 +1897,10 @@ pub fn build_sharing(
         // Carrying someone hurt to the ambulance.
         poses::add_carry_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::swing_cape(&mut c);
+    }
+    if matches!(who, Who::Sidekick(_)) {
+        // Its tricks while its hero stands about (see `tricks`).
+        poses::add_sidekick_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
     if matches!(who, Who::Villain(..)) {
         poses::add_cuffed_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;

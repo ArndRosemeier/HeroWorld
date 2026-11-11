@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.185 (2026-11-11)
+
+- Sidekicks and familiars no longer run circles round you. They trail along behind you, settle down beside you when you stop, and now and then do a little trick: a wave, a hop, a stretch, a look around, a polish of their chest, a curious head tilt or a little jig.
+
 ## 0.184 (2026-11-11)
 
 - The gangs now do their evil where you can see it. In the rough streets a Chrome Jacket snatches a lady's handbag and sprints off with it, two greasers hassle a passer-by, shopkeepers are shaken down at their doors, Syndicate gunsels collect protection money after dark, the gang sprays its sign on walls while one keeps a lookout, and mutant brutes smash lamp posts.

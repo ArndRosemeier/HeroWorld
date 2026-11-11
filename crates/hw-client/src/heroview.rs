@@ -100,6 +100,12 @@ impl HeroAnim {
         self.yaw = ease(self.yaw, self.yaw + angle_delta(self.yaw, yaw), 16.0, dt);
     }
 
+    /// Turns the body towards `yaw` (degrees) at `k` per second: slowly,
+    /// to look at someone.
+    pub fn turn_to(&mut self, yaw: f32, k: f32, dt: f32) {
+        self.yaw = ease(self.yaw, self.yaw + angle_delta(self.yaw, yaw), k, dt);
+    }
+
     /// The way the body faces now (degrees).
     pub fn yaw(&self) -> f32 {
         self.yaw

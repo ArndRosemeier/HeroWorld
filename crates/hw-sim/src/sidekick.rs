@@ -26,6 +26,13 @@ pub const GUARD_REACH: f64 = 18.0;
 pub const HEALTH_SHARE: f32 = 0.6;
 /// Where it keeps: this far behind and beside its hero (m).
 pub const FOLLOW: f64 = 2.2;
+/// Its hero standing, it rests anywhere this near and far (m).
+pub const SETTLE_NEAR: f64 = 1.2;
+pub const SETTLE_FAR: f64 = 3.4;
+/// Its hero counts as on the move above this level speed (m/s).
+pub const HERO_MOVING: f64 = 0.5;
+/// How much faster it goes per metre it is behind its place (1/s).
+pub const CATCH_UP: f64 = 1.6;
 /// Further than this from its hero, it beams back (m).
 pub const BEAM_BACK: f64 = 30.0;
 /// It beams back after this long without getting any nearer (s).
@@ -149,21 +156,15 @@ pub fn step(world: &mut World, tick: u64) {
             f.health = f.health.min(f.max_health);
         }
         let mut body = motion.0;
-        // Where to go: up to the villain it fights, else its place at the
-        // hero's side (behind, to the right of the way they go).
+        // Where to go: up to the villain it fights, else after its hero.
         let foe = f
             .target
             .and_then(|t| fighters.iter().find(|x| x.0 == t))
             .map(|x| x.1);
-        let ahead = DVec3::new(hero_vel.x, 0.0, hero_vel.z);
-        let ahead = if ahead.length() > 0.5 {
-            ahead.normalize()
-        } else {
-            let to = DVec3::new(body.pos.x - hero.x, 0.0, body.pos.z - hero.z);
-            -to.normalize_or(DVec3::Z)
-        };
-        let right = DVec3::new(-ahead.z, 0.0, ahead.x);
-        let place = hero - ahead * FOLLOW + right * (FOLLOW * 0.6);
+        let hero_flat = DVec3::new(hero_vel.x, 0.0, hero_vel.z);
+        let hero_speed = hero_flat.length();
+        let resting = DVec2::new(body.vel.x, body.vel.z).length() < 0.3;
+        let place = keep_place(hero, hero_flat, body.pos, resting);
         let (goal, stop) = match foe {
             Some(v) => (v, PUNCH_REACH - 0.3),
             None => (place, 0.4),
@@ -199,8 +200,11 @@ pub fn step(world: &mut World, tick: u64) {
         let can_move = f.standing() && !f.held(tick) && !f.frozen(tick);
         if dist > stop && can_move {
             let d = to / dist;
-            // Further off, it hurries (little legs, big motor).
-            let pace = ((dist - stop) / 2.0).clamp(0.35, 1.0);
+            // It keeps its hero's pace, and hurries to catch up (little
+            // legs, big motor); near its place it slows to a walk.
+            let keep_up = if foe.is_none() { hero_speed } else { 0.0 };
+            let want = keep_up + (dist - stop) * CATCH_UP;
+            let pace = (want / crate::RUN_SPEED).clamp(0.15, 1.0);
             input.move_x = (d.x * pace) as f32;
             input.move_z = (d.y * pace) as f32;
         }
@@ -218,6 +222,31 @@ pub fn step(world: &mut World, tick: u64) {
         world.despawn(e);
     }
     world.resource_mut::<Fights>().events.extend(fx);
+}
+
+/// Where a sidekick at `at` wants to be, its hero at `hero` going at
+/// `hero_flat` (level velocity). On the move it trails behind and a little
+/// to the right; once the hero stands, it walks in (or out) along the
+/// straight line to them, so it never circles them, and once it has come
+/// to rest (`resting`) it stays put anywhere in a comfortable ring
+/// ([`SETTLE_NEAR`]..[`SETTLE_FAR`]).
+pub fn keep_place(hero: DVec3, hero_flat: DVec3, at: DVec3, resting: bool) -> DVec3 {
+    if hero_flat.length() > HERO_MOVING {
+        let ahead = hero_flat.normalize();
+        let right = DVec3::new(-ahead.z, 0.0, ahead.x);
+        return hero - ahead * FOLLOW + right * (FOLLOW * 0.45);
+    }
+    let off = DVec3::new(at.x - hero.x, 0.0, at.z - hero.z);
+    let d = off.length();
+    let ring = if resting {
+        SETTLE_NEAR..=SETTLE_FAR
+    } else {
+        FOLLOW - 0.4..=FOLLOW + 0.4
+    };
+    if ring.contains(&d) {
+        return at;
+    }
+    hero + off.normalize_or(DVec3::NEG_Z) * FOLLOW
 }
 
 /// Where a sidekick beams in near its hero at `hero`: its place `want` if

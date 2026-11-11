@@ -435,6 +435,14 @@ each one's numbers; the names and links:
 | 6 | **Final Verdict** (fork 2, capstone) | minions fall at a blow, 10 s | Zip Line Strike, Stun Darts |
 | 6 | **Reign of Fear** (fork 2, capstone) | every villain near flees | Rallying Cry, Vanish |
 
+**Sidekicks** (Tin Pal, Familiar, Trusty Partner and the like; `hw-sim/src/sidekick.rs`)
+trail 2.2 m behind and a little to the right while their hero moves, keeping the hero's
+pace and hurrying when behind. When the hero stands they walk straight in (never round)
+and rest anywhere 1.2-3.4 m away, turned to the hero. Standing idle, after about 3-5 s and
+then every 6-14 s, they do a little trick (`hw-client/src/tricks.rs`): wave, hop, look
+around, polish their chest core, tilt their head, stretch, or a short jig. Over 30 m away
+or stuck 2 s, they beam back.
+
 Villains do not use these records yet (planned). Health comes back faster as it grows:
 regeneration (1 a second in a fight, 14 out of it at level 1) scales with your maximum
 health.

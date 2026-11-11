@@ -213,6 +213,45 @@ fn the_sidekick_keeps_at_its_heros_side_and_fights() {
     const { assert!(sidekick::SIZE < 0.8, "drawn small") };
 }
 
+/// Arnd (0.185): the familiar ran round and round its hero. Walking, it
+/// trails behind; once the hero stands, it settles and stays put.
+#[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
+fn the_sidekick_trails_and_then_settles() {
+    let (mut sim, hero, _) = street(&[PowerId(18)], 200.0);
+    press(&mut sim, use_power(PowerId(18), None, DVec3::X), 2);
+    // A walk along +x.
+    let walk = InputState {
+        move_x: 0.4,
+        ..Default::default()
+    };
+    for _ in 0..TICK_HZ as u64 * 4 {
+        sim.set_input(PlayerId(1), walk);
+        sim.step();
+    }
+    let h = sim.position(hero).unwrap();
+    let (_, at) = sidekick_of(&mut sim, hero).unwrap();
+    assert!(at.x < h.x - 0.5, "trails behind: hero {h}, sidekick {at}");
+    assert!(at.distance(h) < 5.0, "keeps up: hero {h}, sidekick {at}");
+    // The hero stands: it comes to rest within a few seconds...
+    press(&mut sim, InputState::default(), TICK_HZ as u64 * 3);
+    let h = sim.position(hero).unwrap();
+    let (_, rest) = sidekick_of(&mut sim, hero).unwrap();
+    let d = DVec2::new(rest.x - h.x, rest.z - h.z).length();
+    assert!(
+        (sidekick::SETTLE_NEAR..=sidekick::SETTLE_FAR).contains(&d),
+        "rests {d:.2} m from its hero"
+    );
+    // ...and stays there, not circling.
+    let mut wander: f64 = 0.0;
+    for _ in 0..TICK_HZ as u64 * 10 {
+        sim.step();
+        let (_, at) = sidekick_of(&mut sim, hero).unwrap();
+        wander = wander.max(DVec2::new(at.x - rest.x, at.z - rest.z).length());
+    }
+    assert!(wander < 0.15, "moved {wander:.2} m while its hero stood");
+}
+
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
 fn the_hypno_ray_turns_a_minion_against_its_friends() {

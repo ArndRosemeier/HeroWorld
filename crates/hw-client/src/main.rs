@@ -84,6 +84,7 @@
 //! Stutters are written to `logs/hitches.log` (see `hitch.rs`; `HW_HITCH_LOG`,
 //! `HW_HITCH_MS`); `HW_AT=x,y,z` with `HW_YAW` starts the hero at a spot a
 //! report names; `HW_CAM_DIST`, `HW_CAM_PITCH` and `HW_CAM_YAW` set the hero camera.
+//! `HW_TRICK=wave` (or another of `tricks::TRICKS`) has a standing sidekick do that trick.
 
 mod session;
 
@@ -560,6 +561,14 @@ fn main() -> EngineResult<()> {
     let mut crowd = CrowdView::new();
     let mut sweepers = hw_client::sweeperview::SweeperView::new();
     let mut anims: BTreeMap<hw_core::NetId, HeroAnim> = BTreeMap::new();
+    // Sidekicks' little tricks while their heroes stand about.
+    let mut tricks: BTreeMap<hw_core::NetId, hw_client::tricks::Tricks> = BTreeMap::new();
+    let force_trick: Option<&'static str> = std::env::var("HW_TRICK").ok().and_then(|t| {
+        hw_client::tricks::TRICKS
+            .iter()
+            .find(|k| k.0 == t)
+            .map(|k| k.0)
+    });
     let mut town = TownView::new(generated.world.clone());
     // Doors near the camera, swinging as the server opens and shuts them.
     let mut door_view = hw_client::doorview::DoorView::new();
@@ -2693,6 +2702,15 @@ fn main() -> EngineResult<()> {
                         _ if close => 1,
                         _ => blast,
                     };
+                    // With `HW_TRICK`, the sidekick is called once and left
+                    // to stand about.
+                    let have_pal = drawn.iter().any(|e| {
+                        e.kind == hw_net::EntityKind::Sidekick
+                            && e.mount.map(|m| m.0) == me_state.map(|m| m.id)
+                    });
+                    if force_trick.is_some() && (have_pal || fight.target.is_some()) {
+                        pending_power = 0;
+                    }
                 }
                 let f = fightview::FightInput {
                     target: fight.target,
@@ -3178,6 +3196,7 @@ fn main() -> EngineResult<()> {
             // Draw heroes.
             let heroes = session.entities(frame.dt as f64, tick_clock.frac());
             anims.retain(|id, _| heroes.iter().any(|h| h.id == *id));
+            tricks.retain(|id, _| heroes.iter().any(|h| h.id == *id));
             hero_entities.retain(|id, (e, _)| {
                 let keep = heroes.iter().any(|h| h.id == *id);
                 if !keep {
@@ -3365,6 +3384,31 @@ fn main() -> EngineResult<()> {
                         d.yaw = anim.yaw();
                     }
                 }
+                // A sidekick standing by turns, unhurried, to its hero, and
+                // now and then does a little trick.
+                let mut trick = None;
+                if h.kind == hw_net::EntityKind::Sidekick {
+                    let idle = d.clip == "idle"
+                        && h.grounded
+                        && action.is_none()
+                        && h.combat.is_none_or(|c| c.target.is_none());
+                    let owner = h.mount.and_then(|m| at_of(m.0));
+                    if let (true, Some(o)) = (idle, owner) {
+                        let to = o - feet;
+                        if to.length() > 0.3 {
+                            anim.turn_to(to.x.atan2(to.z).to_degrees(), 2.5, frame.dt);
+                            d.yaw = anim.yaw();
+                        }
+                    }
+                    trick = tricks
+                        .entry(h.id)
+                        .or_default()
+                        .step(h.id.0 as u64, idle, frame.dt);
+                    // `HW_TRICK=wave` (screenshots): that trick, over and over.
+                    if let Some(t) = force_trick.filter(|_| idle) {
+                        trick = Some((t, false));
+                    }
+                }
                 // A bystander standing still faces the way the server turned
                 // them (towards the muggers).
                 if (bystander || h.kind == hw_net::EntityKind::NpcHero) && slow {
@@ -3522,6 +3566,7 @@ fn main() -> EngineResult<()> {
                             ("threaten", false)
                         }
                     }
+                    None if trick.is_some() => trick.expect("a trick"),
                     // The one being mugged cowers until it is over.
                     None if bystander && d.clip == "idle" => ("hands up", false),
                     // A level up: a fist to the sky, standing or hovering.
@@ -3574,8 +3619,16 @@ fn main() -> EngineResult<()> {
                                 | "carry jog"
                                 | "carry sprint"
                         )
-                        || (matches!(clip, "power pose" | "visor tap" | "visor tap walk")
-                            && h.grounded);
+                        || (matches!(
+                            clip,
+                            "power pose"
+                                | "visor tap"
+                                | "visor tap walk"
+                                | "wave"
+                                | "look around"
+                                | "polish"
+                                | "head tilt"
+                        ) && h.grounded);
                     let _ = world.set_foot_ik(e, on_ground.then(FootIk::default));
                     anim.shown = clip;
                 }

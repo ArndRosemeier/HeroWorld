@@ -486,6 +486,190 @@ pub fn add_victim_clips(model: &mut AnimatedModel) -> Result<(), String> {
     Ok(())
 }
 
+/// Smooth in over the first `rise` and out over the last `fall` of a
+/// clip's 0..1 time: 0 at the ends, 1 in between.
+fn envelope(t: f32, rise: f32, fall: f32) -> f32 {
+    let k = (t / rise).min((1.0 - t) / fall).clamp(0.0, 1.0);
+    k * k * (3.0 - 2.0 * k)
+}
+
+/// The sidekick's idle tricks (see [`crate::tricks`]), each laid over its
+/// idle and played once: "wave" (up at its hero, the hand swinging over
+/// its head), "hop" (two happy little hops, arms flung up), "look around"
+/// (a hand at the brow, the head sweeping round), "polish" (buffing its
+/// chest core, then a proud look up), "head tilt" (a curious tip one way,
+/// then the other), "stretch" (arms up, up on its toes, a lean back).
+/// The robot's "dance" is the packs' own.
+pub fn add_sidekick_clips(model: &mut AnimatedModel) -> Result<(), String> {
+    use std::f32::consts::{PI, TAU};
+    let wave = make_clip(model, "wave", 2.4, |t| {
+        let k = envelope(t, 0.18, 0.2);
+        let w = (t * TAU * 3.0).sin() * k;
+        let up = Vec3::new(-0.15, -1.0, 0.05).lerp(Vec3::new(-0.6, 0.75, 0.25), k);
+        let fore = Vec3::new(-0.05, -1.0, 0.15).lerp(Vec3::new(-0.35 * w, 1.0, 0.25), k);
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", up.x, up.y, up.z),
+                aim("lowerarm_r", "hand_r", fore.x, fore.y, fore.z),
+            ],
+            // Small, so it looks up to its hero; a happy sway.
+            turns: vec![
+                ("head", Vec3::X, -0.3 * k),
+                ("head", Vec3::Z, 0.08 * w),
+                ("spine_03", Vec3::Z, -0.05 * k),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let hop = make_clip(model, "hop", 1.5, |t| {
+        // A crouch, two hops (0.12..0.45 and 0.5..0.83), a settle.
+        let hop_at = |a: f32, b: f32| {
+            if (a..b).contains(&t) {
+                ((t - a) / (b - a) * PI).sin()
+            } else {
+                0.0
+            }
+        };
+        let air = hop_at(0.12, 0.45).max(hop_at(0.5, 0.83) * 0.8);
+        let crouch = envelope(t, 0.1, 0.12) * (1.0 - air);
+        let arms = envelope(t, 0.12, 0.2) * (0.35 + 0.65 * air);
+        let ua = |side: f32| {
+            Vec3::new(side * 0.3, -1.0, 0.1).lerp(Vec3::new(side * 0.7, 0.75, 0.2), arms)
+        };
+        let la = |side: f32| {
+            Vec3::new(side * 0.1, -1.0, 0.25).lerp(Vec3::new(side * 0.45, 1.0, 0.3), arms)
+        };
+        let (l, r) = (ua(1.0), ua(-1.0));
+        let (ll, rl) = (la(1.0), la(-1.0));
+        Pose {
+            aims: vec![
+                aim("upperarm_l", "lowerarm_l", l.x, l.y, l.z),
+                aim("lowerarm_l", "hand_l", ll.x, ll.y, ll.z),
+                aim("upperarm_r", "lowerarm_r", r.x, r.y, r.z),
+                aim("lowerarm_r", "hand_r", rl.x, rl.y, rl.z),
+                // Feet tucked a little in the air.
+                aim("thigh_l", "calf_l", 0.05, -1.0, 0.1 + 0.3 * air),
+                aim("calf_l", "foot_l", 0.03, -1.0, -0.1 - 0.4 * air),
+                aim("thigh_r", "calf_r", -0.05, -1.0, 0.1 + 0.3 * air),
+                aim("calf_r", "foot_r", -0.03, -1.0, -0.1 - 0.4 * air),
+            ],
+            turns: vec![("head", Vec3::X, -0.2 * arms)],
+            lift: 0.22 * air - 0.08 * crouch,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let look = make_clip(model, "look around", 3.6, |t| {
+        let k = envelope(t, 0.12, 0.15);
+        // Left, a pause, right, a pause, back.
+        let sweep = (t * TAU).sin();
+        let sweep = sweep.signum() * sweep.abs().powf(0.5) * k;
+        let up = Vec3::new(-0.15, -1.0, 0.05).lerp(Vec3::new(-0.55, 0.25, 0.75), k);
+        let fore = Vec3::new(-0.05, -1.0, 0.15).lerp(Vec3::new(0.85, 0.35, 0.2), k);
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", up.x, up.y, up.z),
+                aim("lowerarm_r", "hand_r", fore.x, fore.y, fore.z),
+            ],
+            turns: vec![
+                ("spine_02", Vec3::Y, 0.25 * sweep),
+                ("head", Vec3::Y, 0.55 * sweep),
+                ("head", Vec3::X, -0.12 * k),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let polish = make_clip(model, "polish", 2.8, |t| {
+        let k = envelope(t, 0.12, 0.15);
+        // Rubbing circles on the chest until 0.7, then a proud look up.
+        let rub = if t < 0.72 { 1.0 } else { 0.0 };
+        let c = (t * TAU * 5.0).sin() * 0.12 * rub;
+        let s = (t * TAU * 5.0).cos() * 0.1 * rub;
+        let up = Vec3::new(-0.15, -1.0, 0.05).lerp(Vec3::new(-0.35, -0.55, 0.8), k);
+        let fore = Vec3::new(-0.05, -1.0, 0.15).lerp(Vec3::new(0.95, 0.25 + s, 0.25 + c), k);
+        let proud = envelope(((t - 0.72) / 0.28).clamp(0.0, 1.0), 0.3, 0.3);
+        Pose {
+            aims: vec![
+                aim("upperarm_r", "lowerarm_r", up.x, up.y, up.z),
+                aim("lowerarm_r", "hand_r", fore.x, fore.y, fore.z),
+                // The other fist on the hip.
+                aim(
+                    "upperarm_l",
+                    "lowerarm_l",
+                    0.8 * k,
+                    -0.55 - 0.45 * (1.0 - k),
+                    -0.2 * k,
+                ),
+                aim("lowerarm_l", "hand_l", -0.5 * k, -0.8, -0.12 * k),
+            ],
+            turns: vec![
+                ("head", Vec3::X, 0.4 * k * rub - 0.3 * proud),
+                ("spine_03", Vec3::X, -0.1 * proud),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let tilt = make_clip(model, "head tilt", 2.0, |t| {
+        // One way, a beat, the other way, like a puppy hearing its name.
+        let one = envelope((t / 0.5).clamp(0.0, 1.0), 0.3, 0.3);
+        let two = envelope(((t - 0.45) / 0.55).clamp(0.0, 1.0), 0.3, 0.3);
+        Pose {
+            aims: Vec::new(),
+            turns: vec![
+                ("spine_03", Vec3::X, 0.08 * (one + two)),
+                ("head", Vec3::Z, 0.42 * one - 0.38 * two),
+                ("head", Vec3::X, -0.1 * (one + two)),
+            ],
+            lift: 0.0,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let stretch = make_clip(model, "stretch", 2.6, |t| {
+        let k = envelope(t, 0.3, 0.3);
+        let w = (t * TAU).sin() * 0.05 * k;
+        let ua = |side: f32| {
+            Vec3::new(side * 0.3, -1.0, 0.1).lerp(Vec3::new(side * 0.25, 1.0, -0.05), k)
+        };
+        let la = |side: f32| {
+            Vec3::new(side * 0.1, -1.0, 0.25).lerp(Vec3::new(side * 0.05, 1.0, -0.1), k)
+        };
+        let (l, r) = (ua(1.0), ua(-1.0));
+        let (ll, rl) = (la(1.0), la(-1.0));
+        Pose {
+            aims: vec![
+                aim("upperarm_l", "lowerarm_l", l.x, l.y, l.z),
+                aim("lowerarm_l", "hand_l", ll.x, ll.y, ll.z),
+                aim("upperarm_r", "lowerarm_r", r.x, r.y, r.z),
+                aim("lowerarm_r", "hand_r", rl.x, rl.y, rl.z),
+                // Up on its toes.
+                aim("foot_l", "ball_l", 0.0, -0.3 - 0.6 * k, 1.0),
+                aim("foot_r", "ball_r", 0.0, -0.3 - 0.6 * k, 1.0),
+            ],
+            turns: vec![
+                ("spine_03", Vec3::X, -0.18 * k),
+                ("spine_02", Vec3::Z, w),
+                ("head", Vec3::X, -0.15 * k),
+            ],
+            lift: 0.04 * k,
+            seated: false,
+            lay: None,
+        }
+    })?;
+    let made = [wave, hop, look, polish, tilt, stretch];
+    model
+        .clips
+        .retain(|c| !made.iter().any(|m| m.name == c.name));
+    model.clips.extend(made);
+    Ok(())
+}
+
 /// Adds "cuffed": hands bound behind the back in energy cuffs, legs
 /// dangling, a slow sway, for a villain hanging from a police drone.
 pub fn add_cuffed_clip(model: &mut AnimatedModel) -> Result<(), String> {
