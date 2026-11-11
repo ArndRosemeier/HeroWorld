@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.214 (2026-11-11)
+
+- A metropolis or megalopolis builds again: the title screen no longer hangs at 0% "building the metropolis". Working out which roads lie a hair above which at junctions took minutes for a big city; it now takes a moment, and every road ends up exactly where it did.
+
 ## 0.213 (2026-11-11)
 
 - Atomic Annie's cases go all over town now, not only into the Comet buildings. A case can play on a street, on a landmark's plaza, in the utility tunnels, in an Aether Tube station, in a grotto of the Deeps, in the buried city or in the Doctor's own lab.

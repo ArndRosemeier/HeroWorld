@@ -228,8 +228,7 @@ pub fn roads_meet(a: &WorldRoad, b: &WorldRoad) -> bool {
 /// apart over either that lie inside the other (about the overlap in m²,
 /// counted from both sides).
 fn overlap_of(a: &WorldRoad, b: &WorldRoad) -> usize {
-    let n = samples(a).filter(|p| inside_strip(b, *p)).count()
-        + samples(b).filter(|p| inside_strip(a, *p)).count();
+    let n = samples_inside(a, b) + samples_inside(b, a);
     // Ends meeting at an angle overlap in a wedge the samples may miss:
     // counted as about the corner's size, so it weighs like any overlap.
     match ends_meet(a, b) {
@@ -273,24 +272,66 @@ fn ends_meet(a: &WorldRoad, b: &WorldRoad) -> Option<bool> {
     found
 }
 
+/// How many of [`samples`] of `a` lie [`inside_strip`] of `b`, counted
+/// segment by segment: only the segments of `b` whose reach comes near a
+/// segment of `a` are tried, so two long roads that cross once cost about
+/// what their crossing does, not every point of one against every segment
+/// of the other (a city of a million spent minutes here, 0.206-0.210).
+/// Counts exactly what testing every sample against every segment counts.
+fn samples_inside(a: &WorldRoad, b: &WorldRoad) -> usize {
+    let ta = a.half + a.pavement;
+    let tb = b.half + b.pavement;
+    let b_boxes: Vec<(DVec2, DVec2)> = b.pts.windows(2).map(|w| segment_box(w, tb)).collect();
+    let mut near = Vec::new();
+    let mut count = 0;
+    for (i, w) in a.pts.windows(2).enumerate() {
+        let wa = segment_box(w, ta);
+        near.clear();
+        near.extend((0..b_boxes.len()).filter(|&j| boxes_touch(wa, b_boxes[j])));
+        if near.is_empty() {
+            continue;
+        }
+        count += segment_samples(a, i)
+            .filter(|p| near.iter().any(|&j| within_segment(b, j, *p, tb, 0.05)))
+            .count();
+    }
+    count
+}
+
+/// The box round segment `w`, grown by `reach`.
+fn segment_box(w: &[DVec2], reach: f64) -> (DVec2, DVec2) {
+    let t = DVec2::splat(reach);
+    (w[0].min(w[1]) - t, w[0].max(w[1]) + t)
+}
+
+fn boxes_touch(a: (DVec2, DVec2), b: (DVec2, DVec2)) -> bool {
+    a.0.x <= b.1.x && b.0.x <= a.1.x && a.0.y <= b.1.y && b.0.y <= a.1.y
+}
+
 /// Points over `r`'s strip, about a metre apart, its edges and ends
 /// included.
+#[cfg(test)]
 fn samples(r: &WorldRoad) -> impl Iterator<Item = DVec2> + '_ {
+    (0..r.pts.len().saturating_sub(1)).flat_map(move |i| segment_samples(r, i))
+}
+
+/// [`samples`] over the `i`-th segment of `r`, its ends included.
+fn segment_samples(r: &WorldRoad, i: usize) -> impl Iterator<Item = DVec2> + '_ {
     let total = r.half + r.pavement;
     let across = (2.0 * total).ceil().max(1.0) as usize;
-    r.pts.windows(2).flat_map(move |w| {
-        let d = (w[1] - w[0]).normalize_or_zero();
-        let n = d.perp();
-        let along = w[0].distance(w[1]).ceil().max(1.0) as usize;
-        (0..=along).flat_map(move |i| {
-            let c = w[0].lerp(w[1], i as f64 / along as f64);
-            (0..=across).map(move |k| c + n * (-total + 2.0 * total * k as f64 / across as f64))
-        })
+    let (a, b) = (r.pts[i], r.pts[i + 1]);
+    let d = (b - a).normalize_or_zero();
+    let n = d.perp();
+    let along = a.distance(b).ceil().max(1.0) as usize;
+    (0..=along).flat_map(move |k| {
+        let c = a.lerp(b, k as f64 / along as f64);
+        (0..=across).map(move |j| c + n * (-total + 2.0 * total * j as f64 / across as f64))
     })
 }
 
 /// Is `p` well inside `r`'s strip (5 cm in from its edges and its flat
 /// ends; bends taken round)?
+#[cfg(test)]
 fn inside_strip(r: &WorldRoad, p: DVec2) -> bool {
     within_strip(r, p, r.half + r.pavement, 0.05)
 }
@@ -299,29 +340,35 @@ fn inside_strip(r: &WorldRoad, p: DVec2) -> bool {
 /// and from the flat ends (bends taken round, which the drawn strip,
 /// mitred, covers)?
 pub fn within_strip(r: &WorldRoad, p: DVec2, width: f64, margin: f64) -> bool {
+    (0..r.pts.len().saturating_sub(1)).any(|i| within_segment(r, i, p, width, margin))
+}
+
+/// [`within_strip`] for the `i`-th segment of `r` alone. A point it
+/// accepts lies within `width` of the segment, so inside the segment's
+/// box grown by `width` ([`segment_box`]).
+fn within_segment(r: &WorldRoad, i: usize, p: DVec2, width: f64, margin: f64) -> bool {
     let reach = width - margin;
     let m = r.pts.len();
-    r.pts.windows(2).enumerate().any(|(i, w)| {
-        let v = w[1] - w[0];
-        let len = v.length();
-        if len < 1e-9 {
-            return false;
-        }
-        let d = v / len;
-        let t = (p - w[0]).dot(d);
-        let lo = if i == 0 { margin } else { f64::NEG_INFINITY };
-        let hi = if i + 2 == m {
-            len - margin
-        } else {
-            f64::INFINITY
-        };
-        if t < lo || t > hi {
-            return false;
-        }
-        let q = w[0] + d * t.clamp(0.0, len);
-        // Past an inner corner, round about it.
-        p.distance(q) < reach
-    })
+    let (a, b) = (r.pts[i], r.pts[i + 1]);
+    let v = b - a;
+    let len = v.length();
+    if len < 1e-9 {
+        return false;
+    }
+    let d = v / len;
+    let t = (p - a).dot(d);
+    let lo = if i == 0 { margin } else { f64::NEG_INFINITY };
+    let hi = if i + 2 == m {
+        len - margin
+    } else {
+        f64::INFINITY
+    };
+    if t < lo || t > hi {
+        return false;
+    }
+    let q = a + d * t.clamp(0.0, len);
+    // Past an inner corner, round about it.
+    p.distance(q) < reach
 }
 
 /// Gives each of `roads` a height ([`WorldRoad::layer`]) that no road it
@@ -659,6 +706,49 @@ mod tests {
             style: None,
             layer: 0,
         }
+    }
+
+    #[test]
+    fn overlap_counts_like_every_sample_against_every_segment() {
+        // Crooked roads of many widths over a small patch, so they cross,
+        // run along and end on one another: the segment-by-segment count
+        // must match the plain one exactly (it decides the road heights,
+        // and so what a seed produces).
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let roads: Vec<WorldRoad> = (0..40)
+            .map(|k| {
+                let mut p = DVec2::new(rnd() * 80.0, rnd() * 80.0);
+                let mut pts = vec![p];
+                for _ in 0..1 + (rnd() * 12.0) as usize {
+                    p += DVec2::new(rnd() * 30.0 - 15.0, rnd() * 30.0 - 15.0);
+                    pts.push(p);
+                }
+                WorldRoad {
+                    id: DetailId(k),
+                    pts,
+                    half: 1.0 + rnd() * 6.0,
+                    pavement: rnd() * 3.0,
+                    ..straight()
+                }
+            })
+            .collect();
+        let plain =
+            |a: &WorldRoad, b: &WorldRoad| samples(a).filter(|p| inside_strip(b, *p)).count();
+        let mut meeting = 0;
+        for a in &roads {
+            for b in &roads {
+                let n = plain(a, b);
+                assert_eq!(samples_inside(a, b), n);
+                meeting += usize::from(n > 0);
+            }
+        }
+        assert!(meeting > 200, "the roads hardly meet: {meeting}");
     }
 
     #[test]
