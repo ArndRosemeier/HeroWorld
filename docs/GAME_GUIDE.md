@@ -280,6 +280,30 @@ does, what it needs, and Buy or Give up.
   makes a minion left below 20% of its health give up; Mobile Aegis and Martyr cover
   sidekicks too, and the hero at half (`combat::OWN_WARD`).
 
+### Travel powers in numbers (`hw-sim/src/lib.rs`)
+
+All of them grow with the hero's level, evenly from level 1 to level 20
+(`travel_growth`). Running is 7 m/s.
+
+| Power | Level 1 | Level 20 |
+| --- | --- | --- |
+| Super Jump, full height (Space held) | 14 m (over a three storey house) | 45 m (over a ten storey block) |
+| Super Jump, speed through the air | 15 m/s | 22 m/s |
+| Sprint | 13 m/s | 17 m/s |
+| Super Speed | 24 m/s | 34 m/s |
+| Super Speed with Shift | 40 m/s | 58 m/s |
+
+- **Super Jump** takes off at once in the way the hero runs (at least 80% of the leap
+  speed) and steers hard in the air (45 m/s², a leap turns round in about half a
+  second). Letting go of Space on the way up doubles gravity until the top, so a tap is
+  a hop of about half the height (indoors, onto a low roof) and a held jump goes all the
+  way. Take-off kicks up dust with a whoosh (`FxKind::Launch`).
+- **Hard landing:** a super jumper coming down faster than 18 m/s (`HARD_LANDING`, about
+  an eight metre fall) lands with a stomp (`combat::leaps`, `FxKind::Landing`): a ring of
+  dust, grit, a crack in the ground, a thump and camera shake, all bigger the higher the
+  leap. Villains within 3.5 m (up to 7 m from the top of a level-20 leap) and in sight
+  take 7 to 21 damage (`STOMP_DAMAGE`, times the level scale) and are knocked over.
+
 ### The powers
 
 Every origin tree has 22 or 23 powers in six rows; the travel tree seven. The window says
@@ -289,8 +313,8 @@ each one's numbers; the names and links:
 
 | Row | Power | What it does | Needs |
 | --- | --- | --- | --- |
-| 1 | **Super Jump** | leaps over houses | – |
-| 1 | **Sprint** | runs half again as fast | – |
+| 1 | **Super Jump** | leaps over rooftops; lands with a stomp | – |
+| 1 | **Sprint** | runs twice as fast | – |
 | 2 | **Glide** | hold jump to float down | Super Jump |
 | 2 | **Flight** | flies anywhere | Super Jump |
 | 2 | **Super Speed** | runs like the wind | Sprint |

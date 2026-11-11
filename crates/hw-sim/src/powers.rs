@@ -577,7 +577,7 @@ pub static POWERS: &[PowerDef] = &[
     def(
         2,
         "Super Jump",
-        "leaps over houses",
+        "leaps over rooftops; lands with a stomp",
         Common,
         (0, 1),
         &[],
@@ -592,7 +592,7 @@ pub static POWERS: &[PowerDef] = &[
     def(
         3,
         "Sprint",
-        "runs half again as fast",
+        "runs twice as fast",
         Common,
         (0, 3),
         &[],

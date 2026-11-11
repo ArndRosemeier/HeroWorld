@@ -81,7 +81,7 @@ impl Predictor {
             grounded: server.grounded,
         };
         if let Some(c) = server.combat {
-            self.moves = Moves::from_effects(c.effects);
+            self.moves = Moves::from_view(&c);
         }
         if !self.started {
             self.body = server_body;

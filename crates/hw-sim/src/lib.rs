@@ -305,18 +305,59 @@ impl GeneratedTown {
     }
 }
 
-/// Take-off speed with Super Jump (about seven metres up), and how well a
-/// super jumper steers in the air.
-pub const SUPER_JUMP_SPEED: f64 = 16.5;
-pub const SUPER_AIR_ACCEL: f64 = 30.0;
-/// A super jumper's leaps carry them along faster than running.
-pub const SUPER_LEAP_SPEED: f64 = 13.0;
+/// How far a hero's level has grown its travel powers: 0 at level 1, 1 at
+/// level 20 (the cap).
+pub fn travel_growth(level: u8) -> f64 {
+    (level.max(1) - 1) as f64 / 19.0
+}
+
+fn grown(level: u8, at_1: f64, at_20: f64) -> f64 {
+    at_1 + (at_20 - at_1) * travel_growth(level).min(1.0)
+}
+
+/// How high a full super jump (jump held) goes, in metres: over a three
+/// storey house at level 1, over a ten storey block at level 20. A tapped
+/// jump goes about half as high (see [`SUPER_JUMP_CUT`]).
+pub fn super_jump_height(level: u8) -> f64 {
+    grown(level, 14.0, 45.0)
+}
+
+/// Take-off speed of a super jump that reaches [`super_jump_height`].
+pub fn super_jump_speed(level: u8) -> f64 {
+    (2.0 * GRAVITY * super_jump_height(level)).sqrt()
+}
+
+/// Top speed through the air while super jumping (m/s).
+pub fn super_leap_speed(level: u8) -> f64 {
+    grown(level, 15.0, 22.0)
+}
+
+/// How hard a super jumper steers in the air (m/s²): enough to turn a leap
+/// round in about half a second.
+pub const SUPER_AIR_ACCEL: f64 = 45.0;
+/// Letting go of jump on the way up makes gravity this many times stronger
+/// until the top, so a tap is a short hop (indoors, onto a low roof) and a
+/// held jump goes all the way.
+pub const SUPER_JUMP_CUT: f64 = 2.0;
+/// A super jumper landing faster than this (m/s down, about an eight metre
+/// fall) lands hard: dust, a crack in the ground, a stomp that knocks
+/// villains round them over.
+pub const HARD_LANDING: f64 = 18.0;
+
+/// Sprint's top speed (m/s): twice a run at level 1.
+pub fn sprint_speed(level: u8) -> f64 {
+    grown(level, 13.0, 17.0)
+}
 
 /// Running speed with Super Speed, with Shift held, and how quickly a
 /// speedster gets going and stops.
-pub const SUPER_SPEED: f64 = 18.0;
-pub const SUPER_SPEED_BOOST: f64 = 32.0;
-pub const SUPER_SPEED_ACCEL: f64 = 90.0;
+pub fn super_speed(level: u8) -> f64 {
+    grown(level, 24.0, 34.0)
+}
+pub fn super_speed_boost(level: u8) -> f64 {
+    grown(level, 40.0, 58.0)
+}
+pub const SUPER_SPEED_ACCEL: f64 = 120.0;
 
 fn horizontal_speed(body: &Body) -> f64 {
     DVec2::new(body.vel.x, body.vel.z).length()
@@ -336,6 +377,8 @@ pub struct Moves {
     pub sprint: bool,
     pub glide: bool,
     pub wall_run: bool,
+    /// The hero's level: travel powers grow with it.
+    pub level: u8,
 }
 
 impl Moves {
@@ -347,6 +390,7 @@ impl Moves {
         sprint: false,
         glide: false,
         wall_run: false,
+        level: 1,
     };
     /// Flight allowed (tests and tools that fly).
     pub const FLYER: Moves = Moves {
@@ -354,9 +398,12 @@ impl Moves {
         ..Moves::ON_FOOT
     };
 
-    /// From the effect bits a hero's [`hw_net::CombatState`] carries.
-    pub fn from_effects(effects: u32) -> Self {
+    /// From what a hero's [`hw_net::CombatState`] carries: its effect bits
+    /// and its level.
+    pub fn from_view(c: &hw_net::CombatState) -> Self {
+        let effects = c.effects;
         Self {
+            level: c.level,
             fly: effects & hw_net::EFFECT_CAN_FLY != 0,
             super_jump: effects & hw_net::EFFECT_SUPER_JUMP != 0,
             speed: effects & hw_net::EFFECT_SUPER_SPEED != 0,
@@ -366,10 +413,11 @@ impl Moves {
         }
     }
 
-    /// What a hero's powers allow.
-    pub fn of(kit: &powers::Kit) -> Self {
+    /// What a hero's powers allow at `level`.
+    pub fn of(kit: &powers::Kit, level: u8) -> Self {
         use powers::travel;
         Self {
+            level,
             fly: kit.travels(travel::FLY),
             super_jump: kit.travels(travel::JUMP),
             speed: kit.travels(travel::SPEED),
@@ -380,8 +428,6 @@ impl Moves {
     }
 }
 
-/// Sprint's top speed (m/s).
-pub const SPRINT_SPEED: f64 = RUN_SPEED * 1.5;
 /// A glider falls no faster than this (m/s).
 pub const GLIDE_FALL: f64 = 2.5;
 /// A wall runner climbs this fast (m/s).
@@ -407,19 +453,25 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
         }
         return;
     }
+    let level = moves.level;
     let top = if moves.speed && body.grounded {
         if input.boost {
-            SUPER_SPEED_BOOST
+            super_speed_boost(level)
         } else {
-            SUPER_SPEED
+            super_speed(level)
         }
     } else if moves.super_jump && !body.grounded {
-        SUPER_LEAP_SPEED
+        // A leap keeps a speedster's run if that is faster.
+        super_leap_speed(level).max(if moves.speed {
+            horizontal_speed(body)
+        } else {
+            0.0
+        })
     } else if moves.speed {
         // Off the ground a speedster keeps most of their run.
-        SUPER_SPEED.max(horizontal_speed(body))
+        super_speed(level).max(horizontal_speed(body))
     } else if moves.sprint {
-        SPRINT_SPEED
+        sprint_speed(level)
     } else {
         RUN_SPEED
     };
@@ -452,14 +504,31 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
             0.0
         };
     } else {
+        let rising_leap = moves.super_jump && !body.grounded && body.vel.y > JUMP_SPEED;
         if input.jump && body.grounded {
-            body.vel.y = if moves.super_jump {
-                SUPER_JUMP_SPEED
+            if moves.super_jump {
+                body.vel.y = super_jump_speed(level);
+                // Launch: the leap carries on the way the hero was going at
+                // once, instead of speeding up in the air.
+                let stick = DVec2::new(input.move_x as f64, input.move_z as f64);
+                if stick.length_squared() > 1e-6 {
+                    let keep = horizontal_speed(body).max(super_leap_speed(level) * 0.8);
+                    let v = stick.normalize() * keep * stick.length().min(1.0);
+                    let v = DVec3::new(v.x, 0.0, v.y);
+                    body.vel.x = v.x;
+                    body.vel.z = v.z;
+                }
             } else {
-                JUMP_SPEED
-            };
+                body.vel.y = JUMP_SPEED;
+            }
         }
-        body.vel.y -= GRAVITY * DT;
+        // Let go on the way up and the leap tops out sooner.
+        let pull = if rising_leap && !input.jump {
+            SUPER_JUMP_CUT
+        } else {
+            1.0
+        };
+        body.vel.y -= GRAVITY * pull * DT;
         // A glider holding jump floats down.
         if moves.glide && input.jump && !body.grounded {
             body.vel.y = body.vel.y.max(-GLIDE_FALL);
@@ -2130,11 +2199,13 @@ type WalkingHero = (With<Hero>, Without<taxi::Riding>);
 
 fn move_heroes(
     solids: Res<Solids>,
-    mut q: Query<(&Control, &mut Motion, Option<&Fighter>), WalkingHero>,
+    mut q: Query<(&Control, &mut Motion, Option<&mut Fighter>), WalkingHero>,
 ) {
-    for (control, mut motion, fighter) in &mut q {
-        let moves = fighter.map_or(Moves::ON_FOOT, |f| Moves::of(&f.kit));
-        let status = fighter.map_or(Status::Standing, |f| f.status);
+    for (control, mut motion, mut fighter) in &mut q {
+        let moves = fighter
+            .as_ref()
+            .map_or(Moves::ON_FOOT, |f| Moves::of(&f.kit, f.level));
+        let status = fighter.as_ref().map_or(Status::Standing, |f| f.status);
         let input = match status {
             // A drone holds the carried; the downed only fall.
             Status::Carried => continue,
@@ -2142,7 +2213,20 @@ fn move_heroes(
             _ => control.0,
         };
         let mut body = motion.0;
+        let before = body;
         step_moving(&mut body, input, &solids.0, moves);
+        // A super jump's take-off and hard landing: the fight shows them
+        // and the landing stomps (`combat::step` answers them this tick).
+        if moves.super_jump {
+            if let Some(f) = fighter.as_mut() {
+                if before.grounded && !body.grounded && body.vel.y > JUMP_SPEED {
+                    f.leapt = true;
+                }
+                if !before.grounded && body.grounded && before.vel.y < -HARD_LANDING {
+                    f.landed = -before.vel.y as f32;
+                }
+            }
+        }
         // Only a real change counts, so heroes standing still cost no traffic.
         motion.set_if_neq(Motion(body));
     }

@@ -692,6 +692,11 @@ pub struct Fighter {
     /// last went down.
     pub rise_ready: u64,
     pub down_at: u64,
+    /// Movement this tick for the fight to answer: a super jump took off,
+    /// and how fast (m/s down) a super jumper hit the ground hard (0: no
+    /// hard landing). Set by the hero's movement, cleared by [`step`].
+    pub leapt: bool,
+    pub landed: f32,
 }
 
 impl Fighter {
@@ -751,6 +756,8 @@ impl Fighter {
             wind_ready: 0,
             rise_ready: 0,
             down_at: 0,
+            leapt: false,
+            landed: 0.0,
         }
     }
 
@@ -1782,6 +1789,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     let rescue_points = std::mem::take(&mut world.resource_mut::<Fights>().rescue_points);
     let home = world.resource::<Fights>().home;
     heroes_act(&mut actors, &solids, &rescue_points, home, tick, &mut out);
+    leaps(&mut actors, &solids, tick, &mut out);
     world.resource_mut::<Fights>().rescue_points = rescue_points;
     npc_heroes_act(&mut actors, &solids, tick, &mut out);
     sidekicks_act(&mut actors, &solids, tick, &mut out);
@@ -3981,6 +3989,75 @@ fn nearest_rescues(points: &[DVec3], chest: DVec3, aim: DVec3, range: f64, n: us
 }
 
 /// A blast all round a point (shockwave, nova, a meteor landing).
+/// A hard super-jump landing's stomp at full strength (before the level
+/// scale) and its reach: from [`STOMP_REACH`] at a [`crate::HARD_LANDING`]
+/// up to twice that from the top of a level-20 leap.
+pub const STOMP_DAMAGE: f32 = 14.0;
+/// The Super Jump power.
+const SUPER_JUMP: PowerId = PowerId(2);
+pub const STOMP_REACH: f64 = 3.5;
+
+/// How hard a landing at `fall` m/s is: 0 at [`crate::HARD_LANDING`], 1
+/// at the bottom of a full level-20 leap.
+pub fn landing_force(fall: f32) -> f32 {
+    let top = crate::super_jump_speed(20) as f32;
+    let hard = crate::HARD_LANDING as f32;
+    ((fall - hard) / (top - hard)).clamp(0.0, 1.0)
+}
+
+/// Super jumps: a take-off shows (dust, a whoosh), and a hard landing
+/// stomps: villains near the hero's feet are hit and knocked over, more
+/// and further the higher the leap came from.
+fn leaps(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out) {
+    for i in 0..actors.len() {
+        if actors[i].hero.is_none() {
+            continue;
+        }
+        let feet = actors[i].body.pos;
+        let me = actors[i].id;
+        if std::mem::take(&mut actors[i].f.leapt) {
+            out.fx.push(event(tick, FxKind::Launch, me, me, feet));
+        }
+        let fall = std::mem::take(&mut actors[i].f.landed);
+        if fall <= 0.0 {
+            continue;
+        }
+        let force = landing_force(fall);
+        let reach = STOMP_REACH * (1.0 + force as f64);
+        let damage = STOMP_DAMAGE * (0.5 + force) * level_scale(actors[i].f.level);
+        let standing = actors[i].f.fighting();
+        let mut caught = 0u16;
+        if standing {
+            let mut near: Vec<(usize, f64)> = (0..actors.len())
+                .filter(|&k| k != i && hittable(&actors[k]))
+                .map(|k| (k, actors[k].body.pos.distance(feet)))
+                .filter(|&(k, d)| {
+                    d <= reach && clear_line(solids, feet + DVec3::Y, actors[k].chest())
+                })
+                .collect();
+            near.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+            for (k, _) in near {
+                let (knock, defeat, dealt) = hit(actors, i, k, damage, true, tick);
+                let mut e = event(tick, FxKind::Landing, me, actors[k].id, actors[k].chest());
+                e.amount = dealt.round() as u16;
+                e.knock = knock;
+                e.defeat = defeat;
+                e.theme = SUPER_JUMP.0;
+                out.fx.push(e);
+                caught += 1;
+            }
+            if caught > 0 {
+                actors[i].f.last_combat = tick;
+            }
+        }
+        // The hero's own landing: how hard (tenths of m/s) and whom it caught.
+        let mut e = event(tick, FxKind::Landing, me, me, feet);
+        e.amount = (fall * 10.0).round() as u16;
+        e.knock = caught > 0;
+        out.fx.push(e);
+    }
+}
+
 struct Burst {
     centre: DVec3,
     /// Where walls are checked from (a blast does not go through them);

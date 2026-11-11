@@ -769,6 +769,7 @@ impl FightView {
                     | FxKind::Shockwave
                     | FxKind::Shatter
                     | FxKind::Bomb
+                    | FxKind::Landing
             );
             if struck && e.amount > 0 && e.from != e.to && !e.knock && !e.defeat {
                 let d = at - origin;
@@ -947,6 +948,32 @@ impl FightView {
                         impact(world, at, core, 0.8);
                         self.blow(e, at, mine, on_me, fx_ui_colour(e));
                     }
+                }
+                FxKind::Launch => {
+                    // A super jump takes off: dust kicked out, a whoosh.
+                    let feet = all.iter().find(|x| x.id == e.from).map_or(at, pos);
+                    launch_dust(world, feet);
+                    self.play(world, |s| &s.whoosh, feet, 0.9, 0.7);
+                    if mine {
+                        self.shake = self.shake.max(0.25);
+                    }
+                }
+                FxKind::Landing if e.from == e.to => {
+                    // A hard super-jump landing: the harder, the bigger the
+                    // dust ring, the crack and the thump.
+                    let fall = e.amount as f32 / 10.0;
+                    let force = hw_sim::combat::landing_force(fall);
+                    landing_crater(world, at, force);
+                    self.act(e.from, "jump land", 1.0);
+                    self.play(world, |s| &s.boom, at, 0.5 + 0.5 * force, 1.4 - 0.4 * force);
+                    if mine {
+                        self.shake = self.shake.max(0.5 + 0.9 * force);
+                    }
+                }
+                FxKind::Landing => {
+                    // A villain caught in the stomp.
+                    impact(world, at, rgb(210, 190, 150), 0.7);
+                    self.blow(e, at, mine, on_me, egui::Color32::from_rgb(255, 220, 140));
                 }
                 FxKind::Lift => {
                     let (core, _) = fx_colours(e);
@@ -2481,7 +2508,7 @@ impl FightView {
                     let mut hint = String::from("Tab: target   Left mouse / 1   Q / 2   B: powers");
                     use hw_sim::powers::travel;
                     let moves: Vec<&str> = [
-                        (travel::JUMP, "Space: super jump"),
+                        (travel::JUMP, "Space: super jump (hold for height)"),
                         (travel::FLY, "V: fly"),
                         (travel::SPEED, "Shift: super speed"),
                         (travel::SPRINT, "Shift: sprint"),
@@ -2949,6 +2976,92 @@ pub fn shockwave(world: &mut World, feet: Vec3, core: Color, edge: Color, radius
     .depth(1.0)
     .opacity(0.5)
     .lifetime(20.0)
+    .fade(0.0, 4.0);
+    let _ = world.spawn_decal(d);
+}
+
+/// A super jump's take-off: a puff of dust round the feet and a few
+/// streaks shooting down and out.
+fn launch_dust(world: &mut World, feet: Vec3) {
+    let p = world.particles_mut();
+    let _ = p.burst(
+        ParticleEmitter::new(feet + Vec3::Y * 0.15)
+            .with_mode(ParticleMode::Burst)
+            .with_shape(ParticleShape::Ring)
+            .with_burst_count(60)
+            .with_size(0.45)
+            .with_lifetime(0.9)
+            .with_spread(Vec3::new(0.5, 0.05, 0.5))
+            .with_force(ParticleForce::Radial {
+                center: feet,
+                strength: 14.0,
+            })
+            .with_velocity(Vec3::Y * 0.6)
+            .with_drag(2.5)
+            .with_color(rgb(196, 186, 166))
+            .with_size_over_life(SizeOverLife::GrowThenFade),
+    );
+    let _ = p.burst(
+        ParticleEmitter::new(feet + Vec3::Y * 0.4)
+            .with_mode(ParticleMode::Burst)
+            .with_burst_count(24)
+            .with_size(0.06)
+            .with_lifetime(0.35)
+            .with_spread(Vec3::new(0.3, 0.1, 0.3))
+            .with_velocity(Vec3::Y * -2.0)
+            .with_velocity_jitter(Vec3::new(5.0, 1.0, 5.0))
+            .with_color(rgb(255, 240, 210))
+            .with_silhouette(ParticleSilhouette::SparkStreak)
+            .with_velocity_stretch(0.05)
+            .with_emissive_intensity(1.5),
+    );
+}
+
+/// A hard super-jump landing (`force` 0..1, how hard): a ring of dust
+/// racing out, grit thrown up and a crack pressed into the ground.
+fn landing_crater(world: &mut World, feet: Vec3, force: f32) {
+    let reach = (hw_sim::combat::STOMP_REACH as f32) * (1.0 + force);
+    let p = world.particles_mut();
+    let _ = p.burst(
+        ParticleEmitter::new(feet + Vec3::Y * 0.2)
+            .with_mode(ParticleMode::Burst)
+            .with_shape(ParticleShape::Ring)
+            .with_burst_count(90 + (150.0 * force) as u32)
+            .with_size(0.5 + 0.4 * force)
+            .with_lifetime(1.1 + 0.6 * force)
+            .with_spread(Vec3::new(0.6, 0.05, 0.6))
+            .with_force(ParticleForce::Radial {
+                center: feet,
+                strength: reach * 8.0,
+            })
+            .with_velocity(Vec3::Y * 0.9)
+            .with_velocity_jitter(Vec3::splat(0.8))
+            .with_drag(2.0)
+            .with_color(rgb(190, 180, 160))
+            .with_size_over_life(SizeOverLife::GrowThenFade),
+    );
+    let _ = p.burst(
+        ParticleEmitter::new(feet + Vec3::Y * 0.2)
+            .with_mode(ParticleMode::Burst)
+            .with_shape(ParticleShape::Sphere)
+            .with_burst_count(20 + (40.0 * force) as u32)
+            .with_size(0.08)
+            .with_lifetime(0.9)
+            .with_spread(Vec3::splat(0.4))
+            .with_velocity(Vec3::Y * (4.0 + 5.0 * force))
+            .with_velocity_jitter(Vec3::new(3.5, 2.0, 3.5))
+            .with_acceleration(Vec3::Y * -14.0)
+            .with_color(rgb(120, 110, 96)),
+    );
+    let d = Decal::new(
+        DecalKind::Crack,
+        feet + Vec3::Y * 0.2,
+        Vec3::Y,
+        1.2 + 1.8 * force,
+    )
+    .depth(1.0)
+    .opacity(0.55 + 0.3 * force)
+    .lifetime(15.0)
     .fade(0.0, 4.0);
     let _ = world.spawn_decal(d);
 }

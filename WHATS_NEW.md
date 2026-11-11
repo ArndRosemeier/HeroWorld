@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.186 (2026-11-11)
+
+- Super Jump is super now. A held jump goes about 14 m up at level 1 (over a three storey house) and grows with every level to 45 m at level 20 (over a ten storey block). Tap Space for a shorter hop, handy indoors.
+- Leaps take off at once in the way you run, go faster through the air and steer hard, so you can turn a leap round mid-air.
+- Take-off kicks up dust with a whoosh. Come down from high up and you land with a thump: a ring of dust, a crack in the ground, the camera shakes, and villains round you are knocked off their feet (the higher the leap, the harder and wider).
+- Sprint is twice as fast as running now (13 m/s, 17 at level 20), and Super Speed is much faster: 24 m/s (34 at level 20), with Shift 40 m/s (58 at level 20).
+
 ## 0.185 (2026-11-11)
 
 - Sidekicks and familiars no longer run circles round you. They trail along behind you, settle down beside you when you stop, and now and then do a little trick: a wave, a hop, a stretch, a look around, a polish of their chest, a curious head tilt or a little jig.

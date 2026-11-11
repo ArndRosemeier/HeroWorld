@@ -989,6 +989,13 @@ pub enum FxKind {
     /// A villain carries loot (`from`): `amount` says what (see
     /// [`loot`]); 0 puts it down.
     Loot,
+    /// Hero `from` took off on a super jump from `at` (its feet).
+    Launch,
+    /// A super jumper `from` landed hard. On the hero itself (`to` ==
+    /// `from`, `at` its feet) `amount` is how fast it came down in tenths
+    /// of m/s and `knock` says the stomp caught someone; on a villain `to`
+    /// the stomp hit, `amount` is the damage.
+    Landing,
 }
 
 /// What a villain carries off ([`FxKind::Loot`]).
@@ -1082,6 +1089,8 @@ impl FxKind {
             FxKind::Burn => 55,
             FxKind::Admitted => 56,
             FxKind::Loot => 57,
+            FxKind::Launch => 58,
+            FxKind::Landing => 59,
         }
     }
 
@@ -1144,6 +1153,8 @@ impl FxKind {
             55 => FxKind::Burn,
             56 => FxKind::Admitted,
             57 => FxKind::Loot,
+            58 => FxKind::Launch,
+            59 => FxKind::Landing,
             _ => return Err(WireError),
         })
     }

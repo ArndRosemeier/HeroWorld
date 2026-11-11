@@ -1030,14 +1030,14 @@ pub fn what_it_does(d: &PowerDef) -> String {
     }
     use powers::travel;
     for (bit, text) in [
-        (travel::JUMP, "jump seven metres, leap along fast"),
-        (travel::SPRINT, "Shift to sprint"),
+        (travel::JUMP, "leap 14 m up at level 1, 45 m at level 20 (hold Space for full height); a hard landing knocks villains over"),
+        (travel::SPRINT, "run twice as fast, faster with every level"),
         (travel::GLIDE, "hold jump to glide down"),
         (
             travel::FLY,
             "V to fly, Shift to go fast; no energy comes back while you are in the air",
         ),
-        (travel::SPEED, "Shift to run like the wind"),
+        (travel::SPEED, "run 24 m/s (34 at level 20), Shift for 40 (58)"),
         (travel::WALL, "run up walls"),
     ] {
         if f.travel & bit != 0 {
