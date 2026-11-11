@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.204 (2026-11-11)
+
+- The new office buildings no longer flicker round their windows: the inside walls now sit cleanly behind the window panes.
+
 ## 0.203 (2026-11-11)
 
 - New case: hostages. A gang holds three people on different floors: beat their guards, then hold E to untie them, and they hurry out of the building.

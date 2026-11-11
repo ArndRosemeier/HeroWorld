@@ -1138,6 +1138,18 @@ pub enum Look {
     Cut { level: u32 },
 }
 
+/// The frame the inside of a building of halls is made in
+/// (`cometmesh::halls`), in the city: the middle of the building at block
+/// height, +z out of its front.
+pub(crate) fn halls_frame(site: &hw_gen::building::BuildingSite) -> (DVec3, DVec3, DVec3) {
+    let mid = site.size * 0.5;
+    (
+        site.to_city(DVec3::new(mid.x, BLOCK_TOP, mid.y)),
+        -DVec3::new(site.along.x, 0.0, site.along.y),
+        -DVec3::new(site.inward.x, 0.0, site.inward.y),
+    )
+}
+
 /// Adds one building to `b`.
 pub fn add_building(
     b: &mut MeshBuilder,
@@ -1161,12 +1173,7 @@ pub fn add_building(
         let n = plan.floors.len();
         crate::buildingmesh::exterior(b, plan, n, true, detail);
         if detail == crate::buildingmesh::Detail::Near {
-            let mid = site.size * 0.5;
-            b.frame = Some((
-                to_city(mid.x, base, mid.y),
-                -u,
-                -DVec3::new(site.inward.x, 0.0, site.inward.y),
-            ));
+            b.frame = Some(halls_frame(site));
             crate::cometmesh::halls(b, plan);
             b.frame = None;
         }

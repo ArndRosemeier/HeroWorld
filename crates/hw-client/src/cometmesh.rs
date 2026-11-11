@@ -268,7 +268,7 @@ pub fn furniture_models(
 /// the z-fighting check takes them kind by kind to name what clashes).
 fn build(b: &mut MeshBuilder, l: &Landmark, near: bool, keep: &dyn Fn(&Part) -> bool) {
     let Some(plan) = comet::layout(l) else { return };
-    build_parts(b, &plan, &comet::parts(l), near, false, keep);
+    build_parts(b, &plan, &comet::parts(l), near, None, keep);
 }
 
 /// The inside of a town building of halls (`BuildingPlan::layout`), in the
@@ -285,7 +285,7 @@ fn halls_parts(
     plan: &hw_gen::building::BuildingPlan,
     keep: &dyn Fn(&Part) -> bool,
 ) {
-    let (Some(l), Some(parts)) = (plan.layout.as_ref(), plan.solids()) else {
+    let (Some(l), Some(parts)) = (plan.layout.as_ref(), plan.shell_parts(RIM)) else {
         return;
     };
     let parts: Vec<Piece> = parts
@@ -295,23 +295,57 @@ fn halls_parts(
             shape: comet::to_local(l.size, p.shape),
         })
         .collect();
-    build_parts(b, l, &parts, true, true, keep);
+    build_parts(b, l, &parts, true, Some(plan.look.reveal), keep);
 }
 
-/// How far behind the facade's plane an outside wall's plaster starts in
-/// a town building (m).
-const BEHIND_FACADE: f64 = 0.02;
+/// A thin upright part on the building's outline (an outside wall, a
+/// window) as a layer from `d0` to `d1` inside that outline, `grow`n along
+/// the wall. None for a part that is not at the outline.
+fn shell_layer(f: &Footprint, half: DVec2, (d0, d1): (f64, f64), grow: f64) -> Option<Footprint> {
+    let (x0, x1) = f.extent(DVec2::ZERO, DVec2::X);
+    let (z0, z1) = f.extent(DVec2::ZERO, DVec2::Y);
+    let (mut lo, mut hi) = (DVec2::new(x0, z0), DVec2::new(x1, z1));
+    let c = (lo + hi) * 0.5;
+    // The way through the wall: where the part is thin and at the outline.
+    let at_face = |a: usize| hi[a] - lo[a] <= WALL + 0.02 && half[a] - c[a].abs() <= WALL;
+    let axis = [0, 1]
+        .into_iter()
+        .filter(|&a| at_face(a))
+        .min_by(|&a, &e| (hi[a] - lo[a]).total_cmp(&(hi[e] - lo[e])))?;
+    let face = half[axis] * c[axis].signum();
+    let (a, e) = (face - d0 * c[axis].signum(), face - d1 * c[axis].signum());
+    lo[axis] = a.min(e);
+    hi[axis] = a.max(e);
+    lo[1 - axis] -= grow;
+    hi[1 - axis] += grow;
+    let lim = half - DVec2::splat(d0);
+    Some(block(lo.max(-lim), hi.min(lim)))
+}
 
-/// `parts` of the layout `plan`, in the landmark frame. `shell`: inside a
-/// facade drawn by someone else.
+/// How much narrower than the facade's openings the plaster's are (m),
+/// how far behind the facade's panes the plaster starts, and how thick it
+/// is at least.
+const RIM: f64 = 0.03;
+const BEHIND_PANE: f64 = 0.012;
+const PLASTER: f64 = 0.09;
+
+/// `parts` of the layout `plan`, in the landmark frame. `reveal`: inside a
+/// facade drawn by someone else, whose panes sit this deep in the wall.
 fn build_parts(
     b: &mut MeshBuilder,
     plan: &Layout,
     parts: &[Piece],
     near: bool,
-    shell: bool,
+    reveal: Option<f64>,
     keep: &dyn Fn(&Part) -> bool,
 ) {
+    let shell = reveal.is_some();
+    // The plaster of a shell's outside walls: from behind the facade's
+    // panes to the walls' inner face, or a little further in a deep reveal.
+    let plaster_at = reveal.map(|r| {
+        let d0 = r + BEHIND_PANE;
+        (d0, (d0 + PLASTER).max(WALL * 0.5))
+    });
     let (clad, band, accent) = livery(plan.scheme);
     let plaster = rgb(238, 232, 218);
     let ceiling = rgb(244, 242, 234);
@@ -347,7 +381,8 @@ fn build_parts(
         })
     };
 
-    let inside = plan.size * 0.5 - DVec2::splat(WALL * 0.5);
+    // (In a shell that is the plaster's face.)
+    let inside = plan.size * 0.5 - DVec2::splat(plaster_at.map_or(WALL * 0.5, |(_, d1)| d1));
     // The lift shafts' outlines: their walls are drawn a little inside.
     let shafts: Vec<(DVec2, DVec2)> = plan
         .spaces
@@ -481,18 +516,12 @@ fn build_parts(
         };
         match *part {
             Part::Outer if shell => {
-                // Only the plaster: from the wall's inner face to just
-                // behind the facade, and no parapet.
-                let half = plan.size * 0.5 - DVec2::splat(BEHIND_FACADE);
-                skin(b, near, Base::CastStone);
-                put_within(
-                    b,
-                    shape,
-                    (y0 - 0.015, y1.min(top) - 0.015),
-                    0.0,
-                    plaster,
-                    half,
-                );
+                // Only the plaster, and no parapet.
+                let at = plaster_at.expect("a shell");
+                if let Some(layer) = shell_layer(shape, plan.size * 0.5, at, 0.0) {
+                    skin(b, near, Base::CastStone);
+                    self::put(b, &layer, (y0 - 0.015, y1.min(top) - 0.015), 0.0, plaster);
+                }
             }
             Part::Roof if shell => {
                 // The top floor's ceiling, under the facade's roof.
@@ -500,11 +529,15 @@ fn build_parts(
                 put(b, shape, (top - 0.3, top - 0.04), 0.0, ceiling);
             }
             Part::Window if shell => {
-                // The pane seen from indoors: a centimetre of glass just
-                // behind the facade (whose own pane faces the street).
-                let half = plan.size * 0.5 - DVec2::splat(0.03);
-                plain(b, Surf::Glass);
-                put_within(b, shape, (y0, y1), 0.0, glass, half);
+                // The pane seen from indoors: a centimetre of glass in
+                // the plaster's depth, its edges inside the plaster (the
+                // facade's own pane faces the street).
+                let (d0, _) = plaster_at.expect("a shell");
+                let at = (d0 + 0.012, d0 + 0.022);
+                if let Some(pane) = shell_layer(shape, plan.size * 0.5, at, 0.012) {
+                    plain(b, Surf::Glass);
+                    self::put(b, &pane, (y0 - 0.012, y1 + 0.012), 0.0, glass);
+                }
             }
             Part::Outer => outer(b, shape, near, (clad, band, plaster), top, (y0, y1)),
             Part::Wall => {
@@ -1169,6 +1202,123 @@ mod tests {
         comet::layout(l).expect("a plan").scheme
     }
 
+    /// What fights in a report, by the two kinds of part and the way the
+    /// faces look: one line per kind of clash, with its area and a place
+    /// to look.
+    fn clashes(report: &engine::zfight::ZFightReport) -> Vec<String> {
+        let mut found: std::collections::BTreeMap<String, (f64, usize, DVec3)> = Default::default();
+        for c in report.fighting() {
+            let axis = if c.normal.y > 0.9 {
+                "up"
+            } else if c.normal.y < -0.9 {
+                "down"
+            } else {
+                "side"
+            };
+            let mut two = [
+                format!(
+                    "{} {}",
+                    report.source_name(c.sources[0]),
+                    crate::zfight::hex(c.colors[0])
+                ),
+                format!(
+                    "{} {}",
+                    report.source_name(c.sources[1]),
+                    crate::zfight::hex(c.colors[1])
+                ),
+            ];
+            two.sort();
+            let e = found
+                .entry(format!("{} / {} {axis}", two[0], two[1]))
+                .or_insert((0.0, 0, c.at));
+            e.0 += c.area;
+            e.1 += 1;
+        }
+        let mut lines: Vec<_> = found.into_iter().collect();
+        lines.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
+        lines
+            .into_iter()
+            .map(|(k, (area, n, at))| {
+                format!(
+                    "  {k}: {area:.1} m2 in {n}, e.g. ({:.2}, {:.2}, {:.2})",
+                    at.x, at.y, at.z
+                )
+            })
+            .collect()
+    }
+
+    /// A town building of halls: its facade and everything behind it, no
+    /// two faces in one plane over each other.
+    #[test]
+    #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
+    fn town_buildings_of_halls_have_no_z_fighting() {
+        use hw_gen::building::{BuildingPlan, BuildingSite, BuildingUse};
+        use hw_gen::city::DistrictKind;
+        let mut bad = Vec::new();
+        for k in 0..8u64 {
+            let site = BuildingSite {
+                id: hw_core::StableId(k),
+                seed: hw_core::Seed(900 + k),
+                usage: if k % 2 == 0 {
+                    BuildingUse::Offices
+                } else {
+                    BuildingUse::ShopsAndOffices
+                },
+                origin: DVec2::new(40.0, -20.0),
+                along: DVec2::X,
+                inward: DVec2::Y,
+                size: DVec2::new(34.0 + 2.5 * k as f64, 40.0 + 1.5 * k as f64),
+                floors: 3,
+                street: 0,
+                district: [DistrictKind::Commercial, DistrictKind::Residential]
+                    [(k / 2 % 2) as usize],
+                halls: None,
+                vernacular: None,
+            }
+            .into_halls(2 + (k % 4) as u32);
+            let plan = BuildingPlan::generate(&site);
+            let mut check =
+                engine::zfight::ZFightCheck::new().options(crate::zfight::city_options());
+            let mut b = MeshBuilder::new();
+            crate::buildingmesh::exterior(
+                &mut b,
+                &plan,
+                plan.floors.len(),
+                true,
+                crate::buildingmesh::Detail::Near,
+            );
+            check = check.with("Facade", &b.finish());
+            let name = |p: &Part| {
+                let s = format!("{p:?}");
+                s.split('(').next().unwrap_or("").to_string()
+            };
+            let mut kinds: Vec<String> = plan
+                .solids()
+                .expect("solids")
+                .iter()
+                .map(|p| name(&p.part))
+                .collect();
+            kinds.sort();
+            kinds.dedup();
+            for kind in &kinds {
+                let mut b = MeshBuilder::new();
+                b.frame = Some(crate::citymesh::halls_frame(&site));
+                halls_parts(&mut b, &plan, &|p| name(p) == *kind);
+                check = check.with(kind.clone(), &b.finish());
+            }
+            let report = check.run();
+            if !report.is_clean() {
+                bad.push(format!(
+                    "site {k} ({:?}, {:?}):",
+                    plan.layout.as_ref().map(|l| l.scheme),
+                    plan.look.style
+                ));
+                bad.extend(clashes(&report));
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
     /// No two faces of a Comet building lie in one plane over each other.
     #[test]
     #[ignore = "on demand (looks): scripts/check.sh --on-demand"]
@@ -1219,46 +1369,8 @@ mod tests {
                 );
             }
             if !report.is_clean() {
-                // By the two kinds of part and the way the faces look: one
-                // line per kind of clash, with its area and a place to look.
-                let mut found: std::collections::BTreeMap<String, (f64, usize, DVec3)> =
-                    Default::default();
-                for c in report.fighting() {
-                    let axis = if c.normal.y > 0.9 {
-                        "up"
-                    } else if c.normal.y < -0.9 {
-                        "down"
-                    } else {
-                        "side"
-                    };
-                    let mut two = [
-                        format!(
-                            "{} {}",
-                            report.source_name(c.sources[0]),
-                            crate::zfight::hex(c.colors[0])
-                        ),
-                        format!(
-                            "{} {}",
-                            report.source_name(c.sources[1]),
-                            crate::zfight::hex(c.colors[1])
-                        ),
-                    ];
-                    two.sort();
-                    let e = found
-                        .entry(format!("{} / {} {axis}", two[0], two[1]))
-                        .or_insert((0.0, 0, c.at));
-                    e.0 += c.area;
-                    e.1 += 1;
-                }
-                let mut lines: Vec<_> = found.into_iter().collect();
-                lines.sort_by(|a, b| b.1 .0.total_cmp(&a.1 .0));
                 bad.push(format!("{} (site {k}):", comet::name(&l)));
-                for (k, (area, n, at)) in lines {
-                    bad.push(format!(
-                        "  {k}: {area:.1} m2 in {n}, e.g. ({:.2}, {:.2}, {:.2})",
-                        at.x, at.y, at.z
-                    ));
-                }
+                bad.extend(clashes(&report));
             }
         }
         assert!(bad.is_empty(), "{}", bad.join("\n"));

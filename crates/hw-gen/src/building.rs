@@ -235,6 +235,9 @@ pub struct BuildingSite {
     pub vernacular: Option<Vernacular>,
 }
 
+/// The deepest the windows of a building of halls sit in its walls (m).
+pub const HALL_REVEAL: f64 = 0.075;
+
 impl BuildingSite {
     /// The building's look (cheap: no plan needed).
     pub fn look(&self) -> Look {
@@ -244,6 +247,12 @@ impl BuildingSite {
         };
         // A taxi pad needs a roof wide enough to land on.
         look.taxi_pad &= self.size.min_element() >= 15.0;
+        if self.halls.is_some() {
+            // The halls' plaster is drawn behind the window panes, and the
+            // rooms are planned up to the walls' inner faces: a deep
+            // reveal would bring the plaster into the rooms.
+            look.reveal = look.reveal.min(HALL_REVEAL);
+        }
         look
     }
 
@@ -418,6 +427,14 @@ impl BuildingPlan {
     /// its layout's floors, walls, stairs and shafts, the outside walls cut
     /// where the facade has its windows and doors.
     pub fn solids(&self) -> Option<Vec<solid::Piece>> {
+        self.shell_parts(0.0)
+    }
+
+    /// [`Self::solids`] with every facade opening `narrower` by that much
+    /// on each side: what the game draws behind the facade, so the
+    /// plaster's edge round a window is not in the plane of the facade's
+    /// own reveal.
+    pub fn shell_parts(&self, narrower: f64) -> Option<Vec<solid::Piece>> {
         let l = self.layout.as_ref()?;
         let holes: Vec<solid::ShellHole> = self
             .openings
@@ -434,8 +451,11 @@ impl BuildingPlan {
                 solid::ShellHole {
                     along_x,
                     w,
-                    u: (o.along - o.width * 0.5, o.along + o.width * 0.5),
-                    v: (v0, v0 + o.height),
+                    u: (
+                        o.along - o.width * 0.5 + narrower,
+                        o.along + o.width * 0.5 - narrower,
+                    ),
+                    v: (v0 + narrower, v0 + o.height - narrower),
                     glass: o.kind == OpeningKind::Window,
                 }
             })
