@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.216 (2026-11-11)
+
+- Every town now buries its dead: a hamlet has its little old burial ground, a city several graveyards, a megalopolis a dozen. The old town keeps a crowded churchyard of leaning slabs and ringed crosses; the 19th-century quarters have walled cemeteries; the newest quarters have golden-age gardens of rest.
+- Iron railings with gilt spear tips, a gate between stone pylons with glowing globes under an arch with a star and a crescent moon, an avenue of cypresses and lamps up to a rocket monument, benches, and mausoleums: a chapel under a swooping parabolic roof, a flying-saucer tomb.
+- The headstones are of their age: rockets on their fins, atoms, ringed planets, Googie boomerangs, star-tipped obelisks, and here and there a little sheet ghost peeking over its stone, eyes glowing. Plots of ivy and flowers, lanterns burning on some. At night the globes and portholes glow a ghostly green.
+- Headstones are solid and topple when hit (and the town minds a great deal).
+- Towns are laid out a little differently where the graveyards go (world version 42).
+
 ## 0.215 (2026-11-11)
 
 - The town's new office buildings are no longer empty: in working hours people stand at the desks, in the shops, the lobby and along the galleries, on every floor.

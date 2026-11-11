@@ -453,6 +453,7 @@ pub fn model_bounds(levels: &[LodLevel]) -> (Vec3, Vec3) {
 }
 
 pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
+    use crate::gravemesh as gm;
     use crate::propmesh as pm;
     let three = |make: &dyn Fn(Lod) -> Mesh, d: [f32; 3]| {
         vec![
@@ -484,6 +485,11 @@ pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
         PropKind::BusStop => three(&pm::bus_stop, [35.0, 140.0, 450.0]),
         PropKind::CafeTable(v) => three(&|l| pm::cafe_table(v, l), [25.0, 80.0, 220.0]),
         PropKind::Fence(v) => three(&|l| pm::fence(v, l), [20.0, 60.0, 160.0]),
+        // Graves come in hundreds: close up only near, out to the street.
+        PropKind::Grave(v) => three(&|l| gm::grave(v, l), [16.0, 55.0, 180.0]),
+        PropKind::Tomb(v) => three(&|l| gm::tomb(v, l), [45.0, 180.0, 700.0]),
+        PropKind::GraveRail => three(&gm::rail, [22.0, 70.0, 220.0]),
+        PropKind::GraveGate => three(&gm::gate, [40.0, 160.0, 500.0]),
     })
 }
 
@@ -875,6 +881,13 @@ mod tests {
             PropKind::Fence(0),
             PropKind::Fence(1),
             PropKind::Fence(2),
+            PropKind::Grave(0),
+            PropKind::Grave(15),
+            PropKind::Tomb(0),
+            PropKind::Tomb(1),
+            PropKind::Tomb(2),
+            PropKind::GraveRail,
+            PropKind::GraveGate,
         ];
         for k in kinds {
             let levels = model_levels(k).unwrap();

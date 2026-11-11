@@ -104,6 +104,8 @@ fn clearing(p: &Prop) -> Option<f64> {
         PropKind::NewsStand => 0.95,
         PropKind::CafeTable(_) => 1.0,
         PropKind::Barricade(_) => 0.6,
+        PropKind::Tomb(_) => 2.6,
+        PropKind::GraveGate => 2.6,
         _ => return None,
     })
 }

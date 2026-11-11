@@ -182,13 +182,23 @@ pub fn plan_buildings(
             side,
             streets: &near,
         };
+        let from = out.len();
         match held {
             Some((_, v)) => fill_block(block, &room, v, None, bseed, &mut out),
             None => fill_block(block, &room, &prog, vernacular, bseed, &mut out),
         }
+        // Nothing is built on a graveyard's ground: its stones are props.
+        if let Some(g) = streets.graveyard.as_ref().filter(|g| g.block == k) {
+            let mut kept = out.split_off(from);
+            kept.retain(|site| !g.covers(site, GRAVEYARD_CLEAR));
+            out.extend(kept);
+        }
     }
     out
 }
+
+/// How far buildings keep from a graveyard's ground (m).
+const GRAVEYARD_CLEAR: f64 = 2.0;
 
 /// What a block's buildings keep clear of.
 struct Room<'a> {

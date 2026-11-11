@@ -53,7 +53,9 @@ pub fn toughness(kind: PropKind) -> Option<(f32, Breaks)> {
         PropKind::BusStop => (300.0, Breaks::Smashed),
         PropKind::CafeTable(_) => (30.0, Breaks::Smashed),
         PropKind::Fence(_) => (60.0, Breaks::Smashed),
-        PropKind::Fountain => return None,
+        PropKind::Grave(_) => (160.0, Breaks::Topples),
+        PropKind::GraveRail => (140.0, Breaks::Smashed),
+        PropKind::Fountain | PropKind::Tomb(_) | PropKind::GraveGate => return None,
     })
 }
 
@@ -79,6 +81,10 @@ pub fn trunk(kind: PropKind) -> (f64, f64) {
         PropKind::BusStop => (1.8, 2.7),
         PropKind::CafeTable(_) => (0.9, 0.9),
         PropKind::Fence(_) => (1.2, 1.0),
+        PropKind::Grave(_) => (0.4, 1.2),
+        PropKind::GraveRail => (1.2, 1.7),
+        PropKind::Tomb(_) => (2.0, 4.0),
+        PropKind::GraveGate => (2.5, 4.0),
         PropKind::Barricade(p) => {
             let (hx, hz, h) = p.block();
             (hx.max(hz), h)
@@ -91,6 +97,8 @@ fn cost(kind: PropKind) -> f64 {
     match kind {
         PropKind::Car(..) => 12_000.0,
         PropKind::Statue(_) => 20_000.0,
+        // Somebody's grandmother's stone: the town minds a great deal.
+        PropKind::Grave(_) => 4_000.0,
         PropKind::Kiosk => 6_000.0,
         PropKind::BusStop | PropKind::PhoneBooth => 3_000.0,
         PropKind::Tree(..) => 2_500.0,

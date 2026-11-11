@@ -821,6 +821,38 @@ fn main() -> EngineResult<()> {
             };
             FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, pitch)
         }
+        "graveyard" => {
+            // `HW_VIEW=graveyard`: outside the nearest graveyard's gate,
+            // looking in down its avenue (`HW_GRAVE_BACK` metres back,
+            // `HW_GRAVE_UP` up; `HW_GRAVE_N` picks the n-th nearest).
+            use hw_gen::urban::props::PropKind;
+            let n = env_num("HW_GRAVE_N").unwrap_or(0) as usize;
+            let back = env_num("HW_GRAVE_BACK").unwrap_or(14) as f64;
+            let up = env_num("HW_GRAVE_UP").unwrap_or(7) as f64;
+            let mut gates: Vec<_> = generated
+                .area
+                .props
+                .iter()
+                .filter(|p| p.kind == PropKind::GraveGate)
+                .collect();
+            gates.sort_by(|a, b| a.pos.distance(spawn).total_cmp(&b.pos.distance(spawn)));
+            let (c, front) = gates
+                .get(n.min(gates.len().saturating_sub(1)))
+                .map_or((spawn, spawn_dir), |g| (g.pos, g.dir));
+            println!(
+                "graveyard view: gate at {c:?} ({} gates in the area)",
+                gates.len()
+            );
+            let p = c + front * back;
+            let d = c - front * 25.0 - p;
+            let yaw = d.x.atan2(d.y).to_degrees() as f32;
+            let pitch = -(up / back.max(1.0)).atan().to_degrees() as f32 * 0.6;
+            FlyCamera::new(
+                (p.x as f32, ground(p) as f32 + up as f32, p.y as f32),
+                yaw,
+                pitch,
+            )
+        }
         "pad" => {
             // Above the nearest rooftop taxi pad.
             let pad = generated

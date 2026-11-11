@@ -1098,6 +1098,27 @@ between them) is designed but not built; the town stands in endless streamed gro
   benches, bins, hydrants, rocket mailboxes, bollards, kiosks, ad pillars, bronze hero
   statues, traffic lights; taxi pads on tall golden-age roofs; neon signs. Real grass on
   lawns, verges and parks, woods out in the country.
+- **Graveyards** (`hw-gen/src/urban/graveyard.rs`, models `hw-client/src/gravemesh.rs`):
+  every town has at least one, `1 + sqrt(people / 25 000)` rounded (at most 12): one for a
+  hamlet, 2 at 20 000, 3 at 100 000, 7 at a million. The first is the **old burial ground**
+  in the old town (up to 1 500 m² + 0.6 m² per person, at most 4 500 m²): crowded, irregular
+  rows, old ringed crosses and arched slabs. Then, every third a **garden of rest** in the
+  newest quarters (12 000-32 000 m²: rocket, atom, boomerang and ringed-planet markers on open
+  lawn, saucer tombs) and the rest walled **cemeteries** in the 19th-century ring, out where
+  its edge was (14 000-48 000 m²). Never in the villains' quarter; spread over the town. Side
+  streets are traced round a cemetery's ground, so it gets a block of its size; no building
+  stands on it. Each has an iron railing on a stone base, a gate on its longest street side
+  (stone pylons with glowing globes, an iron arch with a ring, a star and a crescent moon, the
+  leaves open), an avenue of cypresses and lamps from the gate to a rocket monument, cross
+  paths every 26-30 m with benches and a mausoleum (a chapel under a parabolic roof, or a
+  saucer tomb) at each, and rows of graves facing the gate, each stone with a kerbed plot of
+  ivy and flowers in front, some with a lantern; 8 % of plots stand empty, 3 % grow a tree.
+  Stones: arched slab, rocket on fins, atom, Googie boomerang, ringed planet, star obelisk,
+  ringed cross, and a stone with a little sheet ghost peeking over it (eyes glowing). Graves
+  are solid and topple when hit (toughness 160, 4 000 collateral); rails smash (140);
+  tombs and the gate do not break. Views: `HW_VIEW=graveyard` (`HW_GRAVE_N`, `HW_GRAVE_BACK`,
+  `HW_GRAVE_UP`), `HW_VIEW=prop HW_PROP=Grave|Tomb|GraveGate|GraveRail`; where they lie:
+  `cargo run --release -p hw-gen --example graveyards -- <seed> <people>`.
 - **Street life** (`hw-gen/src/urban/props.rs`: `shop_fronts`, `street_life`, `fences`):
   more than half the shops put out two to four cafe tables (marble tops, wire chairs,
   striped parasols) against their windows where the pavement leaves room to walk past and

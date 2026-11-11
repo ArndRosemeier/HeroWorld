@@ -114,7 +114,114 @@ pub enum PropKind {
     /// A front garden fence, [`FENCE_LEN`] long along its x: a white
     /// picket fence, an iron railing or a chrome rail (the number).
     Fence(u8),
+    /// A grave, its headstone's front to +z: the number's low bits pick
+    /// the stone ([`GraveStyle`]); unless [`GRAVE_LAWN`] is set, a kerbed
+    /// plot lies in front of it.
+    Grave(u8),
+    /// A mausoleum or monument in a graveyard ([`TombStyle`] by number),
+    /// its door to +z.
+    Tomb(u8),
+    /// A piece of a graveyard's railing, [`RAIL_LEN`] long along its x.
+    GraveRail,
+    /// A graveyard's gate: two pylons under an iron arch, its leaves swung
+    /// open inwards; +z faces out to the street.
+    GraveGate,
 }
+
+/// Graveyard headstones, by the low bits of [`PropKind::Grave`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraveStyle {
+    /// A granite slab with an arched top.
+    Arched,
+    /// A slab shaped as a rocket on its fins, a chrome nose cone on top.
+    Rocket,
+    /// A short obelisk crowned by an atom's orbits.
+    Atom,
+    /// A low Googie boomerang in two tones.
+    Boomerang,
+    /// A ringed planet on a fluted column.
+    Planet,
+    /// A tall obelisk with a star on its tip.
+    Star,
+    /// An old ringed cross, weathered.
+    Cross,
+    /// A round slab with a little sheet ghost peeking over it, its eyes
+    /// glowing faintly.
+    Ghost,
+}
+
+impl GraveStyle {
+    pub const ALL: [GraveStyle; 8] = [
+        GraveStyle::Arched,
+        GraveStyle::Rocket,
+        GraveStyle::Atom,
+        GraveStyle::Boomerang,
+        GraveStyle::Planet,
+        GraveStyle::Star,
+        GraveStyle::Cross,
+        GraveStyle::Ghost,
+    ];
+
+    pub fn of(v: u8) -> GraveStyle {
+        Self::ALL[(v & !GRAVE_LAWN) as usize % Self::ALL.len()]
+    }
+
+    /// The box the stone fills: half its width (x), half its depth (z),
+    /// its height. The models stay inside it.
+    pub fn block(self) -> (f64, f64, f64) {
+        match self {
+            GraveStyle::Arched => (0.36, 0.1, 1.02),
+            GraveStyle::Rocket => (0.42, 0.16, 1.5),
+            GraveStyle::Atom => (0.3, 0.3, 1.78),
+            GraveStyle::Boomerang => (0.5, 0.16, 0.86),
+            GraveStyle::Planet => (0.4, 0.4, 1.3),
+            GraveStyle::Star => (0.26, 0.26, 2.3),
+            GraveStyle::Cross => (0.36, 0.1, 1.32),
+            GraveStyle::Ghost => (0.4, 0.14, 1.18),
+        }
+    }
+}
+
+/// Set in a [`PropKind::Grave`]'s number: a marker on open lawn, no plot.
+pub const GRAVE_LAWN: u8 = 8;
+/// A grave's kerbed plot: its half width, its length in front of the
+/// stone, its height.
+pub const GRAVE_PLOT: (f64, f64, f64) = (0.48, 1.9, 0.16);
+
+/// Graveyard mausoleums and monuments, by [`PropKind::Tomb`]'s number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TombStyle {
+    /// A family chapel under a swooping parabolic roof.
+    Chapel,
+    /// A rocket on its fins over a stepped plinth.
+    Rocket,
+    /// A round marble drum under a flying-saucer roof.
+    Saucer,
+}
+
+impl TombStyle {
+    pub const ALL: [TombStyle; 3] = [TombStyle::Chapel, TombStyle::Rocket, TombStyle::Saucer];
+
+    pub fn of(v: u8) -> TombStyle {
+        Self::ALL[v as usize % Self::ALL.len()]
+    }
+}
+
+/// The chapel tomb's walls: half width, half depth, the walls' top; and
+/// the top of its roof's front peak.
+pub const CHAPEL: (f64, f64, f64, f64) = (1.7, 2.1, 2.7, 4.6);
+/// The rocket monument's plinth (half side, top) and the rocket's tip.
+pub const ROCKET_TOMB: (f64, f64, f64) = (1.45, 0.95, 7.2);
+/// The saucer tomb's drum (radius, top) and the saucer's rim (radius,
+/// top of the roof).
+pub const SAUCER_TOMB: (f64, f64, f64, f64) = (2.0, 2.6, 2.9, 3.7);
+/// Length of one piece of graveyard railing, and its height.
+pub const RAIL_LEN: f64 = 2.4;
+pub const RAIL_HEIGHT: f64 = 1.75;
+/// The graveyard gate: the pylons' distance from the middle and their
+/// half side, their height, the arch's underside and top, and the half
+/// width of the way through.
+pub const GATE: (f64, f64, f64, f64, f64, f64) = (2.35, 0.38, 3.4, 3.55, 4.7, 1.95);
 
 /// Parasol colourings of [`PropKind::CafeTable`].
 pub const CAFE_VARIANTS: u8 = 4;
@@ -167,6 +274,11 @@ impl PropKind {
         ]);
         out.extend((0..CAFE_VARIANTS).map(PropKind::CafeTable));
         out.extend((0..FENCE_VARIANTS).map(PropKind::Fence));
+        for v in 0..GraveStyle::ALL.len() as u8 {
+            out.extend([PropKind::Grave(v), PropKind::Grave(v | GRAVE_LAWN)]);
+        }
+        out.extend((0..TombStyle::ALL.len() as u8).map(PropKind::Tomb));
+        out.extend([PropKind::GraveRail, PropKind::GraveGate]);
         out.sort();
         out
     }
@@ -299,6 +411,56 @@ impl Prop {
             // parasol's edge.
             PropKind::CafeTable(_) => vec![disc(0.95, 1.0)],
             PropKind::Fence(_) => vec![block(FENCE_LEN * 0.5, 0.08, FENCE_HEIGHT)],
+            PropKind::Grave(v) => {
+                let (hx, hz, h) = GraveStyle::of(v).block();
+                vec![block(hx, hz, h)]
+            }
+            PropKind::Tomb(v) => match TombStyle::of(v) {
+                TombStyle::Chapel => {
+                    let (hx, hz, _, top) = CHAPEL;
+                    vec![block(hx + 0.15, hz + 0.15, top)]
+                }
+                TombStyle::Rocket => {
+                    let (half, plinth, tip) = ROCKET_TOMB;
+                    vec![block(half, half, plinth), disc(0.75, tip)]
+                }
+                TombStyle::Saucer => {
+                    let (r, _, _, top) = SAUCER_TOMB;
+                    vec![disc(r + 0.1, top)]
+                }
+            },
+            PropKind::GraveRail => vec![block(RAIL_LEN * 0.5, 0.17, RAIL_HEIGHT)],
+            PropKind::GraveGate => {
+                let (x, half, h, under, top, way) = GATE;
+                let mut v: Vec<Footprint> = [-x, x]
+                    .iter()
+                    .map(|&px| Footprint::Box {
+                        at: DVec2::new(px, 0.0),
+                        dir: DVec2::Y,
+                        half: DVec2::new(half, half),
+                        y0: 0.0,
+                        y1: h,
+                    })
+                    .collect();
+                // The arch over the way in, and the open leaves inside.
+                v.push(Footprint::Box {
+                    at: DVec2::ZERO,
+                    dir: DVec2::Y,
+                    half: DVec2::new(x, 0.14),
+                    y0: under,
+                    y1: top,
+                });
+                for sx in [-1.0, 1.0] {
+                    v.push(Footprint::Box {
+                        at: DVec2::new(sx * (way - 0.02), -way * 0.5 - 0.05),
+                        dir: DVec2::Y,
+                        half: DVec2::new(0.05, way * 0.5),
+                        y0: 0.0,
+                        y1: 2.2,
+                    });
+                }
+                v
+            }
             PropKind::Fountain => {
                 // The basin's rim, too high to step over, and the column.
                 let mut v = ring(3.3, 0.38, 0.66, 20);
@@ -375,6 +537,7 @@ pub(super) fn plan_props(l: &Local, quays: &[QuayWall], steps: &[WaterSteps]) ->
     }
     p.quays(quays, steps);
     p.junctions(seed.child("junctions"));
+    p.graveyard(region);
     p.parks(region, seed.child("parks"));
     p.gardens(region, seed.child("gardens"));
     // Last, so the props before keep their numbers in towns without them.
@@ -1020,7 +1183,7 @@ impl<'a> Placer<'a> {
                 let n = (area / rng.range(110.0, 180.0)) as usize;
                 for _ in 0..n.min(400) {
                     let p = DVec2::new(rng.range(lo.x, hi.x), rng.range(lo.y, hi.y));
-                    if !inside(p) || self.on_road(p, 2.5, None, true) {
+                    if !inside(p) || self.on_road(p, 2.5, None, true) || self.in_graveyard(p, 2.0) {
                         continue;
                     }
                     let kind = if rng.chance(0.8) {
@@ -1037,7 +1200,8 @@ impl<'a> Placer<'a> {
                 }
                 for _ in 0..((area / 700.0) as usize).min(12) {
                     let p = DVec2::new(rng.range(lo.x, hi.x), rng.range(lo.y, hi.y));
-                    if inside(p) && !self.on_road(p, 1.5, None, true) {
+                    if inside(p) && !self.on_road(p, 1.5, None, true) && !self.in_graveyard(p, 1.0)
+                    {
                         let dir = DVec2::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0))
                             .normalize_or(DVec2::Y);
                         self.put(PropKind::Bench, p, dir, 1.0, 1.2);
@@ -1045,6 +1209,364 @@ impl<'a> Placer<'a> {
                 }
             }
         }
+    }
+
+    /// Is `p` within `margin` of this unit's graveyard?
+    fn in_graveyard(&self, p: DVec2, margin: f64) -> bool {
+        self.l
+            .streets
+            .as_ref()
+            .and_then(|s| s.plan.graveyard.as_ref())
+            .is_some_and(|g| g.contains(p) || g.distance(p) < margin)
+    }
+
+    /// How far in from `p` (along `inward`) the pavement ends, if it ends
+    /// within reach.
+    fn off_the_pavement(&self, p: DVec2, inward: DVec2, r: f64) -> Option<f64> {
+        let mut off = 0.3;
+        while self.on_road(p + inward * off, r, None, true) {
+            off += 0.3;
+            if off > 16.0 {
+                return None;
+            }
+        }
+        Some(off)
+    }
+
+    /// The district's graveyard (see [`super::graveyard`]): a railing on a
+    /// stone base round it, broken by the gate on its street side; an
+    /// avenue from the gate lined with cypresses and lamps, cross paths
+    /// with benches, mausoleums along the avenue and a monument at its end;
+    /// rows of graves between the paths. The old burial ground is crowded
+    /// and irregular, a garden of rest open lawn with low markers.
+    fn graveyard(&mut self, region: Region) {
+        use super::graveyard::GraveKind;
+        let Some(g) = self
+            .l
+            .streets
+            .as_ref()
+            .and_then(|s| s.plan.graveyard.clone())
+        else {
+            return;
+        };
+        let mut rng = g.seed.rng();
+        let n = g.outline.len();
+        let ccw = super::graph::signed_area(&g.outline) > 0.0;
+        // The gate faces a street: the longest stretch of the outline that
+        // a street runs along (a side street that ends at the wall counts),
+        // its middle; failing that, the middle of the gate side the plan
+        // chose.
+        let mut best: Option<(f64, DVec2, usize)> = None;
+        for k in 0..n {
+            let (a, b) = (g.outline[k], g.outline[(k + 1) % n]);
+            let len = a.distance(b);
+            let steps = (len / 3.0).floor() as usize;
+            let (mut run, mut from) = (0.0, 0.0);
+            for j in 0..=steps {
+                let t = if steps == 0 {
+                    0.5
+                } else {
+                    j as f64 / steps as f64
+                };
+                let p = a.lerp(b, t);
+                if self.on_road(p, 1.5, None, true) {
+                    if run == 0.0 {
+                        from = t;
+                    }
+                    run += 3.0;
+                    let mid = a.lerp(b, (from + t) * 0.5);
+                    if best.is_none_or(|(r, _, _)| run > r) {
+                        best = Some((run, mid, k));
+                    }
+                } else {
+                    run = 0.0;
+                }
+            }
+        }
+        let (mid, edge) = match best {
+            Some((_, mid, k)) => (mid, k),
+            None => {
+                let k = g.gate_edge;
+                ((g.outline[k] + g.outline[(k + 1) % n]) * 0.5, k)
+            }
+        };
+        let along = (g.outline[(edge + 1) % n] - g.outline[edge]).normalize_or(DVec2::X);
+        let inward = if ccw { along.perp() } else { -along.perp() };
+        // The gate: there, in off the pavement; if a lamp or a tree is in
+        // the way, a few metres along.
+        let (_, _, _, _, _, way) = GATE;
+        let mut gate = None;
+        for shift in [0.0, 4.0, -4.0, 8.0, -8.0, 12.0, -12.0] {
+            let p = mid + along * shift;
+            let Some(off) = self.off_the_pavement(p, inward, GATE.1 + 0.2) else {
+                continue;
+            };
+            let q = p + inward * (off + 0.2);
+            if g.contains(q + inward * 3.0) && self.put(PropKind::GraveGate, q, -inward, 1.0, 2.0) {
+                gate = Some(q);
+                break;
+            }
+        }
+        // Without a way in there is no graveyard to lay out (a gate is
+        // always found on a street side; a block cut to size has one).
+        let Some(gate) = gate else {
+            return;
+        };
+        // The railing round it, piece by piece, in off the pavements.
+        let corner = 1.2;
+        for k in 0..n {
+            let (a, b) = (g.outline[k], g.outline[(k + 1) % n]);
+            let len = a.distance(b);
+            let pieces = ((len - 2.0 * corner) / RAIL_LEN).floor();
+            if pieces < 1.0 {
+                continue;
+            }
+            let d = (b - a) / len;
+            let inw = if ccw { d.perp() } else { -d.perp() };
+            let start = (len - pieces * RAIL_LEN) * 0.5;
+            for j in 0..pieces as usize {
+                let p = a + d * (start + (j as f64 + 0.5) * RAIL_LEN);
+                let Some(off) = self.off_the_pavement(p, inw, 0.2) else {
+                    continue;
+                };
+                let q = p + inw * (off + 0.1);
+                // The gate's opening.
+                if q.distance(gate) < GATE.0 + RAIL_LEN * 0.5 + 0.2 {
+                    continue;
+                }
+                self.put_rail(q, d);
+            }
+        }
+        // The plan in the gate's frame: u along the gate side, v inwards.
+        let (avenue, cross, row, step) = match g.kind {
+            GraveKind::BurialGround => (way + 0.2, f64::MAX, 3.0, 1.95),
+            GraveKind::Cemetery => (way + 0.6, 30.0, 3.5, 2.15),
+            GraveKind::GardenOfRest => (way + 1.0, 26.0, 3.6, 2.5),
+        };
+        let at = |u: f64, v: f64| gate + along * u + inward * v;
+        let room = |me: &Self, p: DVec2, r: f64| {
+            g.contains(p) && g.distance(p) > 1.2 + r && !me.on_road(p, r + 1.6, None, true)
+        };
+        let (mut u0, mut u1, mut v1) = (0.0f64, 0.0f64, 0.0f64);
+        for q in &g.outline {
+            let d = *q - gate;
+            u0 = u0.min(d.dot(along));
+            u1 = u1.max(d.dot(along));
+            v1 = v1.max(d.dot(inward));
+        }
+        // How far the avenue runs: up to the far side's rail.
+        let mut end = 4.0;
+        while end + 1.0 < v1 && room(self, at(0.0, end + 1.0), 3.0) {
+            end += 1.0;
+        }
+        let crossings: Vec<f64> = if cross < f64::MAX {
+            let mut c = Vec::new();
+            let mut v = cross * 0.6;
+            while v + 6.0 < end {
+                c.push(v);
+                v += cross;
+            }
+            c
+        } else {
+            Vec::new()
+        };
+        let on_path = |v: f64| crossings.iter().any(|c| (v - c).abs() < 1.6);
+        // The monument at the avenue's end, facing the gate.
+        if g.kind != GraveKind::BurialGround && end > 22.0 {
+            let v = end - 3.5;
+            self.put(PropKind::Tomb(1), at(0.0, v), -inward, 1.0, 2.6);
+        }
+        // Mausoleums at the crossings, facing the avenue.
+        for (i, &c) in crossings.iter().enumerate() {
+            let side = if i % 2 == 0 { 1.0 } else { -1.0 };
+            let style = match g.kind {
+                GraveKind::GardenOfRest => 2,
+                _ if i % 4 == 1 => 2,
+                _ => 0,
+            };
+            let u = side * (avenue + 4.6);
+            let v = c + cross * 0.45;
+            if v + 4.0 < end && room(self, at(u, v), 2.6) {
+                self.put(PropKind::Tomb(style), at(u, v), -along * side, 1.0, 3.1);
+            }
+            // A bench each side of the crossing.
+            for sd in [-1.0, 1.0] {
+                let p = at(sd * (avenue + 0.7), c + 2.6);
+                if room(self, p, 0.6) {
+                    self.put(PropKind::Bench, p, -along * sd, 1.0, 1.1);
+                }
+            }
+        }
+        // Cypresses along the avenue, and lamps between them.
+        let lamp = match g.kind {
+            GraveKind::GardenOfRest => LampStyle::Atomic,
+            _ => LampStyle::Lantern,
+        };
+        let mut v = 7.0;
+        let mut k = 0;
+        while v < end - 2.0 {
+            if !on_path(v) {
+                for sd in [-1.0, 1.0] {
+                    let p = at(sd * (avenue + 0.4), v);
+                    if room(self, p, 0.5) {
+                        let variant = rng.range_int(0, TREE_VARIANTS as i64) as u8;
+                        let s = rng.range(0.42, 0.56);
+                        self.put(PropKind::Tree(Species::Cypress, variant), p, along, s, 0.7);
+                    }
+                }
+                if k % 3 == 1 {
+                    let sd = if k % 2 == 0 { 1.0 } else { -1.0 };
+                    let p = at(sd * (avenue - 0.2), v + 4.0);
+                    if room(self, p, 0.3) && !on_path(v + 4.0) {
+                        self.put(PropKind::Lamp(lamp), p, -along * sd, 1.0, 0.4);
+                    }
+                }
+            }
+            v += 8.0;
+            k += 1;
+        }
+        // Rows of graves either side of the avenue, facing the gate, a
+        // plot in front of each.
+        let plot = g.kind != GraveKind::GardenOfRest;
+        let styles: &[(GraveStyle, f64)] = match g.kind {
+            GraveKind::BurialGround => &[
+                (GraveStyle::Arched, 0.34),
+                (GraveStyle::Cross, 0.36),
+                (GraveStyle::Star, 0.08),
+                (GraveStyle::Atom, 0.1),
+                (GraveStyle::Ghost, 0.12),
+            ],
+            GraveKind::Cemetery => &[
+                (GraveStyle::Arched, 0.2),
+                (GraveStyle::Rocket, 0.14),
+                (GraveStyle::Atom, 0.13),
+                (GraveStyle::Boomerang, 0.08),
+                (GraveStyle::Planet, 0.12),
+                (GraveStyle::Star, 0.1),
+                (GraveStyle::Cross, 0.13),
+                (GraveStyle::Ghost, 0.1),
+            ],
+            GraveKind::GardenOfRest => &[
+                (GraveStyle::Rocket, 0.25),
+                (GraveStyle::Atom, 0.18),
+                (GraveStyle::Boomerang, 0.3),
+                (GraveStyle::Planet, 0.2),
+                (GraveStyle::Ghost, 0.07),
+            ],
+        };
+        let weights: Vec<f64> = styles.iter().map(|s| s.1).collect();
+        let lead = if plot { GRAVE_PLOT.1 + 0.3 } else { 0.8 };
+        let mut v = 3.0 + lead;
+        while v < v1 {
+            if on_path(v) || on_path(v - lead) {
+                v += 1.0;
+                continue;
+            }
+            for sd in [-1.0, 1.0] {
+                let mut u = avenue + 1.1;
+                while u < (if sd > 0.0 { u1 } else { -u0 }) {
+                    let jitter = if g.kind == GraveKind::BurialGround {
+                        rng.range(-0.25, 0.25)
+                    } else {
+                        0.0
+                    };
+                    let p = at(sd * u, v + jitter);
+                    let front = p - inward * lead;
+                    let pick = rng.unit();
+                    let style = styles[rng.weighted(&weights)].0;
+                    let turn = if g.kind == GraveKind::BurialGround {
+                        rng.range(-0.1, 0.1)
+                    } else {
+                        0.0
+                    };
+                    let scale = match g.kind {
+                        GraveKind::BurialGround => rng.range(0.82, 1.08),
+                        _ => rng.range(0.94, 1.06),
+                    };
+                    let next = match g.kind {
+                        GraveKind::BurialGround => step + rng.range(-0.3, 0.45),
+                        _ => step,
+                    };
+                    u += next;
+                    if !room(self, p, 0.5) || !room(self, front, 0.5) || self.in_building(p, 1.5) {
+                        continue;
+                    }
+                    // A few plots stand empty; now and then a tree grows in one.
+                    if pick < 0.08 {
+                        continue;
+                    }
+                    if pick < 0.11 && g.kind != GraveKind::GardenOfRest {
+                        let kind = PropKind::Tree(
+                            park_species(region, Era::Extension, &mut rng),
+                            rng.range_int(0, TREE_VARIANTS as i64) as u8,
+                        );
+                        self.put(
+                            kind,
+                            p - inward * (lead * 0.5),
+                            along,
+                            rng.range(0.6, 0.85),
+                            0.9,
+                        );
+                        continue;
+                    }
+                    let dir = det::dir2(det::atan2(-inward.y, -inward.x) + turn);
+                    let idx = GraveStyle::ALL
+                        .iter()
+                        .position(|s| *s == style)
+                        .unwrap_or(0) as u8;
+                    let kind = PropKind::Grave(if plot { idx } else { idx | GRAVE_LAWN });
+                    // The plot lies in front of the stone: keep its middle clear.
+                    let mid = p - inward * (lead * 0.5);
+                    if self.crowded(mid, 0.45) {
+                        continue;
+                    }
+                    if self.put(kind, p, dir, scale, 0.55) && plot {
+                        self.taken.entry(key(mid)).or_default().push((mid, 0.45));
+                    }
+                }
+            }
+            v += row;
+        }
+    }
+
+    /// One piece of graveyard railing along `along` (as fences go).
+    fn put_rail(&mut self, p: DVec2, along: DVec2) -> bool {
+        let half = RAIL_LEN * 0.5;
+        let ends = [p - along * half * 0.95, p + along * half * 0.95];
+        if !self.l.owner.owns(p)
+            || !self.dry(p)
+            || ends
+                .iter()
+                .any(|e| self.on_road(*e, 0.15, None, true) || self.in_building(*e, 0.2))
+            || self.w.landmarks.iter().any(|l| l.covers(p, 1.0))
+            || (self.w.ground(ends[0]) - self.w.ground(ends[1])).abs() > 0.7
+        {
+            return false;
+        }
+        // Street trees and lamps keep wide berths from each other, not from
+        // a railing behind them: only what is solid there stops it.
+        let line = [ends[0], p, ends[1]];
+        let blocked = self.out.iter().any(|o| {
+            o.kind != PropKind::GraveRail
+                && o.pos.distance(p) < RAIL_LEN + 4.0
+                && o.footprints()
+                    .iter()
+                    .any(|f| line.iter().any(|q| f.distance(*q) < 0.3))
+        });
+        if blocked {
+            return false;
+        }
+        for e in ends {
+            self.taken.entry(key(e)).or_default().push((e, 0.4));
+        }
+        self.out.push(Prop {
+            kind: PropKind::GraveRail,
+            pos: p,
+            y: self.w.ground(p) - 0.04,
+            dir: DVec2::new(along.y, -along.x),
+            scale: 1.0,
+        });
+        true
     }
 
     /// Front gardens: a tree or a shrub before most houses.
@@ -1529,6 +2051,7 @@ impl<'a> Placer<'a> {
                 if self.w.ground(p) < 3.0
                     || self.on_road(p, 5.0, None, true)
                     || self.in_building(p, 4.5)
+                    || self.in_graveyard(p, 3.0)
                 {
                     continue;
                 }

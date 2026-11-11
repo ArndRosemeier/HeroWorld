@@ -29,6 +29,7 @@ pub mod edge;
 pub mod footprint;
 pub mod gantry;
 pub mod graph;
+pub mod graveyard;
 pub mod greenery;
 pub mod growth;
 pub mod hospital;
@@ -87,6 +88,8 @@ pub struct Town {
     pub pieces: Vec<Piece>,
     /// The mad scientist's quarter (none in a small town).
     pub dystopia: Option<dystopia::Dystopia>,
+    /// Where its graveyards lie (at least one).
+    pub graveyards: Vec<graveyard::GraveSite>,
 }
 
 /// No piece is wider than this (m): bigger ones get district roads
@@ -145,8 +148,11 @@ impl Town {
         cancel.check()?;
         let dystopia =
             dystopia::Dystopia::plan(seed, &pieces, &growth, params.dystopia, params.population);
+        let graveyards =
+            graveyard::plan(seed, &pieces, &growth, dystopia.as_ref(), params.population);
         Ok(Town {
             dystopia,
+            graveyards,
             params,
             land,
             growth,

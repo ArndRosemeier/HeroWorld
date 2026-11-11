@@ -11,6 +11,7 @@
 //! can be planned one at a time as the player comes near.
 
 use super::graph::{Graph, TaggedLine};
+use super::graveyard::{self, Graveyard};
 use super::growth::{simplify, Era};
 use super::params::PlanStyle;
 use super::tensor::{Basis, Field};
@@ -50,6 +51,8 @@ pub struct PieceStreets {
     /// Blocks: the land between the streets (centre lines; road widths
     /// are taken off later).
     pub blocks: Vec<Vec<DVec2>>,
+    /// The graveyard on one of the blocks, if the town put one here.
+    pub graveyard: Option<Graveyard>,
 }
 
 struct Look {
@@ -94,10 +97,24 @@ pub fn piece_seed(seed: Seed, piece: &Piece) -> Seed {
 
 /// Plans the side streets and blocks of `piece`.
 pub fn plan_piece(seed: Seed, town: &Town, piece: &Piece) -> PieceStreets {
+    let town_seed = seed;
     let seed = piece_seed(seed, piece);
     let mut rng = seed.rng();
     let outline = &piece.face.pts;
-    let style = choose_style(&mut rng, town, piece);
+    let mut style = choose_style(&mut rng, town, piece);
+    // A graveyard lies among houses or in a park, not in the docks; side
+    // streets go round it.
+    let grave_site = town
+        .graveyards
+        .iter()
+        .find(|g| contains(outline, g.at))
+        .copied();
+    if grave_site.is_some() && style == StreetStyle::Industrial {
+        style = StreetStyle::Organic;
+    }
+    let reserve = grave_site
+        .filter(|_| style != StreetStyle::Park)
+        .and_then(|g| graveyard::reserve(&g, outline, piece.face.area, town.params.population));
     let lk = look(style);
     let k = rng.range(0.85, 1.2);
     let (dmaj, dmin) = (lk.dsep.0 * k, lk.dsep.1 * k);
@@ -141,7 +158,8 @@ pub fn plan_piece(seed: Seed, town: &Town, piece: &Piece) -> PieceStreets {
             wiggle_len: lk.wiggle_len,
             wiggle: Box::new(move |_| wig),
         };
-        let inside = |q: DVec2| contains(outline, q);
+        let inside =
+            |q: DVec2| contains(outline, q) && !reserve.as_ref().is_some_and(|r| contains(r, q));
         let dsep = |_: DVec2, major: bool| if major { dmaj } else { dmin };
         let spec = TraceSpec {
             field: &field,
@@ -261,10 +279,21 @@ pub fn plan_piece(seed: Seed, town: &Town, piece: &Piece) -> PieceStreets {
             }
         }
     }
+    let graveyard = grave_site.and_then(|_| {
+        graveyard::in_district(
+            &town.graveyards,
+            outline,
+            &blocks,
+            reserve.as_deref(),
+            town.params.population,
+            town_seed,
+        )
+    });
     PieceStreets {
         style,
         streets,
         blocks,
+        graveyard,
     }
 }
 
