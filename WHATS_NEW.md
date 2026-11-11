@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.178 (2026-11-11)
+
+- Fixed: the visor (and the radio, compass and map) kept pointing where the colossus first broke out. They now follow it as it walks.
+
 ## 0.177 (2026-11-11)
 
 - Every power now helps in a hard fight. The powers that only made rescues quicker are gone, and in their places are fight powers: Scanner Goggles hit helpless villains harder, Spirit Sight makes one blow in five miss you, Brace hardens you while you stand your ground, Second Wind gives you 40% health back near defeat, Opening Move doubles your first blow on a villain who hasn't noticed you, plus Guardian Orb, Ring of Judgement, Stasis Cage and Ghost Lantern.

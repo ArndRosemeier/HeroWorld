@@ -534,6 +534,10 @@ impl Radio {
         if *state == 0 || doused {
             if let Some(c) = self.calls.get_mut(id) {
                 c.held = *held;
+                // A call that moves (the walking colossus) sends where it
+                // is now: the radio, compass, map and visor follow it.
+                c.at = at;
+                c.facing = facing;
                 if doused && !c.doused {
                     c.doused = true;
                     self.put_out(world, *id);
@@ -1862,5 +1866,27 @@ mod tests {
         assert_eq!(clock(ahead, Vec2::new(0.0, -5.0)), 6);
         assert_eq!(clock(ahead, Vec2::new(5.0, 0.0)), 9);
         assert_eq!(clock(ahead, Vec2::new(-5.0, 0.0)), 3);
+    }
+
+    /// The colossus walks, and its call follows it: the radio must take
+    /// the new place (it kept the first one, so the visor led to an empty
+    /// street).
+    #[test]
+    fn a_moving_call_follows_where_it_is_now() {
+        let mut world = World::new();
+        let mut radio = Radio::default();
+        let news = |x: f32| ToClient::Incident {
+            id: 7,
+            kind: IncidentKind::Colossus.code(),
+            at: [x, 0.0, 10.0],
+            level: 5,
+            state: 0,
+            yaw: 0,
+            left: 0,
+            held: 0,
+        };
+        assert!(radio.hear(&mut world, &news(0.0)));
+        assert!(radio.hear(&mut world, &news(120.0)));
+        assert_eq!(radio.calls[&7].at, Vec3::new(120.0, 0.0, 10.0));
     }
 }
