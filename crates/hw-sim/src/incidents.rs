@@ -101,6 +101,9 @@ pub const STRAY_REACH: f64 = 80.0;
 pub const STRAY_SECONDS: f64 = 30.0;
 /// The Iron-Masked Empire lands only once the team reaches this level.
 pub const IRON_LEVEL: u8 = 2;
+/// The invaders from Zorrak come down only once the team reaches this
+/// level.
+pub const SAUCER_LEVEL: u8 = 2;
 
 /// What kind of trouble.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -131,10 +134,13 @@ pub enum IncidentKind {
     /// An iron capsule of the Iron-Masked Empire crashes into a street;
     /// its legionaries round up townsfolk to take away.
     IronLanding,
+    /// A flying saucer from Zorrak hangs over a street and beams townsfolk
+    /// up, its bug-eyed troopers keeping everyone back.
+    SaucerRaid,
 }
 
 impl IncidentKind {
-    pub const ALL: [IncidentKind; 11] = [
+    pub const ALL: [IncidentKind; 12] = [
         IncidentKind::Mugging,
         IncidentKind::Robbery,
         IncidentKind::Rampage,
@@ -146,6 +152,7 @@ impl IncidentKind {
         IncidentKind::Surfacing,
         IncidentKind::PirateRaid,
         IncidentKind::IronLanding,
+        IncidentKind::SaucerRaid,
     ];
 
     pub fn code(self) -> u8 {
@@ -170,6 +177,7 @@ impl IncidentKind {
             IncidentKind::Surfacing => "Mole folk surfacing",
             IncidentKind::PirateRaid => "Sky pirates raiding a shop",
             IncidentKind::IronLanding => "Iron Legion landing, people taken",
+            IncidentKind::SaucerRaid => "Flying saucer beaming people up",
         }
     }
 
@@ -204,6 +212,7 @@ impl IncidentKind {
             IncidentKind::Surfacing => (4, Some(EnemyKind::Delver), 0),
             IncidentKind::PirateRaid => (5, None, 1),
             IncidentKind::IronLanding => (5, None, 2),
+            IncidentKind::SaucerRaid => (5, None, 2),
             IncidentKind::CarCrash | IncidentKind::Fire | IncidentKind::Collapse => (0, None, 0),
         }
     }
@@ -214,6 +223,7 @@ impl IncidentKind {
         match self {
             IncidentKind::PirateRaid => Some((EnemyKind::Buccaneer, EnemyKind::Gunner)),
             IncidentKind::IronLanding => Some((EnemyKind::Legionary, EnemyKind::Legionary)),
+            IncidentKind::SaucerRaid => Some((EnemyKind::Grabber, EnemyKind::Zapper)),
             _ => None,
         }
     }
@@ -221,7 +231,7 @@ impl IncidentKind {
     /// People the villains hold (townsfolk rounded up), freed when it ends.
     pub fn captives(self) -> u8 {
         match self {
-            IncidentKind::IronLanding => 2,
+            IncidentKind::IronLanding | IncidentKind::SaucerRaid => 2,
             _ => 0,
         }
     }
@@ -244,6 +254,7 @@ impl IncidentKind {
             IncidentKind::Surfacing => 0.5,
             IncidentKind::PirateRaid => 2.0,
             IncidentKind::IronLanding => 3.0,
+            IncidentKind::SaucerRaid => 3.0,
         }
     }
 
@@ -264,6 +275,8 @@ impl IncidentKind {
             // Hostile to everyone anyway; this is how near they defend
             // their captives even from a friend.
             IncidentKind::IronLanding => 20.0,
+            // The same: they guard the people in the beam.
+            IncidentKind::SaucerRaid => 20.0,
             IncidentKind::CarCrash | IncidentKind::Fire | IncidentKind::Collapse => 0.0,
         }
     }
@@ -275,6 +288,7 @@ impl IncidentKind {
             IncidentKind::Breakout => Some(EnemyKind::Sentry),
             IncidentKind::PirateRaid => Some(EnemyKind::Captain),
             IncidentKind::IronLanding => Some(EnemyKind::Praetorian),
+            IncidentKind::SaucerRaid => Some(EnemyKind::Overlord),
             _ => None,
         }
     }
@@ -1424,6 +1438,7 @@ impl Incidents {
             (IncidentKind::Surfacing, 0.0),
             (IncidentKind::PirateRaid, if hot { 0.05 } else { 0.1 }),
             (IncidentKind::IronLanding, 0.07),
+            (IncidentKind::SaucerRaid, 0.07),
         ];
         // The walking tank marches out of the robot works' gate (or, in a
         // town without works, the Tesla tower's) now and then, once the team
@@ -1460,10 +1475,12 @@ impl Incidents {
                         .last_colossus
                         .is_none_or(|t| tick >= t + ticks(COLOSSUS_GAP))));
         let iron_ok = self.next_kind == Some(IncidentKind::IronLanding) || team >= IRON_LEVEL;
+        let saucer_ok = self.next_kind == Some(IncidentKind::SaucerRaid) || team >= SAUCER_LEVEL;
         kinds.retain(|(k, _)| match k {
             IncidentKind::Breakout => !labs.is_empty(),
             IncidentKind::Robbery | IncidentKind::PirateRaid => !shops.is_empty(),
             IncidentKind::IronLanding => iron_ok && !streets.is_empty(),
+            IncidentKind::SaucerRaid => saucer_ok && !streets.is_empty(),
             IncidentKind::Fire => self.next_kind == Some(IncidentKind::Fire) && !homes.is_empty(),
             IncidentKind::Colossus => colossus_ok,
             IncidentKind::Surfacing => {

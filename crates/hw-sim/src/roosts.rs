@@ -2,7 +2,9 @@
 //! airship over the harbour, a rope ladder down to the quay, where a few
 //! of them keep watch and warn strangers off; the delvers of Molehaven
 //! stand guard inside the cavern, by the lift down from the street. (The
-//! Iron-Masked Empire has no home here: it comes from beyond the sea.)
+//! Iron-Masked Empire has no home here: it comes from beyond the sea; nor
+//! have the invaders from Zorrak, whose saucers come down from the moon,
+//! see [`saucer_hover`].)
 //!
 //! Server and clients both work these out from the town alone, so the
 //! airship everyone sees hangs over the pirates the server placed.
@@ -225,6 +227,94 @@ pub fn raid_departure(from: DVec3, yaw: f64, clear: f64, age: f64) -> Option<DVe
         clear + t * 1.2,
         from.z + along.y * s,
     ))
+}
+
+/// A Zorrak flying saucer, as it is drawn (the client's `factionview`)
+/// and as it is solid ([`crate::airships`]): its profile from the middle
+/// out, `(radius, height)` about its rim's plane, under side from the
+/// beam's lens out to the rim, then the top in to the glass dome's crown.
+pub const SAUCER_UNDER: [(f64, f64); 7] = [
+    (0.0, -1.5),
+    (1.1, -1.5),
+    (2.2, -1.25),
+    (4.5, -0.95),
+    (6.4, -0.5),
+    (7.5, -0.15),
+    (7.8, 0.0),
+];
+pub const SAUCER_TOP: [(f64, f64); 9] = [
+    (7.8, 0.0),
+    (7.6, 0.2),
+    (6.2, 0.62),
+    (4.2, 1.0),
+    (3.3, 1.12),
+    (3.0, 1.35),
+    (2.6, 2.3),
+    (1.5, 2.95),
+    (0.0, 3.15),
+];
+/// The saucer's widest radius (m).
+pub const SAUCER_RADIUS: f64 = 7.8;
+/// From the rim's plane down to the beam's lens (m).
+pub const SAUCER_UNDER_DEPTH: f64 = 1.5;
+/// How high its lens hangs over the street at least, and over any roof
+/// under it (m).
+const SAUCER_OVER_STREET: f64 = 13.0;
+const SAUCER_OVER_ROOFS: f64 = 4.0;
+
+/// Height of a profile at radius `r` (by straight lines between its points).
+fn profile_at(p: &[(f64, f64)], r: f64) -> f64 {
+    let r = r.abs();
+    for w in p.windows(2) {
+        let (lo, hi) = if w[0].0 <= w[1].0 {
+            (w[0], w[1])
+        } else {
+            (w[1], w[0])
+        };
+        if r >= lo.0 && r <= hi.0 {
+            let span = hi.0 - lo.0;
+            if span < 1e-9 {
+                return lo.1.max(hi.1);
+            }
+            return lo.1 + (hi.1 - lo.1) * (r - lo.0) / span;
+        }
+    }
+    0.0
+}
+
+/// How far the saucer reaches below and above its rim's plane at radius
+/// `r` from its middle: `(under, over)`, or `None` past its rim.
+pub fn saucer_span(r: f64) -> Option<(f64, f64)> {
+    (r <= SAUCER_RADIUS).then(|| (profile_at(&SAUCER_UNDER, r), profile_at(&SAUCER_TOP, r)))
+}
+
+/// Where a Zorrak saucer hangs over `street` while its troopers raid it:
+/// the middle of its rim, straight over the street, its lens a good way up
+/// and clear of every roof and spire under it.
+pub fn saucer_hover(w: &TownWorld, street: DVec3) -> DVec3 {
+    let c = DVec2::new(street.x, street.z);
+    let r = SAUCER_RADIUS + 2.0;
+    let roofs = roofs_under(w, c, DVec2::X, r, r).max(street.y);
+    let lens = (street.y + SAUCER_OVER_STREET).max(roofs + SAUCER_OVER_ROOFS);
+    DVec3::new(street.x, lens + SAUCER_UNDER_DEPTH, street.z)
+}
+
+/// Seconds a departing saucer takes to be gone.
+pub const SAUCER_GONE_S: f64 = 7.0;
+
+/// Where a saucer that hung at `from` is `age` seconds after its raid
+/// ended: a short hop up, a hover while it makes up its mind, then off up
+/// into the sky along `dir` (a flat unit direction) faster and faster.
+/// `None` once it is gone.
+pub fn saucer_departure(from: DVec3, dir: DVec2, age: f64) -> Option<DVec3> {
+    if age > SAUCER_GONE_S {
+        return None;
+    }
+    let hop = 4.0 * (age / 1.2).min(1.0);
+    let t = (age - 1.8).max(0.0);
+    let off = 9.0 * t * t * t;
+    let up = hop + 6.0 * t * t;
+    Some(from + DVec3::new(dir.x * off, up, dir.y * off))
 }
 
 /// Where Molehaven's guards stand: on open cavern floor as near the lift

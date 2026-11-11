@@ -794,7 +794,7 @@ pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
         }
     })?;
     let point_up = make_clip(model, "point up", 3.0, |t| {
-        // "There! Saturn!": an arm up at the sky, the head following.
+        // "There! Zorrak!": an arm up at the sky, the head following.
         let w = (t * TAU).sin();
         Pose {
             aims: vec![

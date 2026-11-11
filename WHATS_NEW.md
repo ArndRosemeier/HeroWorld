@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.183 (2026-11-11)
+
+- Aliens! Flying saucers from Zorrak, the small quick moon, now raid the town once your team reaches level 2: a chrome saucer hangs over a street and beams two townsfolk up its green tractor beam while bug-eyed zappers, grabbers and their big-brained Overlord keep everyone back. Beat them and the beam switches off and the saucer zips away. The saucer is solid: you can land on it.
+- Friendly aliens too: Vael star traders from round another sun glide into town on hover discs by day and sell glowing trinkets from a floating tray (comet glass, ringed globes, a star in a jar)
+- The street folk stopped talking about Mars and Saturn: this is not our solar system
+
 ## 0.182 (2026-11-11)
 
 - Puts back hospitals and comic speech bubbles, which build 0.181 left out by mistake.

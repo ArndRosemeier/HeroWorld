@@ -142,6 +142,7 @@ impl Session {
                 "moles" => Some(IncidentKind::Surfacing),
                 "pirates" => Some(IncidentKind::PirateRaid),
                 "iron" => Some(IncidentKind::IronLanding),
+                "saucer" => Some(IncidentKind::SaucerRaid),
                 _ => None,
             };
         }

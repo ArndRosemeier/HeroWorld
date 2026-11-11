@@ -515,7 +515,7 @@ targeting, ragdolls, nobody dies.
 
 ### Factions (`hw-sim/src/factions.rs`)
 
-Eight factions with a standing toward each other from −100 to 100: Hostile (≤ −60),
+Nine factions with a standing toward each other from −100 to 100: Hostile (≤ −60),
 Unfriendly (≤ −20), Neutral, Friendly (≥ 20), Allied (≥ 60).
 
 A hero belongs to none. **Each faction starts out regarding a new hero exactly as it regards
@@ -534,6 +534,7 @@ shows where you stand.
 | Moles | Molehaven's mole folk | Neutral (0) | Hate the Lab and the Empire. Delvers guard Molehaven's lift. Their surfacing event (talk them down with E for +6 Molehaven) is parked until it is redesigned: it no longer comes up on its own (HW_INCIDENT=moles still forces it). |
 | Sky Pirates | an airship crew | Unfriendly (−30) | Moor over the harbour with lookouts on the quay (warn, then fight); raid shops from an airship moored over the street (12 m reach). |
 | Iron-Masked Empire | the Iron Legion, from beyond the sea | Unfriendly (−55) | Hates everyone. Lands in iron capsules and holds two townsfolk captive (20 m reach); only once the team is level 2 and has two heroes, or rarely alone. Never attacks an unknown hero on sight. |
+| Zorrak Invaders | bug-eyed troopers from Zorrak, the small quick moon | Unfriendly (−55) | Hate everyone, the Empire most. A flying saucer hangs over a street (solid, its lens 13 m up and 4 m over any roof) and beams two townsfolk up through a green tractor beam while its troopers guard them (20 m reach); only once the team is level 2. Never attack an unknown hero on sight. |
 
 **What a villain does about a hero** (`factions::react`):
 
@@ -568,6 +569,9 @@ Numbers at level 1; health and damage scale with the villain's level like a hero
 | Legionary | Empire | Minion | 48 | 7.5 every 2.6 s | 28 m | 8 | Iron mask and cuirass, shock rifle. |
 | The Doctor | Lab | Archvillain | 1 400 | 15 every 2 s | 30 m | 220 | Only in the last chapter of his story, in his lab. White lab coat, wild white hair, goggles, a Tesla staff. Throws lightning; when a hero comes within 13 m he **charges an Aether storm** (1.8 s, a green ring on the ground) that hits every hero still inside for 1.6× his blow, every 9 s or so. |
 | Praetorian | Empire | Lieutenant | 190 | 12 every 2.2 s | 3 m | 24 | Gilded mask and cuirass, shock lance. Leads landings. |
+| Zorrak Zapper | Invaders | Minion | 42 | 7 every 2.4 s | 26 m | 7 | Slight, pale teal or lilac, a great bald head with big black eyes, a fishbowl helmet with antennae, silver suit, red gauntlets and boots; a ray gun. |
+| Zorrak Grabber | Invaders | Minion | 50 | 7 every 2 s | 2.9 m | 7.5 | Taller and heavier, gold trim; a glowing grabber claw on a pole. |
+| Zorrak Overlord | Invaders | Lieutenant | 180 | 11 every 2.4 s | 24 m | 24 | The biggest head of all under a tall glass dome with a glowing crest, a purple coat; fires a brain ray from a sceptre from the back row. Leads saucer raids. |
 | Mutant Bulwark | Lab | Minion | 52 | 7 every 2.2 s | 2.4 m | 8 | A brute with a big brass atom shield on its left arm. Aimed blows (bolts, beams) from more than 3.5 m in front mostly clang off the shield (a quarter gets through); blasts, holds and anything from close by or from the side get through. Get close, or go round it. |
 | Lab Grenadier | Lab | Minion | 32 | 11 every 4.2 s | 18 m | 7 | Olive overalls and a leather helmet. Lobs a fizzing bomb where you stand: a red ring shows where, and it bursts 1.9 s later (2.6 m round). Step out of the ring. |
 | Lab Orderly | Lab | Minion | 30 | 5 every 2.6 s | 20 m | 7 | Mint overalls, white gloves. Every 4 s it patches up a hurt friend within 14 m (14 health at level 1, a green beam); in between it shoots. Take it out first. |
@@ -733,6 +737,7 @@ clear place within 12 m instead.
 | Fire, people inside | parked (0%; HW_INCIDENT=fire forces it) | a house in flames, 3 people (3 s each) | – | – | 2.5 per person |
 | The colossus is loose! | 8% | the walking tank (level 3+, every 25 min at most) | +3 | everyone | ×1.5 |
 | Building collapse | follows a collapse | 3 people in the rubble (5 s each digging) | – | – | 3 per person |
+| Flying saucer beaming people up | 7% (team level 2+) | a Zorrak Overlord with grabbers and zappers under their saucer, two townsfolk in its tractor beam; the beam goes off and the saucer zips away when it ends (`HW_VIEW=saucer` looks at it) | +2 | 20 m | ×3.0 |
 
 "Bonus" is karma on top of the villains' own: for fights the group's worth again times that
 factor, for rescues per person freed. The crooks of a crime mind their own business until a
@@ -883,7 +888,8 @@ passenger deck under it, the fins and the engine pods become boxes (at most 4.6 
 `hw_sim::airships`) that move with it each tick, for heroes within 30 m of the hull. Heroes
 bump into it, can land on its back and cannot fly through it; it does not carry a hero
 standing on it. The pirates' *Cloudcutter* moored over the harbour is solid the same way
-(envelope, gondola, engines, fins), and so is a raiders' airship moored over a street.
+(envelope, gondola, engines, fins), and so is a raiders' airship moored over a street, and a
+Zorrak saucer hanging over its raid (a grid of boxes over its disc and dome).
 
 What an airship clears (`hw_gen::urban::airspace`): every building whose outline (with
 2.5 m for eaves, cornices and signs) meets the sky over it, up to its drawn top
@@ -1160,6 +1166,7 @@ villain quarter has none. An act comes, walks in along the pavement with its thi
 | Newsboy | 6:30-11, 16-19:30 | cries the headlines by a bundle of papers; people buy one |
 | Stargazer | 20-02:30 | a brass telescope; people queue to peer at the stars |
 | Swing dancers | 17-00:30 | a couple dancing to a portable radio |
+| Vael star trader | 10-19:30 | a friendly alien from round another sun (lilac skin, gold eyes, a teal coat) glides in on a hover disc and sells glowing trinkets from a floating tray: comet glass, ringed globes, toy rockets, a star in a jar; people come up and buy |
 | The Orbit Room | 20:30-03 | a night club in a big shop building of the business or civic district: neon atom sign, a doorman, a queue of guests in evening clothes that moves up and goes in, the band muffled through the door |
 
 Up to 2-6 passers-by stop to watch (one or two at a time for the spotter and the newsboy).
@@ -1386,7 +1393,7 @@ run, or put them in a `.bat`.
 | Variable | Effect |
 | --- | --- |
 | `HW_INCIDENT=1` | The first incident starts at once. |
-| `HW_INCIDENT=mugging\|robbery\|rampage\|breakout\|crash\|fire\|colossus` | ...and of that kind. |
+| `HW_INCIDENT=mugging\|robbery\|rampage\|breakout\|crash\|fire\|colossus\|moles\|pirates\|iron\|saucer` | ...and of that kind. |
 | `HW_VISOR=1` | The police visor stays down; `HW_VISOR=0.4` freezes it part way in (screenshots). |
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
@@ -1445,7 +1452,7 @@ Showroom for models (`cargo run -p hw-client --bin showroom`): `HW_SHOW`, `HW_LO
 | Heroes | 20 levels, a power tree per origin (22-23 powers each) plus a travel tree, powers as one parametrized record, six elements, a drag-and-drop power tray (0.164), defensive toggles paid for with energy recovery and flight that brings no energy back (0.177) | Villains on the same records, augments, balancing the trees |
 | Looks | Creator with six costumes and sliders | Full costume creator, capes, masks (in progress) |
 | Combat | Minions with roles (shield bearer, grenadier, orderly), lieutenant, boss, colossus, drones, revive, hospital; Hero Hall's five heroes give tips and answer ignored fights | Teaming up with the town's heroes, the Doctor in person |
-| Factions | Eight factions, regard, turf warnings; mole folk, sky pirates and the Iron Legion with their own incidents and homes | Patrol units, turf changing hands |
+| Factions | Nine factions, regard, turf warnings; mole folk, sky pirates, the Iron Legion and the Zorrak invaders with their own incidents and homes | Patrol units, turf changing hands |
 | Co-op | Host's level for all | Per-player sidekick and exemplar levels |
 | Destruction | Buildings, props, cars, self-repair, collateral tally, careful-hero bonus | Collateral cost, digging and craters |
 | Saves | Hero on each PC; world save in `hw-headless` and for host migration | World save for the single-player game |

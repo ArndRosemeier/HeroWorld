@@ -29,6 +29,7 @@ pub fn lights_signal(kind: IncidentKind) -> bool {
             | IncidentKind::Breakout
             | IncidentKind::Colossus
             | IncidentKind::IronLanding
+            | IncidentKind::SaucerRaid
     )
 }
 

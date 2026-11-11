@@ -325,6 +325,19 @@ struct Scene {
     /// and the rope ladders down from it.
     ship: Option<(LodId, Vec3, f32)>,
     ladders: Vec<EntityId>,
+    /// A Zorrak saucer over the raid: where it hangs (its rim's middle),
+    /// and its tractor beam down to the street.
+    saucer: Option<(LodId, Vec3)>,
+    beam: Option<EntityId>,
+}
+
+/// A saucer flying off once its raid is over: where it hung, the way it
+/// goes, seconds since it set off.
+struct Flying {
+    lod: LodId,
+    from: Vec3,
+    dir: DVec2,
+    age: f32,
 }
 
 /// An airship sailing off once its raid is over: where it was, its yaw
@@ -347,6 +360,7 @@ pub struct Radio {
     /// The town plan: what an airship has to clear.
     pub town: Option<std::sync::Arc<hw_gen::urban::world::TownWorld>>,
     departing: Vec<Departing>,
+    flying: Vec<Flying>,
     /// Seconds the radio has run (an airship's gentle sway).
     clock: f32,
     pub calls: BTreeMap<u32, Call>,
@@ -396,6 +410,7 @@ pub fn call_colour(kind: IncidentKind) -> (u8, u8, u8) {
         IncidentKind::Surfacing => (200, 150, 255),
         IncidentKind::PirateRaid => (90, 230, 210),
         IncidentKind::IronLanding => (255, 60, 30),
+        IncidentKind::SaucerRaid => (120, 255, 170),
     }
 }
 
@@ -662,6 +677,42 @@ impl Radio {
                     80,
                 ));
             }
+            IncidentKind::SaucerRaid => {
+                // It hangs over the captives, its beam down on them.
+                let street = hw_sim::incidents::captives(c.kind, c.at.as_dvec3(), c.facing)
+                    .into_iter()
+                    .fold(DVec3::ZERO, |a, p| a + p)
+                    / c.kind.captives().max(1) as f64;
+                let street = street.as_vec3();
+                let at = self.hover(street);
+                let place = Place::new(at.x, at.y, at.z);
+                if let Ok(l) = world.spawn_lod_at(fv::saucer_levels(), &[place]) {
+                    scene.saucer = Some((l, at));
+                }
+                let lens = at - Vec3::Y * fv::SAUCER_UNDER_DEPTH as f32 + Vec3::Y * 0.1;
+                let len = lens.y - street.y;
+                if let Ok(e) =
+                    world.place(fv::tractor_beam(len), Place::new(lens.x, lens.y, lens.z))
+                {
+                    scene.beam = Some(e);
+                }
+                // Motes of light drifting up the beam.
+                let motes = ParticleEmitter::embers(street + Vec3::Y * 0.4, 1.0)
+                    .with_rate(26.0)
+                    .with_spread(Vec3::new(1.4, 0.2, 1.4))
+                    .with_velocity(Vec3::new(0.0, 2.6, 0.0))
+                    .with_velocity_jitter(Vec3::new(0.2, 0.5, 0.2))
+                    .with_acceleration(Vec3::ZERO)
+                    .with_turbulence(0.4)
+                    .with_lifetime(len / 2.6)
+                    .with_size(0.05)
+                    .with_size_over_life(SizeOverLife::FadeInOut)
+                    .with_color(Color::rgb(170, 255, 200))
+                    .with_secondary_color(Color::rgb(90, 255, 160));
+                if let Ok(e) = world.particles_mut().start(motes) {
+                    scene.fire.push(e);
+                }
+            }
             IncidentKind::PirateRaid => {
                 let (at, ship_yaw) = self.mooring(c.at);
                 let place = Place::new(at.x, at.y, at.z).with_yaw_deg(ship_yaw);
@@ -698,6 +749,23 @@ impl Radio {
         (at.as_vec3(), yaw.to_degrees() as f32)
     }
 
+    /// Where a Zorrak saucer hangs over `street`: see
+    /// [`hw_sim::roosts::saucer_hover`] (the server's is solid there too).
+    fn hover(&self, street: Vec3) -> Vec3 {
+        match self.town.as_ref() {
+            Some(w) => hw_sim::roosts::saucer_hover(w, street.as_dvec3()).as_vec3(),
+            None => street + Vec3::Y * 14.5,
+        }
+    }
+
+    /// The first raiding saucer there is: where its rim's middle is. For
+    /// screenshots.
+    pub fn saucer_at(&self) -> Option<Vec3> {
+        self.scenes
+            .values()
+            .find_map(|s| s.saucer.map(|(_, at)| at))
+    }
+
     /// The first raiding airship there is: where it hangs and its yaw
     /// (degrees). For screenshots.
     pub fn ship_at(&self) -> Option<(Vec3, f32)> {
@@ -718,6 +786,36 @@ impl Radio {
                     .with_roll_deg((t * 0.41).sin() * 1.2);
                 let _ = world.set_lod_places(l, &[place]);
             }
+            // A hovering saucer turns slowly and bobs a hand's width.
+            if let Some((l, at)) = s.saucer {
+                let place = Place::new(at.x, at.y + (t * 1.3).sin() * 0.1, at.z)
+                    .with_yaw_deg(t * 24.0)
+                    .with_roll_deg((t * 0.7).sin() * 1.5);
+                let _ = world.set_lod_places(l, &[place]);
+            }
+        }
+        for f in self.flying.iter_mut() {
+            f.age += dt;
+            if let Some(p) =
+                hw_sim::roosts::saucer_departure(f.from.as_dvec3(), f.dir, f.age as f64)
+            {
+                let p = p.as_vec3();
+                let place = Place::new(p.x, p.y, p.z)
+                    .with_yaw_deg(t * 24.0 + f.age * f.age * 60.0)
+                    .with_roll_deg(-8.0 * (f.age - 1.8).clamp(0.0, 1.0));
+                let _ = world.set_lod_places(f.lod, &[place]);
+            }
+        }
+        let mut gone = Vec::new();
+        self.flying.retain(|f| {
+            let on = f.age < hw_sim::roosts::SAUCER_GONE_S as f32;
+            if !on {
+                gone.push(f.lod);
+            }
+            on
+        });
+        for l in gone {
+            world.despawn_lod(l);
         }
         for d in self.departing.iter_mut() {
             d.age += dt;
@@ -1466,6 +1564,19 @@ impl Radio {
             for e in scene.ladders.drain(..) {
                 world.despawn(e);
             }
+            // The beam switches off and the saucer zips away.
+            if let Some(e) = scene.beam.take() {
+                world.despawn(e);
+            }
+            if let Some((lod, from)) = scene.saucer.take() {
+                let a = (id as f64 * 2.399).rem_euclid(std::f64::consts::TAU);
+                self.flying.push(Flying {
+                    lod,
+                    from,
+                    dir: DVec2::new(a.sin(), a.cos()),
+                    age: 0.0,
+                });
+            }
             // The ambulance never just vanishes: it drives off.
             if let Some(l) = depart(world, &mut scene) {
                 self.leaving.push(l);
@@ -1724,6 +1835,9 @@ impl Radio {
         }
         for d in std::mem::take(&mut self.departing) {
             world.despawn_lod(d.lod);
+        }
+        for f in std::mem::take(&mut self.flying) {
+            world.despawn_lod(f.lod);
         }
         for l in std::mem::take(&mut self.leaving) {
             world.despawn_lod(l.lod);

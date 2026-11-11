@@ -163,14 +163,14 @@ Factions are goofy early SF, and not all of them are evil, but some are evil eno
 | Faction | Stance | Fits affinity |
 | --- | --- | --- |
 | Mole people: grumpy, misunderstood, surface where the ground breaks | neutral | Guardian |
-| Venusian traders | friendly | Science |
+| Vael star traders, from round another sun (first street traders in 0.183) | friendly | Science |
 | Lost-world valley with dinosaurs | neutral | Might |
 | Rogue robots who want rights | neutral | Science |
 | Iron-masked empire that rules the dystopias | evil | Justice |
 | Death-ray mad scientist and his mutants | evil | Science |
 | Shadow cult | evil | Mystic |
 | Sky pirates | evil | Justice |
-| Invaders from one of the moons | evil | Might |
+| Invaders from Zorrak, the small moon (saucer raids since 0.183) | evil | Might |
 
 Villains come in tiers: thugs, then lieutenants, then supervillains with lairs in the dystopian regions.
 

@@ -2,8 +2,9 @@
 //! mooring mast ([`hw_gen::urban::mast::MastRoute`]), where it is at this
 //! very tick of the game clock, the sky pirates' *Cloudcutter* moored
 //! over its quay ([`crate::roosts`]) and their raiders moored over the
-//! streets they raid ([`crate::roosts::raid_mooring`]). Heroes bump into
-//! them, stand on them and cannot fly through them.
+//! streets they raid ([`crate::roosts::raid_mooring`]), and the Zorrak
+//! saucers hanging over theirs ([`crate::roosts::saucer_hover`]). Heroes
+//! bump into them, stand on them and cannot fly through them.
 //!
 //! Each ship becomes a set of upright boxes from the same numbers it is
 //! drawn by: its envelope sliced along its length into short drums, each
@@ -15,7 +16,10 @@
 //! the game clock.
 
 use crate::collision::Solid;
-use crate::roosts::{envelope_r, pirate_roost, raid_mooring, AIRSHIP_LENGTH, GONDOLA_DECK};
+use crate::roosts::{
+    envelope_r, pirate_roost, raid_mooring, saucer_hover, saucer_span, AIRSHIP_LENGTH,
+    GONDOLA_DECK, SAUCER_RADIUS,
+};
 use glam::{DVec2, DVec3};
 use hw_core::det;
 use hw_gen::urban::landmarks::LandmarkKind;
@@ -235,6 +239,36 @@ pub fn pirate_solids(ship: DVec3, yaw: f64) -> Vec<Solid> {
     out
 }
 
+/// A Zorrak saucer whose rim's middle is at `at`: a grid of upright
+/// tiles over its disc, each as deep and as tall as the saucer is at the
+/// tile's edge nearest its middle.
+pub fn saucer_solids(at: DVec3) -> Vec<Solid> {
+    let f = Frame::new(at, 0.0, 0.0);
+    let n = ((2.0 * SAUCER_RADIUS) / (TILE - 0.6)).ceil() as usize;
+    let side = 2.0 * SAUCER_RADIUS / n as f64;
+    let mut out = Vec::new();
+    for i in 0..n {
+        for k in 0..n {
+            let x0 = -SAUCER_RADIUS + side * i as f64;
+            let z0 = -SAUCER_RADIUS + side * k as f64;
+            let near = |a: f64, b: f64| {
+                if a < 0.0 && b > 0.0 {
+                    0.0
+                } else {
+                    a.abs().min(b.abs())
+                }
+            };
+            let r = near(x0, x0 + side).hypot(near(z0, z0 + side));
+            let Some((under, over)) = saucer_span(r) else {
+                continue;
+            };
+            let c = DVec3::new(x0 + side * 0.5, 0.0, z0 + side * 0.5);
+            out.push(f.tile(c, side, side, at.y + under, at.y + over));
+        }
+    }
+    out
+}
+
 /// The town plan, kept for working out where raiders hang.
 #[derive(Clone)]
 struct Town(Arc<TownWorld>);
@@ -255,6 +289,9 @@ pub struct Airships {
     /// The pirates' raiders moored over the streets they raid, by
     /// incident: where each hangs and its solids.
     raids: BTreeMap<u32, (DVec3, Vec<Solid>)>,
+    /// The Zorrak saucers over the streets they raid, by incident: where
+    /// each hangs and its solids.
+    saucers: BTreeMap<u32, (DVec3, Vec<Solid>)>,
     town: Option<Town>,
 }
 
@@ -283,6 +320,23 @@ impl Airships {
         }
     }
 
+    /// Keeps the saucers in step with the saucer raids open now:
+    /// `(incident, street)` each, hanging where every machine draws them
+    /// ([`saucer_hover`]).
+    pub fn set_saucers(&mut self, raids: &[(u32, DVec3)]) {
+        let Some(Town(w)) = &self.town else {
+            return;
+        };
+        self.saucers
+            .retain(|id, _| raids.iter().any(|r| r.0 == *id));
+        for &(id, street) in raids {
+            self.saucers.entry(id).or_insert_with(|| {
+                let at = saucer_hover(w, street);
+                (at, saucer_solids(at))
+            });
+        }
+    }
+
     pub fn new(w: &TownWorld) -> Self {
         let liner = w
             .landmarks
@@ -297,6 +351,7 @@ impl Airships {
                 .unwrap_or_default(),
             pirate_at: roost.map(|r| r.ship()),
             raids: BTreeMap::new(),
+            saucers: BTreeMap::new(),
             town: None,
         }
     }
@@ -325,6 +380,11 @@ impl Airships {
         }
         for (c, solids) in self.raids.values() {
             if near(*c, AIRSHIP_LENGTH * 0.5 + 12.0) {
+                out.extend(solids.iter().cloned());
+            }
+        }
+        for (c, solids) in self.saucers.values() {
+            if near(*c, SAUCER_RADIUS + 4.0) {
                 out.extend(solids.iter().cloned());
             }
         }
@@ -359,6 +419,35 @@ mod tests {
             thrust: 1.0,
             phase: Phase::Flight,
             t: 0.0,
+        }
+    }
+
+    #[test]
+    fn a_saucer_is_solid_where_it_is_drawn() {
+        use crate::roosts::{SAUCER_TOP, SAUCER_UNDER};
+        let at = DVec3::new(30.0, 25.0, -12.0);
+        let solids = saucer_solids(at);
+        for s in &solids {
+            assert!((s.max - s.min).length() * 0.5 < 3.5, "a mover: {s:?}");
+        }
+        // Its skin, a hand inside, all round; under side and top alike.
+        for &(r, y) in SAUCER_UNDER.iter().chain(SAUCER_TOP.iter()) {
+            let r = (r - 0.3).max(0.0);
+            for k in 0..24 {
+                let a = std::f64::consts::TAU * k as f64 / 24.0;
+                let inward = if y < 0.0 { 0.2 } else { -0.2 };
+                let q = at + DVec3::new(r * a.cos(), y + inward, r * a.sin());
+                assert!(inside(&solids, q, 1e-6), "open at r {r} y {y} angle {a}");
+            }
+        }
+        // And open air well clear of it.
+        let clear = [
+            at + DVec3::Y * 4.0,
+            at - DVec3::Y * 2.5,
+            at + DVec3::X * (SAUCER_RADIUS + 1.0),
+        ];
+        for q in clear {
+            assert!(!inside(&solids, q, 0.0), "{q}");
         }
     }
 

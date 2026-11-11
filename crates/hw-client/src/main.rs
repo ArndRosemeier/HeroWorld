@@ -3431,6 +3431,7 @@ fn main() -> EngineResult<()> {
                                 } else if h.kind.wields() {
                                     fight.wield(world, e, h.kind);
                                 }
+                                fight.crown(world, e, h.kind);
                                 e
                             }
                             None if villain => {
@@ -3645,6 +3646,26 @@ fn main() -> EngineResult<()> {
                     fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
                 }
             }
+            // `HW_VIEW=saucer` (with HW_INCIDENT=saucer): the Zorrak saucer and
+            // its beam from above the roofs, looking down at the street.
+            if view == "saucer" {
+                if let Some(at) = radio.saucer_at() {
+                    let c = radio.calls.values().next();
+                    let f = c.map_or(Vec3::Z, |c| {
+                        Vec3::new(c.facing.x as f32, 0.0, c.facing.y as f32)
+                    });
+                    let side = Vec3::new(f.z, 0.0, -f.x);
+                    let foot = c.map_or(at - Vec3::Y * 14.0, |c| c.at);
+                    // Above the roofs (the saucer hovers over them), so no wall
+                    // stands between the camera and the beam.
+                    let p = at + f * 42.0 + side * 16.0 + Vec3::Y * 2.0;
+                    let d = Vec3::new(at.x, at.y * 0.6 + foot.y * 0.4, at.z) - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
             // `HW_VIEW=call` (with HW_INCIDENT=<kind>): the first call on the
             // police visor, from over the rooftops 50 m off.
             if view == "call" {
@@ -3805,7 +3826,7 @@ fn main() -> EngineResult<()> {
                 )?;
             }
             // `HW_VIEW=act HW_ACT=<juggler|theremin|statue|prophet|spotter|
-            // newsboy|stargazer|dancers|club>`: the nearest such street act,
+            // newsboy|stargazer|dancers|club|trader>`: the nearest such street act,
             // from in front and a little to the side (`HW_ACT_FAR=1`: wider).
             if view == "act" {
                 act_try += 1;

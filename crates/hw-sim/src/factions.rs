@@ -66,34 +66,40 @@ impl Attitude {
 
 /// How each faction (row) regards each other one (column), in the order of
 /// [`Faction::ALL`]: Townsfolk, Patrol, Lab, Jackets, Syndicate, Moles, Sky
-/// Pirates, Empire.
+/// Pirates, Empire, Invaders.
 const TABLE: [[i16; FACTIONS]; FACTIONS] = [
-    // Townsfolk fear the Lab and the Empire, mistrust the gangs and the
-    // pirates, like the Patrol.
-    [50, 40, -60, -30, -20, 0, -30, -80],
+    // Townsfolk fear the Lab, the Empire and the invaders, mistrust the
+    // gangs and the pirates, like the Patrol.
+    [50, 40, -60, -30, -20, 0, -30, -80, -80],
     // The Patrol keeps the peace against every gang and invader.
-    [50, 80, -80, -50, -40, 0, -50, -90],
+    [50, 80, -80, -50, -40, 0, -50, -90, -90],
     // The Lab looks down on everyone; it hates the Patrol and the Syndicate
-    // (rivals for the city's underworld), and the Empire (rivals for the
-    // world).
-    [-40, -70, 80, -30, -50, -40, -30, -60],
+    // (rivals for the city's underworld), and the Empire and the invaders
+    // (rivals for the world).
+    [-40, -70, 80, -30, -50, -40, -30, -60, -60],
     // The Chrome Jackets: unfriendly to anyone outside the gang, at war
     // with the Syndicate.
-    [-30, -60, -40, 80, -60, -10, -20, -60],
+    [-30, -60, -40, 80, -60, -10, -20, -60, -60],
     // The Velvet Syndicate keeps the peace when it suits business; the
     // pirates are rival smugglers.
-    [-10, -50, -50, -60, 80, 0, -40, -60],
+    [-10, -50, -50, -60, 80, 0, -40, -60, -60],
     // Molehaven: wary of the surface, hates the Lab's diggers and the
-    // Empire, which takes mole folk for its mines.
-    [0, 10, -50, -10, -10, 80, 0, -70],
+    // Empire, which takes mole folk for its mines; the saucers it has
+    // hardly seen.
+    [0, 10, -50, -10, -10, 80, 0, -70, -40],
     // The sky pirates: rogues, not monsters. Unfriendly to landlubbers,
-    // at odds with the law and the Syndicate; they trade with Molehaven.
-    [-30, -60, -40, -10, -40, 10, 80, -50],
+    // at odds with the law and the Syndicate; they trade with Molehaven,
+    // and the saucers own the sky they want.
+    [-30, -60, -40, -10, -40, 10, 80, -50, -70],
     // The Iron-Masked Empire: hostile to every power that is not of it,
     // and it despises townsfolk, but even it does not know a newcomer
     // yet (nobody attacks an unknown hero on sight): its legionaries
     // fight whoever comes near the people they round up.
-    [-55, -90, -60, -60, -60, -70, -60, 90],
+    [-55, -90, -60, -60, -60, -70, -60, 90, -80],
+    // The invaders from Zorrak, the small moon: everyone on this world is
+    // a specimen to them and every power a nuisance; like the Empire they
+    // leave a stranger be until they come near the people being beamed up.
+    [-55, -90, -70, -60, -60, -60, -60, -80, 90],
 ];
 
 /// How `of` regards `toward`, before any deeds.
@@ -123,6 +129,7 @@ pub fn of_enemy(kind: EnemyKind) -> Faction {
         EnemyKind::Delver => Faction::Moles,
         EnemyKind::Buccaneer | EnemyKind::Gunner | EnemyKind::Captain => Faction::SkyPirates,
         EnemyKind::Legionary | EnemyKind::Praetorian => Faction::Empire,
+        EnemyKind::Zapper | EnemyKind::Grabber | EnemyKind::Overlord => Faction::Invaders,
     }
 }
 
@@ -254,6 +261,11 @@ pub fn warnings(f: Faction) -> &'static [&'static str] {
             "Kneel before the Iron Throne!",
             "Resistance is noted. And punished.",
             "This city belongs to the Empire now.",
+        ],
+        Faction::Invaders => &[
+            "Halt, soft-skin! Zorrak claims this street!",
+            "Resistance is futile. Also rude.",
+            "Take us to your leader. Or stay back. Mostly stay back.",
         ],
         _ => &["Go away!"],
     }

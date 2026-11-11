@@ -700,6 +700,8 @@ fn clip_of(act: Act, p: &StreetPerson, running: bool, startled: bool) -> &'stati
         return if townsfolk { "walk" } else { "jog" };
     }
     match p.doing {
+        // Gliding in and out on the hover disc.
+        Doing::Walking if performer && act.rides() => "idle",
         Doing::Walking if p.carrying && performer && act != Act::Club => "carry case",
         Doing::Walking => "walk",
         Doing::Setting | Doing::Packing => "interact",
@@ -714,6 +716,7 @@ fn clip_of(act: Act, p: &StreetPerson, running: bool, startled: bool) -> &'stati
             Act::Stargazer => "peer",
             Act::Dancers => "dance",
             Act::Club => "arms folded",
+            Act::Trader => "holler",
         },
         Doing::Talking => match act {
             Act::Stargazer => "point up",
@@ -794,6 +797,7 @@ fn set_gear(show: &Show, g: f64, time: f64, places: &mut BTreeMap<Gear, Vec<Plac
         }
         Act::Newsboy => put(Gear::Bundle, p + side * 0.45 + face * 0.2, s.y, face),
         Act::Stargazer => put(Gear::Telescope, p + face * 0.7 + side * 0.5, s.y, face),
+        Act::Trader => put(Gear::Wares, p + face * 0.75, s.y, face),
         Act::Spotter | Act::Club => {}
     }
 }
@@ -829,7 +833,16 @@ fn held_gear(
         );
     };
     let doing = p.doing;
-    if doing == Doing::Walking && p.carrying && act != Act::Club && act != Act::Prophet {
+    // The trader rides a hover disc, in and out and all through the act.
+    if act.rides() {
+        put(Gear::Disc, feet, 0.0);
+    }
+    if doing == Doing::Walking
+        && p.carrying
+        && act != Act::Club
+        && act != Act::Prophet
+        && !act.rides()
+    {
         if let Some(h) = bone("hand_r", Vec3::ZERO) {
             put(Gear::CaseShut, h, 0.0);
         }

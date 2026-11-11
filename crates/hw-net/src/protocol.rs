@@ -200,10 +200,13 @@ pub enum Faction {
     /// The Iron-Masked Empire: invaders from beyond the sea who drop from
     /// the sky in iron capsules and take townsfolk away.
     Empire,
+    /// The invaders from Zorrak, the small quick moon: bug-eyed troopers
+    /// who come down in flying saucers and beam townsfolk up.
+    Invaders,
 }
 
 /// How many factions there are.
-pub const FACTIONS: usize = 8;
+pub const FACTIONS: usize = 9;
 
 impl Faction {
     pub const ALL: [Faction; FACTIONS] = [
@@ -215,6 +218,7 @@ impl Faction {
         Faction::Moles,
         Faction::SkyPirates,
         Faction::Empire,
+        Faction::Invaders,
     ];
 
     pub fn index(self) -> usize {
@@ -231,6 +235,7 @@ impl Faction {
             Faction::Moles => "Molehaven",
             Faction::SkyPirates => "Sky Pirates",
             Faction::Empire => "Iron-Masked Empire",
+            Faction::Invaders => "Zorrak Invaders",
         }
     }
 }
@@ -303,6 +308,15 @@ pub enum EntityKind {
     /// The mad scientist's lab orderly: patches up hurt villains with a
     /// mending ray.
     Orderly,
+    /// A Zorrak zapper: a bug-eyed invader from the moon in a fishbowl
+    /// helmet, with a ray gun.
+    Zapper,
+    /// A Zorrak grabber: an invader with a glowing grabber claw on a pole,
+    /// up close.
+    Grabber,
+    /// A Zorrak overlord: a lieutenant, a great brain under a glass dome,
+    /// with a brain-ray sceptre.
+    Overlord,
 }
 
 impl EntityKind {
@@ -334,6 +348,9 @@ impl EntityKind {
             EntityKind::Bulwark => 23,
             EntityKind::Grenadier => 24,
             EntityKind::Orderly => 25,
+            EntityKind::Zapper => 26,
+            EntityKind::Grabber => 27,
+            EntityKind::Overlord => 28,
         }
     }
 
@@ -365,6 +382,9 @@ impl EntityKind {
             23 => Ok(EntityKind::Bulwark),
             24 => Ok(EntityKind::Grenadier),
             25 => Ok(EntityKind::Orderly),
+            26 => Ok(EntityKind::Zapper),
+            27 => Ok(EntityKind::Grabber),
+            28 => Ok(EntityKind::Overlord),
             _ => Err(WireError),
         }
     }
@@ -393,6 +413,9 @@ impl EntityKind {
                 | EntityKind::Bulwark
                 | EntityKind::Grenadier
                 | EntityKind::Orderly
+                | EntityKind::Zapper
+                | EntityKind::Grabber
+                | EntityKind::Overlord
         )
     }
 
@@ -404,6 +427,7 @@ impl EntityKind {
                 | EntityKind::Gunsel
                 | EntityKind::Gunner
                 | EntityKind::Legionary
+                | EntityKind::Zapper
         )
     }
 
@@ -420,6 +444,8 @@ impl EntityKind {
                 | EntityKind::Bulwark
                 | EntityKind::Grenadier
                 | EntityKind::Orderly
+                | EntityKind::Grabber
+                | EntityKind::Overlord
         )
     }
 
@@ -2158,7 +2184,7 @@ mod tests {
                     paid: 300,
                 },
             ],
-            regard: [0, 5, -40, -100, 12, 127, -7, 60],
+            regard: [0, 5, -40, -100, 12, 127, -7, 60, -30],
             story: 3,
             briefed: true,
         }

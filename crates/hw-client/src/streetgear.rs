@@ -41,10 +41,16 @@ pub enum Gear {
     Radio,
     /// Flat against a wall, its back at z = 0, its middle at the origin.
     ClubSign,
+    /// The Vael trader's hover disc: origin at the middle of its top, where
+    /// the trader stands.
+    Disc,
+    /// The trader's floating tray of trinkets: origin on the ground under
+    /// its middle.
+    Wares,
 }
 
 impl Gear {
-    pub const ALL: [Gear; 14] = [
+    pub const ALL: [Gear; 16] = [
         Gear::Soapbox,
         Gear::Board,
         Gear::Theremin,
@@ -59,6 +65,8 @@ impl Gear {
         Gear::Telescope,
         Gear::Radio,
         Gear::ClubSign,
+        Gear::Disc,
+        Gear::Wares,
     ];
 
     /// Its three levels (near, mid, far) and how far each is drawn.
@@ -104,6 +112,8 @@ impl Gear {
             Gear::Telescope => telescope(&mut b, lod),
             Gear::Radio => radio(&mut b, lod),
             Gear::ClubSign => club_sign(&mut b, lod),
+            Gear::Disc => disc(&mut b, lod),
+            Gear::Wares => wares(&mut b, lod),
         }
         b.finish()
     }
@@ -872,6 +882,219 @@ fn club_sign(b: &mut MeshBuilder, lod: Lod) {
             }
         }
     }
+}
+
+/// A ball of radius `r` round `at`.
+fn orb(b: &mut MeshBuilder, at: DVec3, r: f64, n: usize, surf: Surf, c: Color) {
+    let rows = (n / 2).max(3);
+    let profile: Vec<(f64, f64)> = (0..=rows)
+        .map(|k| {
+            let a = PI * k as f64 / rows as f64;
+            let rad = if k == 0 || k == rows {
+                0.0
+            } else {
+                r * a.sin()
+            };
+            (rad, -r * a.cos())
+        })
+        .collect();
+    lathe(b, at, DVec3::Y, &profile, n, |_| Some((surf, c)));
+}
+
+/// The Vael trader's hover disc: a little saucer to stand on, pearl white
+/// on top with a gold rim, a violet glow ring and a lens underneath where
+/// it rides on its light. Its top at the origin.
+fn disc(b: &mut MeshBuilder, lod: Lod) {
+    let pearl = rgb(236, 232, 244);
+    let gold = rgb(214, 176, 84);
+    let violet = rgb(190, 120, 255);
+    let h = hw_sim::streetlife::HOVER;
+    lathe(
+        b,
+        DVec3::ZERO,
+        DVec3::Y,
+        &[
+            (0.0, -0.2),
+            (0.12, -0.2),
+            (0.22, -0.16),
+            (0.42, -0.08),
+            (0.5, -0.02),
+            (0.52, 0.0),
+            (0.49, 0.025),
+            (0.3, 0.03),
+            (0.0, 0.03),
+        ],
+        sides(lod, 40),
+        |k| match k {
+            0 => Some((Surf::Glow, violet)),
+            4 | 5 => Some((Surf::Metal, gold)),
+            6 | 7 => Some((Surf::Plain, pearl)),
+            _ => Some((Surf::Metal, pearl)),
+        },
+    );
+    if lod == Lod::Far {
+        return;
+    }
+    // The glow ring under the rim, and a soft column of light down to
+    // the ground it rides on.
+    let n = sides(lod, 32);
+    let ring: Vec<DVec3> = (0..=n)
+        .map(|k| {
+            let a = TAU * k as f64 / n as f64;
+            DVec3::new(0.38 * a.cos(), -0.11, 0.38 * a.sin())
+        })
+        .collect();
+    tube(b, &ring, (0.018, 0.018), 6, Some((Surf::Glow, violet)));
+    orb(
+        b,
+        DVec3::new(0.0, -h + 0.05, 0.0),
+        0.05,
+        sides(lod, 12),
+        Surf::Glow,
+        violet,
+    );
+}
+
+/// The trader's floating tray: a gold-rimmed pearl tray on a column of
+/// violet light, set out with trinkets from round another sun: glowing
+/// crystals, a ringed globe, a little chrome rocket and a star in a jar.
+fn wares(b: &mut MeshBuilder, lod: Lod) {
+    let pearl = rgb(236, 232, 244);
+    let gold = rgb(214, 176, 84);
+    let violet = rgb(190, 120, 255);
+    let top = 0.98;
+    // The tray: a shallow dish.
+    lathe(
+        b,
+        DVec3::Y * top,
+        DVec3::Y,
+        &[
+            (0.0, -0.05),
+            (0.3, -0.05),
+            (0.38, -0.02),
+            (0.4, 0.03),
+            (0.37, 0.035),
+            (0.0, 0.0),
+        ],
+        sides(lod, 36),
+        |k| match k {
+            2 | 3 => Some((Surf::Metal, gold)),
+            _ => Some((Surf::Plain, pearl)),
+        },
+    );
+    // Its column of light and the little emitter on the ground.
+    lathe(
+        b,
+        DVec3::ZERO,
+        DVec3::Y,
+        &[(0.0, 0.0), (0.14, 0.0), (0.1, 0.06), (0.0, 0.07)],
+        sides(lod, 20),
+        |_| Some((Surf::Metal, gold)),
+    );
+    lathe(
+        b,
+        DVec3::Y * 0.07,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.035, 0.0),
+            (0.02, top - 0.12),
+            (0.0, top - 0.12),
+        ],
+        sides(lod, 12),
+        |_| Some((Surf::Glow, violet)),
+    );
+    if lod == Lod::Far {
+        return;
+    }
+    let y = top + 0.0;
+    // Three crystals, pointed both ends.
+    for (x, z, h, c) in [
+        (-0.2, 0.08, 0.16, rgb(120, 230, 255)),
+        (-0.12, -0.14, 0.12, rgb(255, 120, 200)),
+        (0.02, 0.18, 0.1, rgb(140, 255, 150)),
+    ] {
+        lathe(
+            b,
+            DVec3::new(x, y, z),
+            DVec3::Y,
+            &[(0.0, 0.0), (0.035, h * 0.3), (0.03, h * 0.75), (0.0, h)],
+            6,
+            |_| Some((Surf::Glow, c)),
+        );
+    }
+    // A ringed globe on a little stand.
+    let g = DVec3::new(0.16, y + 0.12, -0.06);
+    orb(b, g, 0.07, sides(lod, 20), Surf::Plain, rgb(230, 150, 80));
+    let n = sides(lod, 28);
+    let ring: Vec<DVec3> = (0..=n)
+        .map(|k| {
+            let a = TAU * k as f64 / n as f64;
+            let p = DVec3::new(0.11 * a.cos(), 0.0, 0.11 * a.sin());
+            g + DVec3::new(p.x, p.z * 0.35, p.z * 0.94)
+        })
+        .collect();
+    tube(b, &ring, (0.012, 0.004), 6, Some((Surf::Metal, gold)));
+    tube(
+        b,
+        &[DVec3::new(g.x, y, g.z), g - DVec3::Y * 0.06],
+        (0.008, 0.008),
+        6,
+        Some((Surf::Metal, gold)),
+    );
+    // A little chrome rocket with red fins.
+    let r = DVec3::new(0.2, y, 0.16);
+    lathe(
+        b,
+        r,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.025, 0.0),
+            (0.03, 0.05),
+            (0.026, 0.12),
+            (0.012, 0.17),
+            (0.0, 0.19),
+        ],
+        sides(lod, 14),
+        |_| Some((Surf::Metal, rgb(214, 218, 226))),
+    );
+    for k in 0..3 {
+        let a = TAU * k as f64 / 3.0;
+        let out = DVec3::new(a.cos(), 0.0, a.sin());
+        slab(
+            b,
+            r + out * 0.035 + DVec3::Y * 0.03,
+            [out, DVec3::Y],
+            DVec3::new(0.02, 0.03, 0.004),
+            rgb(200, 40, 40),
+        );
+    }
+    // A star in a jar.
+    let j = DVec3::new(-0.02, y, -0.2);
+    lathe(
+        b,
+        j,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.045, 0.0),
+            (0.05, 0.08),
+            (0.035, 0.11),
+            (0.03, 0.13),
+            (0.0, 0.13),
+        ],
+        sides(lod, 16),
+        |_| Some((Surf::Glass, rgb(220, 236, 240))),
+    );
+    orb(
+        b,
+        j + DVec3::Y * 0.055,
+        0.025,
+        10,
+        Surf::Glow,
+        rgb(255, 236, 140),
+    );
 }
 
 #[cfg(test)]

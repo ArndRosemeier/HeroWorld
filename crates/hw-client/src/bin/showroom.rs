@@ -6,7 +6,10 @@
 //! HW_LOD=near|mid|far  HW_PAINT=0..7  HW_YAW=degrees  HW_DIST=metres  HW_PITCH=degrees
 //! HW_LOOK_Y=metres (what the camera looks at). Airships float: `airship`
 //! (the pirates', its gondola's deck 2.6 m up) and `liner` (its deck's
-//! floor 1 m up, nose at the origin).
+//! floor 1 m up, nose at the origin). The Zorrak invaders' things:
+//! `saucer` (resting just over the floor), `raid` (hanging 14 m up with its
+//! tractor beam), `helmet` and `crown` (a zapper's and an overlord's
+//! headgear), `claw` and `sceptre`; the Vael trader's `disc` and `wares`.
 //!
 //! xvfb-run -a env ENGINE_SCREENSHOT=$PWD/screenshots/show.png HW_SHOW=cruiser \
 //!   cargo run -p hw-client --bin showroom
@@ -16,6 +19,9 @@ use glam::DVec3;
 use hw_client::carmesh::{car_doors, car_into, car_shell_into, taxi_into, wheel, Door, Lod};
 use hw_client::citymesh::MeshBuilder;
 use hw_gen::urban::props::CarModel;
+
+/// How high the `raid` saucer hangs (its rim's middle, m).
+const RAID_LIFT: f32 = 14.5;
 
 fn env_f(name: &str, default: f32) -> f32 {
     std::env::var(name)
@@ -42,6 +48,16 @@ fn model(name: &str, lod: Lod, paint: u8) -> Mesh {
         _ => return prop(name, lod),
     }
     b.finish()
+}
+
+/// An invader's helmet, its glass bowl merged in (the game hangs the bowl
+/// on its own).
+fn helmet(kind: hw_net::EntityKind) -> Mesh {
+    let Some((mut frame, bowl)) = hw_client::factionview::headgear(kind) else {
+        return Mesh::new();
+    };
+    let _ = frame.append_translated(&bowl, Vec3::ZERO);
+    frame
 }
 
 fn prop(name: &str, lod: Lod) -> Mesh {
@@ -76,6 +92,15 @@ fn prop(name: &str, lod: Lod) -> Mesh {
         "sweeper" => hw_client::sweeperview::sweeper(lod),
         "airship" => hw_client::factionview::airship(lod),
         "liner" => hw_client::mastmesh::ship(lod),
+        "saucer" | "raid" => hw_client::factionview::saucer(lod),
+        "helmet" => helmet(hw_net::EntityKind::Zapper),
+        "crown" => helmet(hw_net::EntityKind::Overlord),
+        "claw" => hw_client::factionview::weapon(hw_net::EntityKind::Grabber).unwrap_or_default(),
+        "sceptre" => {
+            hw_client::factionview::weapon(hw_net::EntityKind::Overlord).unwrap_or_default()
+        }
+        "disc" => hw_client::streetgear::Gear::Disc.mesh(lod),
+        "wares" => hw_client::streetgear::Gear::Wares.mesh(lod),
         _ => Mesh::new(),
     }
 }
@@ -134,9 +159,18 @@ fn main() -> EngineResult<()> {
                     + match names[i].as_str() {
                         "airship" => hw_client::factionview::GONDOLA_DECK as f32 + 2.6,
                         "liner" => hw_gen::urban::mast::DECK_DROP as f32 + 1.0,
+                        "saucer" => hw_client::factionview::SAUCER_UNDER_DEPTH as f32 + 0.3,
+                        "raid" => RAID_LIFT,
+                        "disc" => hw_sim::streetlife::HOVER as f32,
                         _ => 0.0,
                     };
                 world.place(m, Place::new(x, lift, 0.0))?;
+                if names[i] == "raid" {
+                    // Its beam from the lens down to the floor.
+                    let lens = lift - hw_client::factionview::SAUCER_UNDER_DEPTH as f32 + 0.1;
+                    let beam = hw_client::factionview::tractor_beam(lens);
+                    world.place(beam, Place::new(x, lens, 0.0))?;
+                }
             }
             world.spawn(Shape::box_at(
                 (0.0, -0.05, 0.0),

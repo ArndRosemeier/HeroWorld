@@ -232,14 +232,14 @@ fn the_empire_waits_until_the_team_can_take_it() {
     let mut sim = Sim::for_town(Seed(3), &town);
     sim.spawn_hero(PlayerId(1), sim.spawn_point(1));
     sim.incidents.first_after = 0.0;
-    // Many incidents at level 1: never the Iron Legion.
+    // Many incidents at level 1: never the Iron Legion, never a saucer.
     for _ in 0..40 {
         run(&mut sim, incidents::GAP_SECONDS + 1.0);
         assert!(sim
             .incidents
             .open
             .iter()
-            .all(|i| i.kind != IncidentKind::IronLanding));
+            .all(|i| i.kind != IncidentKind::IronLanding && i.kind != IncidentKind::SaucerRaid));
         // Clear them so more start.
         sim.incidents.open.clear();
         if sim.incidents.count > 25 {

@@ -195,6 +195,13 @@ pub enum EnemyKind {
     /// The mad scientist's lab orderly: no fighter, it patches up the most
     /// hurt of its group from the back row. Beat it first.
     Orderly,
+    /// A Zorrak zapper: an invader from the moon with a ray gun.
+    Zapper,
+    /// A Zorrak grabber: an invader with a grabber claw, up close.
+    Grabber,
+    /// A Zorrak overlord: a lieutenant who fires a brain ray from the back
+    /// row.
+    Overlord,
 }
 
 /// The Doctor's Aether storm: how long he charges it (the telegraph: get
@@ -445,6 +452,43 @@ pub fn enemy_spec(k: EnemyKind) -> EnemySpec {
             aggro: 18.0,
             karma: 7.0,
         },
+        EnemyKind::Zapper => EnemySpec {
+            name: "Zorrak Zapper",
+            rank: "Minion",
+            health: 42.0,
+            damage: 7.0,
+            attack_every: 2.4,
+            windup: 0.7,
+            reach: 26.0,
+            speed: 0.7,
+            aggro: 24.0,
+            karma: 7.0,
+        },
+        EnemyKind::Grabber => EnemySpec {
+            name: "Zorrak Grabber",
+            rank: "Minion",
+            health: 50.0,
+            damage: 7.0,
+            attack_every: 2.0,
+            windup: 0.55,
+            // The claw's pole reaches a little further than a fist.
+            reach: 2.9,
+            speed: 0.85,
+            aggro: 22.0,
+            karma: 7.5,
+        },
+        EnemyKind::Overlord => EnemySpec {
+            name: "Zorrak Overlord",
+            rank: "Lieutenant",
+            health: 180.0,
+            damage: 11.0,
+            attack_every: 2.4,
+            windup: 0.8,
+            reach: 24.0,
+            speed: 0.55,
+            aggro: 26.0,
+            karma: 24.0,
+        },
     }
 }
 
@@ -469,6 +513,9 @@ impl EnemyKind {
             EnemyKind::Bulwark => EntityKind::Bulwark,
             EnemyKind::Grenadier => EntityKind::Grenadier,
             EnemyKind::Orderly => EntityKind::Orderly,
+            EnemyKind::Zapper => EntityKind::Zapper,
+            EnemyKind::Grabber => EntityKind::Grabber,
+            EnemyKind::Overlord => EntityKind::Overlord,
         }
     }
 
@@ -487,6 +534,8 @@ impl EnemyKind {
                 | EnemyKind::Bulwark
                 | EnemyKind::Grenadier
                 | EnemyKind::Orderly
+                | EnemyKind::Zapper
+                | EnemyKind::Grabber
         )
     }
 
@@ -501,6 +550,8 @@ impl EnemyKind {
                 | EnemyKind::Legionary
                 | EnemyKind::Doctor
                 | EnemyKind::Orderly
+                | EnemyKind::Zapper
+                | EnemyKind::Overlord
         )
     }
 
@@ -535,6 +586,9 @@ impl EnemyKind {
             EntityKind::Bulwark => Some(EnemyKind::Bulwark),
             EntityKind::Grenadier => Some(EnemyKind::Grenadier),
             EntityKind::Orderly => Some(EnemyKind::Orderly),
+            EntityKind::Zapper => Some(EnemyKind::Zapper),
+            EntityKind::Grabber => Some(EnemyKind::Grabber),
+            EntityKind::Overlord => Some(EnemyKind::Overlord),
             _ => None,
         }
     }

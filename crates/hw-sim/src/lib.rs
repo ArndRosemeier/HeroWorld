@@ -1140,6 +1140,14 @@ impl Sim {
             .map(|i| (i.id, i.at))
             .collect();
         self.airships.set_raids(&raids);
+        let saucers: Vec<(u32, DVec3)> = self
+            .incidents
+            .open
+            .iter()
+            .filter(|i| i.kind == incidents::IncidentKind::SaucerRaid)
+            .map(|i| (i.id, i.at))
+            .collect();
+        self.airships.set_saucers(&saucers);
         let mut movers = rocket::solids(&self.rockets, now, &heroes, 25.0);
         movers.extend(self.airships.solids_near(&heroes, now));
         movers.extend(self.story.statue_solids());

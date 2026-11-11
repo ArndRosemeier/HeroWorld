@@ -1,7 +1,9 @@
 //! The new factions' things: the sky pirates' airship, the Iron-Masked
-//! Empire's drop capsule, the hole mole folk dig up through a street, and
-//! the weapons their fighters carry (a delver's pick, a pirate's cutlass,
-//! a praetorian's shock lance).
+//! Empire's drop capsule, the Zorrak invaders' flying saucer with its
+//! tractor beam and their fishbowl helmets, the hole mole folk dig up
+//! through a street, and the weapons their fighters carry (a delver's
+//! pick, a pirate's cutlass, a praetorian's shock lance, a grabber's claw,
+//! an overlord's sceptre).
 //!
 //! Everything is built the way the cars are: lofted and lathed surfaces
 //! with smooth normals ([`MeshBuilder::grid`] through `carmesh`'s helpers),
@@ -833,6 +835,441 @@ pub fn iron_capsule_levels() -> Vec<LodLevel> {
     ]
 }
 
+// ----------------------------------------------------------------- saucer
+
+pub use hw_sim::roosts::{SAUCER_RADIUS, SAUCER_TOP, SAUCER_UNDER, SAUCER_UNDER_DEPTH};
+
+/// The glass dome's foot (radius, height) and its crown's height: the
+/// dome is half an ellipse over the foot (the solid shape in
+/// `hw_sim::airships` follows [`SAUCER_TOP`], which lies on it).
+const DOME_FOOT: (f64, f64) = (3.0, 1.35);
+const DOME_CROWN: f64 = 3.15;
+
+/// A flying saucer from Zorrak: a polished chrome disc with a red rim and
+/// a red band, a ring of running lights round the rim, a green-tinted
+/// glass dome with a pilot's glowing console inside and an aerial on top,
+/// and underneath a gunmetal belly with three engine bulbs and the
+/// tractor beam's green lens in the middle. Origin at the middle of the
+/// rim's plane, +y up (it is round: no front).
+pub fn saucer(lod: Lod) -> Mesh {
+    let mut b = MeshBuilder::new();
+    let seg = lod.pick(72, 36, 16);
+    let chrome = rgb(214, 218, 226);
+    let gunmetal = rgb(70, 74, 82);
+    let red = rgb(196, 30, 36);
+    let lens = rgb(120, 255, 170);
+    let glass = rgb(150, 220, 190);
+    // The disc: belly, rim and top in one smooth lathe, out from the lens
+    // to the rim and back in to the dome's foot.
+    let mut profile: Vec<(f64, f64)> = SAUCER_UNDER.to_vec();
+    profile.extend(SAUCER_TOP[1..].iter().take(4).copied());
+    profile.push(DOME_FOOT);
+    // Bands: 0 the lens, 1 its chrome bezel, 2-5 the belly, 6 the rim,
+    // 7-8 the top, 9 the red band, 10 the dome's collar.
+    lathe(&mut b, DVec3::ZERO, DVec3::Y, &profile, seg, |k| match k {
+        0 => glow(lens),
+        1 | 7 | 8 | 10 => metal(chrome),
+        6 | 9 => metal(red),
+        _ => metal(gunmetal),
+    });
+    // The dome, half an ellipse of tinted glass.
+    let rows = lod.pick(14, 8, 4);
+    let dome: Vec<(f64, f64)> = (0..=rows)
+        .map(|i| {
+            let t = std::f64::consts::FRAC_PI_2 * i as f64 / rows as f64;
+            let r = if i == rows {
+                0.0
+            } else {
+                DOME_FOOT.0 * t.cos()
+            };
+            (r, DOME_FOOT.1 + (DOME_CROWN - DOME_FOOT.1) * t.sin())
+        })
+        .collect();
+    lathe(&mut b, DVec3::ZERO, DVec3::Y, &dome, seg, |_| {
+        Some((Surf::Glass, glass))
+    });
+    if lod != Lod::Far {
+        // The aerial on the crown, a glowing ball on its tip.
+        lathe(
+            &mut b,
+            DVec3::Y * (DOME_CROWN - 0.05),
+            DVec3::Y,
+            &[(0.0, 0.0), (0.07, 0.0), (0.03, 0.9), (0.0, 0.9)],
+            12,
+            |_| metal(chrome),
+        );
+        ball(
+            &mut b,
+            DVec3::Y * (DOME_CROWN + 0.95),
+            0.12,
+            12,
+            glow(rgb(255, 70, 60)),
+        );
+        // Running lights round the rim, amber and red by turns.
+        let n = lod.pick(32, 16, 0);
+        for k in 0..n {
+            let a = TAU * k as f64 / n as f64;
+            let c = if k % 2 == 0 {
+                rgb(255, 196, 70)
+            } else {
+                rgb(255, 70, 50)
+            };
+            let at = DVec3::new(a.cos(), 0.0, a.sin()) * (SAUCER_RADIUS - 0.02);
+            ball(&mut b, at, 0.16, lod.pick(10, 6, 4), glow(c));
+        }
+        // Three engine bulbs under the belly, glowing orange in chrome cups.
+        for k in 0..3 {
+            let a = TAU * k as f64 / 3.0 + 0.5;
+            let at = DVec3::new(a.cos() * 4.4, -0.98, a.sin() * 4.4);
+            lathe(
+                &mut b,
+                at,
+                -DVec3::Y,
+                &[
+                    (0.0, -0.05),
+                    (0.75, -0.05),
+                    (0.7, 0.18),
+                    (0.55, 0.3),
+                    (0.0, 0.3),
+                ],
+                lod.pick(24, 12, 8),
+                |k| {
+                    if k == 0 {
+                        metal(chrome)
+                    } else {
+                        metal(gunmetal)
+                    }
+                },
+            );
+            ball(
+                &mut b,
+                at - DVec3::Y * 0.32,
+                0.42,
+                lod.pick(16, 10, 6),
+                glow(rgb(255, 150, 60)),
+            );
+        }
+        // The pilot's console under the glass: a glowing drum with a
+        // chrome top, seen through the dome.
+        lathe(
+            &mut b,
+            DVec3::Y * 1.1,
+            DVec3::Y,
+            &[(0.0, 0.0), (1.0, 0.0), (0.9, 0.7), (0.0, 0.7)],
+            lod.pick(32, 16, 8),
+            |_| glow(rgb(90, 200, 150)),
+        );
+        // Radial ribs over the top, between the rim and the red band.
+        let ribs = lod.pick(12, 6, 0);
+        for k in 0..ribs {
+            let a = TAU * (k as f64 + 0.5) / ribs as f64;
+            let d = DVec3::new(a.cos(), 0.0, a.sin());
+            let path: Vec<DVec3> = (0..=6)
+                .map(|i| {
+                    let r = 7.3 - 3.1 * i as f64 / 6.0;
+                    d * r + DVec3::Y * (top_at(r) + 0.03)
+                })
+                .collect();
+            tube(&mut b, &path, (0.06, 0.04), 6, metal(chrome));
+        }
+    }
+    b.finish()
+}
+
+/// The saucer's top height at radius `r` (on [`SAUCER_TOP`]).
+fn top_at(r: f64) -> f64 {
+    hw_sim::roosts::saucer_span(r).map_or(0.0, |s| s.1)
+}
+
+/// A ball of radius `r` round `at`.
+fn ball(b: &mut MeshBuilder, at: DVec3, r: f64, seg: usize, paint: Paint) {
+    let rows = (seg / 2).max(3);
+    let profile: Vec<(f64, f64)> = (0..=rows)
+        .map(|i| {
+            let a = PI * i as f64 / rows as f64;
+            let rad = if i == 0 || i == rows {
+                0.0
+            } else {
+                r * a.sin()
+            };
+            (rad, -r * a.cos())
+        })
+        .collect();
+    lathe(b, at, DVec3::Y, &profile, seg, move |_| paint);
+}
+
+pub fn saucer_levels() -> Vec<LodLevel> {
+    vec![
+        LodLevel::new(saucer(Lod::Near), 70.0),
+        LodLevel::new(saucer(Lod::Mid), 260.0),
+        LodLevel::new(saucer(Lod::Far), 1500.0),
+    ]
+}
+
+/// The tractor beam from a saucer's lens down to the street, `len` metres
+/// below it: a cone of green light widening as it falls, brightest at the
+/// lens, with a glowing ring where it meets the ground. See-through (its
+/// points' alpha), origin at the lens.
+pub fn tractor_beam(len: f32) -> Mesh {
+    const SIDES: usize = 40;
+    let colour = rgb(120, 255, 170);
+    let mut m = Mesh::new();
+    let point = |m: &mut Mesh, p: Vec3, n: Vec3, alpha: f32| {
+        let id = m.add_point(p).expect("finite point");
+        let c = Color {
+            a: alpha.clamp(0.0, 1.0),
+            ..colour
+        };
+        m.set_point_color(id, c).expect("point exists");
+        m.set_point_normal(id, n).expect("point exists");
+        id
+    };
+    let len = len.max(1.0);
+    // Down from the lens: radius and light by the share of the way down.
+    let rows: [(f32, f32, f32); 6] = [
+        (0.0, 1.05, 0.4),
+        (0.08, 1.3, 0.3),
+        (0.35, 1.9, 0.18),
+        (0.7, 2.6, 0.13),
+        (0.95, 3.0, 0.1),
+        (1.0, 3.1, 0.0),
+    ];
+    let rings: Vec<Vec<PointId>> = rows
+        .iter()
+        .map(|&(t, r, alpha)| {
+            (0..SIDES)
+                .map(|i| {
+                    let a = std::f32::consts::TAU * i as f32 / SIDES as f32;
+                    let out = Vec3::new(a.cos(), 0.0, a.sin());
+                    point(&mut m, out * r - Vec3::Y * (t * len), out, alpha)
+                })
+                .collect()
+        })
+        .collect();
+    for w in rings.windows(2) {
+        for i in 0..SIDES {
+            let j = (i + 1) % SIDES;
+            // Both sides: it is seen from inside too (by the captives).
+            m.add_triangle(w[0][i], w[1][j], w[0][j]).expect("tri");
+            m.add_triangle(w[0][i], w[1][i], w[1][j]).expect("tri");
+            m.add_triangle(w[0][i], w[0][j], w[1][j]).expect("tri");
+            m.add_triangle(w[0][i], w[1][j], w[1][i]).expect("tri");
+        }
+    }
+    // The ring of light on the street.
+    let band: [(f32, f32); 3] = [(2.7, 0.0), (3.1, 0.8), (3.5, 0.0)];
+    let circles: Vec<Vec<PointId>> = band
+        .iter()
+        .map(|&(r, alpha)| {
+            (0..SIDES * 2)
+                .map(|i| {
+                    let a = std::f32::consts::TAU * i as f32 / (SIDES * 2) as f32;
+                    let p = Vec3::new(a.cos() * r, 0.1 - len, a.sin() * r);
+                    point(&mut m, p, Vec3::Y, alpha)
+                })
+                .collect()
+        })
+        .collect();
+    let n = SIDES * 2;
+    for w in circles.windows(2) {
+        for i in 0..n {
+            let j = (i + 1) % n;
+            m.add_triangle(w[0][i], w[0][j], w[1][j]).expect("tri");
+            m.add_triangle(w[0][i], w[1][j], w[1][i]).expect("tri");
+        }
+    }
+    m.set_surface_material(SurfaceMaterial {
+        roughness: 0.4,
+        emission: 1.1,
+        ..SurfaceMaterial::DEFAULT
+    });
+    m
+}
+
+/// What an invader wears on its head (the head bone's frame: +y up the
+/// head from the skull's base, +z the way it faces): a zapper's or
+/// grabber's fishbowl helmet on a chrome collar with two antennae, an
+/// overlord's taller dome on a gold collar with a glowing crest. Two
+/// meshes: the collar and its fittings, and the glass bowl, see-through
+/// (its own entity, so it sorts with the other glass). `None` for everyone
+/// else.
+pub fn headgear(kind: hw_net::EntityKind) -> Option<(Mesh, Mesh)> {
+    use hw_net::EntityKind as K;
+    let overlord = match kind {
+        K::Zapper | K::Grabber => false,
+        K::Overlord => true,
+        _ => return None,
+    };
+    let mut b = MeshBuilder::new();
+    let chrome = rgb(214, 218, 226);
+    let gold = rgb(206, 166, 72);
+    let collar = if overlord { gold } else { chrome };
+    let (r, centre) = if overlord {
+        (0.25, DVec3::new(0.0, 0.14, 0.01))
+    } else {
+        (0.21, DVec3::new(0.0, 0.11, 0.01))
+    };
+    // The collar ring round the neck.
+    lathe(
+        &mut b,
+        DVec3::new(0.0, -0.08, 0.0),
+        DVec3::Y,
+        &[
+            (r * 0.62, -0.03),
+            (r * 0.82, -0.03),
+            (r * 0.86, 0.0),
+            (r * 0.8, 0.035),
+            (r * 0.62, 0.035),
+        ],
+        32,
+        |_| metal(collar),
+    );
+    // The bowl: a sphere open at the bottom, standing on the collar.
+    let rows = 16;
+    let stretch = if overlord { 1.25 } else { 1.0 };
+    let bowl: Vec<(f64, f64)> = (2..=rows)
+        .map(|i| {
+            let a = PI * i as f64 / rows as f64;
+            let rad = if i == rows { 0.0 } else { r * a.sin() };
+            (rad, -r * a.cos() * stretch)
+        })
+        .collect();
+    let mut glass = MeshBuilder::new();
+    let clear = Color {
+        a: 0.2,
+        ..rgb(215, 240, 236)
+    };
+    lathe(&mut glass, centre, DVec3::Y, &bowl, 32, |_| {
+        Some((Surf::Glass, clear))
+    });
+    let top = centre + DVec3::Y * r * stretch;
+    if overlord {
+        // A crest on the crown: a gold spike in a collar, a glowing tip.
+        lathe(
+            &mut b,
+            top - DVec3::Y * 0.01,
+            DVec3::Y,
+            &[
+                (0.0, 0.0),
+                (0.04, 0.0),
+                (0.035, 0.02),
+                (0.008, 0.12),
+                (0.0, 0.12),
+            ],
+            16,
+            |_| metal(gold),
+        );
+        ball(
+            &mut b,
+            top + DVec3::Y * 0.135,
+            0.028,
+            12,
+            glow(rgb(255, 80, 220)),
+        );
+    } else {
+        // Two antennae, springing out of the bowl's crown.
+        for k in [-1.0, 1.0] {
+            let path = [
+                top + DVec3::new(0.05 * k, -0.01, 0.0),
+                top + DVec3::new(0.09 * k, 0.09, -0.01),
+                top + DVec3::new(0.14 * k, 0.17, 0.01),
+            ];
+            let path = spline(&path, 4, false);
+            tube(&mut b, &path, (0.008, 0.008), 6, metal(chrome));
+            ball(
+                &mut b,
+                *path.last().expect("a path"),
+                0.025,
+                10,
+                glow(rgb(255, 90, 70)),
+            );
+        }
+    }
+    Some((b.finish(), glass.finish()))
+}
+
+/// A grabber's claw on a pole: a chrome pole, three hooked fingers
+/// round a glowing green palm.
+fn claw(b: &mut MeshBuilder) {
+    let chrome = rgb(206, 210, 218);
+    let red = rgb(190, 34, 36);
+    lathe(
+        b,
+        DVec3::Y * -0.4,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.024, 0.0),
+            (0.02, 0.2),
+            (0.028, 0.22),
+            (0.02, 0.24),
+            (0.018, 1.25),
+            (0.05, 1.3),
+            (0.06, 1.36),
+            (0.0, 1.38),
+        ],
+        16,
+        |k| {
+            if (2..4).contains(&k) {
+                metal(red)
+            } else {
+                metal(chrome)
+            }
+        },
+    );
+    let palm = DVec3::Y * 0.98;
+    ball(
+        b,
+        palm + DVec3::Y * 0.02,
+        0.05,
+        14,
+        glow(rgb(120, 255, 170)),
+    );
+    for k in 0..3 {
+        let a = TAU * k as f64 / 3.0;
+        let out = DVec3::new(a.cos(), 0.0, a.sin());
+        let finger = [
+            palm + out * 0.05,
+            palm + out * 0.11 + DVec3::Y * 0.06,
+            palm + out * 0.12 + DVec3::Y * 0.15,
+            palm + out * 0.06 + DVec3::Y * 0.21,
+        ];
+        let path = spline(&finger, 4, false);
+        tube(b, &path, (0.016, 0.016), 8, metal(chrome));
+    }
+}
+
+/// An overlord's sceptre: a slim gold rod and a glowing violet orb in a
+/// chrome ring.
+fn sceptre(b: &mut MeshBuilder) {
+    let gold = rgb(206, 166, 72);
+    let chrome = rgb(214, 218, 226);
+    lathe(
+        b,
+        DVec3::Y * -0.3,
+        DVec3::Y,
+        &[
+            (0.0, 0.0),
+            (0.03, 0.0),
+            (0.022, 0.06),
+            (0.018, 0.75),
+            (0.04, 0.8),
+            (0.0, 0.82),
+        ],
+        16,
+        |_| metal(gold),
+    );
+    let orb = DVec3::Y * 0.6;
+    ball(b, orb, 0.075, 18, glow(rgb(210, 110, 255)));
+    let ring: Vec<DVec3> = (0..=24)
+        .map(|i| {
+            let a = TAU * i as f64 / 24.0;
+            orb + DVec3::new(a.cos() * 0.1, 0.0, a.sin() * 0.1)
+        })
+        .collect();
+    tube(b, &ring, (0.012, 0.012), 6, metal(chrome));
+}
+
 // --------------------------------------------------------------- mole hole
 
 /// Broken street round a hole: slabs of asphalt heaved up and tilted
@@ -1025,6 +1462,8 @@ pub fn weapon(kind: hw_net::EntityKind) -> Option<Mesh> {
         K::Bulwark => shield(&mut b),
         K::Grenadier => bomb(&mut b, DVec3::Y * 0.1),
         K::Orderly => mender(&mut b),
+        K::Grabber => claw(&mut b),
+        K::Overlord => sceptre(&mut b),
         _ => return None,
     }
     Some(b.finish())
@@ -1480,6 +1919,19 @@ mod tests {
         assert!(far < 2_000, "airship far {far}");
         let capsule = tris(iron_capsule(Lod::Near));
         assert!((1_500..15_000).contains(&capsule), "capsule {capsule}");
+        let saucer_near = tris(saucer(Lod::Near));
+        let saucer_mid = tris(saucer(Lod::Mid));
+        let saucer_far = tris(saucer(Lod::Far));
+        assert!(
+            (3_000..20_000).contains(&saucer_near),
+            "saucer near {saucer_near}"
+        );
+        assert!(saucer_mid * 2 < saucer_near, "saucer mid {saucer_mid}");
+        assert!(saucer_far < 1_500, "saucer far {saucer_far}");
+        for k in [hw_net::EntityKind::Zapper, hw_net::EntityKind::Overlord] {
+            let (frame, bowl) = headgear(k).expect("a helmet");
+            assert!(tris(frame) > 150 && tris(bowl) > 400, "{k:?}");
+        }
         let hole = tris(broken_ground(Lod::Near, 1.6, false, true));
         assert!((600..10_000).contains(&hole), "hole {hole}");
         for k in [
@@ -1487,6 +1939,8 @@ mod tests {
             hw_net::EntityKind::Buccaneer,
             hw_net::EntityKind::Captain,
             hw_net::EntityKind::Praetorian,
+            hw_net::EntityKind::Grabber,
+            hw_net::EntityKind::Overlord,
         ] {
             let w = weapon(k).expect("a weapon");
             assert!(tris(w) > 100, "{k:?}");

@@ -366,6 +366,9 @@ pub struct FightView {
     hums: BTreeMap<NetId, SoundId>,
     /// Ray guns in technicians' hands: character entity -> gun.
     guns: std::collections::HashMap<EntityId, EntityId>,
+    /// What a character wears on its head (an invader's fishbowl helmet),
+    /// hung on its head bone.
+    hats: std::collections::HashMap<EntityId, Vec<EntityId>>,
     /// Next punch from our hero is a cross (alternating with the jab).
     cross: bool,
     clock: f32,
@@ -435,6 +438,7 @@ impl FightView {
             note: None,
             hums: BTreeMap::new(),
             guns: std::collections::HashMap::new(),
+            hats: std::collections::HashMap::new(),
             cross: false,
             clock: 0.0,
             muzzles: BTreeMap::new(),
@@ -1836,10 +1840,38 @@ impl FightView {
         }
     }
 
-    /// Takes a ray gun away with its technician.
+    /// Puts a fighter's helmet on its head: an invader's fishbowl (once
+    /// per character; nothing for everyone else).
+    pub fn crown(&mut self, world: &mut World, e: EntityId, kind: EntityKind) {
+        if self.hats.contains_key(&e) {
+            return;
+        }
+        let Some((frame, bowl)) = crate::factionview::headgear(kind) else {
+            return;
+        };
+        let mut worn = Vec::new();
+        for mesh in [frame, bowl] {
+            if let Ok(h) = world.place(mesh, Place::new(0.0, 0.0, 0.0)) {
+                if world
+                    .attach_to_bone(h, e, "head", Place::new(0.0, 0.0, 0.0))
+                    .is_ok()
+                {
+                    worn.push(h);
+                } else {
+                    world.despawn(h);
+                }
+            }
+        }
+        self.hats.insert(e, worn);
+    }
+
+    /// Takes a ray gun (and a helmet) away with its technician.
     pub fn drop_gun(&mut self, world: &mut World, e: EntityId) {
         if let Some(g) = self.guns.remove(&e) {
             world.despawn(g);
+        }
+        for h in self.hats.remove(&e).unwrap_or_default() {
+            world.despawn(h);
         }
     }
 
@@ -3130,6 +3162,8 @@ pub fn villain_placeholder(kind: EntityKind) -> Mesh {
         EntityKind::Bulwark => (rgb(70, 60, 52), rgb(110, 160, 80)),
         EntityKind::Grenadier => (rgb(84, 92, 58), rgb(224, 186, 150)),
         EntityKind::Orderly => (rgb(170, 220, 200), rgb(224, 186, 150)),
+        EntityKind::Zapper | EntityKind::Grabber => (rgb(185, 190, 200), rgb(159, 216, 200)),
+        EntityKind::Overlord => (rgb(74, 28, 106), rgb(180, 168, 224)),
         _ => (rgb(236, 234, 226), rgb(224, 186, 150)),
     };
     let mut m = Mesh::new();

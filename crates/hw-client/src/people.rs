@@ -181,6 +181,16 @@ pub enum VillainKind {
     /// over a black suit, wild white hair and beard, dark goggles, heavy
     /// rubber gauntlets, eyes glowing Aether green. One look.
     Doctor,
+    /// A Zorrak zapper: a slight invader from the moon, pale teal skin, a
+    /// bald domed head with great black eyes, in a silver flight suit with
+    /// red gauntlets and boots (the fishbowl helmet and its antennae are
+    /// hung on its head: `factionview::headgear`).
+    Zapper,
+    /// A Zorrak grabber: a taller, heavier invader in a gold-trimmed suit.
+    Grabber,
+    /// A Zorrak overlord: the biggest head of all (the brain shows through
+    /// its glass dome), in a royal purple coat over the silver. One look.
+    Overlord,
 }
 
 impl VillainKind {
@@ -203,6 +213,9 @@ impl VillainKind {
             K::Bulwark => VillainKind::Bulwark,
             K::Grenadier => VillainKind::Grenadier,
             K::Orderly => VillainKind::Orderly,
+            K::Zapper => VillainKind::Zapper,
+            K::Grabber => VillainKind::Grabber,
+            K::Overlord => VillainKind::Overlord,
             _ => return None,
         })
     }
@@ -217,6 +230,9 @@ impl VillainKind {
                 | VillainKind::Captain
                 | VillainKind::Legionary
                 | VillainKind::Praetorian
+                | VillainKind::Zapper
+                | VillainKind::Grabber
+                | VillainKind::Overlord
         )
     }
 
@@ -226,7 +242,8 @@ impl VillainKind {
             VillainKind::Alpha
             | VillainKind::Captain
             | VillainKind::Praetorian
-            | VillainKind::Doctor => 1,
+            | VillainKind::Doctor
+            | VillainKind::Overlord => 1,
             _ => VILLAIN_LOOKS,
         }
     }
@@ -1063,6 +1080,41 @@ pub fn street(
                 &[],
             );
         }
+        Act::Trader => {
+            // A Vael star trader: tall and slender, lilac skin, no hair, a
+            // high domed head and kind gold eyes that glow a little, in a
+            // teal travelling coat over a gold suit.
+            b.gender = 0.5;
+            b.age_years = rng.range(35.0, 55.0);
+            b.height = 1.0;
+            b.weight = 0.15;
+            b.muscle = 0.3;
+            c.race = actors_human::RaceId::Elf;
+            c.skin = actors_generator::SkinKind::Procedural;
+            c.skin_color = Some("#c6b2ea".into());
+            c.eye_color = Some("#ffcc40".into());
+            c.eye_glow = 0.5;
+            c.hair = None;
+            c.brows = None;
+            c.beard = "none".into();
+            c.stubble = 0.0;
+            for (id, v) in [
+                ("head/head-scale-vert-decr-incr", 0.5),
+                ("eyes/eye-scale-decr-incr", 0.6),
+            ] {
+                c.details.insert(id.to_string(), v);
+            }
+            dress(
+                &mut c,
+                &["worksuit", "open-coat", "gloves-short", "black-shoes"],
+                &[
+                    ("worksuit", "#d8b860"),
+                    ("open-coat", "#1f6a6a"),
+                    ("gloves-short", "#d8b860"),
+                    ("black-shoes", "#3a2a1a"),
+                ],
+            );
+        }
         Act::Juggler => {
             b.gender = 0.0;
             b.age_years = rng.range(22.0, 30.0);
@@ -1337,6 +1389,39 @@ pub fn villain(
             colour(&mut c, "med-belt", "#b08a3c");
             colour(&mut c, "work-boots", "#1e1a16");
         }
+        VillainKind::Zapper | VillainKind::Grabber | VillainKind::Overlord => {
+            moon_invader(&mut c, kind, look, &mut rng);
+            let suit = match kind {
+                VillainKind::Overlord => vec![
+                    "worksuit",
+                    "open-coat",
+                    "gauntlet-gloves",
+                    "cuffed-knee-boots",
+                ],
+                _ => vec![
+                    "worksuit",
+                    "gauntlet-gloves",
+                    "cuffed-knee-boots",
+                    "med-belt",
+                ],
+            };
+            c.outfit = keep(&suit);
+            // Silver flight suits, red gauntlets and boots: Zorrak's livery.
+            colour(
+                &mut c,
+                "worksuit",
+                ["#b9bec8", "#aeb6c2", "#c4c6cc"][(look as usize) % 3],
+            );
+            let trim = if kind == VillainKind::Grabber {
+                "#c8a040"
+            } else {
+                "#b8241c"
+            };
+            colour(&mut c, "gauntlet-gloves", trim);
+            colour(&mut c, "cuffed-knee-boots", trim);
+            colour(&mut c, "med-belt", "#2a2c34");
+            colour(&mut c, "open-coat", "#4a1c6a");
+        }
         VillainKind::Orderly => {
             let b = &mut c.body;
             b.age_years = rng.range(24.0, 50.0);
@@ -1553,6 +1638,59 @@ pub fn villain(
         }
     }
     c
+}
+
+/// An invader from Zorrak, the small moon: a slight body, pale teal or
+/// lilac skin with no hair, a great domed head and big glossy black eyes
+/// with no whites. The overlord's head is bigger still.
+fn moon_invader(
+    c: &mut actors_generator::CharacterConfig,
+    kind: VillainKind,
+    look: u32,
+    rng: &mut hw_core::Rng,
+) {
+    let b = &mut c.body;
+    b.gender = 0.5;
+    b.age_years = rng.range(30.0, 45.0);
+    b.muscle = if kind == VillainKind::Grabber {
+        0.6
+    } else {
+        0.25
+    };
+    b.weight = if kind == VillainKind::Grabber {
+        0.45
+    } else {
+        0.2
+    };
+    b.height = match kind {
+        VillainKind::Grabber => 0.9,
+        VillainKind::Overlord => 0.75,
+        _ => rng.range(0.25, 0.45),
+    };
+    b.proportions = 0.8;
+    c.skin = actors_generator::SkinKind::Procedural;
+    let skins = ["#9fd8c8", "#b4a8e0", "#a8dcb0"];
+    c.skin_color = Some(skins[(look as usize) % skins.len()].to_string());
+    c.eye_color = Some("#0a0812".into());
+    c.pupil = "none".into();
+    c.eye_glow = 0.0;
+    c.hair = None;
+    c.brows = None;
+    c.beard = "none".into();
+    c.stubble = 0.0;
+    let head = if kind == VillainKind::Overlord {
+        1.0
+    } else {
+        0.7
+    };
+    for (id, v) in [
+        ("head/head-scale-vert-decr-incr", head),
+        ("head/head-scale-horiz-decr-incr", head * 0.8),
+        ("head/head-scale-depth-decr-incr", head * 0.6),
+        ("eyes/eye-scale-decr-incr", 1.0),
+    ] {
+        c.details.insert(id.to_string(), v);
+    }
 }
 
 /// One of Molehaven's people: short and stocky, pale from a life

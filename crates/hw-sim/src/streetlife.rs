@@ -3,7 +3,8 @@
 //! statue, an atom juggler, a saucer spotter with binoculars and a foil
 //! cap, the newsboy crying the headlines; after dark a stargazer with a
 //! telescope, swing dancers round a radio, and the queue at a night club's
-//! door.
+//! door. And by day now and then a star trader of the Vael, from a world
+//! round another sun, gliding in on a hover disc to sell glowing trinkets.
 //!
 //! Like the citizens, all of it is a pure function of the town seed and
 //! the game time: where the pitches are (worked out per patch of town,
@@ -130,10 +131,14 @@ pub enum Act {
     Dancers,
     /// The queue at a night club's door, and its doorman.
     Club,
+    /// A star trader of the Vael, friendly visitors from round another
+    /// sun: rides a hover disc, hawks glowing trinkets from a floating
+    /// tray, and people come to buy.
+    Trader,
 }
 
 impl Act {
-    pub const ALL: [Act; 9] = [
+    pub const ALL: [Act; 10] = [
         Act::Prophet,
         Act::Theremin,
         Act::Statue,
@@ -143,6 +148,7 @@ impl Act {
         Act::Stargazer,
         Act::Dancers,
         Act::Club,
+        Act::Trader,
     ];
 
     /// What people call it.
@@ -157,6 +163,7 @@ impl Act {
             Act::Stargazer => "Stargazer",
             Act::Dancers => "Swing dancers",
             Act::Club => "The Orbit Room",
+            Act::Trader => "Vael star trader",
         }
     }
 
@@ -172,6 +179,7 @@ impl Act {
             Act::Stargazer => &[(20.0, 26.5)],
             Act::Dancers => &[(17.0, 24.5)],
             Act::Club => &[(20.5, 27.0)],
+            Act::Trader => &[(10.0, 19.5)],
         }
     }
 
@@ -194,6 +202,7 @@ impl Act {
             Act::Stargazer => 1.3,
             Act::Dancers => 1.2,
             Act::Club => 1.0,
+            Act::Trader => 0.8,
         }
     }
 
@@ -225,6 +234,7 @@ impl Act {
             Act::Stargazer => 3,
             Act::Dancers => 4,
             Act::Club => 6,
+            Act::Trader => 3,
         }
     }
 
@@ -241,6 +251,7 @@ impl Act {
         match self {
             Act::Prophet => SOAPBOX,
             Act::Statue => CRATE,
+            Act::Trader => HOVER,
             _ => 0.0,
         }
     }
@@ -249,6 +260,23 @@ impl Act {
 /// Height of the prophet's soapbox and of the statue's crate (m).
 pub const SOAPBOX: f64 = 0.34;
 pub const CRATE: f64 = 0.52;
+/// How high the trader's hover disc carries them, its top over the ground
+/// (m): all the time, gliding in and out too.
+pub const HOVER: f64 = 0.42;
+
+impl Act {
+    /// Buyers come up, buy and go (the newsboy's paper, the trader's
+    /// trinkets): no watching, no clapping.
+    pub fn sells(self) -> bool {
+        matches!(self, Act::Newsboy | Act::Trader)
+    }
+
+    /// Rides in and out on something (the trader's hover disc): lifted the
+    /// whole time, not only while performing.
+    pub fn rides(self) -> bool {
+        self == Act::Trader
+    }
+}
 
 /// Who someone is, for whoever draws them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1260,6 +1288,8 @@ impl StreetLife {
                 while t < off - 40.0 && visit < 12 {
                     let (stay, gap) = match act {
                         Act::Newsboy => (srng.range(4.0, 7.0), srng.range(30.0, 90.0)),
+                        // A trinket wants a good look first.
+                        Act::Trader => (srng.range(9.0, 20.0), srng.range(25.0, 80.0)),
                         Act::Spotter => (srng.range(20.0, 45.0), srng.range(40.0, 100.0)),
                         _ => (srng.range(45.0, 120.0), srng.range(15.0, 60.0)),
                     };
@@ -1285,7 +1315,7 @@ impl StreetLife {
                         leave: go,
                         walk_out: wout.clone(),
                         pace: WATCHER_PACE,
-                        tips: act == Act::Newsboy || (act.takes_coins() && srng.chance(0.55)),
+                        tips: act.sells() || (act.takes_coins() && srng.chance(0.55)),
                     });
                     let back = wout.as_ref().map_or(0.0, |e| e.len()) / WATCHER_PACE;
                     t = go + back.min(20.0) + gap;
@@ -1460,9 +1490,13 @@ impl Show {
                 if s.doing == Doing::Watching {
                     s.doing = self.performing(time, k as u8);
                     // Up on the soapbox or crate while the act is on.
-                    if matches!(s.doing, Doing::Performing | Doing::Talking) {
+                    if matches!(s.doing, Doing::Performing | Doing::Talking) && !self.act.rides() {
                         s.pos.y += self.act.lift();
                     }
+                }
+                // On the hover disc the whole time.
+                if self.act.rides() {
+                    s.pos.y += self.act.lift();
                 }
                 out.push(s);
             }
@@ -1478,12 +1512,12 @@ impl Show {
             if let Some(mut s) = self.part_at(life, citizens, p, at, face, time) {
                 if s.doing == Doing::Watching {
                     s.doing = if p.tips && time > p.leave - 3.0 {
-                        if self.act == Act::Newsboy {
+                        if self.act.sells() {
                             Doing::Buying
                         } else {
                             Doing::Tipping
                         }
-                    } else if self.act == Act::Newsboy {
+                    } else if self.act.sells() {
                         Doing::Buying
                     } else if self.act.takes_coins() && clapping(p.id, time) {
                         Doing::Clapping
@@ -1518,6 +1552,7 @@ impl Show {
             Act::Spotter => (10.0, 8.0),
             Act::Newsboy => (6.0, 4.0),
             Act::Stargazer => (12.0, 9.0),
+            Act::Trader => (15.0, 8.0),
         };
         let period = on + talk;
         let x = (t - self.on + k as f64 * 3.0).rem_euclid(period);
