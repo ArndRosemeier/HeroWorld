@@ -110,7 +110,8 @@ Playing together on one machine: `HW_HOST=1 cargo run -p hw-client` in one windo
 hw-headless` as the host). `crates/hw-sim/tests/join_over_udp.rs` tests the same.
 
 Z-fighting: `cargo run --release -p hw-client --bin zfight -- <seed> [--cut N]` lists faces that fight
-(where, which colours, which building); `tests/no_zfighting.rs` in hw-client keeps the city clean, and
+(where, which colours, which building), `-- <seed> --town <people>` a town's streets and junctions;
+`tests/no_zfighting.rs` in hw-client keeps the city and town streets clean, and
 `ENGINE_ZFIGHT=1` marks spots in the game (the finder is Engine's, `engine::zfight`). Fix overlaps in the geometry, never by loosening the check.
 
 Run `check.sh` before every push (the fast default: blocker tests only; `--daily` when you change

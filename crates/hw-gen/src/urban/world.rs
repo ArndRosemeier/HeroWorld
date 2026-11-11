@@ -58,6 +58,9 @@ pub struct WorldRoad {
     pub class: Option<RoadClass>,
     /// A side street's style.
     pub style: Option<StreetStyle>,
+    /// Which of four heights it is drawn at, unlike every road it meets
+    /// (see [`super::surface::assign_layers`]).
+    pub layer: u8,
 }
 
 /// Half the width of a moving car, with its mirrors (m).
@@ -263,6 +266,7 @@ impl TownWorld {
             }
         }
         cancel.check()?;
+        super::surface::assign_layers(&[], &mut mains);
         out.main_bridges = out.bridges_of(&mains);
         out.main_roads = mains;
         cancel.check()?;
@@ -362,6 +366,13 @@ impl TownWorld {
             for (n, r) in roads.iter_mut().enumerate() {
                 r.id = DetailId::new(unit, n);
             }
+            let (lo, hi) = super::surface::roads_box(&roads);
+            let mains: Vec<WorldRoad> = self
+                .main_in(lo, hi)
+                .into_iter()
+                .map(|i| self.main_roads[i].clone())
+                .collect();
+            super::surface::assign_layers(&mains, &mut roads);
             let bridges = self.bridges_of(&roads);
             Split {
                 boxes: districts.iter().map(|d| bounds(&d.face.pts)).collect(),
@@ -386,12 +397,24 @@ impl TownWorld {
     fn plan_streets_of(&self, unit: Unit, d: &super::Piece) -> Streets {
         plan_streets(self.seed, &self.town, unit, d, |lines, plan| {
             let reach = side_reach(plan.style);
-            let roads: Vec<WorldRoad> = lines
+            let mut roads: Vec<WorldRoad> = lines
                 .into_iter()
                 .filter(|s| s.len() >= 2)
                 .enumerate()
                 .map(|(n, s)| road(DetailId::new(unit, n), s, reach, None, Some(plan.style)))
                 .collect();
+            // Unlike the main and district roads they meet (of any piece),
+            // and each other.
+            let (lo, hi) = super::surface::roads_box(&roads);
+            let mut fixed: Vec<WorldRoad> = self
+                .main_in(lo, hi)
+                .into_iter()
+                .map(|i| self.main_roads[i].clone())
+                .collect();
+            for piece in self.pieces_in(lo, hi) {
+                fixed.extend(self.split(piece).roads.iter().cloned());
+            }
+            super::surface::assign_layers(&fixed, &mut roads);
             let bridges = self.bridges_of(&roads);
             (roads, bridges)
         })
@@ -573,6 +596,10 @@ impl TownWorld {
                 }
             }
         }
+        // A street reaching into two districts' boxes is found twice:
+        // once is enough (twice is drawn twice, over itself).
+        let mut seen = std::collections::BTreeSet::new();
+        out.retain(|r| seen.insert(r.id));
         out
     }
 
@@ -1026,6 +1053,7 @@ fn road(
         main: class.is_some(),
         class,
         style,
+        layer: 0,
     }
 }
 

@@ -178,7 +178,10 @@ pub fn plan_piece(seed: Seed, town: &Town, piece: &Piece) -> PieceStreets {
             &seeds,
             &mut seed.child("trace").rng(),
         );
-        streets = lines.into_iter().map(|l| simplify(&l.pts, 1.0)).collect();
+        streets = lines
+            .into_iter()
+            .map(|l| simplify(&end_where_it_meets_itself(&l.pts, spec.step), 1.0))
+            .collect();
     }
     // Blocks: the faces of the outline plus the streets. A loop of streets
     // that touches nothing would sit inside its block like a hole, so it is
@@ -229,17 +232,32 @@ pub fn plan_piece(seed: Seed, town: &Town, piece: &Piece) -> PieceStreets {
         }
         for isl in islands {
             let near = |q: DVec2| nearest_on(outline, q);
-            let (k0, _) = isl
+            let tie = |k: usize| {
+                let q = isl[k];
+                let t = near(q);
+                vec![q, t + (t - q).normalize_or_zero() * 0.5]
+            };
+            // The shortest tie that does not run alongside a street (or
+            // an earlier tie): islands next to each other would otherwise
+            // be tied by streets a metre or two apart, drawn over each
+            // other.
+            let mut order: Vec<(usize, f64)> = isl
                 .iter()
                 .enumerate()
                 .map(|(k, q)| (k, q.distance(near(*q))))
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .expect("non-empty");
+                .collect();
+            order.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+            let k0 = order
+                .iter()
+                .map(|&(k, _)| k)
+                .find(|&k| !alongside(&tie(k), &streets, TIE_CLEAR))
+                .unwrap_or(order[0].0);
             let k1 = (k0 + isl.len() / 2) % isl.len();
             for k in [k0, k1] {
-                let q = isl[k];
-                let t = near(q);
-                streets.push(vec![q, t + (t - q).normalize_or_zero() * 0.5]);
+                let t = tie(k);
+                if k == k0 || !alongside(&t, &streets, TIE_CLEAR) {
+                    streets.push(t);
+                }
             }
         }
     }
@@ -248,6 +266,66 @@ pub fn plan_piece(seed: Seed, town: &Town, piece: &Piece) -> PieceStreets {
         streets,
         blocks,
     }
+}
+
+/// `pts` up to where it comes back to its own earlier way (round a still
+/// point of the field a street can circle and run on beside itself, or
+/// both its halves run round one circle): a street that closes a loop ends
+/// there, the loop closed.
+fn end_where_it_meets_itself(pts: &[DVec2], step: f64) -> Vec<DVec2> {
+    let near = step * 0.9;
+    let mut arc = vec![0.0; pts.len()];
+    for k in 1..pts.len() {
+        arc[k] = arc[k - 1] + pts[k - 1].distance(pts[k]);
+    }
+    for k in 2..pts.len() {
+        let met = (0..k - 1).find(|&j| {
+            arc[k] - arc[j + 1] > 3.0 * step
+                && crate::water::segment_distance(pts[k], pts[j], pts[j + 1]) < near
+        });
+        if let Some(j) = met {
+            let mut out = pts[..k].to_vec();
+            // Close onto the nearest point of the earlier way.
+            let (a, b) = (pts[j], pts[j + 1]);
+            let ab = b - a;
+            let t = ((pts[k] - a).dot(ab) / ab.length_squared().max(1e-12)).clamp(0.0, 1.0);
+            out.push(a + ab * t);
+            return out;
+        }
+    }
+    pts.to_vec()
+}
+
+/// How far (m) a tie to an island keeps from other streets along its way.
+const TIE_CLEAR: f64 = 14.0;
+
+/// Does the middle of `line` (its ends left out: they meet streets) come
+/// within `clear` of any of `streets`?
+fn alongside(line: &[DVec2], streets: &[Vec<DVec2>], clear: f64) -> bool {
+    let len: f64 = line.windows(2).map(|w| w[0].distance(w[1])).sum();
+    if len <= 2.0 * clear {
+        return false;
+    }
+    let n = (len / 4.0).ceil() as usize;
+    (1..n).any(|i| {
+        let mut s = len * i as f64 / n as f64;
+        if s < clear || s > len - clear {
+            return false;
+        }
+        let mut p = line[0];
+        for w in line.windows(2) {
+            let l = w[0].distance(w[1]);
+            if s <= l {
+                p = w[0].lerp(w[1], s / l.max(1e-9));
+                break;
+            }
+            s -= l;
+        }
+        streets.iter().any(|st| {
+            st.windows(2)
+                .any(|w| crate::water::segment_distance(p, w[0], w[1]) < clear)
+        })
+    })
 }
 
 /// The nearest point on a closed outline.

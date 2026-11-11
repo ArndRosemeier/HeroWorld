@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.206 (2026-11-11)
+
+- Streets no longer flicker where they meet: roads that cross or join each lie at their own height, and where one still overlaps another the hidden part is left out.
+- Pavements stay below the road on streets that lean sideways.
+- Ring roads close with a clean corner, and side streets no longer circle round over themselves or run a metre beside another street.
+- Side streets are laid out a little differently (world version 40).
+
 ## 0.205 (2026-11-11)
 
 - The case file: press J for Hero Hall's folder of your cases, typed up on Annie's typewriter. The open case with its progress, a mugshot of the boss and Annie's notes in the margin; the Doctor's dossier with the chapters still to come blacked out; and the cases you have closed.

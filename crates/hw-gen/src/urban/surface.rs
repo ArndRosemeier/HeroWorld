@@ -21,21 +21,21 @@ pub(super) const SURFACE_TILE: f64 = 64.0;
 pub(super) const KEEP_SURFACE_TILES: usize = 1024;
 
 impl WorldRoad {
-    /// Which of four heights the road is drawn at, so crossing roads never
-    /// fight.
+    /// Which of [`LAYERS`] heights the road is drawn at, so roads that meet
+    /// never fight ([`assign_layers`]).
     pub fn layer(&self) -> usize {
-        ((self.id.0 ^ (self.id.0 >> 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 62) as usize
+        self.layer as usize % LAYERS
     }
 
     /// Height of the pavement's top above [`TownWorld::road_height`].
     pub fn pavement_lift(&self) -> f64 {
-        0.02 + self.layer() as f64 * 0.012
+        ROAD_BASE + self.layer() as f64 * LAYER_STEP
     }
 
     /// Height of the carriageway's top above [`TownWorld::road_height`]:
     /// a kerb's step above the pavement.
     pub fn carriage_lift(&self) -> f64 {
-        self.pavement_lift() + 0.05
+        self.pavement_lift() + KERB
     }
 
     /// The centre line cut into steps of at most [`ROAD_STEP`], each point
@@ -54,6 +54,23 @@ impl WorldRoad {
             return out;
         }
         let dir = |i: usize| (pts[i + 1] - pts[i]).normalize_or_zero();
+        // A ring road closes on itself: its two ends meet in a corner
+        // like any other bend, not square ends lying over each other.
+        let closed = m >= 4 && pts[0].distance(pts[m - 1]) < 0.05;
+        let prev = |i: usize| match i {
+            0 if closed => Some(dir(m - 2)),
+            0 => None,
+            _ => Some(dir(i - 1)),
+        };
+        let next = |i: usize| {
+            if i + 2 < m {
+                Some(dir(i + 1))
+            } else if closed {
+                Some(dir(0))
+            } else {
+                None
+            }
+        };
         let mitre = |d0: DVec2, d1: DVec2| -> DVec2 {
             let n = (d0 + d1).normalize_or_zero().perp();
             let d = if d1 != DVec2::ZERO { d1 } else { d0 };
@@ -64,16 +81,8 @@ impl WorldRoad {
         // and the one at the end.
         let lean = |i: usize| -> (f64, f64) {
             let d = dir(i);
-            let start = if i > 0 {
-                mitre(dir(i - 1), d).dot(d)
-            } else {
-                0.0
-            };
-            let end = if i + 2 < m {
-                mitre(d, dir(i + 1)).dot(d)
-            } else {
-                0.0
-            };
+            let start = prev(i).map_or(0.0, |p| mitre(p, d).dot(d));
+            let end = next(i).map_or(0.0, |n| mitre(d, n).dot(d));
             (start, end)
         };
         for i in 0..m - 1 {
@@ -111,16 +120,15 @@ impl WorldRoad {
                 } else {
                     0.0
                 };
-                let n = if u == 0.0 && i > 0 {
-                    mitre(dir(i - 1), d)
-                } else {
-                    d.perp() + d * (ka * wa + kb * wb)
+                let n = match prev(i) {
+                    Some(p) if u == 0.0 => mitre(p, d),
+                    _ => d.perp() + d * (ka * wa + kb * wb),
                 };
                 out.push((a + d * u, n));
             }
         }
         let last = dir(m - 2);
-        out.push((pts[m - 1], mitre(last, DVec2::ZERO)));
+        out.push((pts[m - 1], mitre(last, next(m - 2).unwrap_or(DVec2::ZERO))));
         out
     }
 }
@@ -171,6 +179,201 @@ pub fn ease_bends(pts: &[DVec2], total: f64) -> Vec<DVec2> {
     pts
 }
 
+/// The lowest layer's pavement over [`TownWorld::road_height`] (m).
+pub const ROAD_BASE: f64 = 0.032;
+/// How many heights roads are drawn at.
+pub const LAYERS: usize = 5;
+/// Between one road height and the next (m): the 1 cm the z-fighting
+/// check asks for, and room for strips draped on the ground in different
+/// steps to bend apart a little.
+pub const LAYER_STEP: f64 = 0.016;
+/// The kerb, from pavement up to carriageway (m): a step more than every
+/// layer's pavement together, so a plate's carriageway
+/// ([`RoadJoin`], a step under the lowest road's) clears every pavement.
+pub const KERB: f64 = LAYER_STEP * (LAYERS as f64 + 1.0);
+
+/// The box round `roads`, pavements and all.
+pub fn roads_box(roads: &[WorldRoad]) -> (DVec2, DVec2) {
+    let mut lo = DVec2::splat(f64::INFINITY);
+    let mut hi = DVec2::splat(f64::NEG_INFINITY);
+    for r in roads {
+        let (a, b) = road_box(r);
+        lo = lo.min(a);
+        hi = hi.max(b);
+    }
+    (lo, hi)
+}
+
+fn road_box(r: &WorldRoad) -> (DVec2, DVec2) {
+    let t = DVec2::splat(r.half + r.pavement + 0.5);
+    let lo = r
+        .pts
+        .iter()
+        .fold(DVec2::splat(f64::INFINITY), |a, p| a.min(*p));
+    let hi = r
+        .pts
+        .iter()
+        .fold(DVec2::splat(f64::NEG_INFINITY), |a, p| a.max(*p));
+    (lo - t, hi + t)
+}
+
+/// Do the drawn strips of `a` and `b` overlap (by more than a touch along
+/// an edge or a flat end)? Points across `a`'s strip about a metre apart
+/// are tried inside `b`'s, and the other way round.
+pub fn roads_meet(a: &WorldRoad, b: &WorldRoad) -> bool {
+    overlap_of(a, b) > 0
+}
+
+/// How much the strips of `a` and `b` overlap: the points about a metre
+/// apart over either that lie inside the other (about the overlap in m²,
+/// counted from both sides).
+fn overlap_of(a: &WorldRoad, b: &WorldRoad) -> usize {
+    let n = samples(a).filter(|p| inside_strip(b, *p)).count()
+        + samples(b).filter(|p| inside_strip(a, *p)).count();
+    // Ends meeting at an angle overlap in a wedge the samples may miss:
+    // counted as about the corner's size, so it weighs like any overlap.
+    match ends_meet(a, b) {
+        Some(true) => {
+            let w = (a.half + a.pavement).min(b.half + b.pavement);
+            n.max((w * w).ceil() as usize)
+        }
+        // Running straight on into a road of another width: they meet
+        // along the end.
+        Some(false) if (a.half - b.half).abs() > 1e-6 => n.max(1),
+        Some(false) | None => n,
+    }
+}
+
+/// Does an end of `a` meet an end of `b`: at an angle (`Some(true)`),
+/// running straight on (`Some(false)`), or not at all (`None`)?
+fn ends_meet(a: &WorldRoad, b: &WorldRoad) -> Option<bool> {
+    let ends = |r: &WorldRoad| {
+        let m = r.pts.len();
+        [
+            (r.pts[0], (r.pts[1] - r.pts[0]).normalize_or_zero()),
+            (
+                r.pts[m - 1],
+                (r.pts[m - 2] - r.pts[m - 1]).normalize_or_zero(),
+            ),
+        ]
+    };
+    if a.pts.len() < 2 || b.pts.len() < 2 {
+        return None;
+    }
+    let mut found = None;
+    for (p, d) in ends(a) {
+        for (q, e) in ends(b) {
+            if p.distance(q) <= JOIN_SNAP {
+                // Even a hair off straight leaves a sliver of overlap.
+                let angled = d.dot(e) > -0.99999;
+                found = Some(found.unwrap_or(false) || angled);
+            }
+        }
+    }
+    found
+}
+
+/// Points over `r`'s strip, about a metre apart, its edges and ends
+/// included.
+fn samples(r: &WorldRoad) -> impl Iterator<Item = DVec2> + '_ {
+    let total = r.half + r.pavement;
+    let across = (2.0 * total).ceil().max(1.0) as usize;
+    r.pts.windows(2).flat_map(move |w| {
+        let d = (w[1] - w[0]).normalize_or_zero();
+        let n = d.perp();
+        let along = w[0].distance(w[1]).ceil().max(1.0) as usize;
+        (0..=along).flat_map(move |i| {
+            let c = w[0].lerp(w[1], i as f64 / along as f64);
+            (0..=across).map(move |k| c + n * (-total + 2.0 * total * k as f64 / across as f64))
+        })
+    })
+}
+
+/// Is `p` well inside `r`'s strip (5 cm in from its edges and its flat
+/// ends; bends taken round)?
+fn inside_strip(r: &WorldRoad, p: DVec2) -> bool {
+    within_strip(r, p, r.half + r.pavement, 0.05)
+}
+
+/// Is `p` within `width` of `r`'s centre line, `margin` in from that edge
+/// and from the flat ends (bends taken round, which the drawn strip,
+/// mitred, covers)?
+pub fn within_strip(r: &WorldRoad, p: DVec2, width: f64, margin: f64) -> bool {
+    let reach = width - margin;
+    let m = r.pts.len();
+    r.pts.windows(2).enumerate().any(|(i, w)| {
+        let v = w[1] - w[0];
+        let len = v.length();
+        if len < 1e-9 {
+            return false;
+        }
+        let d = v / len;
+        let t = (p - w[0]).dot(d);
+        let lo = if i == 0 { margin } else { f64::NEG_INFINITY };
+        let hi = if i + 2 == m {
+            len - margin
+        } else {
+            f64::INFINITY
+        };
+        if t < lo || t > hi {
+            return false;
+        }
+        let q = w[0] + d * t.clamp(0.0, len);
+        // Past an inner corner, round about it.
+        p.distance(q) < reach
+    })
+}
+
+/// Gives each of `roads` a height ([`WorldRoad::layer`]) that no road it
+/// meets has, among `fixed` and the others: roads that overlap at a
+/// junction then never lie in one plane. The most hemmed-in road chooses
+/// first (the one meeting the most heights already taken, then the one
+/// meeting the most roads); where every height is taken, it takes the one
+/// the fewest of them have. Same roads, same heights.
+pub fn assign_layers(fixed: &[WorldRoad], roads: &mut [WorldRoad]) {
+    let fixed_boxes: Vec<(DVec2, DVec2)> = fixed.iter().map(road_box).collect();
+    let boxes: Vec<(DVec2, DVec2)> = roads.iter().map(road_box).collect();
+    let touch = |a: (DVec2, DVec2), b: (DVec2, DVec2)| {
+        a.0.x <= b.1.x && b.0.x <= a.1.x && a.0.y <= b.1.y && b.0.y <= a.1.y
+    };
+    let n = roads.len();
+    // Heights already taken round each road (by the fixed ones), and
+    // which of the others it meets.
+    let mut taken = vec![[0usize; LAYERS]; n];
+    let mut meets: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n];
+    for i in 0..n {
+        for (f, fb) in fixed.iter().zip(&fixed_boxes) {
+            if f.id != roads[i].id && touch(boxes[i], *fb) {
+                taken[i][f.layer()] += overlap_of(&roads[i], f);
+            }
+        }
+        for j in 0..i {
+            if touch(boxes[i], boxes[j]) {
+                let o = overlap_of(&roads[i], &roads[j]);
+                if o > 0 {
+                    meets[i].push((j, o));
+                    meets[j].push((i, o));
+                }
+            }
+        }
+    }
+    let mut done = vec![false; n];
+    for _ in 0..n {
+        let Some(i) = (0..n).filter(|&i| !done[i]).max_by_key(|&i| {
+            let kinds = taken[i].iter().filter(|&&c| c > 0).count();
+            (kinds, meets[i].len(), std::cmp::Reverse(i))
+        }) else {
+            break;
+        };
+        let best = (0..LAYERS).min_by_key(|&l| (taken[i][l], l)).unwrap_or(0);
+        roads[i].layer = best as u8;
+        done[i] = true;
+        for &(j, o) in &meets[i] {
+            taken[j][best] += o;
+        }
+    }
+}
+
 /// Room a bend's points get to slide in, over the mitre's own reach.
 const EASE_ROOM: f64 = 1.25;
 
@@ -187,12 +390,17 @@ pub struct RoadJoin {
     pub carriage: f64,
     pub pavement_lift: f64,
     pub carriage_lift: f64,
+    /// The road whose look the plate takes: the narrowest meeting there,
+    /// or at any plate it overlaps (so overlapping plates look alike and
+    /// do not fight).
+    pub look: super::quarter::DetailId,
 }
 
 /// Ends of different roads closer than this meet (m).
 const JOIN_SNAP: f64 = 0.3;
-/// The plate lies this far under the roads' own surfaces (m).
-pub const JOIN_SINK: f64 = 0.006;
+/// The plate lies this far under every road's surfaces (m): under the
+/// lowest layer's pavement and carriageway, whichever roads cross it.
+pub const JOIN_SINK: f64 = LAYER_STEP;
 
 impl RoadJoin {
     /// How far `p` is outside the plate's pavement disc (negative inside).
@@ -256,9 +464,49 @@ pub fn road_joins(roads: &[WorldRoad]) -> Vec<RoadJoin> {
             at: ends[k].0,
             pavement: min(&|r| r.half + r.pavement),
             carriage: min(&|r| r.half),
-            pavement_lift: min(&|r| r.pavement_lift()) - JOIN_SINK,
-            carriage_lift: min(&|r| r.carriage_lift()) - JOIN_SINK,
+            pavement_lift: ROAD_BASE - JOIN_SINK,
+            carriage_lift: ROAD_BASE + KERB - JOIN_SINK,
+            look: rs
+                .clone()
+                .min_by(|a, b| a.half.total_cmp(&b.half).then(a.id.0.cmp(&b.id.0)))
+                .map_or_else(Default::default, |r| r.id),
         });
+    }
+    // Plates that overlap take one look: the narrowest road's of them all.
+    let half_of =
+        |id: super::quarter::DetailId| roads.iter().find(|r| r.id == id).map_or(0.0, |r| r.half);
+    let mut group: Vec<usize> = (0..out.len()).collect();
+    fn root(g: &mut [usize], mut i: usize) -> usize {
+        while g[i] != i {
+            g[i] = g[g[i]];
+            i = g[i];
+        }
+        i
+    }
+    for i in 0..out.len() {
+        for j in i + 1..out.len() {
+            if out[i].at.distance(out[j].at) < out[i].pavement + out[j].pavement {
+                let (a, b) = (root(&mut group, i), root(&mut group, j));
+                group[a.max(b)] = a.min(b);
+            }
+        }
+    }
+    let mut look: std::collections::BTreeMap<usize, super::quarter::DetailId> = Default::default();
+    for (i, j) in out.iter().enumerate() {
+        let g = root(&mut group, i);
+        let mine = j.look;
+        look.entry(g)
+            .and_modify(|l| {
+                let (a, b) = ((half_of(mine), mine.0), (half_of(*l), l.0));
+                if a.0 < b.0 || (a.0 == b.0 && a.1 < b.1) {
+                    *l = mine;
+                }
+            })
+            .or_insert(mine);
+    }
+    for (i, j) in out.iter_mut().enumerate() {
+        let g = root(&mut group, i);
+        j.look = look[&g];
     }
     out
 }
@@ -409,6 +657,7 @@ mod tests {
             main: false,
             class: None,
             style: None,
+            layer: 0,
         }
     }
 

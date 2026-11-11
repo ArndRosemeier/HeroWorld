@@ -2,6 +2,7 @@
 //! face the same way and overlap, so they flicker.
 //!
 //! cargo run -p hw-client --bin zfight -- [seed] [--cut LEVEL] [--far] [--all] [--svg FILE] [--radius M]
+//! cargo run -p hw-client --bin zfight -- [seed] --town PEOPLE   (a town's streets and junctions)
 //!
 //! Prints the worst spots (where, which colours, which meshes) and exits
 //! with 1 if any differently coloured faces fight. Buildings are drawn in
@@ -22,6 +23,7 @@ fn main() {
     let mut svg = None;
     let mut detail = Detail::Near;
     let mut params = hw_gen::city::CityParams::default();
+    let mut town = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -29,6 +31,7 @@ fn main() {
             "--all" => all = true,
             "--svg" => svg = args.next(),
             "--far" => detail = Detail::Far,
+            "--town" => town = args.next().and_then(|s| s.parse::<f64>().ok()),
             "--radius" => {
                 let r = args
                     .next()
@@ -38,6 +41,15 @@ fn main() {
             }
             s => seed = s.parse().unwrap_or_else(|_| panic!("not a seed: {s}")),
         }
+    }
+    if let Some(people) = town {
+        let t = hw_sim::GeneratedTown::generate(Seed(seed), people);
+        let report = zfight::town_roads(&t.world);
+        println!(
+            "seed {seed}, town of {people} people, streets: {}",
+            report.summary(25)
+        );
+        std::process::exit(i32::from(!report.is_clean()));
     }
     let city = GeneratedCity::generate_with(Seed(seed), &params);
     let report = zfight::city_report(&city, cut, detail);

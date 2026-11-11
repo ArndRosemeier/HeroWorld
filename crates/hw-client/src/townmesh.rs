@@ -11,6 +11,7 @@ use glam::{DVec2, DVec3, Vec3};
 use hw_gen::building::BuildingPlan;
 use hw_gen::urban::greenery::Greenery;
 use hw_gen::urban::props::PropKind;
+use hw_gen::urban::surface::within_strip;
 use hw_gen::urban::world::{TownWorld, WorldBuilding, WorldRoad, WATER_LEVEL};
 use hw_sim::collision::Inside;
 use std::collections::{BTreeMap, BTreeSet};
@@ -431,14 +432,15 @@ fn make_cell(job: CellJob) -> CellMeshes {
     let mut b = MeshBuilder::new();
     for r in &roads {
         for run in runs_in(r, k) {
-            draw_road(&mut b, &world, r, &run);
+            draw_road(&mut b, &world, r, &run, &roads);
         }
     }
     // Where road ends meet at an angle, a round plate fills the wedges
     // between their square ends; each plate drawn by the cell holding it.
-    for j in hw_gen::urban::surface::road_joins(&roads) {
+    let joins = hw_gen::urban::surface::road_joins(&roads);
+    for j in &joins {
         if cell_of(j.at) == k {
-            draw_join(&mut b, &world, &roads, &j);
+            draw_join(&mut b, &world, &roads, j, &joins);
         }
     }
     // Full detail: the buildings go into blocks, each drawn in full and in
@@ -1528,10 +1530,51 @@ fn runs_in(r: &WorldRoad, k: CellKey) -> Vec<Vec<(DVec2, DVec2)>> {
 /// One road run: pavements, then the carriageway a little higher so it wins
 /// where roads cross; both at the heights people stand on
 /// ([`TownWorld::surface`] reads the same lifts and strips).
-fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &[(DVec2, DVec2)]) {
+fn draw_road(
+    b: &mut MeshBuilder,
+    w: &TownWorld,
+    r: &WorldRoad,
+    run: &[(DVec2, DVec2)],
+    cover: &[WorldRoad],
+) {
     if run.len() < 2 {
         return;
     }
+    // A piece lying wholly under another road's surface is never seen:
+    // left out, it cannot flicker against roads it lies level with there.
+    let under = |lift: f64, q: &[DVec2; 4]| {
+        cover.iter().any(|o| {
+            if o.id == r.id {
+                return false;
+            }
+            let (h, t) = (o.half, o.half + o.pavement);
+            let on = |w: f64| q.iter().all(|p| within_strip(o, *p, w, COVER_MARGIN));
+            (o.carriage_lift() > lift + 1e-6 && on(h)) || (o.pavement_lift() > lift + 1e-6 && on(t))
+        })
+    };
+    // Where a road at the same height still overlaps this one (a long
+    // road meets more roads than there are heights), or the road runs
+    // over itself, the overlap is cut out of one of them.
+    let whole = r.strip_points();
+    let first = whole.iter().position(|p| p.0 == run[0].0).unwrap_or(0);
+    let cutters = [
+        Cutters::new(r, &whole, cover, false),
+        Cutters::new(r, &whole, cover, true),
+    ];
+    let shape = |carriage: bool| {
+        let lift = if carriage {
+            r.carriage_lift()
+        } else {
+            r.pavement_lift()
+        };
+        let cut = &cutters[usize::from(carriage)];
+        move |k: usize, q: [DVec2; 4]| -> Vec<Vec<DVec2>> {
+            if under(lift, &q) {
+                return Vec::new();
+            }
+            cut.cut(first + k, q.to_vec())
+        }
+    };
     let asphalt = if r.main {
         rgb(58, 58, 62)
     } else {
@@ -1541,7 +1584,13 @@ fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &[(DVec2, D
     let total = r.half + r.pavement;
     b.tex = Some(GroundLayer::Paving.into());
     b.mottle = 0.08;
-    strip(b, w, run, -total, total, r.pavement_lift(), pavement);
+    // Each pavement only out to the carriageway, not under it: one strip
+    // across the whole road cuts straight through the ground's curve and
+    // comes up to the carriageway where the road leans sideways.
+    let side = shape(false);
+    let (lp, lc) = (r.pavement_lift(), r.carriage_lift());
+    strip(b, w, run, (-total, -r.half), lp, pavement, &side);
+    strip(b, w, run, (r.half, total), lp, pavement, &side);
     // Old lanes are cobbled.
     let lane = r.style == Some(hw_gen::urban::streets::StreetStyle::Lanes);
     b.tex = Some(if lane {
@@ -1550,37 +1599,215 @@ fn draw_road(b: &mut MeshBuilder, w: &TownWorld, r: &WorldRoad, run: &[(DVec2, D
         GroundLayer::RoadAsphalt.into()
     });
     let asphalt = if lane { rgb(120, 116, 110) } else { asphalt };
+    let middle = shape(true);
     if lane {
         // Setts repeat every two metres; patches of worn, sandy and damp
         // stone over them hide the repeat.
         b.mottle = 0.22;
-        fine_strip(b, w, run, -r.half, r.half, r.carriage_lift(), asphalt);
+        fine_strip(b, w, run, (-r.half, r.half), lc, asphalt, &middle);
     } else {
         b.mottle = 0.06;
-        strip(b, w, run, -r.half, r.half, r.carriage_lift(), asphalt);
+        strip(b, w, run, (-r.half, r.half), lc, asphalt, &middle);
     }
     b.mottle = 0.0;
     b.tex = None;
 }
 
+/// Which of two roads at one height keeps the ground where they overlap:
+/// the wider, then the higher id.
+fn outranks(a: &WorldRoad, b: &WorldRoad) -> bool {
+    (a.half, a.id.0) > (b.half, b.id.0)
+}
+
+/// What is cut out of one road's pavements (or carriageway): the same
+/// part of every road at its height that outranks it ([`outranks`]), and
+/// its own pieces from two or more steps back (where it runs over
+/// itself). Convex pieces, found through a grid.
+struct Cutters {
+    pieces: Vec<(Vec<DVec2>, Option<usize>)>,
+    grid: std::collections::HashMap<(i64, i64), Vec<usize>>,
+}
+
+/// Side of the cutters' grid squares (m).
+const CUT_CELL: f64 = 8.0;
+
+impl Cutters {
+    fn new(r: &WorldRoad, whole: &[(DVec2, DVec2)], cover: &[WorldRoad], carriage: bool) -> Self {
+        let parts = |o: &WorldRoad| -> Vec<(f64, f64)> {
+            let t = o.half + o.pavement;
+            if carriage {
+                vec![(-o.half, o.half)]
+            } else {
+                vec![(-t, -o.half), (o.half, t)]
+            }
+        };
+        let quads = |pts: &[(DVec2, DVec2)], a: f64, b: f64| -> Vec<Vec<DVec2>> {
+            pts.windows(2)
+                .map(|w| {
+                    let ((p, n0), (q, n1)) = (w[0], w[1]);
+                    vec![p + n0 * a, q + n1 * a, q + n1 * b, p + n0 * b]
+                })
+                .collect()
+        };
+        let mut pieces = Vec::new();
+        let (lo, hi) = hw_gen::urban::surface::roads_box(std::slice::from_ref(r));
+        for o in cover {
+            if o.id == r.id || o.layer() != r.layer() || !outranks(o, r) {
+                continue;
+            }
+            let (olo, ohi) = hw_gen::urban::surface::roads_box(std::slice::from_ref(o));
+            if olo.x > hi.x || ohi.x < lo.x || olo.y > hi.y || ohi.y < lo.y {
+                continue;
+            }
+            let pts = o.strip_points();
+            for (a, b) in parts(o) {
+                pieces.extend(quads(&pts, a, b).into_iter().map(|q| (q, None)));
+            }
+        }
+        for (a, b) in parts(r) {
+            pieces.extend(
+                quads(whole, a, b)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(k, q)| (q, Some(k))),
+            );
+        }
+        let mut grid: std::collections::HashMap<(i64, i64), Vec<usize>> = Default::default();
+        for (i, (q, _)) in pieces.iter().enumerate() {
+            let (a, b) = poly_box(q);
+            for x in (a.x / CUT_CELL).floor() as i64..=(b.x / CUT_CELL).floor() as i64 {
+                for y in (a.y / CUT_CELL).floor() as i64..=(b.y / CUT_CELL).floor() as i64 {
+                    grid.entry((x, y)).or_default().push(i);
+                }
+            }
+        }
+        Self { pieces, grid }
+    }
+
+    /// What is left of `quad`, piece `k` of the road (counted along its
+    /// whole strip), once every cutter over it is taken away.
+    fn cut(&self, k: usize, quad: Vec<DVec2>) -> Vec<Vec<DVec2>> {
+        let (a, b) = poly_box(&quad);
+        let mut near: Vec<usize> = Vec::new();
+        for x in (a.x / CUT_CELL).floor() as i64..=(b.x / CUT_CELL).floor() as i64 {
+            for y in (a.y / CUT_CELL).floor() as i64..=(b.y / CUT_CELL).floor() as i64 {
+                if let Some(v) = self.grid.get(&(x, y)) {
+                    near.extend(v);
+                }
+            }
+        }
+        near.sort_unstable();
+        near.dedup();
+        let mut left = vec![quad];
+        for i in near {
+            let (c, own) = &self.pieces[i];
+            if own.is_some_and(|j| j + 2 > k) {
+                continue;
+            }
+            let (ca, cb) = poly_box(c);
+            left = left
+                .into_iter()
+                .flat_map(|p| {
+                    let (pa, pb) = poly_box(&p);
+                    if pa.x >= cb.x || pb.x <= ca.x || pa.y >= cb.y || pb.y <= ca.y {
+                        vec![p]
+                    } else {
+                        subtract_convex(&p, c)
+                    }
+                })
+                .collect();
+            if left.is_empty() {
+                break;
+            }
+        }
+        left
+    }
+}
+
+fn poly_box(p: &[DVec2]) -> (DVec2, DVec2) {
+    p.iter().fold(
+        (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+        |(a, b), q| (a.min(*q), b.max(*q)),
+    )
+}
+
+/// `p` less the convex polygon `c`, as convex pieces (slivers under a
+/// square centimetre dropped).
+fn subtract_convex(p: &[DVec2], c: &[DVec2]) -> Vec<Vec<DVec2>> {
+    let area = |q: &[DVec2]| {
+        (0..q.len())
+            .map(|i| q[i].perp_dot(q[(i + 1) % q.len()]))
+            .sum::<f64>()
+            * 0.5
+    };
+    // Counter-clockwise, so the inside of each edge is on its left.
+    let mut c = c.to_vec();
+    if area(&c) < 0.0 {
+        c.reverse();
+    }
+    if area(&c).abs() < 1e-9 {
+        return vec![p.to_vec()];
+    }
+    let mut out = Vec::new();
+    let mut rest = p.to_vec();
+    for i in 0..c.len() {
+        let (u, v) = (c[i], c[(i + 1) % c.len()]);
+        let n = (v - u).perp();
+        // Outside this edge: n·q <= n·u.
+        let outside = clip_half_plane(&rest, n, n.dot(u));
+        if outside.len() >= 3 && area(&outside).abs() > 1e-4 {
+            out.push(outside);
+        }
+        rest = clip_half_plane(&rest, -n, -n.dot(u));
+        if rest.len() < 3 {
+            // Nothing of `p` lies inside `c`: keep it whole.
+            return vec![p.to_vec()];
+        }
+    }
+    if area(&rest).abs() < 1e-6 {
+        return vec![p.to_vec()];
+    }
+    out
+}
+
+/// The roads within `lo..hi` as [`TownView`] draws them, one mesh per road
+/// (named "road <id>") and one for the plates where road ends meet
+/// ("joins"): for the z-fighting check ([`crate::zfight::town_roads`]).
+pub fn road_meshes(w: &TownWorld, lo: DVec2, hi: DVec2) -> Vec<(String, engine::mesh::Mesh)> {
+    let roads = w.roads_in(lo, hi);
+    let mut out = Vec::new();
+    for r in &roads {
+        let mut b = MeshBuilder::new();
+        draw_road(&mut b, w, r, &r.strip_points(), &roads);
+        out.push((format!("road {}", r.id.0), b.finish()));
+    }
+    let mut b = MeshBuilder::new();
+    let joins = hw_gen::urban::surface::road_joins(&roads);
+    for j in &joins {
+        draw_join(&mut b, w, &roads, j, &joins);
+    }
+    out.push(("joins".to_string(), b.finish()));
+    out
+}
+
+/// How far inside another road's surface (m) a piece must lie to be left
+/// out as hidden: more than the drawn strip may fall short of the centre
+/// line's reach at a bend.
+const COVER_MARGIN: f64 = 0.3;
+
 /// A plate under meeting road ends ([`hw_gen::urban::surface::RoadJoin`]):
 /// a disc of pavement and a disc of carriageway, in the look of the
-/// narrowest road there (whose width the plate has).
+/// road it names (the narrowest there, whose width the plate has). Where
+/// plates overlap, each keeps its own side of the line through the points
+/// their rims cross, so together they cover what both did, once.
 fn draw_join(
     b: &mut MeshBuilder,
     w: &TownWorld,
     roads: &[WorldRoad],
     j: &hw_gen::urban::surface::RoadJoin,
+    all: &[hw_gen::urban::surface::RoadJoin],
 ) {
-    let meets = |r: &&WorldRoad| {
-        r.pts.len() >= 2
-            && (r.pts[0].distance(j.at) < 0.5 || r.pts[r.pts.len() - 1].distance(j.at) < 0.5)
-    };
-    let Some(r) = roads
-        .iter()
-        .filter(meets)
-        .min_by(|a, b| a.half.total_cmp(&b.half))
-    else {
+    let Some(r) = roads.iter().find(|r| r.id == j.look) else {
         return;
     };
     let lane = r.style == Some(hw_gen::urban::streets::StreetStyle::Lanes);
@@ -1591,45 +1818,109 @@ fn draw_join(
     } else {
         rgb(78, 76, 74)
     };
+    // Half-planes q·n <= c (q from the plate's centre) keeping this plate
+    // to its side of each plate it overlaps, for discs of radius `mine`
+    // and `theirs`.
+    let cuts = |mine: f64, theirs: &dyn Fn(&hw_gen::urban::surface::RoadJoin) -> f64| {
+        all.iter()
+            .filter(|o| o.at != j.at && o.at.distance(j.at) < mine + theirs(o))
+            .map(|o| {
+                let d = o.at - j.at;
+                (
+                    d * 2.0,
+                    d.length_squared() - theirs(o).powi(2) + mine * mine,
+                )
+            })
+            .collect::<Vec<(DVec2, f64)>>()
+    };
     b.tex = Some(GroundLayer::Paving.into());
     b.mottle = 0.08;
-    disc(b, w, j.at, j.pavement, j.pavement_lift, rgb(165, 160, 150));
+    let pavement_cuts = cuts(j.pavement, &|o| o.pavement);
+    disc(
+        b,
+        w,
+        j.at,
+        j.pavement,
+        j.pavement_lift,
+        &pavement_cuts,
+        rgb(165, 160, 150),
+    );
     b.tex = Some(if lane {
         GroundLayer::Cobble.into()
     } else {
         GroundLayer::RoadAsphalt.into()
     });
     b.mottle = if lane { 0.22 } else { 0.06 };
-    disc(b, w, j.at, j.carriage, j.carriage_lift, asphalt);
+    let carriage_cuts = cuts(j.carriage, &|o| o.carriage);
+    disc(
+        b,
+        w,
+        j.at,
+        j.carriage,
+        j.carriage_lift,
+        &carriage_cuts,
+        asphalt,
+    );
     b.mottle = 0.0;
     b.tex = None;
 }
 
 /// A flat disc draped on the road height plus `lift`, in rings so it
-/// follows the ground.
-fn disc(b: &mut MeshBuilder, w: &TownWorld, at: DVec2, r: f64, lift: f64, c: Color) {
+/// follows the ground, cut to the half-planes `q·n <= c` (`q` from `at`).
+fn disc(
+    b: &mut MeshBuilder,
+    w: &TownWorld,
+    at: DVec2,
+    r: f64,
+    lift: f64,
+    cuts: &[(DVec2, f64)],
+    c: Color,
+) {
     const SIDES: usize = 32;
     let rings = ((r / hw_gen::urban::surface::ROAD_STEP).ceil() as usize).max(1);
-    let at3 = |p: DVec2| DVec3::new(p.x, w.road_height(p) + lift, p.y);
+    let at3 = |q: DVec2| {
+        let p = at + q;
+        DVec3::new(p.x, w.road_height(p) + lift, p.y)
+    };
     let pt = |ring: usize, k: usize| {
         let a = std::f64::consts::TAU * k as f64 / SIDES as f64;
-        at + DVec2::new(hw_core::det::cos(a), hw_core::det::sin(a)) * r * ring as f64 / rings as f64
+        DVec2::new(hw_core::det::cos(a), hw_core::det::sin(a)) * r * ring as f64 / rings as f64
+    };
+    let mut put = |poly: Vec<DVec2>| {
+        let poly = cuts
+            .iter()
+            .fold(poly, |p, &(n, c)| clip_half_plane(&p, n, c));
+        for i in 1..poly.len().saturating_sub(1) {
+            b.tri([at3(poly[0]), at3(poly[i]), at3(poly[i + 1])], DVec3::Y, c);
+        }
     };
     for k in 0..SIDES {
-        b.tri([at3(at), at3(pt(1, k)), at3(pt(1, k + 1))], DVec3::Y, c);
+        put(vec![DVec2::ZERO, pt(1, k), pt(1, k + 1)]);
         for ring in 1..rings {
-            b.quad(
-                [
-                    at3(pt(ring, k)),
-                    at3(pt(ring + 1, k)),
-                    at3(pt(ring + 1, k + 1)),
-                    at3(pt(ring, k + 1)),
-                ],
-                DVec3::Y,
-                c,
-            );
+            put(vec![
+                pt(ring, k),
+                pt(ring + 1, k),
+                pt(ring + 1, k + 1),
+                pt(ring, k + 1),
+            ]);
         }
     }
+}
+
+/// The part of the convex polygon `poly` where `q·n <= c`.
+fn clip_half_plane(poly: &[DVec2], n: DVec2, c: f64) -> Vec<DVec2> {
+    let mut out = Vec::with_capacity(poly.len() + 1);
+    for i in 0..poly.len() {
+        let (p, q) = (poly[i], poly[(i + 1) % poly.len()]);
+        let (dp, dq) = (p.dot(n) - c, q.dot(n) - c);
+        if dp <= 0.0 {
+            out.push(p);
+        }
+        if (dp < 0.0) != (dq < 0.0) && dp != dq {
+            out.push(p + (q - p) * (dp / (dp - dq)));
+        }
+    }
+    out
 }
 
 /// Like [`strip`], cut into cells about 1.5 m on a side so vertex colours
@@ -1638,10 +1929,10 @@ fn fine_strip(
     b: &mut MeshBuilder,
     w: &TownWorld,
     pts: &[(DVec2, DVec2)],
-    a: f64,
-    bo: f64,
+    (a, bo): (f64, f64),
     lift: f64,
     c: Color,
+    shape: &dyn Fn(usize, [DVec2; 4]) -> Vec<Vec<DVec2>>,
 ) {
     const CELL: f64 = 1.5;
     let across = (((bo - a) / CELL).ceil() as usize).max(1);
@@ -1654,15 +1945,12 @@ fn fine_strip(
             let o = a + (bo - a) * j as f64 / across as f64;
             let base = p.lerp(q, u);
             let n = n0.lerp(n1, u);
-            at(base + n * o)
+            base + n * o
         };
         for i in 0..along {
             for j in 0..across {
-                b.quad(
-                    [pt(i, j), pt(i + 1, j), pt(i + 1, j + 1), pt(i, j + 1)],
-                    DVec3::Y,
-                    c,
-                );
+                let quad = [pt(i, j), pt(i + 1, j), pt(i + 1, j + 1), pt(i, j + 1)];
+                put(b, &at, shape(k, quad), c);
             }
         }
     }
@@ -1674,22 +1962,41 @@ fn strip(
     b: &mut MeshBuilder,
     w: &TownWorld,
     pts: &[(DVec2, DVec2)],
-    a: f64,
-    bo: f64,
+    (a, bo): (f64, f64),
     lift: f64,
     c: Color,
+    shape: &dyn Fn(usize, [DVec2; 4]) -> Vec<Vec<DVec2>>,
 ) {
     let n = pts.len();
     let at = |p: DVec2| DVec3::new(p.x, w.road_height(p) + lift, p.y);
+    // Across in pieces no wider than a step along, so a wide carriageway
+    // follows the ground's curve as closely as the narrow strips beside
+    // and across it do (one quad across cuts a chord a centimetre off).
+    let across = ((bo - a) / hw_gen::urban::surface::ROAD_STEP)
+        .ceil()
+        .max(1.0) as usize;
     for k in 0..n - 1 {
         let ((p, n0), (q, n1)) = (pts[k], pts[k + 1]);
-        let quad = [
-            at(p + n0 * a),
-            at(q + n1 * a),
-            at(q + n1 * bo),
-            at(p + n0 * bo),
-        ];
-        b.quad(quad, DVec3::Y, c);
+        for j in 0..across {
+            let o0 = a + (bo - a) * j as f64 / across as f64;
+            let o1 = a + (bo - a) * (j + 1) as f64 / across as f64;
+            let quad = [p + n0 * o0, q + n1 * o0, q + n1 * o1, p + n0 * o1];
+            put(b, &at, shape(k, quad), c);
+        }
+    }
+}
+
+/// Draws the pieces `shape` left of a quad: whole as a quad, cut pieces
+/// as fans (each convex), draped by `at`.
+fn put(b: &mut MeshBuilder, at: &dyn Fn(DVec2) -> DVec3, pieces: Vec<Vec<DVec2>>, c: Color) {
+    for p in pieces {
+        if p.len() == 4 {
+            b.quad([at(p[0]), at(p[1]), at(p[2]), at(p[3])], DVec3::Y, c);
+        } else {
+            for i in 1..p.len().saturating_sub(1) {
+                b.tri([at(p[0]), at(p[i]), at(p[i + 1])], DVec3::Y, c);
+            }
+        }
     }
 }
 

@@ -31,3 +31,26 @@ fn the_city_has_no_z_fighting() {
         );
     }
 }
+
+/// No road, pavement or corner plate fights another anywhere in a town's
+/// streets, from a hamlet to a big city, closed rings and busy junctions
+/// included (Arnd found a flickering junction in 0.197).
+#[test]
+#[ignore = "on demand (looks): scripts/check.sh --on-demand"]
+fn town_streets_have_no_z_fighting() {
+    for (seed, people) in [
+        (1, 300.0),
+        (1, 40_000.0),
+        (2, 5_000.0),
+        (2, 40_000.0),
+        (3, 300_000.0),
+    ] {
+        let town = hw_sim::GeneratedTown::generate(Seed(seed), people);
+        let report = zfight::town_roads(&town.world);
+        assert!(
+            report.is_clean(),
+            "seed {seed}, {people} people: {}\n(cargo run --release -p hw-client --bin zfight -- {seed} --town {people})",
+            report.summary(8)
+        );
+    }
+}
