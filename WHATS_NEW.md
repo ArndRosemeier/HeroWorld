@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.179 (2026-11-11)
+
+- People now talk in comic speech bubbles over their heads, with a tail pointing at whoever speaks. Long lines wrap and the bubble grows to fit; shouts burst out in red capitals. Several people talking at once get bubbles that step aside instead of covering each other, and someone talking behind you or off screen gets a bubble at the edge of the screen pointing their way
+
 ## 0.178 (2026-11-11)
 
 - Fixed: the visor (and the radio, compass and map) kept pointing where the colossus first broke out. They now follow it as it walks.

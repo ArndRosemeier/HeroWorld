@@ -60,6 +60,7 @@ pub mod settings;
 pub mod signalview;
 pub mod skins;
 pub mod soundscape;
+pub mod speech;
 pub mod startflight;
 pub mod storyview;
 pub mod streetgear;

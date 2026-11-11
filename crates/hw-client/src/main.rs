@@ -354,6 +354,9 @@ fn main() -> EngineResult<()> {
     // `HW_VIEW=act`: where the act it looks at plays.
     let mut act_spot: Option<(Vec3, DVec2)> = None;
     let mut act_try = 0u64;
+    // `HW_SPEECH=1`: speech bubbles round the hero to look at.
+    let speech_demo = std::env::var("HW_SPEECH").is_ok_and(|v| v == "1");
+    let mut speech_demo_at: Option<Vec3> = None;
     // `HW_VIEW=act` jumps the street acts' clock on (`HW_ACT_SKIP` seconds,
     // 150 by default: the middle of a two-hour slot) so acts are set up
     // in the first frames; play leaves it at 0.
@@ -4131,14 +4134,56 @@ fn main() -> EngineResult<()> {
                     for s in fight.said.drain(..) {
                         chat.hear(&s, hero_at);
                     }
+                    // `HW_SPEECH=1`: a few bubbles round the hero, to look at
+                    // them (a long line, a shout, one behind the camera).
+                    let demo_here = hero_at.unwrap_or(Vec3::ZERO);
+                    if speech_demo && speech_demo_at.is_none_or(|a| a.distance(demo_here) > 3.0) {
+                        // Round what the camera looks at (again when the
+                        // hero is placed somewhere else).
+                        if speech_demo_at.is_none() {
+                            hw_client::title::install_fonts(frame.ui.ctx());
+                        }
+                        speech_demo_at = Some(demo_here);
+                        fight.speech.clear();
+                        if let Some(h) = hero_at.map(|_| demo_here) {
+                            use hw_client::speech::Speech;
+                            let side = (cam.target() - cam.eye())
+                                .cross(Vec3::Y)
+                                .normalize_or_zero();
+                            let ahead = (cam.target() - cam.eye()).with_y(0.0).normalize_or_zero();
+                            fight.speech.add(Speech::say(
+                                h + side * 2.5 + ahead * 3.0,
+                                "Gee whiz, a real hero! Wait till I tell the folks down at the diner, they'll never believe it!",
+                                Voice::Folk,
+                            ));
+                            fight.speech.add(Speech::shout(
+                                h - side * 2.0 + ahead * 5.0,
+                                "Stop, thief!",
+                                Voice::Folk,
+                            ));
+                            fight.speech.add(Speech::say(
+                                h + side * 0.6 + ahead * 9.0,
+                                "Swell day for it.",
+                                Voice::Ally,
+                            ));
+                            fight.speech.add(Speech::say(
+                                h - ahead * 12.0 + side * 3.0,
+                                "Hey, over here!",
+                                Voice::Folk,
+                            ));
+                            fight
+                                .speech
+                                .add(Speech::say(h, "Hello, citizens!", Voice::Me));
+                        }
+                    }
                     // What the street acts and their watchers say.
                     for s in street.said.drain(..) {
-                        fight.say_at(s.at, &s.text, s.voice);
+                        fight.bubble(&s);
                         chat.hear(&s, hero_at);
                     }
                     // Thanks from the people at rescues.
                     for s in radio.said.drain(..) {
-                        fight.say_at(s.at, &s.text, s.voice);
+                        fight.bubble(&s);
                         chat.hear(&s, hero_at);
                     }
                     for l in story.heard.drain(..) {
