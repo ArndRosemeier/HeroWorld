@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.170 (2026-11-11)
+
+- Smoother city: the game no longer redoes the whole scene's bookkeeping every frame when something moves or a street block streams in. On a fast PC the busy street route went from about 40 to about 68 frames per second, and the worst stutters are much shorter.
+
 ## 0.169 (2026-11-11)
 
 - Buses! Streamline buses with fins, chrome, a roof rocket and a lit route sign now run on the main roads and call at every bus stop.
