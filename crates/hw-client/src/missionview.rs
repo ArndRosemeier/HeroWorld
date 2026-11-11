@@ -1,19 +1,21 @@
-//! Indoor cases on screen: every open case, one of them tracked (its
-//! goal on the wrist radio, a teal mark on the compass and the map, a
-//! teal light over its building while the heroes head there), sparkles
-//! over the clues inside, Atomic Annie's words on the air (text only),
+//! Cases on screen: every open case, one of them tracked (its goal on
+//! the wrist radio, a teal mark on the compass and the map, a teal light
+//! over its place, or its way down, while the heroes head there),
+//! sparkles over the clues, Atomic Annie's words on the air (text only),
 //! the prompt at her desk and the bar at a clue or a hostage, and the
-//! cases closed. The rules are the server's (`hw_sim::missions`); this
-//! only shows what it says. Nothing here assumes one case.
+//! cases closed. A case is a chain of steps, each a job at a place; the
+//! words come from the place's kind and name as the server sends them.
+//! The rules are the server's (`hw_sim::missions`); this only shows what
+//! it says. Nothing here assumes one case, or one kind of place.
 
 use crate::radioview::{beacon_lit, Radio, StoryMark};
 use crate::storyview::{read_time, Line};
 use engine::prelude::*;
 use engine::ui::egui;
 use glam::Vec3;
-use hw_gen::urban::landmarks::LandmarkKind;
 use hw_gen::urban::world::TownWorld;
 use hw_net::ToClient;
+use hw_sim::missions::Place;
 use hw_sim::missions::{
     CaseKind, ASK_REACH, CLOSED, CLUES, CLUE_REACH, CONTACT_NAME, DONE, GANGS, GO, GUARDED,
     HOSTAGES, IDLE, INSIDE,
@@ -23,13 +25,34 @@ use std::collections::{BTreeMap, VecDeque};
 /// The cases' colour on the radio, the compass and the map.
 pub const CASE_TEAL: egui::Color32 = egui::Color32::from_rgb(90, 225, 210);
 
+/// One step of a case: a job at a place.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StepView {
+    pub place: Place,
+    pub job: CaseKind,
+    pub at: Vec3,
+    /// Reads after [`Place::preposition`]: "the crystal grotto".
+    pub name: String,
+}
+
+impl StepView {
+    /// "on Juniper Avenue", "in the crystal grotto".
+    pub fn at_place(&self) -> String {
+        format!("{} {}", self.place.preposition(), self.name)
+    }
+}
+
 /// What the server last said of one case.
 #[derive(Clone, Debug, PartialEq)]
 pub struct State {
     pub number: u16,
     pub stage: u8,
+    /// The job of the step it is at.
     pub kind: CaseKind,
     pub gang: usize,
+    /// The step it is at, of its steps.
+    pub step: usize,
+    pub steps: Vec<StepView>,
     pub at: Vec3,
     pub cleared: u8,
     pub groups: u8,
@@ -43,6 +66,21 @@ pub struct State {
 impl State {
     pub fn found(&self) -> usize {
         self.clues.iter().filter(|c| c.1 == DONE).count()
+    }
+
+    /// The step it is at.
+    pub fn here(&self) -> Option<&StepView> {
+        self.steps.get(self.step)
+    }
+
+    /// Where the step it is at plays ("the Daily Comet building").
+    pub fn place_name(&self) -> String {
+        self.here()
+            .map_or_else(|| "the scene".to_string(), |s| s.name.clone())
+    }
+
+    pub fn in_building(&self) -> bool {
+        self.here().is_some_and(|s| s.place == Place::Building)
     }
 }
 
@@ -102,8 +140,6 @@ pub struct MissionView {
     pub desk: Option<Desk>,
     /// The case the radio, the compass and the map follow.
     pub tracked: Option<u16>,
-    /// Where each case plays, by name.
-    buildings: BTreeMap<u16, &'static str>,
     /// Cases closed, oldest first.
     pub filed: Vec<Filed>,
     /// News for the case file, taken by it.
@@ -144,8 +180,9 @@ impl MissionView {
             ToClient::Case {
                 number,
                 stage,
-                kind,
                 gang,
+                step,
+                steps,
                 at,
                 cleared,
                 groups,
@@ -153,11 +190,23 @@ impl MissionView {
                 clues,
                 held,
             } => {
+                let steps: Vec<StepView> = steps
+                    .iter()
+                    .map(|c| StepView {
+                        place: Place::from_code(c.place),
+                        job: CaseKind::from_code(c.job),
+                        at: Vec3::from_array(c.at),
+                        name: c.name.clone(),
+                    })
+                    .collect();
+                let step = (*step as usize).min(steps.len().saturating_sub(1));
                 let next = State {
                     number: *number,
                     stage: *stage,
-                    kind: CaseKind::from_code(*kind),
+                    kind: steps.get(step).map_or(CaseKind::Takeover, |s| s.job),
                     gang: (*gang as usize).min(GANGS.len() - 1),
+                    step,
+                    steps,
                     at: Vec3::from_array(*at),
                     cleared: *cleared,
                     groups: *groups,
@@ -180,9 +229,11 @@ impl MissionView {
         }
     }
 
-    /// The building case `number` plays in, by name.
-    pub fn building(&self, number: u16) -> &'static str {
-        self.buildings.get(&number).copied().unwrap_or("building")
+    /// Where case `number` plays now, by name.
+    pub fn place_name(&self, number: u16) -> String {
+        self.cases
+            .get(&number)
+            .map_or_else(|| "the scene".to_string(), |s| s.place_name())
     }
 
     /// The tracked case.
@@ -199,16 +250,10 @@ impl MissionView {
 
     /// Every frame: the words for the news, the light over the tracked
     /// building, the sparkles over the clues, the line on the air.
-    pub fn update(&mut self, world: &mut World, town: &TownWorld, radio: &mut Radio, dt: f32) {
+    pub fn update(&mut self, world: &mut World, _town: &TownWorld, radio: &mut Radio, dt: f32) {
         for (before, now) in std::mem::take(&mut self.pending) {
             let n = now.number;
-            if now.stage == GO || !self.buildings.contains_key(&n) {
-                if let Some(b) = building_name(town, now.at) {
-                    self.buildings.insert(n, b);
-                }
-            }
-            let building = self.building(n);
-            let said = lines(before.as_ref(), &now, building, self.cases.len());
+            let said = lines(before.as_ref(), &now, self.cases.len());
             self.heard.extend(said.iter().cloned());
             self.lines.extend(said);
             match now.stage {
@@ -218,17 +263,14 @@ impl MissionView {
                         number: n,
                         kind: b.kind,
                         gang: b.gang,
-                        building: building.to_string(),
+                        building: b.place_name(),
                     };
                     self.filed.push(filed.clone());
                     let over = self.filed.len().saturating_sub(CABINET_KEEP);
                     self.filed.drain(..over);
                     self.events.push(Event::Closed(filed));
-                    self.buildings.remove(&n);
                 }
-                IDLE => {
-                    self.buildings.remove(&n);
-                }
+                IDLE => {}
                 _ if before.is_none() => {
                     // A new case is the one to follow.
                     self.tracked = Some(n);
@@ -241,22 +283,34 @@ impl MissionView {
             self.tracked = self.cases.keys().next_back().copied();
         }
         radio.case = self.tracked().and_then(|s| {
-            let mut m = mark(s, self.building(s.number))?;
+            let mut m = mark(s)?;
             if self.cases.len() > 1 {
                 m.heading = format!("{}   ({} open)", m.heading, self.cases.len());
             }
             Some(m)
         });
-        // The light only outdoors, while heading there: inside it would
-        // stand through the floors.
-        let want = self.tracked().filter(|s| s.stage == GO).map(|s| s.at);
+        // The light only while heading there: inside it would stand
+        // through the floors.
+        // Under the ground only over the way down, never up through the
+        // street from below.
+        let want = self
+            .tracked()
+            .filter(|s| s.stage == GO)
+            .filter(|s| {
+                s.here()
+                    .is_none_or(|h| !h.place.underground() || h.at.distance(s.at) > 1.0)
+            })
+            .map(|s| s.at);
         if want != self.beam.map(|b| b.1) {
             if let Some((e, _)) = self.beam.take() {
                 world.despawn(e);
             }
             if let Some(at) = want {
                 let teal = rgb(90, 225, 210);
-                if let Ok(e) = world.place(beacon_lit(teal), Place::new(at.x, at.y, at.z)) {
+                if let Ok(e) = world.place(
+                    beacon_lit(teal),
+                    engine::prelude::Place::new(at.x, at.y, at.z),
+                ) {
                     self.beam = Some((e, at));
                 }
             }
@@ -311,7 +365,7 @@ impl MissionView {
             } else {
                 (
                     format!(
-                        "{CONTACT_NAME}: \"Nothing new right now. Every building on my list is taken.\""
+                        "{CONTACT_NAME}: \"Nothing new right now. Every place on my list is taken.\""
                     ),
                     None,
                 )
@@ -402,48 +456,58 @@ impl MissionView {
         self.desk = None;
         self.tracked = None;
         self.pending.clear();
-        self.buildings.clear();
         self.lines.clear();
         self.shown = 0.0;
     }
 }
 
-/// The name of the building with a floor plan nearest `at`.
-fn building_name(town: &TownWorld, at: Vec3) -> Option<&'static str> {
-    let p = glam::DVec2::new(at.x as f64, at.z as f64);
-    town.landmarks
-        .iter()
-        .filter(|l| l.kind == LandmarkKind::CometBuilding)
-        .min_by(|a, b| a.pos.distance(p).total_cmp(&b.pos.distance(p)))
-        .filter(|l| l.pos.distance(p) < 120.0)
-        .map(hw_gen::urban::comet::name)
-}
-
-/// The case on the radio: its heading, the goal, and where to go.
-pub fn mark(s: &State, building: &str) -> Option<StoryMark> {
-    let heading = format!("CASE No. {} - the {building}   (J: case file)", s.number);
-    let rooms = if s.groups > 0 {
-        format!(" (rooms cleared {} of {})", s.cleared, s.groups)
+/// What a step asks, in a few words for the radio's goal line.
+fn goal(s: &State) -> String {
+    let groups = if s.groups > 0 {
+        if s.in_building() {
+            format!(" (rooms cleared {} of {})", s.cleared, s.groups)
+        } else {
+            format!(" (crews beaten {} of {})", s.cleared, s.groups)
+        }
     } else {
         String::new()
     };
-    let goal = match (s.stage, s.kind) {
-        (GO, _) => format!("Go to the {building}"),
-        (INSIDE, CaseKind::Takeover) => format!("Beat their boss on the top floor{rooms}"),
-        (INSIDE, CaseKind::Evidence) => {
-            format!(
-                "Find the clues: {} of {}{rooms}",
-                s.found(),
-                s.clues.len().max(CLUES)
-            )
+    match s.kind {
+        CaseKind::Takeover if s.in_building() => {
+            format!("Beat their boss on the top floor{groups}")
         }
-        (INSIDE, CaseKind::Hostages) => {
-            format!(
-                "Free the hostages: {} of {}{rooms}",
-                s.found(),
-                s.clues.len().max(HOSTAGES)
-            )
-        }
+        CaseKind::Takeover => format!("Beat their boss{groups}"),
+        CaseKind::Crew => format!("Beat the crew: {} of {}", s.cleared, s.groups.max(1)),
+        CaseKind::Evidence => format!(
+            "Find the clues: {} of {}{groups}",
+            s.found(),
+            s.clues.len().max(CLUES)
+        ),
+        CaseKind::Hostages => format!(
+            "Free the hostages: {} of {}{groups}",
+            s.found(),
+            s.clues.len().max(HOSTAGES)
+        ),
+    }
+}
+
+/// The case on the radio: its heading, the goal, and where to go.
+pub fn mark(s: &State) -> Option<StoryMark> {
+    let here = s.here()?;
+    let steps = if s.steps.len() > 1 {
+        format!(" - step {} of {}", s.step + 1, s.steps.len())
+    } else {
+        String::new()
+    };
+    let heading = format!(
+        "CASE No. {} - {}{steps}   (J: case file)",
+        s.number,
+        crate::casefile::capitalised(&here.name)
+    );
+    let goal = match s.stage {
+        GO if here.place.underground() => format!("Go down to {}", here.name),
+        GO => format!("Go to {}", here.name),
+        INSIDE => goal(s),
         _ => return None,
     };
     Some(StoryMark {
@@ -453,20 +517,67 @@ pub fn mark(s: &State, building: &str) -> Option<StoryMark> {
     })
 }
 
+/// Annie's words for a step starting: where, and what to do there.
+fn brief(gang: &str, step: &StepView, last: bool) -> Vec<String> {
+    let at = step.at_place();
+    let gang_cap = crate::casefile::capitalised(gang);
+    let building = step.place == Place::Building;
+    match step.job {
+        CaseKind::Crew => vec![
+            format!("A crew of {gang} hangs about {at}."),
+            "Shake them down and they'll talk.".to_string(),
+        ],
+        CaseKind::Evidence if !last => vec![
+            format!("{gang_cap} have been busy {at}."),
+            "Search the place: whatever they left behind will tell us more.".to_string(),
+        ],
+        CaseKind::Takeover if building => vec![
+            format!("Trouble {at}: {gang} have taken the whole place over."),
+            "Their boss sits on the top floor. Bring them down, and the rest will scatter."
+                .to_string(),
+        ],
+        CaseKind::Takeover => vec![
+            format!("{gang_cap} have dug in {at}, boss and all."),
+            "Bring the boss down, and the rest will scatter.".to_string(),
+        ],
+        CaseKind::Evidence if building => vec![
+            format!("{gang_cap} are holed up {at}, and they're hiding something."),
+            "Find three clues for me. They'll be tucked away in the rooms, upstairs too."
+                .to_string(),
+        ],
+        CaseKind::Evidence => vec![
+            format!("{gang_cap} are hiding something {at}."),
+            "Find three clues for me. Hold E to search.".to_string(),
+        ],
+        CaseKind::Hostages if building => vec![
+            format!(
+                "{gang_cap} have taken {}, and they're holding people inside.",
+                step.name
+            ),
+            "Three of them, on different floors. Beat their guards, then untie them.".to_string(),
+        ],
+        CaseKind::Hostages => vec![
+            format!("{gang_cap} are holding people {at}."),
+            "Beat their guards, then untie them.".to_string(),
+        ],
+    }
+}
+
 /// What the radio says of a case going from `before` (None: new to us)
 /// to `now`; `open` cases are left after it.
-pub fn lines(before: Option<&State>, now: &State, building: &str, open: usize) -> Vec<Line> {
+pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
     let say = |text: String| Line {
         who: CONTACT_NAME,
         text,
     };
     let gang = GANGS[now.gang].name;
-    let gang_cap = crate::casefile::capitalised(gang);
     let mut out = Vec::new();
+    let place = now.place_name();
     match now.stage {
         CLOSED => {
             out.push(say(format!(
-                "The {building} is clear. Case closed, swell work!"
+                "{} is clear. Case closed, swell work!",
+                crate::casefile::capitalised(&place)
             )));
             out.push(say(match open {
                 0 => "Come and see me at Hero Hall when you want the next one.".to_string(),
@@ -478,51 +589,47 @@ pub fn lines(before: Option<&State>, now: &State, building: &str, open: usize) -
         IDLE => return out,
         _ => {}
     }
-    let Some(b) = before else {
-        // A new case: the briefing.
-        match now.kind {
-            CaseKind::Takeover => {
-                out.push(say(format!(
-                    "Trouble at the {building}: {gang} have taken the whole place over."
-                )));
-                out.push(say(
-                    "Their boss sits on the top floor. Bring them down, and the rest will scatter."
-                        .to_string(),
-                ));
-            }
-            CaseKind::Evidence => {
-                out.push(say(format!(
-                    "{gang_cap} are holed up in the {building}, and they're hiding something.",
-                )));
-                out.push(say(
-                    "Find three clues for me. They'll be tucked away in the rooms, upstairs too."
-                        .to_string(),
-                ));
-            }
-            CaseKind::Hostages => {
-                out.push(say(format!(
-                    "{gang_cap} have taken the {building}, and they're holding people inside.",
-                )));
-                out.push(say(
-                    "Three of them, on different floors. Beat their guards, then untie them."
-                        .to_string(),
-                ));
-            }
-        }
+    let Some(here) = now.here() else {
         return out;
     };
+    let last = now.step + 1 >= now.steps.len();
+    let Some(b) = before else {
+        // A new case: the briefing.
+        if now.steps.len() > 1 {
+            out.push(say(format!(
+                "Something's brewing with {gang}. Let's pull the thread."
+            )));
+        }
+        out.extend(brief(gang, here, last).into_iter().map(say));
+        return out;
+    };
+    if now.step > b.step {
+        // A lead done: it points to the next place.
+        let was = &b.kind;
+        out.push(say(match was {
+            CaseKind::Crew => format!("They talked! The trail leads {}.", here.at_place()),
+            _ => format!("That's what we needed. It points {}.", here.at_place()),
+        }));
+        out.extend(brief(gang, here, last).into_iter().skip(1).map(say));
+        return out;
+    }
     match (b.stage, now.stage) {
-        (GO, INSIDE) => out.push(say(format!(
-            "That's the {building}. Each room has its own crew: take them one at a time."
+        (GO, INSIDE) if now.in_building() => out.push(say(format!(
+            "That's {place}. Each room has its own crew: take them one at a time."
         ))),
+        (GO, INSIDE) if here.place.underground() => out.push(say(
+            "You're down there. Watch yourself, sound carries in the dark.".to_string(),
+        )),
+        (GO, INSIDE) => out.push(say("There they are. Go get 'em!".to_string())),
         (INSIDE, GO) => out.push(say(format!(
-            "They've regrouped in the {building} while you were away. Go back when you're ready."
+            "They've regrouped {} while you were away. Go back when you're ready.",
+            here.at_place()
         ))),
         (INSIDE, INSIDE) if now.found() > b.found() => {
             let left = now.clues.len() - now.found();
             out.push(say(match (now.kind, left) {
                 (CaseKind::Hostages, 0) => "Everyone's out safe!".to_string(),
-                (CaseKind::Hostages, _) => format!("They're free! {left} more held inside."),
+                (CaseKind::Hostages, _) => format!("They're free! {left} more held."),
                 (_, 0) => "That's all of them!".to_string(),
                 _ => format!("Got one! {left} more to find."),
             }));
@@ -536,12 +643,23 @@ pub fn lines(before: Option<&State>, now: &State, building: &str, open: usize) -
 mod tests {
     use super::*;
 
+    fn step(place: Place, job: CaseKind, name: &str) -> StepView {
+        StepView {
+            place,
+            job,
+            at: Vec3::ZERO,
+            name: name.into(),
+        }
+    }
+
     fn st(stage: u8, kind: CaseKind, number: u16, found: usize) -> State {
         State {
             number,
             stage,
             kind,
             gang: 2,
+            step: 0,
+            steps: vec![step(Place::Building, kind, "the Daily Comet building")],
             at: Vec3::ZERO,
             cleared: 1,
             groups: 6,
@@ -564,41 +682,71 @@ mod tests {
 
     #[test]
     fn the_radio_follows_a_case() {
-        let b = "Daily Comet building";
-        let brief = lines(None, &st(GO, CaseKind::Evidence, 1, 0), b, 1);
+        let b = "the Daily Comet building";
+        let brief = lines(None, &st(GO, CaseKind::Evidence, 1, 0), 1);
         assert!(brief[0].text.contains(b) && brief[0].text.to_lowercase().contains(GANGS[2].name));
         let one = lines(
             Some(&st(INSIDE, CaseKind::Evidence, 1, 0)),
             &st(INSIDE, CaseKind::Evidence, 1, 1),
-            b,
             1,
         );
         assert!(one[0].text.contains("2 more"));
         let closed = lines(
             Some(&st(INSIDE, CaseKind::Takeover, 1, 0)),
             &st(CLOSED, CaseKind::Takeover, 1, 0),
-            b,
             2,
         );
         assert!(closed[0].text.contains("closed") && closed[1].text.contains("2 cases"));
-        let m = mark(&st(INSIDE, CaseKind::Evidence, 4, 1), b).expect("a mark");
+        let m = mark(&st(INSIDE, CaseKind::Evidence, 4, 1)).expect("a mark");
         assert!(
             m.goal.contains("1 of 3") && m.goal.contains("1 of 6") && m.heading.contains("No. 4"),
             "{} / {}",
             m.heading,
             m.goal
         );
-        assert!(mark(&st(CLOSED, CaseKind::Evidence, 1, 0), b).is_none());
+        assert!(mark(&st(CLOSED, CaseKind::Evidence, 1, 0)).is_none());
         let freed = lines(
             Some(&st(INSIDE, CaseKind::Hostages, 1, 1)),
             &st(INSIDE, CaseKind::Hostages, 1, 2),
-            b,
             1,
         );
         assert!(freed[0].text.contains("1 more"), "{}", freed[0].text);
-        let m = mark(&st(INSIDE, CaseKind::Hostages, 1, 2), b).expect("a mark");
+        let m = mark(&st(INSIDE, CaseKind::Hostages, 1, 2)).expect("a mark");
         assert!(m.goal.contains("hostages: 2 of 3"), "{}", m.goal);
         for l in brief.iter().chain(&one).chain(&closed).chain(&freed) {
+            assert!(l.text.len() <= 110, "too long for the radio: {}", l.text);
+        }
+    }
+
+    #[test]
+    fn a_chain_leads_from_place_to_place() {
+        let mut a = st(GO, CaseKind::Crew, 3, 0);
+        a.steps = vec![
+            step(Place::Street, CaseKind::Crew, "Juniper Avenue"),
+            step(Place::Station, CaseKind::Hostages, "Orbit Square station"),
+        ];
+        let brief = lines(None, &a, 1);
+        assert!(brief.iter().any(|l| l.text.contains("on Juniper Avenue")));
+        let m = mark(&a).expect("a mark");
+        assert!(m.heading.contains("step 1 of 2"), "{}", m.heading);
+        assert_eq!(m.goal, "Go to Juniper Avenue");
+        let mut b = a.clone();
+        b.stage = INSIDE;
+        let mut c = b.clone();
+        c.step = 1;
+        c.stage = GO;
+        c.kind = CaseKind::Hostages;
+        let next = lines(Some(&b), &c, 1);
+        assert!(
+            next[0].text.contains("talked") && next[0].text.contains("at Orbit Square station"),
+            "{}",
+            next[0].text
+        );
+        assert_eq!(
+            mark(&c).expect("a mark").goal,
+            "Go down to Orbit Square station"
+        );
+        for l in brief.iter().chain(&next) {
             assert!(l.text.len() <= 110, "too long for the radio: {}", l.text);
         }
     }
@@ -607,8 +755,14 @@ mod tests {
         ToClient::Case {
             number,
             stage,
-            kind: 2,
             gang: 1,
+            step: 0,
+            steps: vec![hw_net::CaseStep {
+                place: 0,
+                job: 2,
+                at: [number as f32, 0.0, 0.0],
+                name: "the Daily Comet building".into(),
+            }],
             at: [number as f32, 0.0, 0.0],
             cleared: 0,
             groups: 6,
@@ -617,7 +771,6 @@ mod tests {
             held: 0,
         }
     }
-
     #[test]
     fn several_cases_are_kept_apart_and_the_newest_is_tracked() {
         let mut v = MissionView::default();

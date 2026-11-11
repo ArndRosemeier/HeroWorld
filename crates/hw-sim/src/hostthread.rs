@@ -352,24 +352,13 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
     if std::env::var("HW_COLOSSUS_RAMPAGE").is_ok_and(|v| v == "1") {
         crate::robots::rampage_unseen(true);
     }
-    // `HW_CASE=takeover|evidence|hostages`: a case in the first Comet building starts at once,
-    // the hero at its way in (screenshots). Several, comma-separated, open one to a building
-    // (`HW_CASE=hostages,evidence`); the hero stands at the first.
-    let mut case: Vec<crate::missions::Case> = std::env::var("HW_CASE")
-        .map(|v| {
-            v.split(',')
-                .enumerate()
-                .map(|(i, k)| crate::missions::Case {
-                    kind: match k.trim() {
-                        "evidence" => crate::missions::CaseKind::Evidence,
-                        "hostages" => crate::missions::CaseKind::Hostages,
-                        _ => crate::missions::CaseKind::Takeover,
-                    },
-                    building: i,
-                    gang: 1 + i % 2,
-                })
-                .collect()
-        })
+    // `HW_CASE`: cases open at once, the hero at the first (screenshots). A
+    // comma-separated list of `<job>[@<place>]` (`hostages`, `crew@street`,
+    // `takeover@station`; jobs takeover|evidence|hostages|crew, places
+    // building|street|plaza|tunnel|station|grotto|ruin|lair; a building by
+    // default, one to a building) or `chain` (a whole case as Annie plans it).
+    let mut case: Vec<String> = std::env::var("HW_CASE")
+        .map(|v| v.split(',').map(|k| k.trim().to_string()).collect())
         .unwrap_or_default();
     let mut busy = Duration::ZERO;
     let mut ticks = 0u32;
@@ -394,15 +383,25 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
                     host.sim.break_colossus(n);
                 }
                 let mut first = true;
-                for c in std::mem::take(&mut case) {
+                for (i, c) in std::mem::take(&mut case).into_iter().enumerate() {
                     let sim = &mut host.sim;
-                    if !sim.missions.available() || c.building >= sim.missions.buildings() {
+                    if !sim.missions.available() {
                         continue;
                     }
-                    let number = sim.missions.force(&mut sim.world, c);
+                    let number = force_case(sim, &c, i);
                     // The hero stands at the first one's way in.
                     let hero = sim.hero_of(me);
-                    let at = sim.missions.case(number).map(|r| r.objective());
+                    // Out in the open, a little way off: not in the crew's
+                    // middle.
+                    let at = number.and_then(|n| sim.missions.case(n)).map(|r| {
+                        let site = r.site();
+                        if site.building.is_none() && !site.place.underground() {
+                            let f = site.facing * 22.0;
+                            site.at + glam::DVec3::new(f.x, 0.5, f.y)
+                        } else {
+                            r.objective()
+                        }
+                    });
                     if let (true, Some(at), Some(hero)) = (std::mem::take(&mut first), at, hero) {
                         sim.set_body(
                             hero,
@@ -456,6 +455,34 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
             }
         }
     }
+}
+
+/// Opens the case `token` of `HW_CASE` (see there), the `i`th asked for.
+fn force_case(sim: &mut crate::Sim, token: &str, i: usize) -> Option<u16> {
+    use crate::missions::{CaseKind, Place};
+    let gang = 1 + i % 2;
+    if token == "chain" {
+        return sim.missions.force_plan(&mut sim.world, gang);
+    }
+    let (job, place) = token.split_once('@').unwrap_or((token, "building"));
+    let job = match job {
+        "evidence" => CaseKind::Evidence,
+        "hostages" => CaseKind::Hostages,
+        "crew" => CaseKind::Crew,
+        _ => CaseKind::Takeover,
+    };
+    let place = Place::ALL
+        .into_iter()
+        .find(|p| format!("{p:?}").eq_ignore_ascii_case(place))
+        .unwrap_or(Place::Building);
+    if place == Place::Building && job.fits(place) {
+        let buildings = sim.missions.buildings();
+        if i >= buildings {
+            return None;
+        }
+        return Some(sim.missions.force(&mut sim.world, job, i, gang));
+    }
+    sim.missions.force_at(&mut sim.world, job, place, gang)
 }
 
 #[cfg(test)]

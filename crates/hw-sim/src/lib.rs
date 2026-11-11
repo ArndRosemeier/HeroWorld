@@ -715,7 +715,7 @@ impl Sim {
         sim.crimes.set_area(town.area.clone());
         let floors = Arc::new(floornav::Floors::new(&town.world));
         sim.world.resource_mut::<Fights>().floors = Some(floors.clone());
-        sim.missions = missions::Missions::plan(&town.world, floors, seed.0);
+        sim.missions = missions::Missions::plan(&town.world, town.area.clone(), floors, seed.0);
         sim.world.resource_mut::<Fights>().streets = Some(Arc::new(streets::Streets::new(
             &town.world,
             streets::TANK_STREET,

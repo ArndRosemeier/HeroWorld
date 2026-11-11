@@ -219,9 +219,9 @@ fn sheet_to_json(s: &Sheet) -> Value {
             "closed": s.cases.closed,
             "open": s.cases.open.iter().map(|c| json!({
                 "number": c.number,
-                "kind": c.kind,
                 "gang": c.gang,
-                "building": c.building,
+                "variant": c.variant,
+                "step": c.step,
             })).collect::<Vec<_>>(),
         },
     })
@@ -244,9 +244,13 @@ fn cases_from_json(v: &Value) -> hw_net::CaseBook {
                     .take(hw_net::protocol::MAX_SAVED_CASES)
                     .map(|c| hw_net::SavedCase {
                         number: small(&c["number"]),
-                        kind: byte(&c["kind"]),
                         gang: byte(&c["gang"]),
-                        building: byte(&c["building"]),
+                        // A case from before cases were planned (0.209)
+                        // has none: never planned again.
+                        variant: c["variant"]
+                            .as_u64()
+                            .map_or(hw_sim::missions::FORCED, |v| v.min(255) as u8),
+                        step: byte(&c["step"]),
                     })
                     .collect()
             })

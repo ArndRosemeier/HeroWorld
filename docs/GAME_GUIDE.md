@@ -807,21 +807,51 @@ the **host's** story, as it fights at the host's level: anyone near can be brief
 a chapter for the team, and it is written into the host's file and into the files of those
 who were there; a guest further along keeps their own place.
 
-### Building cases (`hw-sim/src/missions.rs`, `hw-client/src/missionview.rs`)
+### Cases (`hw-sim/src/missions/`, `hw-client/src/missionview.rs`)
 
 **Atomic Annie** (Hero Hall's second hero) hands out cases: hold **E** near her (3.5 m). She
 never leaves the hall to answer calls, so she is always at her place on its steps. Each
-press of E gives one case. The team can have up to **3 cases open** at once (`OPEN_LIMIT` in
-missions.rs; nothing else assumes a number), **one to a building**; with all open or every
-building taken she says so ("Your desk's full" / "No building free"). Cases are numbered
-(No. 1, 2, ...) and each plays in one of the three Comet buildings (Daily Comet,
-Atlas Assurance, Zenith Radio), against one of five gangs (the Doctor's sentries, Jackets or
-Syndicate, sky pirates, the Iron Legion, the Zorrak; the last two only from their levels on).
+press of E gives one case; it is made up on a worker thread and opens **2 s** later. The team
+can have up to **3 cases open** at once (`OPEN_LIMIT`; nothing else assumes a number), never
+two at one place (the same building, or within 60 m); when she finds no free place she says
+so until a case closes. Cases are numbered (No. 1, 2, ...) and each is against one of five
+gangs (the Doctor's sentries, Jackets or Syndicate, sky pirates, the Iron Legion, the Zorrak;
+the last two only from their levels on).
+
+**A case is a chain of 1-3 steps** (`missions/plan.rs`; two steps the most often): **leads**
+first, then **the job**. A lead is a **crew** to shake down (beat them; down and cuffed is
+enough, "They talked!") or a place to **search** (3 clues); what it turns up points to the next
+place, which stays blacked out in the case file until then. The job is a **takeover** (beat the
+boss), **evidence** (3 clues) or **hostages** (3 people). Each step plays at a **place**
+(`missions/sites.rs`), picked from the kinds of place its gang likes (`Gang::haunts`):
+
+| Place | Where | Gangs that like it most |
+| --- | --- | --- |
+| Building | the Comet buildings' rooms, floor by floor (the job only, never a lead) | Jackets, Iron Legion |
+| Street | the pavement of a street round the start (180 m clear of Hero Hall and where heroes appear); streets get made-up names ("Atlas Drive") | Jackets, Iron Legion |
+| Plaza | a landmark's plaza (Aether Spire, lighthouse, Tesla tower, airship mast, rocket port, atomic plant, mole drill, weather tower, robot works) | sky pirates, Zorrak |
+| Tunnel | the utility tunnels under a main road | the Doctor's men |
+| Station | an Aether Tube station's hall | Jackets |
+| Grotto | a cave chamber of the Deeps | Zorrak |
+| Ruin | the buried city's vault and streets | Jackets |
+| Lair | the Doctor's own lab (the Doctor's men only) | the Doctor's men |
+
+Under the ground the radio leads to **the way down** first (the tube pavilion, a green exit, the
+kiosk over the lab), then to the place once a hero is below the street. The gang there stands
+only for a hero below the street, within **70 m**.
+
+**Out in the open** (every place but a building) the gang stands in the middle and on open floor
+round it: a takeover is the boss with 3 guards plus **2 side crews**; a crew is **2 crews**;
+hostages are 2 crews with **3 hostages** further out, each guarded by the nearest crew; evidence
+is 1 crew and **3 clues** on the far spots. Crews are **3 villains** for one hero, one more for
+each friend. Freed hostages walk off a few metres and are gone.
+
 The radio, the compass, the map diamond and the teal beacon follow **one tracked case**
 (the newest, until you pick another in the case file); the radio heading says how many are
-open. Every open case plays on regardless: its gang stands when a hero comes near, its
-clues sparkle and its hostages can be freed, tracked or not.
+open and which step ("step 1 of 2"). Every open case plays on regardless: its gang stands when
+a hero comes near, its clues sparkle and its hostages can be freed, tracked or not.
 
+In a building:
 - **Takeover**: the gang holds up to **6 rooms** (halls, boardrooms, lobbies, shops,
   concourses; at least 8 m a side), spread over the floors, **3 villains a room** for one
   hero and one more for each friend. The **boss** waits in the top floor's boardroom (or its
@@ -838,10 +868,17 @@ clues sparkle and its hostages can be freed, tracked or not.
   only in aggro range and in sight, and only its own room's friends come along, so a floor
   can be cleared one room at a time without bringing the whole gang. Villains who saw you
   follow you through doors and up stairs by the building's route map (see Villain AI).
-- The gang moves in when a hero comes within **90 m** of the building, and leaves if no
-  hero is within **250 m** for **30 s** (the case stays; it comes back when you do).
-- **Reward**: every hero within 150 m when it closes gets **40 %** of the karma their next
-  level takes.
+- The gang moves in when a hero comes within **90 m** of the place (on the flat; underground
+  70 m and below the street), and leaves if no hero is within **250 m** for **30 s** (the
+  case stays at its step; it comes back when you do).
+- **Reward**: every hero within 150 m gets **10 %** of the karma their next level takes for
+  each lead, and **40 %** when the case closes.
+
+**Adding to cases** (the hooks): a new kind of place is a `Place` value, a finder function and a
+line in `sites::SOURCES`, plus its weight in the gangs' `haunts`; a new job is a `CaseKind`
+value (where it fits, as a lead or a last step in `plan.rs`, how its gang stands and when it is
+done in `running.rs`, its words in missionview and casefile). Everything else (steps, radio, case
+file, saving) works from those.
 
 **The case file** (J; `hw-client/src/casefile.rs`): Hero Hall's manila folder, typed on a
 typewriter. It slides in on its own for 7 s when a case opens (a NEW CASE stamp) or closes
@@ -850,7 +887,8 @@ click turns the tabs). Tabs:
 - **Open cases**: with more than one open, a divider tab per case down the folder's edge (Up/Down
   or a click picks one; Enter or "Follow this case on the radio" tracks it, and the tracked one
   wears a TRACKED stamp). Each sheet: case number, who filed it, where, the gang, what kind; a briefing (what the
-  gang is known for, then the job); a progress checklist (rooms cleared, the boss at large or
+  gang is known for, then the step's job); **the trail** (every step with its place, ticked when
+  done, the ones to come blacked out); a progress checklist for the step (rooms cleared, the boss at large or
   bagged, each clue with what it turned out to be, each hostage held, under guard or freed); the
   boss's mugshot clipped on; one of Annie's notes in blue ink in the margin. With no case: where
   to find Annie.
@@ -860,13 +898,15 @@ click turns the tabs). Tabs:
   the wheel scrolls), each stamped CLOSED. It is kept in the profile on this PC (the newest
   500).
 
-**Saving**: the open cases (number, kind, gang, building) and the opened and closed counts go
-in the hero file (`Sheet.cases`, up to 16 open), tagged with the world's seed. The host's file
-wins: on starting, the server opens the host's saved cases again (in stage "go there"; the gang
-moves in when you come); a book from another world keeps its counts but not its cases. Every
+**Saving**: each open case is kept as its number, gang, **variant** (which of the plans for that
+number it is) and the step reached; with the world's seed that plans it again exactly (same
+seed, same cases), so nothing about places is saved. The opened and closed counts go along
+(`Sheet.cases`, up to 16 open). The host's file wins: on starting, the server plans the host's
+saved cases again and opens them at their step (in stage "go there"); a book from another world
+keeps its counts but not its cases. Cases saved by 0.209 (before the chains) are dropped. Every
 change is written back into every hero's file.
 
-Not yet: villains riding lifts, cases in ordinary town offices.
+Not yet: villains riding lifts, cases in ordinary town offices, parks and rooftops as places.
 
 ---
 
@@ -1659,7 +1699,7 @@ run, or put them in a `.bat`.
 | `HW_VIEW=getaway` | With `HW_INCIDENT` and `HW_TIMEOUT`: follows the crooks making off. |
 | `HW_VISOR=1` | The police visor stays down; `HW_VISOR=0.4` freezes it part way in (screenshots). |
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
-| `HW_CASE=takeover\|evidence\|hostages` | A case of that kind in the first Comet building starts at once (Jackets), the hero at its way in; with `HW_VIEW=hero`. Several, comma-separated (`hostages,evidence`), open one to a building. |
+| `HW_CASE=<job>[@<place>]` | Cases open at once, the hero at the first (a little way off in the open; at the way down underground); with `HW_VIEW=hero`. Jobs `takeover`, `evidence`, `hostages`, `crew`; places `building` (default, one to a building), `street`, `plaza`, `tunnel`, `station`, `grotto`, `ruin`, `lair`. Comma-separated for several (`hostages,crew@street`); `chain` is a whole case as Annie plans it. |
 | `HW_CASEFILE=case\|doctor\|closed` | The case file open on that tab (screenshots). |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
 | `HW_COLOSSUS_RAMPAGE=1` | The colossus smashes its way through town even with no hero near (screenshots). |

@@ -301,7 +301,7 @@ impl CaseFile {
                     "{}No. {:04}  {}",
                     if tracked { "* " } else { "" },
                     n,
-                    short(cases.building(*n))
+                    short(&cases.place_name(*n))
                 );
                 painter.text(
                     r.left_center() + vec2(8.0, -3.0),
@@ -343,14 +343,7 @@ impl CaseFile {
                 (Some(f), _) => closed_sheet_for(&mut pen, sheet, f, &type_font),
                 (None, Some(s)) => {
                     let tracked = cases.tracked == Some(s.number);
-                    let track_line = case_sheet(
-                        &mut pen,
-                        sheet,
-                        s,
-                        cases.building(s.number),
-                        tracked,
-                        &type_font,
-                    );
+                    let track_line = case_sheet(&mut pen, sheet, s, tracked, &type_font);
                     if tracked {
                         stamp_shape(
                             &painter,
@@ -401,12 +394,15 @@ impl CaseFile {
     }
 }
 
-/// A building's name without "the ... building" round it, for a divider.
-fn short(building: &str) -> &str {
-    building
+/// A place's name without "the" and "building" round it, for a divider.
+fn short(place: &str) -> String {
+    let s = place
+        .trim_start_matches("the ")
         .trim_end_matches(" building")
         .trim_end_matches(" house")
-        .trim_end_matches(" hall")
+        .trim_end_matches(" hall");
+    let s: String = s.chars().take(22).collect();
+    capitalised(&s)
 }
 
 /// No open case: where to get one.
@@ -420,7 +416,8 @@ fn empty_sheet(pen: &mut Pen, sheet: Rect, cases: &MissionView, type_font: &dyn 
     pen.gap(16.0);
     if let Some(d) = cases.desk {
         pen.para(&format!(
-            "She lets a team work up to {} cases at once, one to a building.",
+            "She lets a team work up to {} cases at once, never two at one place. A case \
+             can start on a street corner and end in a tube station, or the other way round.",
             d.limit
         ));
         pen.gap(10.0);
@@ -442,7 +439,6 @@ fn case_sheet(
     pen: &mut Pen,
     sheet: Rect,
     s: &State,
-    building: &str,
     tracked: bool,
     type_font: &dyn Fn(f32) -> FontId,
 ) -> Option<Rect> {
@@ -450,23 +446,64 @@ fn case_sheet(
     let number = s.number;
     let gang = &GANGS[s.gang.min(GANGS.len() - 1)];
     let flavour = &GANG_FLAVOUR[s.gang.min(GANG_FLAVOUR.len() - 1)];
+    let place = s.place_name();
+    let last = s.steps.last().map_or(s.kind, |l| l.job);
     pen.line_font(&format!("CASE No. {number:04}"), type_font(26.0), TYPE);
     pen.gap(4.0);
     pen.field("FILED BY", CONTACT_NAME);
-    pen.field("LOCATION", &format!("the {building}"));
+    pen.field("LOCATION", &capitalised(&place));
     pen.field("SUSPECTS", &capitalised(gang.name));
-    pen.field("NATURE", nature(s.kind));
+    pen.field("NATURE", nature(last));
     pen.gap(10.0);
-    pen.para(&briefing(s.kind, flavour, building));
+    let at = s
+        .here()
+        .map_or_else(|| "at the scene".to_string(), |h| h.at_place());
+    pen.para(&briefing(s.kind, flavour, &at, s.in_building()));
+    let ticked = |b: bool| if b { "[X]" } else { "[ ]" };
+    // The trail: every step, done, under way or still to come (blacked
+    // out until the lead before it turns it up).
+    if s.steps.len() > 1 {
+        pen.gap(10.0);
+        pen.line_font("THE TRAIL", type_font(17.0), TYPE);
+        pen.gap(2.0);
+        for (k, st) in s.steps.iter().enumerate() {
+            let what = step_words(st.job);
+            if k < s.step {
+                pen.line(&format!(
+                    "[X] {}. {} {}",
+                    k + 1,
+                    capitalised(&st.at_place()),
+                    what
+                ));
+            } else if k == s.step {
+                pen.line(&format!(
+                    "[ ] {}. {} {}  <-",
+                    k + 1,
+                    capitalised(&st.at_place()),
+                    what
+                ));
+            } else {
+                pen.line_font(
+                    &format!("[ ] {}. ############  {what}", k + 1),
+                    type_font(16.0),
+                    FADED,
+                );
+            }
+        }
+    }
     pen.gap(12.0);
     pen.line_font("PROGRESS", type_font(17.0), TYPE);
     pen.gap(2.0);
-    let ticked = |b: bool| if b { "[X]" } else { "[ ]" };
-    pen.line(&format!("{} Get to the {building}", ticked(s.stage != GO)));
-    if s.groups > 0 {
+    pen.line(&format!("{} Get to {place}", ticked(s.stage != GO)));
+    if s.groups > 0 && s.kind != CaseKind::Crew {
         pen.line(&format!(
-            "{} Rooms cleared: {} of {}",
+            "{} {}: {} of {}",
             ticked(s.cleared >= s.groups),
+            if s.in_building() {
+                "Rooms cleared"
+            } else {
+                "Crews beaten"
+            },
             s.cleared,
             s.groups
         ));
@@ -475,10 +512,23 @@ fn case_sheet(
         CaseKind::Takeover => {
             let bagged = s.boss == 2;
             pen.line(&format!(
-                "{} {} on the top floor: {}",
+                "{} {}{}: {}",
                 ticked(bagged),
                 flavour.boss,
+                if s.in_building() {
+                    " on the top floor"
+                } else {
+                    ""
+                },
                 if bagged { "BAGGED" } else { "at large" }
+            ));
+        }
+        CaseKind::Crew => {
+            pen.line(&format!(
+                "{} The crew, shaken down: {} of {}",
+                ticked(s.groups > 0 && s.cleared >= s.groups),
+                s.cleared,
+                s.groups.max(1)
             ));
         }
         CaseKind::Evidence | CaseKind::Hostages => {
@@ -491,7 +541,7 @@ fn case_sheet(
                     (true, true, _) => "freed, and thankful".to_string(),
                     (true, false, Some(GUARDED)) => "held, under guard".to_string(),
                     (true, false, Some(_)) => "held, guards down: untie them!".to_string(),
-                    (true, false, None) => "somewhere inside".to_string(),
+                    (true, false, None) => "somewhere about".to_string(),
                     (false, true, _) => {
                         CLUE_FINDS[(number as usize + k) % CLUE_FINDS.len()].to_string()
                     }
@@ -535,7 +585,7 @@ fn closed_sheet_for(pen: &mut Pen, sheet: Rect, f: &Filed, type_font: &dyn Fn(f3
     pen.line_font(&format!("CASE No. {:04}", f.number), type_font(26.0), TYPE);
     pen.gap(4.0);
     pen.field("FILED BY", CONTACT_NAME);
-    pen.field("LOCATION", &format!("the {}", f.building));
+    pen.field("LOCATION", &capitalised(&f.building));
     pen.field("SUSPECTS", &capitalised(gang.name));
     pen.field("NATURE", nature(f.kind));
     pen.gap(12.0);
@@ -543,6 +593,7 @@ fn closed_sheet_for(pen: &mut Pen, sheet: Rect, f: &Filed, type_font: &dyn Fn(f3
         CaseKind::Takeover => format!("[X] {} BAGGED", flavour.boss),
         CaseKind::Evidence => "[X] All three clues found".to_string(),
         CaseKind::Hostages => "[X] Everyone out safe".to_string(),
+        CaseKind::Crew => "[X] The crew shaken down".to_string(),
     });
     pen.line("[X] Karma paid out to the heroes on the scene");
     let card = Rect::from_min_size(
@@ -589,7 +640,7 @@ fn cabinet(
     for f in cases.filed.iter().rev().skip(scroll).take(CABINET_ROWS) {
         let y = pen.at.y;
         pen.line(&format!(
-            "No. {:04}   the {}   {}",
+            "No. {:04}   {}   {}",
             f.number,
             f.building,
             nature(f.kind).to_lowercase()
@@ -626,6 +677,17 @@ fn nature(kind: CaseKind) -> &'static str {
         CaseKind::Takeover => "Hostile takeover",
         CaseKind::Evidence => "Evidence wanted",
         CaseKind::Hostages => "Hostages held",
+        CaseKind::Crew => "A crew to shake down",
+    }
+}
+
+/// What a step of the trail asks, for its line.
+fn step_words(kind: CaseKind) -> &'static str {
+    match kind {
+        CaseKind::Takeover => "- their boss",
+        CaseKind::Evidence => "- search for clues",
+        CaseKind::Hostages => "- free the hostages",
+        CaseKind::Crew => "- shake down a crew",
     }
 }
 
@@ -1066,20 +1128,35 @@ const CLUE_FINDS: [&str; 8] = [
     "a receipt for 40 tons of rivets",
 ];
 
-fn briefing(kind: CaseKind, f: &GangFlavour, building: &str) -> String {
-    let job = match kind {
-        CaseKind::Takeover => format!(
-            "They have taken the {building} room by room. Their boss sits on the top floor: \
+/// The sheet's paragraph: what the gang is known for, then the job of the
+/// step under way `at` its place.
+fn briefing(kind: CaseKind, f: &GangFlavour, at: &str, building: bool) -> String {
+    let job = match (kind, building) {
+        (CaseKind::Takeover, true) => format!(
+            "They have taken the place room by room, {at}. Their boss sits on the top floor: \
              bring them down and the rest will scatter."
         ),
-        CaseKind::Evidence => format!(
-            "They are holed up in the {building} and hiding something. Three clues, tucked \
-             away on different floors. Hold E to search."
+        (CaseKind::Takeover, false) => format!(
+            "They have dug in {at}, boss and all: bring the boss down and the rest will \
+             scatter."
         ),
-        CaseKind::Hostages => format!(
-            "They are holding three people in the {building}, on different floors. Beat each \
-             room's guards, then hold E to untie them."
+        (CaseKind::Evidence, true) => format!(
+            "They are holed up {at} and hiding something. Three clues, tucked away on \
+             different floors. Hold E to search."
         ),
+        (CaseKind::Evidence, false) => format!(
+            "They have been busy {at}. Search the place (hold E) for what they left behind."
+        ),
+        (CaseKind::Hostages, true) => format!(
+            "They are holding three people {at}, on different floors. Beat each room's \
+             guards, then hold E to untie them."
+        ),
+        (CaseKind::Hostages, false) => {
+            format!("They are holding people {at}. Beat their guards, then hold E to untie them.")
+        }
+        (CaseKind::Crew, _) => {
+            format!("A crew of theirs hangs about {at}. Shake them down: beaten, they talk.")
+        }
     };
     format!("{} {job}", f.known)
 }

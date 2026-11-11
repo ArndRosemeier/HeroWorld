@@ -1560,7 +1560,7 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
 /// Where a villain of a group whose spot stands at height `near` stands at
 /// `p`: the street, the floor of the tunnel or cavern the spot is down in,
 /// or the floor of the building it is up in (an indoor mission's room).
-fn stand_height(solids: &Obstacles, p: DVec2, near: f64) -> f64 {
+pub(crate) fn stand_height(solids: &Obstacles, p: DVec2, near: f64) -> f64 {
     let street = solids.ground_at(p).max(GROUND_Y);
     let floor = solids.ground_for(p, near + 1.0);
     if floor < street - 1.0 {

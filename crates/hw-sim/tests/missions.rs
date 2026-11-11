@@ -13,7 +13,7 @@ use hw_net::{InputState, PlayerId};
 use hw_sim::collision::{solids_of, Body, Obstacles};
 use hw_sim::combat::{EnemyKind, Fights};
 use hw_sim::floornav::{Building, FloorGraph, Floors};
-use hw_sim::missions::{self, Case, CaseKind, Missions, GANGS};
+use hw_sim::missions::{self, CaseKind, Missions, GANGS};
 use hw_sim::{Sim, GROUND_Y, TICK_HZ};
 use std::sync::Arc;
 
@@ -99,20 +99,15 @@ fn a_hero_takes_a_case_and_closes_it() {
             ..InputState::default()
         },
     );
-    for _ in 0..TICK_HZ * 2 {
+    for _ in 0..TICK_HZ * 3 {
         sim.step();
     }
     sim.set_input(PlayerId(1), InputState::default());
     assert_eq!(sim.missions.cases.len(), 1);
     assert_eq!(sim.missions.cases[0].stage, missions::GO);
     // An evidence case in the building (the test's own pick).
-    let case = Case {
-        kind: CaseKind::Evidence,
-        building: 0,
-        gang: 0,
-    };
     // It takes the place of the asked one (one case to a building).
-    let number = sim.missions.force(&mut sim.world, case);
+    let number = sim.missions.force(&mut sim.world, CaseKind::Evidence, 0, 0);
     assert_eq!(sim.missions.cases.len(), 1);
     let b = &floors.buildings[0];
     let front = b.to_town(b.graph.front());
@@ -225,14 +220,7 @@ fn hostages_are_freed_room_by_room_and_walk_out() {
     let b = &floors.buildings[0];
     let front = b.to_town(b.graph.front());
     let hero = sim.spawn_hero(PlayerId(1), front);
-    let number = sim.missions.force(
-        &mut sim.world,
-        Case {
-            kind: CaseKind::Hostages,
-            building: 0,
-            gang: 1,
-        },
-    );
+    let number = sim.missions.force(&mut sim.world, CaseKind::Hostages, 0, 1);
     for _ in 0..TICK_HZ * 3 {
         put(&mut sim, hero, front);
         sim.step();
@@ -314,7 +302,8 @@ fn annie_hands_out_a_case_per_press_one_to_a_building() {
             sim.step();
         }
         sim.set_input(PlayerId(1), InputState::default());
-        for _ in 0..TICK_HZ / 2 {
+        // Annie's files are made up on a worker and open a set time later.
+        for _ in 0..missions::PLAN_TICKS + TICK_HZ as u64 / 2 {
             sim.step();
         }
     };
@@ -326,11 +315,17 @@ fn annie_hands_out_a_case_per_press_one_to_a_building() {
     assert_eq!(sim.missions.cases.len(), 2);
     let numbers: Vec<u16> = sim.missions.cases.iter().map(|r| r.number).collect();
     assert_eq!(numbers, vec![1, 2]);
+    // With only buildings in this town, each case is one step there.
+    for r in &sim.missions.cases {
+        assert_eq!(r.steps().len(), 1);
+    }
     assert_ne!(
-        sim.missions.cases[0].case.building,
-        sim.missions.cases[1].case.building
+        sim.missions.cases[0].site().building,
+        sim.missions.cases[1].site().building
     );
     // No building left: no third, however often she is asked.
+    press(&mut sim, 0.5);
+    assert_eq!(sim.missions.cases.len(), 2);
     assert!(!sim.missions.can_take());
     press(&mut sim, 0.5);
     assert_eq!(sim.missions.cases.len(), 2);
@@ -359,6 +354,11 @@ fn annie_hands_out_a_case_per_press_one_to_a_building() {
 fn open_cases_come_back_from_the_hosts_file() {
     let (mut sim, _) = town_of(2);
     let contact = DVec3::new(-150.0, GROUND_Y, -150.0);
+    // Case 7 as it was planned: planned again from the same numbers.
+    let places = sim.missions.places().expect("places").clone();
+    let (variant, was) = (0..missions::plan::VARIANTS)
+        .find_map(|v| missions::plan::plan(&places, 9, 7, 2, v).map(|p| (v, p)))
+        .expect("a plan");
     let mut sheet = hw_sim::progress::starter();
     sheet.cases = hw_net::CaseBook {
         world: 9,
@@ -366,19 +366,20 @@ fn open_cases_come_back_from_the_hosts_file() {
         closed: 4,
         open: vec![hw_net::SavedCase {
             number: 7,
-            kind: CaseKind::Hostages.code(),
             gang: 2,
-            building: 1,
+            variant,
+            step: 0,
         }],
     };
     sim.spawn_hero_with(PlayerId(1), contact + DVec3::X, sheet);
-    for _ in 0..TICK_HZ * 2 {
+    for _ in 0..TICK_HZ * 3 {
         sim.step();
     }
     assert_eq!(sim.missions.closed, 4);
     let r = sim.missions.case(7).expect("case 7 is open again");
-    assert_eq!((r.case.building, r.case.gang), (1, 2));
-    assert_eq!(r.case.kind, CaseKind::Hostages);
+    assert_eq!(r.gang, 2);
+    assert_eq!(r.steps(), &was.steps[..]);
+    let first = r.site().building.expect("in a building");
     // A new one gets the next number and the other building, and both
     // are written back into the file.
     sim.set_input(
@@ -388,15 +389,18 @@ fn open_cases_come_back_from_the_hosts_file() {
             ..InputState::default()
         },
     );
-    for _ in 0..TICK_HZ * 2 {
+    for _ in 0..TICK_HZ * 3 {
         sim.step();
     }
     let numbers: Vec<u16> = sim.missions.cases.iter().map(|r| r.number).collect();
     assert_eq!(numbers, vec![7, 8]);
     let book = sim.sheet(PlayerId(1)).expect("a sheet").cases;
     assert_eq!((book.opened, book.closed, book.world), (8, 4, 9));
-    let saved: Vec<(u16, u8)> = book.open.iter().map(|c| (c.number, c.building)).collect();
-    assert_eq!(saved, vec![(7, 1), (8, 0)]);
+    let saved: Vec<(u16, u8)> = book.open.iter().map(|c| (c.number, c.variant)).collect();
+    assert_eq!(saved[0], (7, variant));
+    assert_eq!(saved[1].0, 8);
+    let second = sim.missions.case(8).expect("case 8").site().building;
+    assert_eq!(second, Some(1 - first));
 }
 
 #[test]
@@ -409,9 +413,9 @@ fn a_book_from_another_world_keeps_its_count_but_not_its_cases() {
         closed: 2,
         open: vec![hw_net::SavedCase {
             number: 3,
-            kind: 0,
             gang: 1,
-            building: 0,
+            variant: 0,
+            step: 0,
         }],
     };
     sim.spawn_hero_with(PlayerId(1), DVec3::new(-150.0, GROUND_Y, -148.0), sheet);

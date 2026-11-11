@@ -551,15 +551,36 @@ pub struct CaseBook {
     pub open: Vec<SavedCase>,
 }
 
-/// An open case in a hero file: its number, kind, gang and building (by
-/// index in the town's buildings with a floor plan).
+/// An open case in a hero file: its number, its gang and which of the
+/// plans for that number it is (cases are planned again from these and
+/// the world's seed, see `hw_sim::missions`), and the step reached.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SavedCase {
     pub number: u16,
-    pub kind: u8,
     pub gang: u8,
-    pub building: u8,
+    pub variant: u8,
+    pub step: u8,
 }
+
+/// One step of a case, as [`ToClient::Case`] carries it: what kind of
+/// place (`hw_sim::missions::sites::Place`), the job there
+/// (`hw_sim::missions::CaseKind`), where, and the place's name.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CaseStep {
+    pub place: u8,
+    pub job: u8,
+    pub at: [f32; 3],
+    pub name: String,
+}
+
+/// A place's name as sent: at most [`MAX_PLACE_NAME`] characters.
+fn place_name(name: &str) -> String {
+    name.chars().take(MAX_PLACE_NAME).collect()
+}
+
+/// Most steps one case has, and the longest place name sent.
+pub const MAX_CASE_STEPS: usize = 6;
+pub const MAX_PLACE_NAME: usize = 48;
 
 /// Most open cases a hero file keeps.
 pub const MAX_SAVED_CASES: usize = 16;
@@ -670,7 +691,7 @@ impl Sheet {
         let n = b.open.len().min(MAX_SAVED_CASES);
         w.u8(n as u8);
         for c in &b.open[..n] {
-            w.u16(c.number).u8(c.kind).u8(c.gang).u8(c.building);
+            w.u16(c.number).u8(c.gang).u8(c.variant).u8(c.step);
         }
     }
 
@@ -720,9 +741,9 @@ impl Sheet {
         for _ in 0..n {
             open.push(SavedCase {
                 number: r.u16()?,
-                kind: r.u8()?,
                 gang: r.u8()?,
-                building: r.u8()?,
+                variant: r.u8()?,
+                step: r.u8()?,
             });
         }
         let cases = CaseBook {
@@ -1559,17 +1580,18 @@ pub enum ToClient {
     Gates {
         gates: Vec<GateView>,
     },
-    /// One of the team's indoor cases (see `hw_sim::missions`), by its
-    /// number: its stage (0 dropped, 1 go there, 2 inside, 3 just
-    /// closed), its kind and gang, where to go, rooms cleared of rooms
-    /// held, the boss (0 none yet, 1 standing, 2 beaten), the clues or
-    /// hostages (where; 0 guarded, 1 ready, 2 found or freed) and how far
-    /// along holding the help key is (0-255).
+    /// One of the team's cases (see `hw_sim::missions`), by its number:
+    /// its stage (0 dropped, 1 go there, 2 at it, 3 just closed), its
+    /// gang, its steps and the one it is at, where to go, the step's
+    /// groups beaten of groups, the boss (0 none yet, 1 standing, 2
+    /// beaten), the clues or hostages (where; 0 guarded, 1 ready, 2 found
+    /// or freed) and how far along holding the help key is (0-255).
     Case {
         number: u16,
         stage: u8,
-        kind: u8,
         gang: u8,
+        step: u8,
+        steps: Vec<CaseStep>,
         at: [f32; 3],
         cleared: u8,
         groups: u8,
@@ -1670,8 +1692,24 @@ impl ToClient {
             ToClient::Story { .. } => 1 + 1 + 12 + 1 + 1,
             ToClient::Crime { .. } => 8 + 8 + 1,
             ToClient::Gates { gates } => 1 + GATE_BYTES * gates.len().min(MAX_GATES),
-            ToClient::Case { clues, .. } => {
-                1 + 2 + 1 + 1 + 1 + 12 + 1 + 1 + 1 + 1 + 13 * clues.len().min(MAX_CLUES) + 1
+            ToClient::Case { clues, steps, .. } => {
+                1 + 2
+                    + 1
+                    + 1
+                    + 1
+                    + 1
+                    + steps
+                        .iter()
+                        .take(MAX_CASE_STEPS)
+                        .map(|c| 1 + 1 + 12 + s(&place_name(&c.name)))
+                        .sum::<usize>()
+                    + 12
+                    + 1
+                    + 1
+                    + 1
+                    + 1
+                    + 13 * clues.len().min(MAX_CLUES)
+                    + 1
             }
             ToClient::CaseDesk { .. } => 1 + 12 + 2 + 1 + 1 + 1,
         }
@@ -1877,8 +1915,9 @@ impl ToClient {
             ToClient::Case {
                 number,
                 stage,
-                kind,
                 gang,
+                step,
+                steps,
                 at,
                 cleared,
                 groups,
@@ -1886,7 +1925,16 @@ impl ToClient {
                 clues,
                 held,
             } => {
-                w.u8(24).u16(*number).u8(*stage).u8(*kind).u8(*gang);
+                w.u8(24).u16(*number).u8(*stage).u8(*gang).u8(*step);
+                let n = steps.len().min(MAX_CASE_STEPS);
+                w.u8(n as u8);
+                for c in &steps[..n] {
+                    w.u8(c.place).u8(c.job);
+                    for v in c.at {
+                        w.f32(v);
+                    }
+                    w.str(&place_name(&c.name));
+                }
                 for v in at {
                     w.f32(*v);
                 }
@@ -2111,8 +2159,21 @@ impl ToClient {
             24 => {
                 let number = r.u16()?;
                 let stage = r.u8()?;
-                let kind = r.u8()?;
                 let gang = r.u8()?;
+                let step = r.u8()?;
+                let n = r.u8()? as usize;
+                if n > MAX_CASE_STEPS {
+                    return Err(WireError);
+                }
+                let mut steps = Vec::with_capacity(n);
+                for _ in 0..n {
+                    steps.push(CaseStep {
+                        place: r.u8()?,
+                        job: r.u8()?,
+                        at: [r.f32()?, r.f32()?, r.f32()?],
+                        name: r.str()?,
+                    });
+                }
                 let at = [r.f32()?, r.f32()?, r.f32()?];
                 let cleared = r.u8()?;
                 let groups = r.u8()?;
@@ -2128,8 +2189,9 @@ impl ToClient {
                 ToClient::Case {
                     number,
                     stage,
-                    kind,
                     gang,
+                    step,
+                    steps,
                     at,
                     cleared,
                     groups,
@@ -2615,15 +2677,15 @@ mod tests {
                 open: vec![
                     SavedCase {
                         number: 11,
-                        kind: 2,
                         gang: 3,
-                        building: 4,
+                        variant: 2,
+                        step: 1,
                     },
                     SavedCase {
                         number: 12,
-                        kind: 0,
                         gang: 1,
-                        building: 200,
+                        variant: 0,
+                        step: 0,
                     },
                 ],
             },
@@ -2778,8 +2840,22 @@ mod tests {
                     ToClient::Case {
                         number: 300,
                         stage: 2,
-                        kind: 1,
                         gang: 3,
+                        step: 1,
+                        steps: vec![
+                            CaseStep {
+                                place: 1,
+                                job: 3,
+                                at: [5.0, 1.0, 2.0],
+                                name: "Juniper Avenue".into(),
+                            },
+                            CaseStep {
+                                place: 4,
+                                job: 2,
+                                at: [-50.0, -20.5, 9.0],
+                                name: "Orbit Square station".into(),
+                            },
+                        ],
                         at: [1.0, 7.5, -2.0],
                         cleared: 2,
                         groups: 6,

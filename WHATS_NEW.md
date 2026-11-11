@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.213 (2026-11-11)
+
+- Atomic Annie's cases go all over town now, not only into the Comet buildings. A case can play on a street, on a landmark's plaza, in the utility tunnels, in an Aether Tube station, in a grotto of the Deeps, in the buried city or in the Doctor's own lab.
+- Many cases are a trail: shake down a crew on a street corner or search a place first, and what turns up leads you to the next place, where the real job waits.
+- Under the ground the radio first leads you to the way down.
+- The case file shows the trail, with the places still to come blacked out.
+- Cases you had open in 0.209 are dropped (the count of closed cases stays).
+
 ## 0.212 (2026-11-11)
 
 - No two floors alike in the town's office buildings (and the Comet buildings): every storey has its own height and its own rooms. Some are one open hall, some have a row of small rooms, some open straight on to the atrium's rail.
