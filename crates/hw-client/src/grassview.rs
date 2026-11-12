@@ -156,7 +156,10 @@ impl GrassView {
         let (tx, done) = channel();
         std::thread::Builder::new()
             .name("hw-grass".into())
-            .spawn(move || planter.run(rx, tx))
+            .spawn(move || {
+                engine::parallel::background_thread();
+                planter.run(rx, tx)
+            })
             .expect("start the grass thread");
         Self {
             world: town,

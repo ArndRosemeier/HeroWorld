@@ -66,6 +66,7 @@ impl Models {
     fn start() -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
+            engine::parallel::background_thread();
             let cars: Vec<VehicleKind> = [CarModel::Cruiser, CarModel::Bubble, CarModel::Hover]
                 .into_iter()
                 .flat_map(|m| (0..CAR_PAINTS).map(move |p| VehicleKind::Car(m, p)))

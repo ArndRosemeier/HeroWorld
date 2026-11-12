@@ -210,6 +210,7 @@ impl ExtrasLoad {
         std::thread::Builder::new()
             .name("town extras".into())
             .spawn(move || {
+                engine::parallel::background_thread();
                 // Nobody waiting any more (the title switched worlds): fine.
                 let _ = tx.send(ExtrasParts::build(&t, &g, background_threads()));
             })

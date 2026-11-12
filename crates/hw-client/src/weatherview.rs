@@ -324,6 +324,7 @@ impl WeatherView {
             std::thread::Builder::new()
                 .name("weather parts".into())
                 .spawn(move || {
+                    engine::parallel::background_thread();
                     let _ = tx.send(parts(&l));
                 })
                 .expect("spawn the weather parts worker");

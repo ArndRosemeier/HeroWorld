@@ -93,6 +93,7 @@ impl PropView {
                 .map(|t| {
                     let kinds = &kinds;
                     s.spawn(move || {
+                        engine::parallel::background_thread();
                         (t..kinds.len())
                             .step_by(threads)
                             .map(|i| (i, model_levels(kinds[i])))

@@ -150,6 +150,7 @@ impl HallFurniture {
         std::thread::Builder::new()
             .name("hall furniture".into())
             .spawn(move || {
+                engine::parallel::background_thread();
                 let _ = tx.send(list(&town, c, &known));
             })
             .map_err(EngineError::Io)?;

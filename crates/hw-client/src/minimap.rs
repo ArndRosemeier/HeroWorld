@@ -70,6 +70,7 @@ impl Minimap {
         std::thread::Builder::new()
             .name("minimap".into())
             .spawn(move || {
+                engine::parallel::background_thread();
                 while let Ok(key) = asks.recv() {
                     if done.send(mapraster::raster(&town, key)).is_err() {
                         break;
@@ -82,6 +83,7 @@ impl Minimap {
         std::thread::Builder::new()
             .name("minimap-paint".into())
             .spawn(move || {
+                engine::parallel::background_thread();
                 let mut image = Vec::new();
                 while let Ok(job) = jobs.recv() {
                     let mpp = job.reach / (job.side as f64 * 0.5);

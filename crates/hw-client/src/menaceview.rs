@@ -324,6 +324,7 @@ impl MenaceView {
             std::thread::Builder::new()
                 .name("villain quarter".into())
                 .spawn(move || {
+                    engine::parallel::background_thread();
                     let _ = tx.send(gather(&town));
                 })
                 .expect("a thread for the villain quarter");

@@ -143,6 +143,7 @@ impl Bank {
         std::thread::Builder::new()
             .name("sound-decode".into())
             .spawn(move || {
+                engine::parallel::background_thread();
                 while let Ok(name) = asks.recv() {
                     let Some((_, bytes)) = clips.iter().find(|(n, _)| *n == name) else {
                         continue;
@@ -1790,6 +1791,7 @@ impl Music {
         let path = dir.join(format!("{pick}.ogg"));
         let (tx, rx) = channel();
         std::thread::spawn(move || {
+            engine::parallel::background_thread();
             let _ = tx.send(Sound::load(path));
         });
         self.state = Playing::Loading(mood, rx);

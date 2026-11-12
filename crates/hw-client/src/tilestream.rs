@@ -46,6 +46,7 @@ impl<K: Ord + Copy + Send + 'static, B: Send + 'static> TileStream<K, B> {
         std::thread::Builder::new()
             .name(name.into())
             .spawn(move || {
+                engine::parallel::background_thread();
                 while let Ok(k) = rx.recv() {
                     let want = still.lock().map(|w| w.contains(&k)).unwrap_or(false);
                     let b = want.then(|| build(k));

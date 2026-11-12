@@ -53,6 +53,7 @@ impl SweeperView {
                 std::thread::Builder::new()
                     .name("hw-sweepers".into())
                     .spawn(move || {
+                        engine::parallel::background_thread();
                         let _ = tx.send(models());
                     })
                     .map_err(|e| EngineError::InvalidValue(e.to_string()))?;

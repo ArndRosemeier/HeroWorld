@@ -327,6 +327,7 @@ impl CrimeView {
             std::thread::Builder::new()
                 .name("hw-crime".into())
                 .spawn(move || {
+                    engine::parallel::background_thread();
                     while let Ok(mut a) = asks.recv() {
                         // Only the newest question matters.
                         while let Ok(newer) = asks.try_recv() {

@@ -2800,6 +2800,7 @@ impl WorksView {
                 std::thread::Builder::new()
                     .name("works-parts".into())
                     .spawn(move || {
+                        engine::parallel::background_thread();
                         let _ = tx.send(load_parts());
                     })
                     .map_err(|e| EngineError::InvalidValue(format!("works thread: {e}")))?;

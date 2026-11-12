@@ -163,6 +163,7 @@ impl DamageView {
             let job = std::thread::Builder::new()
                 .name("broken building".into())
                 .spawn(move || {
+                    engine::parallel::background_thread();
                     let made = look(&plan, &frame).map(Arc::new);
                     let _ = tx.send(made.map_err(|e| e.to_string()));
                 });

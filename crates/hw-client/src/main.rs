@@ -3298,6 +3298,7 @@ fn main() -> EngineResult<()> {
                     let half = (generated.area.hi.x - generated.area.lo.x) * 0.5;
                     let (tx, rx) = std::sync::mpsc::channel();
                     std::thread::spawn(move || {
+                        engine::parallel::background_thread();
                         let area = std::sync::Arc::new(hw_gen::urban::area::Area::around(
                             world_town,
                             DVec2::new(x, z),
@@ -4239,12 +4240,15 @@ fn main() -> EngineResult<()> {
             // The traffic drives on and its cars are placed on a worker,
             // while the citizens go to Engine here; the join below is the
             // only meeting point (the borrows keep the two apart).
-            let (traffic_plan, survey) = std::thread::scope(|scope| {
+            // It runs on one of Engine's frame threads, which are idle
+            // while the game's own update runs and so start at once: a
+            // thread started here each frame waited up to 31 ms for a core
+            // while the town was being built on all of them.
+            let (traffic_plan, survey) = {
                 let (traffic, traffic_view) = (&mut traffic, &mut traffic_view);
                 let town_plan = &generated.world;
-                let job = std::thread::Builder::new()
-                    .name("hw-traffic".into())
-                    .spawn_scoped(scope, move || {
+                let (plan, crowd_done) = engine::parallel::beside_frame(
+                    move || {
                         traffic.advance_to(game_time);
                         let plan = traffic_view.plan(traffic, eye2, game_time, dt);
                         // What the soundscape asks of the town round the camera.
@@ -4255,18 +4259,17 @@ fn main() -> EngineResult<()> {
                             district: hw_client::soundscape::district(town_plan, eye2),
                         };
                         (plan, survey)
-                    })
-                    .expect("start the traffic worker");
-                // Citizens around the camera, at the game's time.
-                let crowd_done = crowd
-                    .update(world, &citizens, &alarms, eye2, game_time, dt)
-                    .and_then(|()| sweepers.update(world, &citizens, eye2, game_time, dt));
-                let plan = match job.join() {
-                    Ok(p) => p,
-                    Err(panic) => std::panic::resume_unwind(panic),
-                };
-                crowd_done.map(|()| plan)
-            })?;
+                    },
+                    // Citizens around the camera, at the game's time.
+                    || {
+                        crowd
+                            .update(world, &citizens, &alarms, eye2, game_time, dt)
+                            .and_then(|()| sweepers.update(world, &citizens, eye2, game_time, dt))
+                    },
+                );
+                crowd_done?;
+                plan
+            };
             // Street performers, odd folk and the night club round the camera.
             // (`HW_STREETLIFE=0` turns it off, to measure without it.)
             if std::env::var("HW_STREETLIFE").map_or(true, |v| v != "0") {

@@ -359,25 +359,28 @@ impl Workers {
             .clamp(1, 4);
         for _ in 0..count {
             let (queue, tx) = (queue.clone(), tx.clone());
-            std::thread::spawn(move || loop {
-                let job = {
-                    let (lock, ready) = &*queue;
-                    let Ok(mut q) = lock.lock() else { return };
-                    loop {
-                        if q.closed {
-                            return;
+            std::thread::spawn(move || {
+                engine::parallel::background_thread();
+                loop {
+                    let job = {
+                        let (lock, ready) = &*queue;
+                        let Ok(mut q) = lock.lock() else { return };
+                        loop {
+                            if q.closed {
+                                return;
+                            }
+                            if let Some(job) = q.jobs.pop_front() {
+                                break job;
+                            }
+                            q = match ready.wait(q) {
+                                Ok(q) => q,
+                                Err(_) => return,
+                            };
                         }
-                        if let Some(job) = q.jobs.pop_front() {
-                            break job;
-                        }
-                        q = match ready.wait(q) {
-                            Ok(q) => q,
-                            Err(_) => return,
-                        };
+                    };
+                    if tx.send(make_cell(job)).is_err() {
+                        return;
                     }
-                };
-                if tx.send(make_cell(job)).is_err() {
-                    return;
                 }
             });
         }

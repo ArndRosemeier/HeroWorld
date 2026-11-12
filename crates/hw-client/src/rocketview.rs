@@ -149,6 +149,7 @@ impl RocketView {
             std::thread::Builder::new()
                 .name("rocket meshes".into())
                 .spawn(move || {
+                    engine::parallel::background_thread();
                     let _ = tx.send(build());
                 })
                 .expect("a thread for the rocket's meshes");

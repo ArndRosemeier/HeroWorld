@@ -707,6 +707,7 @@ impl DoorView {
         std::thread::Builder::new()
             .name("door-models".into())
             .spawn(move || {
+                engine::parallel::background_thread();
                 let models: Vec<ModelLevels> =
                     Model::all().into_iter().map(|m| (m, m.levels())).collect();
                 let _ = tx.send(models);

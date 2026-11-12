@@ -168,6 +168,7 @@ impl HallInsides {
             let made = std::thread::Builder::new()
                 .name("halls inside".into())
                 .spawn(move || {
+                    engine::parallel::background_thread();
                     let _ = tx.send(inside(&site, base));
                 });
             if made.is_ok() {

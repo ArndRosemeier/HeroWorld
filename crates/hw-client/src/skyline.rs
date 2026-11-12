@@ -203,25 +203,28 @@ impl Workers {
                 (queue.clone(), tx.clone(), world.clone());
             std::thread::Builder::new()
                 .name("hw-skyline".into())
-                .spawn(move || loop {
-                    let job = {
-                        let (lock, ready) = &*queue;
-                        let Ok(mut q) = lock.lock() else { return };
-                        loop {
-                            if q.closed {
-                                return;
+                .spawn(move || {
+                    engine::parallel::background_thread();
+                    loop {
+                        let job = {
+                            let (lock, ready) = &*queue;
+                            let Ok(mut q) = lock.lock() else { return };
+                            loop {
+                                if q.closed {
+                                    return;
+                                }
+                                if let Some(j) = q.jobs.pop_front() {
+                                    break j;
+                                }
+                                q = match ready.wait(q) {
+                                    Ok(q) => q,
+                                    Err(_) => return,
+                                };
                             }
-                            if let Some(j) = q.jobs.pop_front() {
-                                break j;
-                            }
-                            q = match ready.wait(q) {
-                                Ok(q) => q,
-                                Err(_) => return,
-                            };
+                        };
+                        if tx.send(make_tile(&world, job.0, job.1)).is_err() {
+                            return;
                         }
-                    };
-                    if tx.send(make_tile(&world, job.0, job.1)).is_err() {
-                        return;
                     }
                 })
                 .expect("skyline worker");

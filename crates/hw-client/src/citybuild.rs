@@ -192,6 +192,7 @@ impl CityBuilds {
         let thread = std::thread::Builder::new()
             .name("city plan".into())
             .spawn(move || {
+                engine::parallel::background_thread();
                 let r = GeneratedTown::generate_or_stop(Seed(city.seed), city.people, &c);
                 // Cancelled while finishing: free it here, not on the game's thread.
                 let r = match r {
@@ -223,7 +224,10 @@ impl Drop for CityBuilds {
 pub fn dispose<T: Send + 'static>(town: T) {
     let _ = std::thread::Builder::new()
         .name("city free".into())
-        .spawn(move || drop(town));
+        .spawn(move || {
+            engine::parallel::background_thread();
+            drop(town)
+        });
 }
 
 #[cfg(test)]

@@ -69,23 +69,26 @@ impl TownMap {
             let (queue, town, done) = (queue.clone(), town.clone(), done.clone());
             std::thread::Builder::new()
                 .name(format!("townmap-{n}"))
-                .spawn(move || loop {
-                    let key = {
-                        let (lock, ready) = &*queue;
-                        let mut q = lock.lock().expect("town map queue");
-                        loop {
-                            if q.stop {
-                                return;
+                .spawn(move || {
+                    engine::parallel::background_thread();
+                    loop {
+                        let key = {
+                            let (lock, ready) = &*queue;
+                            let mut q = lock.lock().expect("town map queue");
+                            loop {
+                                if q.stop {
+                                    return;
+                                }
+                                if let Some(k) = q.todo.pop() {
+                                    break k;
+                                }
+                                q = ready.wait(q).expect("town map queue");
                             }
-                            if let Some(k) = q.todo.pop() {
-                                break k;
-                            }
-                            q = ready.wait(q).expect("town map queue");
+                        };
+                        let img = picture(&mapraster::raster(&town, key));
+                        if done.send((key, img)).is_err() {
+                            return;
                         }
-                    };
-                    let img = picture(&mapraster::raster(&town, key));
-                    if done.send((key, img)).is_err() {
-                        return;
                     }
                 })
                 .expect("town map thread");

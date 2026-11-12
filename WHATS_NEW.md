@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.232 (2026-11-12)
+
+- Smoother while flying over town and on busy streets: the threads that build the town now step aside for the frame, the street traffic no longer waits for a free core each frame, and the bounced light is no longer worked out again every time something appears in the distance (Engine 0.065).
+
 ## 0.231 (2026-11-12)
 
 - Far fewer long stutters while moving through town: new ground is now worked out in the background (it used to hold a frame for up to 40 ms), and the street reflections are renewed a bit at a time instead of all in one frame (Engine 0.064).

@@ -1317,6 +1317,7 @@ impl RobotView {
             None => {
                 let (tx, rx) = std::sync::mpsc::channel();
                 std::thread::spawn(move || {
+                    engine::parallel::background_thread();
                     let _ = tx.send(Sound::from_bytes(COLOSSUS_THEME.to_vec()));
                 });
                 self.music.loading = Some(rx);

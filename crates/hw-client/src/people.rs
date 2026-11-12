@@ -341,6 +341,7 @@ impl People {
         std::thread::Builder::new()
             .name("people".into())
             .spawn(move || {
+                engine::parallel::background_thread();
                 let load = || {
                     let t0 = std::time::Instant::now();
                     let b = CharacterBuilder::load(&packs)

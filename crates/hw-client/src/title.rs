@@ -195,6 +195,7 @@ impl Title {
         // The theme is three minutes: decode it off the main thread.
         let (tx, rx) = channel();
         std::thread::spawn(move || {
+            engine::parallel::background_thread();
             let _ = tx.send(Sound::from_bytes(THEME.to_vec()));
         });
         let start = std::env::var("HW_TITLE_TIME")
