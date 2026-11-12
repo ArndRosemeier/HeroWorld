@@ -260,7 +260,7 @@ does, what it needs, and Buy or Give up.
   `hw-client/src/gateview.rs`): every hero has it, free, as two powers on keys 9 and 0.
   **Portal Home** (124, 2 s recharge) marks home on the floor 1.3 m ahead, its way in facing
   the way the hero faces; it is kept in the hero file (`portal_home`, per town: seed and
-  size) and a new mark closes the open portal. **Open Portal** (125, 4 s recharge) tears a
+  size) and a new mark closes the open portal. A hero with no home in this town (a new hero) starts with one already marked on Hero Hall's plaza, a few steps out from the greeters, facing away from the hall (0.246; `Landmark::portal_home`). **Open Portal** (125, 4 s recharge) tears a
   portal open on the floor 2.7 m ahead, facing the hero; a hero has one open at a time (a new
   one moves its far side). Each opening is an ellipse 2.6 m wide and 3.5 m high, shrunk to
   86%, 74% or 64% where a full one has no room; under that, or with a wall, a floor more

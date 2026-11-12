@@ -320,6 +320,19 @@ impl Landmark {
             .collect()
     }
 
+    /// Where a new hero's portal home is marked: on Hero Hall's plaza, a few
+    /// steps out from the greeters, in the town's frame, with the way out
+    /// of the hall (the way through the mark faces). None for other
+    /// landmarks.
+    pub fn portal_home(&self) -> Option<(DVec2, DVec2)> {
+        if self.kind != LandmarkKind::HeroHall {
+            return None;
+        }
+        let z = (HALL_R + HALL_CANOPY.1 + 3.0).min(self.plaza - 1.5);
+        let z = (z + 3.5).min(self.plaza - 1.0);
+        Some((self.to_plan(DVec2::new(0.0, z)), self.dir))
+    }
+
     /// Hero Hall's statue plinth: the middle of its top in the town's frame,
     /// and the way the statue faces (out, like the hall). None for other
     /// landmarks.

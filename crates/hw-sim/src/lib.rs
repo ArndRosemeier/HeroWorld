@@ -606,6 +606,8 @@ pub struct Sim {
     /// Where heroes below [`quarter::ROOKIE_LEVEL`] start: a street near
     /// the Chrome Jackets' corners (none in a town without a gang).
     rookie: Option<(DVec2, DVec2)>,
+    /// The portal home a hero without one gets: Hero Hall's plaza.
+    hall_home: Option<gates::Side>,
     /// Players who appeared at the start and whose hero file has not come
     /// in yet: it decides which start is theirs.
     fresh: BTreeSet<PlayerId>,
@@ -791,6 +793,12 @@ impl Sim {
                 .into_iter()
                 .map(|(p, f)| (DVec3::new(p.x, hall.base, p.y), f))
                 .collect();
+            if let Some((p, dir)) = hall.portal_home() {
+                sim.hall_home = Some(gates::Side {
+                    at: DVec3::new(p.x, hall.base, p.y),
+                    yaw: hw_core::det::atan2(dir.x, dir.y),
+                });
+            }
             let tick = sim.tick;
             if let Some(&(p, _)) = spots.first() {
                 let mut f = sim.world.resource_mut::<combat::Fights>();
@@ -989,6 +997,7 @@ impl Sim {
             tick: 0,
             spawn: (DVec2::ZERO, DVec2::X),
             rookie: None,
+            hall_home: None,
             fresh: Default::default(),
             schedule,
             track,
@@ -1488,6 +1497,15 @@ impl Sim {
         self.seed.0 ^ self.town_population.to_bits().rotate_left(17)
     }
 
+    /// Whether the server knows `owner`'s portal home (a test helper).
+    pub fn gates_home_known(&self, owner: PlayerId) -> bool {
+        self.world
+            .resource::<Fights>()
+            .gates
+            .home(owner)
+            .is_some()
+    }
+
     /// The open portals, for a joining player.
     pub fn gates_snapshot(&self) -> ToClient {
         self.world.resource::<Fights>().gates.snapshot()
@@ -1899,7 +1917,15 @@ impl Sim {
 
     /// Plays `owner`'s hero by the hero file `sheet` (sent when joining).
     pub fn set_sheet(&mut self, owner: PlayerId, sheet: Sheet) {
-        let sheet = progress::sanitize(sheet);
+        let mut sheet = progress::sanitize(sheet);
+        // A hero without a portal home in this town starts with it marked
+        // on Hero Hall's plaza (they can mark a new one any time).
+        let key = self.world_key();
+        if let Some(h) = self.hall_home {
+            if sheet.gate_home.is_none_or(|g| g.world != key) {
+                sheet.gate_home = Some(hw_net::GateHome::new(key, h.at.to_array(), h.yaw));
+            }
+        }
         self.change_sheet(owner, |s| *s = sheet);
         self.place_fresh(owner);
     }

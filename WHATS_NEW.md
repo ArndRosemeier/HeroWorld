@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.246 (2026-11-12)
+
+- A new hero's portal home is already marked: on the plaza in front of Hero Hall, so Open Portal works from the first minute. Mark Portal Home anywhere else to move it.
+
 ## 0.245 (2026-11-12)
 
 - Behind the scenes: when the game runs slow for a while, the log now says what took the time (the server's parts, the drawing, the rest) instead of only listing single stutters.

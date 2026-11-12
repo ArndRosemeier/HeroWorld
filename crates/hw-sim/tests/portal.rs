@@ -147,3 +147,34 @@ fn a_wall_ahead_fizzles_the_portal_and_costs_nothing() {
     assert!(!fx.iter().any(|e| e.kind == FxKind::GateOpen));
     assert!(!news.iter().any(|m| matches!(m, ToClient::Gates { .. })));
 }
+
+#[test]
+fn a_new_hero_has_its_portal_home_on_hero_halls_plaza() {
+    let town = hw_sim::GeneratedTown::generate(Seed(2), 3000.0);
+    let hall = town
+        .world
+        .landmarks
+        .iter()
+        .find(|l| l.kind == hw_gen::urban::landmarks::LandmarkKind::HeroHall)
+        .expect("Hero Hall");
+    let mut sim = Sim::for_town(Seed(2), &town);
+    sim.spawn_at_start(PlayerId(1));
+    sim.set_sheet(PlayerId(1), starter());
+    sim.step();
+    let home = sim
+        .sheet(PlayerId(1))
+        .unwrap()
+        .gate_home
+        .expect("a new hero's home is set");
+    let p = home.pos();
+    let d = DVec2::new(p[0], p[2]).distance(hall.pos);
+    assert!(d < hall.plaza, "{d} m from the hall, plaza {}", hall.plaza);
+    assert!((p[1] - hall.base).abs() < 0.1);
+    // The server knows it as well, so Open Portal works at once.
+    assert!(sim.gates_home_known(PlayerId(1)));
+    // A home the hero marked itself is kept.
+    let mut mine = starter();
+    mine.gate_home = Some(hw_net::GateHome::new(sim.world_key(), [1.0, 2.0, 3.0], 0.0));
+    sim.set_sheet(PlayerId(1), mine.clone());
+    assert_eq!(sim.sheet(PlayerId(1)).unwrap().gate_home, mine.gate_home);
+}
