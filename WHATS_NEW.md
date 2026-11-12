@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.224 (2026-11-12)
+
+- Doors in the new buildings: rooms off a lobby, the flats on a landing and the bedrooms inside them now have real double doors that stand shut. Open and shut them with E; villains and other people on foot open them as they walk up.
+- The front doors of the new buildings are right: glass doors onto the real lobby, without the painted stand-in hall that stuck out behind them.
+- Towns are built anew for this version.
+
 ## 0.223 (2026-11-12)
 
 - The picture going dark while walking through town is fixed at its source: a few people had hair and brow points the lighting could not handle. They are now lit correctly (Engine 0.061).

@@ -545,8 +545,8 @@ impl<'a> Planner<'a> {
 
     /// A building of halls: one [`Floor`] per storey of its layout, every
     /// space that stands or rises through that storey a room of it, and
-    /// the way in from the street its only door (inside, the layout's
-    /// openings are wide and have no leaves).
+    /// the way in from the street and the single doors between rooms its
+    /// doors (the layout's wider openings have no leaves).
     fn hall_plan(&self, l: Layout) -> BuildingPlan {
         let s = self.site;
         let full = Rect::from_xz(0.0, 0.0, s.size.x, s.size.y);
@@ -580,18 +580,32 @@ impl<'a> Planner<'a> {
                     rooms.push(room(seed, rooms.len() as u32, kind, sp.rect));
                 }
             }
+            // The way in from the street, and the single doors between
+            // two rooms of this storey (they get leaves, `doors.rs`).
             let doors = l
                 .links
                 .iter()
-                .filter(|k| k.b.is_none() && (k.y - e).abs() < 1e-3)
+                .filter(|k| (k.y - e).abs() < 1e-3)
                 .filter_map(|k| {
+                    use crate::layout::{solid, LinkKind};
                     let a = index[l.spaces[k.a].within.unwrap_or(k.a)]?;
+                    let (b, height) = match (k.kind, k.b) {
+                        (_, None) => (None, solid::ENTRANCE_H),
+                        (LinkKind::Door, Some(b)) => {
+                            // (Not a door of a room that stands within
+                            // another: both are one room here.)
+                            let within = |i: usize| l.spaces[i].within.is_some();
+                            let b = index[b].filter(|_| !within(k.a) && !within(b))?;
+                            (Some(b), solid::DOOR_H)
+                        }
+                        _ => return None,
+                    };
                     Some(Door {
                         a,
-                        b: None,
+                        b,
                         at: k.at,
                         along_x: k.along_x,
-                        size: DVec2::new(k.width, crate::layout::solid::ENTRANCE_H),
+                        size: DVec2::new(k.width, height),
                     })
                 })
                 .collect();

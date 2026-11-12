@@ -577,7 +577,9 @@ pub fn door_spots(
         };
         let drawn_open = open_floor == Some(k);
         let shown = match open_floor {
-            None => d.outside,
+            // (A building of halls is never cut open: its inside is
+            // drawn whole, with every door.)
+            None => d.outside || plan.layout.is_some(),
             Some(o) => k == o || (k < o && d.outside),
         };
         if !shown {
@@ -628,7 +630,8 @@ pub fn door_spots(
         if d.kind == DoorKind::Glass && over > 0.05 {
             panes.push(pane_at(-d.half, d.half, y + height, floor + top));
         }
-        let vestibule = (d.outside && !drawn_open).then(|| {
+        // (Not in a building of halls: its lobby is really there.)
+        let vestibule = (d.outside && !drawn_open && plan.layout.is_none()).then(|| {
             let p = city(d.point(0.0, 0.0), floor + 0.004);
             // Its +z into the building.
             Place::new(p.x, p.y, p.z).with_yaw_deg(into.x.atan2(into.y).to_degrees())

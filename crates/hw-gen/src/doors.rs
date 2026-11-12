@@ -108,7 +108,7 @@ impl BuildingPlan {
         let mut out = Vec::new();
         for f in &self.floors {
             for (i, d) in f.doors.iter().enumerate() {
-                out.extend(leaves_of(f, i, d, self.look.reveal));
+                out.extend(leaves_of(f, i, d, self.look.reveal, self.layout.is_some()));
             }
         }
         out
@@ -118,21 +118,38 @@ impl BuildingPlan {
     pub fn door(&self, key: u32) -> Option<DoorLeaves> {
         let f = self.floors.iter().find(|f| f.level == key >> 12)?;
         let i = (key & 0xFFF) as usize;
-        leaves_of(f, i, f.doors.get(i)?, self.look.reveal)
+        leaves_of(
+            f,
+            i,
+            f.doors.get(i)?,
+            self.look.reveal,
+            self.layout.is_some(),
+        )
     }
 }
 
-fn leaves_of(f: &Floor, index: usize, d: &Door, reveal: f64) -> Option<DoorLeaves> {
+/// `halls`: a building of halls (`crate::layout`), whose doors between
+/// rooms are a pair of tall leaves in a thick wall.
+fn leaves_of(f: &Floor, index: usize, d: &Door, reveal: f64, halls: bool) -> Option<DoorLeaves> {
     let normal = if d.along_x { DVec2::Y } else { DVec2::X };
     let along = if d.along_x { DVec2::X } else { DVec2::Y };
     let (kind, room) = match d.b {
         None if d.size.x >= ENTRANCE_SIZE.x => (DoorKind::Glass, d.a),
         None => (DoorKind::Front, d.a),
         Some(b) => {
-            if d.size.x > WIDEST_INNER {
+            let widest = if halls {
+                crate::layout::DOOR
+            } else {
+                WIDEST_INNER
+            };
+            if d.size.x > widest + 1e-6 {
                 return None;
             }
+            let area = |i: usize| f.rooms[i].rect.area();
             let into = if f.rooms[d.a].kind == RoomKind::Corridor {
+                b
+            } else if halls && f.rooms[b].kind != RoomKind::Corridor && area(b) < area(d.a) {
+                // Into the smaller room (a bedroom, not the living room).
                 b
             } else {
                 d.a
@@ -150,7 +167,11 @@ fn leaves_of(f: &Floor, index: usize, d: &Door, reveal: f64) -> Option<DoorLeave
         -normal
     };
     let outside = d.b.is_none();
-    let wall_half = if outside { OUTER_HALF } else { INNER_HALF };
+    let wall_half = if outside || halls {
+        OUTER_HALF
+    } else {
+        INNER_HALF
+    };
     let width = match kind {
         DoorKind::Glass => GLASS_DOORS.min(d.size.x - 0.6),
         _ => d.size.x,
@@ -177,6 +198,7 @@ fn leaves_of(f: &Floor, index: usize, d: &Door, reveal: f64) -> Option<DoorLeave
         return None;
     }
     let plane = match kind {
+        DoorKind::Inner if halls => wall_half + 0.05,
         DoorKind::Inner => INNER_PLANE,
         // Behind the facade's reveal, not deeper than half of it.
         _ => (reveal * 0.5).clamp(0.03, 0.12),
@@ -184,6 +206,7 @@ fn leaves_of(f: &Floor, index: usize, d: &Door, reveal: f64) -> Option<DoorLeave
     let (height, top) = match kind {
         DoorKind::Glass => (GLASS_HEIGHT.min(d.size.y), d.size.y),
         DoorKind::Front => (d.size.y - 0.02, d.size.y),
+        DoorKind::Inner if halls => (d.size.y - 0.02, d.size.y),
         DoorKind::Inner => (INNER_HEIGHT, d.size.y),
     };
     let hinge = |s: f64| d.at + along * s * (half - HINGE_IN) + into * plane;

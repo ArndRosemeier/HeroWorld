@@ -55,6 +55,7 @@ fn main() {
         println!("solids {:?}", plan.solids().map(|s| s.len()));
         println!("shell {:?}", plan.shell_parts(0.05).map(|s| s.len()));
         println!("furniture {}", plan.furniture().len());
+        println!("doors {}", plan.door_leaves().len());
         println!(
             "standing {}",
             plan.standing().iter().map(|v| v.len()).sum::<usize>()
