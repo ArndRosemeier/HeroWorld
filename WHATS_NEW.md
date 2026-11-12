@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.230 (2026-11-12)
+
+- The villain quarter got room indoors too: its tenements are houses of flats with big rooms now, and the Doctor's laboratories are buildings of tall halls under their domes and coils.
+- A fire escape no longer hangs its ladder in front of a door.
+- Towns are built anew for this version.
+
 ## 0.229 (2026-11-12)
 
 - Fewer short stutters in town: the street traffic's driving step, ten times a second, is now shared out over the processor's cores instead of holding one frame for 4 to 8 ms.

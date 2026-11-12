@@ -37,7 +37,11 @@ const GRAND: ((f64, f64), (f64, f64)) = ((34.0, 50.0), (40.0, 52.0));
 /// Does this use get an office building's big plot here? Not in the old
 /// town's lanes, where a shop is a narrow house with rooms above.
 fn grand(prog: &Programme, usage: BuildingUse) -> bool {
-    matches!(usage, BuildingUse::Offices | BuildingUse::ShopsAndOffices) && !prog.lanes
+    // (The Doctor's labs too: halls of apparatus.)
+    matches!(
+        usage,
+        BuildingUse::Offices | BuildingUse::ShopsAndOffices | BuildingUse::Lab
+    ) && !prog.lanes
 }
 
 /// A shop house's plot in the old town's lanes: width and depth (m). Wider
@@ -59,7 +63,8 @@ const BLOCK: ((f64, f64), (f64, f64)) = ((30.0, 40.0), (28.0, 34.0));
 
 /// Is this an apartment block? Homes outside the old town's lanes.
 fn flat_block(prog: &Programme, usage: BuildingUse) -> bool {
-    usage == BuildingUse::Apartments && !prog.lanes
+    // (The villain quarter's tenements are homes like any other.)
+    matches!(usage, BuildingUse::Apartments | BuildingUse::Tenement) && !prog.lanes
 }
 
 /// The plot of a wide, shallow house (width, depth): a house of flats
@@ -580,12 +585,18 @@ fn fill_block(
                 }
             };
             let homes = prog.lanes || prog.uses.iter().any(|u| flat_block(prog, u.0));
+            // The quarter's kind of home.
+            let flat = if prog.uses.iter().any(|u| u.0 == BuildingUse::Tenement) {
+                BuildingUse::Tenement
+            } else {
+                BuildingUse::Apartments
+            };
             let other = prog
                 .uses
                 .iter()
                 .map(|u| u.0)
                 .find(|u| !of_halls(prog, *u))
-                .or(homes.then_some(BuildingUse::Apartments));
+                .or(homes.then_some(flat));
             let best = class(wanted);
             // (A family's house that does not fit stays a small house of
             // the old kind.)
@@ -597,12 +608,14 @@ fn fill_block(
             // Where the wanted building does not fit, homes do: an
             // apartment block (not in the lanes), a deep house of flats,
             // a wide one.
-            let flat = BuildingUse::Apartments;
             let home = |p: Plot| {
                 (homes && best != Plot::Plain && (wanted, best) != (flat, p)).then_some((flat, p))
             };
             let tries = [
                 Some((wanted, best)),
+                // (A lab that has no room for its great halls is a small
+                // one: a hall on the street with rooms above.)
+                (wanted == BuildingUse::Lab).then_some((wanted, Plot::House)),
                 home(Plot::Block).filter(|_| !prog.lanes),
                 home(Plot::House),
                 home(Plot::Row),
@@ -617,10 +630,11 @@ fn fill_block(
             let tries: Vec<(BuildingUse, Plot)> = tries.into_iter().flatten().collect();
             let roomy = |p: &&(BuildingUse, Plot)| p.1 != Plot::Plain;
             // (The wanted building before the homes that stand in for it.)
-            let order = (tries.iter().take(1).filter(roomy))
+            let lead = if wanted == BuildingUse::Lab { 2 } else { 1 };
+            let order = (tries.iter().take(lead).filter(roomy))
                 .flat_map(|t| [(*t, false), (*t, true)])
-                .chain(tries.iter().skip(1).filter(roomy).map(|t| (*t, false)))
-                .chain(tries.iter().skip(1).filter(roomy).map(|t| (*t, true)))
+                .chain(tries.iter().skip(lead).filter(roomy).map(|t| (*t, false)))
+                .chain(tries.iter().skip(lead).filter(roomy).map(|t| (*t, true)))
                 .chain(tries.iter().filter(|p| !roomy(p)).map(|t| (*t, false)));
             for ((usage, plot), whole) in order {
                 let house = plot == Plot::House;
@@ -628,7 +642,7 @@ fn fill_block(
                 let row = plot == Plot::Row;
                 let big = plot != Plot::Plain;
                 let (wr, dr) = if house {
-                    let least = if usage == BuildingUse::Apartments {
+                    let least = if usage == flat {
                         office::MIN_FLATS.y
                     } else {
                         HOUSE.1 .0
@@ -646,7 +660,7 @@ fn fill_block(
                 } else {
                     (prog.width, prog.depth)
                 };
-                let (least_w, least_d) = if house && usage == BuildingUse::Apartments {
+                let (least_w, least_d) = if house && usage == flat {
                     (office::MIN_FLATS.x, office::MIN_FLATS.y)
                 } else if house {
                     (office::MIN_HOUSE.x, office::MIN_HOUSE.y)

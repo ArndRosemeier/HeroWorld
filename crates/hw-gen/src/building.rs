@@ -354,7 +354,7 @@ impl BuildingSite {
     /// homes, else an office building or (on a narrow plot) a shop house.
     fn plan_halls(&self) -> Layout {
         let seed = self.seed.child("layout");
-        if self.usage == BuildingUse::Apartments {
+        if matches!(self.usage, BuildingUse::Apartments | BuildingUse::Tenement) {
             office::plan_flats(seed, self.size, self.floors)
         } else if self.usage == BuildingUse::House {
             office::plan_villa(seed, self.size)

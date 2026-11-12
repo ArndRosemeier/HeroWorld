@@ -2894,7 +2894,24 @@ fn fire_escape(c: &mut Ctx, level: usize) {
     if lines.len() < 4 {
         return;
     }
-    let k = (lines.len() - 1) / 2 - 1;
+    // The pair of bays nearest the middle that no way in or out stands under:
+    // the drop ladder must not hang in front of a door.
+    let ways: Vec<(f64, f64)> = plan.floors[0]
+        .doors
+        .iter()
+        .filter(|d| d.b.is_none() && d.along_x)
+        .map(|d| (d.at.x - d.size.x * 0.5 - 0.4, d.at.x + d.size.x * 0.5 + 0.4))
+        .collect();
+    let mid = (lines.len() - 1) / 2 - 1;
+    let Some(k) = (0..lines.len() - 2)
+        .filter(|&k| {
+            ways.iter()
+                .all(|&(a, b)| lines[k + 2] - 0.2 <= a || lines[k] + 0.2 >= b)
+        })
+        .min_by_key(|&k| k.abs_diff(mid))
+    else {
+        return;
+    };
     let (t0, t1) = (lines[k] + 0.2, lines[k + 2] - 0.2);
     let w = Wall {
         side: Side::Front,

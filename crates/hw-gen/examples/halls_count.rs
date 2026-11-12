@@ -20,6 +20,11 @@ fn main() {
         for b in &q.buildings {
             match b.site.layout() {
                 Some(l) => {
+                    if b.site.usage == hw_gen::building::BuildingUse::Lab {
+                        *plain
+                            .entry(format!("LAB of halls {:?}", l.scheme))
+                            .or_default() += 1;
+                    }
                     if !l.problems().is_empty() {
                         println!("PROBLEM {:?} {}: {:?}", l.scheme, b.site.size, l.problems());
                     }
