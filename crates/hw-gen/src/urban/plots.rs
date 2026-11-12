@@ -72,6 +72,10 @@ fn flat_block(prog: &Programme, usage: BuildingUse) -> bool {
 /// (`office::MIN_ROW`).
 const ROW: ((f64, f64), (f64, f64)) = ((23.0, 30.0), (16.0, 19.0));
 
+/// A loft house's plot: what is left where nothing bigger fits
+/// (`office::MIN_LOFT`).
+const LOFT: ((f64, f64), (f64, f64)) = ((12.0, 17.0), (8.5, 11.0));
+
 /// Is this use planned as halls here (an office building, an apartment
 /// block or an old-town house)?
 fn of_halls(prog: &Programme, usage: BuildingUse) -> bool {
@@ -89,6 +93,8 @@ enum Plot {
     Block,
     /// A wide, shallow house of flats or a family's house ([`ROW`]).
     Row,
+    /// A loft house ([`LOFT`]).
+    Loft,
     /// An office building ([`GRAND`]).
     Grand,
 }
@@ -616,9 +622,12 @@ fn fill_block(
                 // (A lab that has no room for its great halls is a small
                 // one: a hall on the street with rooms above.)
                 (wanted == BuildingUse::Lab).then_some((wanted, Plot::House)),
+                // (A family's house on a small plot is a loft house.)
+                (wanted == BuildingUse::House).then_some((wanted, Plot::Loft)),
                 home(Plot::Block).filter(|_| !prog.lanes),
                 home(Plot::House),
                 home(Plot::Row),
+                home(Plot::Loft),
                 last.filter(|_| best != Plot::Plain)
                     .map(|u| (u, Plot::Plain)),
             ];
@@ -630,16 +639,29 @@ fn fill_block(
             let tries: Vec<(BuildingUse, Plot)> = tries.into_iter().flatten().collect();
             let roomy = |p: &&(BuildingUse, Plot)| p.1 != Plot::Plain;
             // (The wanted building before the homes that stand in for it.)
-            let lead = if wanted == BuildingUse::Lab { 2 } else { 1 };
+            let lead = if matches!(wanted, BuildingUse::Lab | BuildingUse::House) {
+                2
+            } else {
+                1
+            };
+            // (A loft house only where no bigger home fits either way.)
+            let rest = |loft: bool| {
+                tries
+                    .iter()
+                    .skip(lead)
+                    .filter(move |p| p.1 != Plot::Plain && (p.1 == Plot::Loft) == loft)
+            };
             let order = (tries.iter().take(lead).filter(roomy))
                 .flat_map(|t| [(*t, false), (*t, true)])
-                .chain(tries.iter().skip(lead).filter(roomy).map(|t| (*t, false)))
-                .chain(tries.iter().skip(lead).filter(roomy).map(|t| (*t, true)))
+                .chain(rest(false).map(|t| (*t, false)))
+                .chain(rest(false).map(|t| (*t, true)))
+                .chain(rest(true).flat_map(|t| [(*t, false), (*t, true)]))
                 .chain(tries.iter().filter(|p| !roomy(p)).map(|t| (*t, false)));
             for ((usage, plot), whole) in order {
                 let house = plot == Plot::House;
                 let flats = plot == Plot::Block;
                 let row = plot == Plot::Row;
+                let loft = plot == Plot::Loft;
                 let big = plot != Plot::Plain;
                 let (wr, dr) = if house {
                     let least = if usage == flat {
@@ -652,6 +674,8 @@ fn fill_block(
                     BLOCK
                 } else if row {
                     ROW
+                } else if loft {
+                    LOFT
                 } else if big {
                     (
                         (prog.width.0.max(GRAND.0 .0), prog.width.1.max(GRAND.0 .1)),
@@ -668,6 +692,8 @@ fn fill_block(
                     (office::MIN_BLOCK.x, office::MIN_BLOCK.y)
                 } else if row {
                     (office::MIN_ROW.x, office::MIN_ROW.y)
+                } else if loft {
+                    (office::MIN_LOFT.x, office::MIN_LOFT.y)
                 } else if big {
                     (office::MIN_SIZE.x, office::MIN_SIZE.y)
                 } else {
@@ -783,6 +809,8 @@ fn fill_block(
                             let storeys = (site.height() / 4.6).round() as u32;
                             let most = if usage == BuildingUse::House { 2 } else { 5 };
                             site.into_halls(storeys.clamp(2, most))
+                        } else if loft {
+                            site.into_halls(2)
                         } else if big {
                             let storeys = (site.height() / 6.3).round() as u32;
                             site.into_halls(storeys.clamp(2, 16))
@@ -903,7 +931,13 @@ mod tests {
                 let streets = plan_piece(Seed(s), &town, pc);
                 let b = plan_buildings(Seed(s), &town, i, pc, &streets);
                 for site in &b {
-                    assert!(site.size.x >= MIN_WIDTH - 1e-9 && site.size.y >= MIN_DEPTH - 1e-9);
+                    // (A house of halls has its own least size: a loft house's.)
+                    let least = if site.halls.is_some() {
+                        office::MIN_LOFT
+                    } else {
+                        DVec2::new(MIN_WIDTH, MIN_DEPTH)
+                    };
+                    assert!(site.size.x >= least.x - 1e-9 && site.size.y >= least.y - 1e-9);
                     // Every building stands on dry land inside the piece.
                     let c = site.origin
                         + site.along * site.size.x * 0.5

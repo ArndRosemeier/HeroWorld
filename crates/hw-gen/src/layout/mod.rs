@@ -408,6 +408,10 @@ pub enum Scheme {
     /// the living room and kitchen on the ground floor, an upper hall and
     /// the bedrooms above.
     Villa,
+    /// A small house for a plot no stairwell fits on: a living room two
+    /// storeys high, a straight flight along its back wall, and a bedroom
+    /// gallery over the kitchen at the other end.
+    Loft,
 }
 
 impl Scheme {
@@ -415,7 +419,7 @@ impl Scheme {
     pub fn homes(self) -> bool {
         matches!(
             self,
-            Self::Flats | Self::Block | Self::Terrace | Self::Villa
+            Self::Flats | Self::Block | Self::Terrace | Self::Villa | Self::Loft
         )
     }
 }

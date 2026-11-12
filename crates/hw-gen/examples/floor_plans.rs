@@ -34,6 +34,7 @@ fn main() {
                 "block" => Some(Scheme::Block),
                 "terrace" => Some(Scheme::Terrace),
                 "villa" => Some(Scheme::Villa),
+                "loft" => Some(Scheme::Loft),
                 _ => None,
             });
             jobs.push((seed as u64, w, d, st as u32, scheme));
@@ -125,6 +126,7 @@ fn scheme_name(s: Scheme) -> &'static str {
         Scheme::Block => "Block",
         Scheme::Terrace => "Terrace",
         Scheme::Villa => "Villa",
+        Scheme::Loft => "Loft",
     }
 }
 

@@ -313,3 +313,31 @@ fn terraces_and_villas_are_sound() {
         }
     }
 }
+
+/// A loft house fits every plot from its least size up: one tall living
+/// room, a kitchen under a bedroom gallery, and a way up to it.
+#[test]
+fn loft_houses_fit_small_plots() {
+    use super::office::{plan_loft, MIN_LOFT};
+    for k in 0..300u64 {
+        let size = DVec2::new(
+            MIN_LOFT.x + (k % 23) as f64 * 0.5,
+            MIN_LOFT.y + (k % 16) as f64 * 0.5,
+        );
+        let l = plan_loft(Seed(1500 + k), size);
+        assert_eq!(l.scheme, Scheme::Loft, "{k} {size:?}");
+        assert!(l.problems().is_empty(), "{k} {size:?}: {:?}", l.problems());
+        assert_eq!(l.levels().len(), 2, "{k}");
+        let living = l
+            .spaces
+            .iter()
+            .find(|s| s.kind == SpaceKind::Living)
+            .expect("a living room");
+        assert!(
+            living.h >= 7.5,
+            "{k}: the living room is {} m high",
+            living.h
+        );
+        assert!(living.rect.size().min_element() >= 8.5, "{k}");
+    }
+}

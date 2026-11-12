@@ -59,7 +59,8 @@ pub fn name(l: &Landmark) -> &'static str {
         | Scheme::Flats
         | Scheme::Block
         | Scheme::Terrace
-        | Scheme::Villa => "Zenith Radio house",
+        | Scheme::Villa
+        | Scheme::Loft => "Zenith Radio house",
     }
 }
 

@@ -48,6 +48,7 @@ fn scheme_key(s: Scheme) -> u8 {
         Scheme::Block => 5,
         Scheme::Terrace => 6,
         Scheme::Villa => 7,
+        Scheme::Loft => 8,
     }
 }
 

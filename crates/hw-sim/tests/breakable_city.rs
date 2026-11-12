@@ -105,7 +105,7 @@ fn small_building(t: &GeneratedTown) -> u64 {
             plan.layout.is_none()
                 && plan.floors.len() <= 3
                 && destruction::material_factor(&plan) <= 1.1
-                && b.base - b.low < 0.3
+                && b.base - b.low < 0.5
         })
         .min_by(|&a, &b| {
             let d = |i| DVec2::new(centre(t, i).0.x, centre(t, i).0.z).distance(spawn);

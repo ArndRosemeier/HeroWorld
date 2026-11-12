@@ -1265,6 +1265,21 @@ impl Obstacles {
         })
     }
 
+    /// Is a ground point within `margin` of a building of halls' footprint?
+    /// (Their ground floors never break: nothing ploughs through them.)
+    pub fn in_halls(&self, q: DVec2, margin: f64) -> bool {
+        self.near_colliders(q, margin).into_iter().any(|(_, c)| {
+            let Some(plan) = c.plan() else { return false };
+            if plan.layout.is_none() {
+                return false;
+            }
+            let s = &plan.site;
+            let d = q - s.origin;
+            let l = DVec2::new(d.dot(s.along), d.dot(s.inward));
+            l.x >= -margin && l.y >= -margin && l.x <= s.size.x + margin && l.y <= s.size.y + margin
+        })
+    }
+
     /// The building and floor a point is in, if any.
     pub fn inside(&self, p: DVec3) -> Option<Inside> {
         let q = DVec2::new(p.x, p.z);

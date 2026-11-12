@@ -183,6 +183,12 @@ pub struct Lance {
     pub done: f64,
 }
 
+/// How far the tank's middle keeps from a building of halls (m).
+const HALLS_CLEAR: f64 = 3.0;
+/// How long it keeps to the streets after such a building stood in its
+/// way (s).
+const ROUND_SECONDS: f64 = 20.0;
+
 /// The walking tank's own state.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Colossus {
@@ -223,6 +229,10 @@ pub struct Colossus {
     pub drop: u8,
     /// The team it was sized for.
     pub heroes: u8,
+    /// Walking round a building of halls: which side (-1, 1; 0 not), and
+    /// when its wall was last in the way.
+    pub skirt: i8,
+    pub skirt_at: u64,
 }
 
 impl Colossus {
@@ -847,7 +857,10 @@ fn colossus(
         let mut to = flat(here, goal);
         let mut far = !near;
         // Out of sight, along the streets.
-        let streets = streets.filter(|s| !s.is_empty() && !seen);
+        // (And for a while after a building of halls stood in its way:
+        // the streets lead round the block.)
+        let walled = c.skirt != 0 && tick < c.skirt_at + ticks(ROUND_SECONDS);
+        let streets = streets.filter(|s| !s.is_empty() && (!seen || walled));
         if let Some(streets) = streets {
             let at = DVec2::new(here.x, here.z);
             let stale = tick >= route.0 + ticks(REPLAN);
@@ -898,6 +911,50 @@ fn colossus(
         }
     }
     let mut pos = here + vel * DT;
+    // A building of halls stands: its ground floor does not break, so the
+    // tank walks round it (and rams what breaks above) rather than wading
+    // in, where its core could not be seen or hit. (One that is in such a
+    // house already walks out as it likes.)
+    let plan_at = |p: DVec3| DVec2::new(p.x, p.z);
+    let shut = |p: DVec3| solids.in_halls(plan_at(p), HALLS_CLEAR);
+    // (It looks a metre ahead, so it does not walk into the wall and back.)
+    let ahead = |v: DVec3| here + v.normalize_or_zero();
+    if vel != DVec3::ZERO && (shut(pos) || shut(ahead(vel))) && !shut(here) {
+        // Along the wall instead, to the side that is open (the same side
+        // for as long as the wall lasts), and round the house's corner.
+        let speed = vel.length();
+        let f = vel / speed;
+        let side = |s: f64| DVec3::new(f.z * s, 0.0, -f.x * s);
+        if c.skirt == 0 || tick > c.skirt_at + ticks(2.0) {
+            c.skirt = if shut(here + side(1.0) * 6.0) && !shut(here + side(-1.0) * 6.0) {
+                -1
+            } else {
+                1
+            };
+        }
+        c.skirt_at = tick;
+        let tangent = side(f64::from(c.skirt));
+        let slide = if shut(here + tangent * speed * DT) {
+            (tangent - f * 0.3).normalize()
+        } else {
+            tangent
+        };
+        let along = here + slide * speed * DT;
+        if shut(along) {
+            // A corner between two houses: back the other way.
+            c.skirt = -c.skirt;
+            pos = here;
+            vel = DVec3::ZERO;
+        } else {
+            pos = along;
+            vel = slide * speed;
+        }
+        if charging {
+            charging = false;
+            c.charge = None;
+            c.next_charge = tick + ticks(pick(CHARGE_EVERY));
+        }
+    }
     pos.y = ground_of(pos);
     actors[i].body = Body {
         pos,

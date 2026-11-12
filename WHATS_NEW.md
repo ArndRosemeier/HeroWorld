@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.233 (2026-11-12)
+
+- Loft houses: on the small plots where no bigger home fits, a house with a living room two storeys high now stands, with steps along its back wall up to a bedroom gallery over the kitchen. Almost no cramped homes of the old kind are left (about 45 in a town of 20,000, from 1,150).
+- The Doctor's colossus no longer wades into a house of halls, where its core was hidden and could not be hit: it rams what breaks above and walks round the house, by the streets if it must.
+- Towns are built anew for this version.
 ## 0.232 (2026-11-12)
 
 - Smoother while flying over town and on busy streets: the threads that build the town now step aside for the frame, the street traffic no longer waits for a free core each frame, and the bounced light is no longer worked out again every time something appears in the distance (Engine 0.065).

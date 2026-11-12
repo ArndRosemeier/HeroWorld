@@ -25,6 +25,9 @@ pub const MIN_BLOCK: DVec2 = DVec2::new(30.0, 28.0);
 /// The least plot of a wide, shallow house (flats or a family's house):
 /// the stair (8.5 m) at one end, a living room and a column of rooms.
 pub const MIN_ROW: DVec2 = DVec2::new(23.0, 16.0);
+/// The least plot of a loft house: a living room two storeys high with
+/// its stair along the back wall, and a kitchen under a bedroom gallery.
+pub const MIN_LOFT: DVec2 = DVec2::new(12.0, 8.5);
 /// How deep the landing between a block's two flats is.
 const LANDING: f64 = 6.0;
 const GALLERY: f64 = 5.0;
@@ -66,6 +69,9 @@ pub fn plan_flats(seed: Seed, size: DVec2, storeys: u32) -> Layout {
             return l;
         }
     }
+    if (size.x < MIN_ROW.x && size.y < MIN_FLATS.y) || size.y < MIN_ROW.y {
+        return plan_loft(seed, size);
+    }
     if size.y < MIN_FLATS.y {
         return row(seed, size.max(MIN_ROW), storeys.max(2), false)
             .expect("a terrace fits every plot of at least MIN_ROW");
@@ -76,7 +82,15 @@ pub fn plan_flats(seed: Seed, size: DVec2, storeys: u32) -> Layout {
 
 /// Plans a family's house (two storeys) on a plot of at least [`MIN_ROW`].
 pub fn plan_villa(seed: Seed, size: DVec2) -> Layout {
+    if size.x < MIN_ROW.x || size.y < MIN_ROW.y {
+        return plan_loft(seed, size);
+    }
     row(seed, size.max(MIN_ROW), 2, true).expect("a villa fits every plot of at least MIN_ROW")
+}
+
+/// Plans a loft house (two storeys) on a plot of at least [`MIN_LOFT`].
+pub fn plan_loft(seed: Seed, size: DVec2) -> Layout {
+    loft(seed, size.max(MIN_LOFT)).expect("a loft house fits every plot of at least MIN_LOFT")
 }
 
 /// Plans an office building in one scheme, if it fits.
@@ -86,6 +100,7 @@ pub fn plan_scheme(seed: Seed, size: DVec2, storeys: u32, scheme: Scheme) -> Opt
         Scheme::Flats => MIN_FLATS,
         Scheme::Block => MIN_BLOCK,
         Scheme::Terrace | Scheme::Villa => MIN_ROW,
+        Scheme::Loft => MIN_LOFT,
         _ => MIN_SIZE,
     };
     if size.x < least.x || size.y < least.y || storeys < 2 {
@@ -100,6 +115,7 @@ pub fn plan_scheme(seed: Seed, size: DVec2, storeys: u32, scheme: Scheme) -> Opt
         Scheme::Block => apartment_block(seed, size, storeys),
         Scheme::Terrace => row(seed, size, storeys, false),
         Scheme::Villa => row(seed, size, 2, true),
+        Scheme::Loft => loft(seed, size),
     }
 }
 
@@ -1177,6 +1193,78 @@ fn row(seed: Seed, size: DVec2, n: u32, family: bool) -> Option<Layout> {
         Scheme::Terrace
     };
     Some(b.finish(scheme, size))
+}
+
+/// A loft house (see [`Scheme::Loft`]): for plots too small for any
+/// stairwell. The living room at one end is two storeys high; a straight
+/// flight climbs along its back wall to a bedroom gallery at the other
+/// end, over the kitchen.
+fn loft(seed: Seed, size: DVec2) -> Option<Layout> {
+    let (w, d) = (size.x, size.y);
+    if w < MIN_LOFT.x || d < MIN_LOFT.y {
+        return None;
+    }
+    let mut rng = seed.child("loft").rng();
+    // (A higher ground floor needs a longer flight: only in a wider house.)
+    let h0 = if w >= 13.5 {
+        *rng.pick(&[4.0, 4.0, 4.5])
+    } else {
+        4.0
+    };
+    let h1 = *rng.pick(&[3.5, 4.0, 4.0, 4.5]);
+    let (n, rise) = super::stairs::risers(h0);
+    let run = Flight::run(n);
+    // Where the gallery's edge is, from the living room's end of the
+    // house: the flight and 2.3 m at its foot before it, 3 to 6.5 m of
+    // kitchen and bedroom behind it.
+    let least = ((run + 2.3) * 2.0).ceil() * 0.5;
+    let most = w - 3.0;
+    if most < least {
+        return None;
+    }
+    let wide: Vec<f64> = [w - 6.5, w - 5.5, w - 4.5, w - 3.5]
+        .into_iter()
+        .map(snap)
+        .filter(|x| *x >= least && *x <= most)
+        .collect();
+    let xa = if wide.is_empty() {
+        least
+    } else {
+        *rng.pick(&wide)
+    };
+    let left = rng.chance(0.5);
+    let fx = |t: f64| if left { t } else { w - t };
+    let across =
+        |a: f64, c: f64, z0: f64, z1: f64| rect(fx(a).min(fx(c)), z0, fx(a).max(fx(c)), z1);
+    let mut b = Builder::default();
+    let living = b.space(SpaceKind::Living, across(0.0, xa, 0.0, d), 0.0, h0 + h1);
+    let kitchen = b.space(SpaceKind::Kitchen, across(xa, w, 0.0, d), 0.0, h0);
+    let bedroom = b.space(SpaceKind::Bedroom, across(xa, w, 0.0, d), h0, h1);
+    b.entrance(living, snap(fx(xa * 0.5)), DOUBLE);
+    // The kitchen under the gallery: open to the room, or behind doors.
+    if rng.chance(0.6) {
+        b.edge(living, kitchen, LinkKind::Open, 0.0);
+    } else {
+        b.door(living, kitchen, LinkKind::Double, 0.0, DOUBLE);
+    }
+    // The flight along the back wall, arriving on the gallery's edge.
+    let fw = 1.8;
+    let (z0, z1) = (d - 0.2 - fw, d - 0.2);
+    let dir = if left { DVec2::X } else { DVec2::NEG_X };
+    b.stairs.push(Stair {
+        kind: StairKind::Straight,
+        host: living,
+        flights: vec![Flight::Straight {
+            from: DVec3::new(fx(xa - run), 0.0, (z0 + z1) * 0.5),
+            dir,
+            width: fw,
+            risers: n,
+            rise,
+        }],
+        landings: Vec::new(),
+    });
+    rail_except(&mut b, living, bedroom, h0, vec![(z0, z1)]);
+    Some(b.finish(Scheme::Loft, size))
 }
 
 /// Front and back blocks half a storey apart. Between them a canyon as
