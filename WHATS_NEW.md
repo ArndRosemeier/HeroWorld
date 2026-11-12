@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.229 (2026-11-12)
+
+- Fewer short stutters in town: the street traffic's driving step, ten times a second, is now shared out over the processor's cores instead of holding one frame for 4 to 8 ms.
+
 ## 0.228 (2026-11-12)
 
 - Fewer cramped houses: where an office building does not fit, a roomy house of flats goes there now instead of a small old one, and the houses along the two streets of a block share its depth, so both rows get room. About a third fewer homes of the old, small kind.

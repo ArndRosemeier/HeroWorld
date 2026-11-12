@@ -242,6 +242,11 @@ const STANDSTILL: f64 = 2.0;
 /// Further behind than this (s), the cars are put where they would be
 /// without junctions instead of being driven there.
 const CATCH_UP: f64 = 120.0;
+/// A step is shared out over at most this many threads, and only with
+/// this many cars or more for each (below that starting a thread costs
+/// more than it saves).
+const STEP_THREADS: usize = 8;
+const STEP_CARS_PER_THREAD: usize = 400;
 
 /// What a vehicle is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1100,8 +1105,65 @@ impl Traffic {
                 o
             })
             .collect();
-        let mut next: Vec<Vec<Car>> = Vec::with_capacity(old.len());
-        for (li, cars) in old.iter().enumerate() {
+        let next = self.step_lanes(&order);
+        self.prev = std::mem::replace(&mut self.cars, next);
+        self.time += STEP;
+    }
+
+    /// Every lane's cars after one step. A lane's new cars depend only on
+    /// the cars as they are now, never on another lane's new ones, so the
+    /// lanes are shared out over the machine's cores; each lane's result is
+    /// the same whichever thread worked it out, and they are put back in
+    /// lane order.
+    fn step_lanes(&self, order: &[Vec<(f64, usize)>]) -> Vec<Vec<Car>> {
+        let cars: usize = self.cars.iter().map(Vec::len).sum();
+        let threads = std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .min(STEP_THREADS)
+            .min(cars / STEP_CARS_PER_THREAD)
+            .max(1);
+        self.step_lanes_on(order, threads)
+    }
+
+    /// [`Self::step_lanes`] on `threads` threads.
+    fn step_lanes_on(&self, order: &[Vec<(f64, usize)>], threads: usize) -> Vec<Vec<Car>> {
+        let lanes = self.cars.len();
+        if threads <= 1 {
+            return (0..lanes).map(|li| self.step_lane(order, li)).collect();
+        }
+        // Each thread takes the next lane nobody has taken yet.
+        let taken = std::sync::atomic::AtomicUsize::new(0);
+        let work = || {
+            let mut done = Vec::new();
+            loop {
+                let li = taken.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if li >= lanes {
+                    return done;
+                }
+                done.push((li, self.step_lane(order, li)));
+            }
+        };
+        let mut next: Vec<Vec<Car>> = vec![Vec::new(); lanes];
+        std::thread::scope(|scope| {
+            let others: Vec<_> = (1..threads).map(|_| scope.spawn(work)).collect();
+            let mut done = work();
+            for t in others {
+                match t.join() {
+                    Ok(more) => done.extend(more),
+                    Err(panic) => std::panic::resume_unwind(panic),
+                }
+            }
+            for (li, cars) in done {
+                next[li] = cars;
+            }
+        });
+        next
+    }
+
+    /// Lane `li`'s cars after one step.
+    fn step_lane(&self, order: &[Vec<(f64, usize)>], li: usize) -> Vec<Car> {
+        let cars = &self.cars[li];
+        {
             let l = &self.ground[li];
             let len = l.path.len();
             let n = cars.len();
@@ -1143,7 +1205,7 @@ impl Traffic {
                     }
                 }
                 // A crossing ahead someone else has: stop before it.
-                if let Some(stop) = self.give_way(&order, li as u32, k, c, (gap, lead_v), half) {
+                if let Some(stop) = self.give_way(order, li as u32, k, c, (gap, lead_v), half) {
                     if stop < gap {
                         gap = stop;
                         lead_v = 0.0;
@@ -1183,10 +1245,8 @@ impl Traffic {
                     left,
                 });
             }
-            next.push(out);
+            out
         }
-        self.prev = std::mem::replace(&mut self.cars, next);
-        self.time += STEP;
     }
 
     /// How far ahead of a car at `s` on lane `li` the nearest hold is.
@@ -2296,6 +2356,37 @@ mod tests {
         assert_eq!(na.len(), nc.len());
         for (x, y) in na.iter().zip(&nc) {
             assert!(x.pos.distance(y.pos) < 0.05, "{} drifted", x.id);
+        }
+    }
+
+    /// A step shared out over threads gives exactly the cars a step on one
+    /// thread gives (machines with different core counts play together).
+    #[test]
+    fn a_step_on_many_threads_is_the_step_on_one() {
+        let mut t = traffic();
+        t.advance_to(30.0);
+        for _ in 0..20 {
+            let order: Vec<Vec<(f64, usize)>> = t
+                .cars
+                .iter()
+                .enumerate()
+                .map(|(i, cars)| {
+                    let len = t.ground[i].path.len();
+                    let mut o: Vec<(f64, usize)> = cars
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, c)| !c.parked)
+                        .map(|(k, c)| (c.s.rem_euclid(len), k))
+                        .collect();
+                    o.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+                    o
+                })
+                .collect();
+            let one: Vec<Vec<Car>> = (0..t.cars.len())
+                .map(|li| t.step_lane(&order, li))
+                .collect();
+            assert_eq!(t.step_lanes_on(&order, 4), one);
+            t.step();
         }
     }
 }
