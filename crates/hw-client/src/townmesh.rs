@@ -86,10 +86,12 @@ impl WorldGenerator for TownGround {
         crate::deepview::density(self.world(), p, ground)
     }
 
+    /// Every water surface of the town stands at [`WATER_LEVEL`], so Engine's
+    /// calm far water at that height is the town's water to the horizon: the
+    /// open sea of a coast, and wherever the ground dips below it, the rivers
+    /// and lakes (a flat plane that the land hides).
     fn sea(&self) -> Option<engine::water::Sea> {
-        self.world()
-            .coastal()
-            .then(|| engine::water::Sea::calm(WATER_LEVEL as f32))
+        Some(engine::water::Sea::calm(WATER_LEVEL as f32))
     }
 
     fn water_level(&self, _x: f32, _z: f32) -> Option<f32> {
@@ -97,11 +99,11 @@ impl WorldGenerator for TownGround {
         Some(WATER_LEVEL as f32)
     }
 
-    /// Engine's water fills a window around the camera and draws the sea to
-    /// the horizon: a coastal town uses it for all its water. Inland, the
-    /// rivers and lakes are drawn by [`TownView`] across the whole town.
+    /// Engine's water fills a window around the camera (simulated, with
+    /// flow, waves, foam and refraction) and draws the rest to the horizon:
+    /// all the town's water, rivers and lakes included.
     fn has_water(&self) -> bool {
-        self.world().coastal()
+        true
     }
 }
 
@@ -301,7 +303,6 @@ struct CellMeshes {
     /// Full-detail cells: each block's box, full and far drawing.
     blocks: Vec<BlockMeshes>,
     lawns: Vec<PreparedMesh>,
-    water: Option<PreparedMesh>,
     /// Plans the worker had to make, for the cache.
     plans: Vec<(u64, Arc<BuildingPlan>)>,
     /// Places to stand on the floors drawn open: building, floor, places.
@@ -418,7 +419,7 @@ impl Drop for Workers {
     }
 }
 
-/// Draws one cell: roads, buildings, lawns and inland water. Pure, so it
+/// Draws one cell: roads, buildings and lawns. Pure, so it
 /// runs on any thread.
 fn make_cell(job: CellJob) -> CellMeshes {
     let CellJob {
@@ -603,12 +604,6 @@ fn make_cell(job: CellJob) -> CellMeshes {
     } else {
         crate::lawnmesh::lawn(&world, &green, lo, hi, step)
     };
-    // Inland water (a coastal town's comes from Engine's sea).
-    let water = if world.coastal() {
-        None
-    } else {
-        water_mesh(&world, k)
-    };
     CellMeshes {
         key: k,
         stamp,
@@ -616,7 +611,6 @@ fn make_cell(job: CellJob) -> CellMeshes {
         solid: solid.into_iter().map(Mesh::prepare).collect(),
         blocks,
         lawns: lawns.into_iter().map(Mesh::prepare).collect(),
-        water: water.map(Mesh::prepare),
         plans,
         spots,
         doors,
@@ -1252,7 +1246,7 @@ impl TownView {
     /// Takes a finished cell to put in over the next frames.
     fn start_placing(&mut self, m: CellMeshes) {
         debug_assert!(self.placing.is_none(), "one cell is placed at a time");
-        let (meshes, blocks) = cell_parts(m.solid, m.blocks, m.lawns, m.water);
+        let (meshes, blocks) = cell_parts(m.solid, m.blocks, m.lawns);
         let mut meshes = meshes;
         // Spawned from the end: keep the order the cell listed them in.
         meshes.reverse();
@@ -1354,7 +1348,7 @@ impl TownView {
             self.spots.insert(k, m.spots);
         }
         self.set_doors(k, m.doors);
-        let (meshes, blocks) = cell_parts(m.solid, m.blocks, m.lawns, m.water);
+        let (meshes, blocks) = cell_parts(m.solid, m.blocks, m.lawns);
         let spawned = meshes
             .into_iter()
             .map(|(mesh, part)| (spawn_part(world, mesh, part, k), part))
@@ -1453,7 +1447,6 @@ fn cell_parts(
     solid: Vec<PreparedMesh>,
     blocks: Vec<BlockMeshes>,
     lawns: Vec<PreparedMesh>,
-    water: Option<PreparedMesh>,
 ) -> (Vec<(PreparedMesh, Part)>, Vec<(DVec2, DVec2)>) {
     let mut meshes: Vec<(PreparedMesh, Part)> = Vec::new();
     let mut boxes = Vec::with_capacity(blocks.len());
@@ -1464,7 +1457,6 @@ fn cell_parts(
         meshes.extend(b.far.into_iter().map(|m| (m, Part::Far(i))));
     }
     meshes.extend(lawns.into_iter().map(|m| (m, Part::Flat)));
-    meshes.extend(water.into_iter().map(|m| (m, Part::Solid)));
     (meshes, boxes)
 }
 
@@ -1477,59 +1469,6 @@ fn spawn_part(world: &mut World, mesh: PreparedMesh, part: Part, k: CellKey) -> 
     }
     world.set_name(id, format!("town cell {} {}", k.0, k.1));
     id
-}
-
-/// Flat water over the rivers and lakes of one cell: a square per land-grid
-/// cell that is under water or next to it, cut off where the banks rise.
-fn water_mesh(w: &TownWorld, k: CellKey) -> Option<Mesh> {
-    let g = &w.town.land.height;
-    let (lo, hi) = (
-        DVec2::new(k.0 as f64, k.1 as f64) * CELL,
-        DVec2::new(k.0 as f64 + 1.0, k.1 as f64 + 1.0) * CELL,
-    );
-    let wet = |i: i64, j: i64| {
-        i >= 0
-            && j >= 0
-            && (i as usize) < g.w
-            && (j as usize) < g.h
-            && w.ground(g.center(i as usize, j as usize)) < WATER_LEVEL
-    };
-    let mut b = MeshBuilder::new();
-    // Smooth and reflective, like still water.
-    b.surf = crate::citymesh::Surf::Glass;
-    let i0 = ((lo.x - g.origin.x) / g.cell).floor() as i64;
-    let i1 = ((hi.x - g.origin.x) / g.cell).ceil() as i64;
-    let j0 = ((lo.y - g.origin.y) / g.cell).floor() as i64;
-    let j1 = ((hi.y - g.origin.y) / g.cell).ceil() as i64;
-    let y = WATER_LEVEL - 0.05;
-    for j in j0..j1 {
-        for i in i0..i1 {
-            let near = (-1..=1).any(|dj| (-1..=1).any(|di| wet(i + di, j + dj)));
-            if !near {
-                continue;
-            }
-            // Each grid square belongs to the cell holding its centre.
-            let c = g.origin + DVec2::new(i as f64 + 0.5, j as f64 + 0.5) * g.cell;
-            if cell_of(c) != k {
-                continue;
-            }
-            let (a, z) = (
-                c - DVec2::splat(g.cell * 0.5),
-                c + DVec2::splat(g.cell * 0.5),
-            );
-            b.quad(
-                [
-                    DVec3::new(a.x, y, a.y),
-                    DVec3::new(z.x, y, a.y),
-                    DVec3::new(z.x, y, z.y),
-                    DVec3::new(a.x, y, z.y),
-                ],
-                DVec3::Y,
-                rgb(46, 92, 112),
-            );
-        }
-    }
-    (!b.is_empty()).then(|| b.finish())
 }
 
 /// What [`TownView::room_lamps`] were picked for.

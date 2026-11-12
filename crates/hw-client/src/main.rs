@@ -5215,6 +5215,18 @@ fn main() -> EngineResult<()> {
                 v.flush(world)?;
             }
             hw_client::hitch::mark("waterfront");
+            // Engine's water: a coast's open sea, or the clear green-blue of the
+            // town's rivers and lakes (the silty river look reads as black from above).
+            if let Some(w) = world.water_mut() {
+                let look = if town.world.coastal() {
+                    engine::water::WaterLook::ocean()
+                } else {
+                    engine::water::WaterLook::lake()
+                };
+                if *w.look() != look {
+                    w.set_look(look);
+                }
+            }
             if let Some(w) = extras.waterfront.as_mut() {
                 w.update(world, DVec2::new(eye.x as f64, eye.z as f64), true);
             }

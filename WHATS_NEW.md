@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.254 (2026-11-12)
+
+- Rivers, canals and lakes are real water now: little waves, reflections of the sky and the buildings, light patterns on the river bed and a clear green-blue colour, instead of a flat shiny sheet. A hero standing in a river wades in it.
+
 ## 0.253 (2026-11-12)
 
 - Behind the scenes: the crowd stress tests now count work (searches and acting villains per tick) instead of timing it, so they no longer fail by chance.

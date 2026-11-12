@@ -1091,7 +1091,7 @@ between them) is designed but not built; the town stands in endless streamed gro
   doors are remembered (in collision, the save, and for players who join). Behind an open
   street door of a building you are not in, a small lit hall shows. View:
   `HW_VIEW=door HW_DOOR=front|glass|inner [HW_DOOR_OPEN=1] [HW_DOOR_SKIP=n]`.
-- **Water:** rivers, lakes and coasts; bridges; granite quays with bollards and steps down
+- **Water:** rivers, lakes and coasts, all drawn by Engine's water (a simulated window around the hero, 1.5 km wide in 4 m cells, with waves, reflections, foam and caustics, and a flat far plane at `WATER_LEVEL` to the horizon, since 0.254; the clear lake look inland, the ocean look on coasts); bridges; granite quays with bollards and steps down
   to the water. Water is a surface you stand on at its level; quay walls block (fly out).
 - **Landmarks:** the **Aether Spire** (every town, on a raised plaza near the old centre,
   with steps; the Hero Signal shines from it), the **lighthouse** (seaside towns), the
