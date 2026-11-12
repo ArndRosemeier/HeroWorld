@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.221 (2026-11-12)
+
+- Fixed the last way the picture could go dark while walking the streets: a character seen through a car's glass could store a colour too bright for the picture, which the street reflections then spread. Every lit surface now stores colours the picture can hold (Engine 0.060)
+
 ## 0.220 (2026-11-12)
 
 - Homes in the old town are roomy now: houses of flats with a house hall on the ground floor and, on every floor above, a big living room, a kitchen to eat in and one or two bedrooms.
