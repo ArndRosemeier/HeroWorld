@@ -174,6 +174,8 @@ pub struct MissionView {
     sparkle: f32,
     /// The things to find, standing in the rooms: by case and clue.
     things: BTreeMap<(u16, usize), EntityId>,
+    /// Counts the glints, to vary where they appear.
+    sparkle_n: u32,
 }
 
 /// The mesh of the thing a gang hides (see `interior::pieces::evidence`).
@@ -393,7 +395,7 @@ impl MissionView {
                 thing_mesh(crime),
                 engine::prelude::Place::new(at.x, at.y + 0.02, at.z)
                     .with_yaw_deg(yaw)
-                    .with_scale(1.35),
+                    .with_scale(1.7),
             ) {
                 self.things.insert(key, e);
             }
@@ -401,6 +403,7 @@ impl MissionView {
         self.sparkle -= dt;
         if self.sparkle <= 0.0 {
             self.sparkle = 0.45;
+            self.sparkle_n = self.sparkle_n.wrapping_add(1);
             // Clues sparkle; hostages are there to see.
             for s in self
                 .cases
@@ -411,9 +414,15 @@ impl MissionView {
                     if *state != DONE {
                         crate::fightview::glow_at(
                             world,
-                            *at + Vec3::Y * 0.7,
-                            rgb(120, 255, 235),
-                            0.35,
+                            // Small glints on the object itself, not a
+                            // bubble round it: it must read as the thing.
+                            *at + Vec3::new(
+                                (self.sparkle_n % 5) as f32 * 0.12 - 0.24,
+                                0.25 + (self.sparkle_n % 3) as f32 * 0.18,
+                                0.0,
+                            ),
+                            rgb(255, 236, 170),
+                            0.07,
                         );
                     }
                 }
