@@ -247,6 +247,8 @@ const CATCH_UP: f64 = 120.0;
 /// more than it saves).
 const STEP_THREADS: usize = 8;
 const STEP_CARS_PER_THREAD: usize = 400;
+/// Lanes handed out together: a lane alone is too little work to hand over.
+const STEP_LANES_AT_ONCE: usize = 8;
 
 /// The threads a step is shared out over: started once and kept, so a
 /// step never waits for a thread to start.
@@ -1149,12 +1151,22 @@ impl Traffic {
         // a core while the town was being built on all of them (up to
         // 181 ms was measured), and the frame waited for the step.
         use rayon::prelude::*;
-        step_pool().install(|| {
+        let step = || -> Vec<Vec<Car>> {
             (0..lanes)
                 .into_par_iter()
+                .with_min_len(STEP_LANES_AT_ONCE)
                 .map(|li| self.step_lane(order, li))
                 .collect()
-        })
+        };
+        if rayon::current_thread_index().is_some() {
+            // Already on a pool's thread (the client steps the traffic on
+            // one of Engine's frame threads, the rest of which are idle
+            // then): share the lanes out there, and this thread works its
+            // share instead of waiting for others to wake.
+            step()
+        } else {
+            step_pool().install(step)
+        }
     }
 
     /// Lane `li`'s cars after one step.
