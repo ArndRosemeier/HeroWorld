@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.239 (2026-11-12)
+
+- Fixed a crash when you change the city size on the title screen (for example from Metropolis to a normal city).
+
 ## 0.238 (2026-11-12)
 
 - The town map fills in at the right detail when you zoom out: the big overview now loads first, and streets stay visible further out.
