@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.243 (2026-11-12)
+
+- The camera no longer pokes through walls and ceilings inside the big halls: it stays in the room with you and only pulls in close when something is behind you.
+
 ## 0.242 (2026-11-12)
 
 - No more running to Atomic Annie for a case: the **police computer** has them. Click the little monitor at the top right (or press Y) to log in; its desktop holds **Crime-o-Vision**, your case files, the crime scanner, the city map and your powers, each with an icon.

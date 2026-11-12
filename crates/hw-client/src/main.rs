@@ -4570,6 +4570,12 @@ fn main() -> EngineResult<()> {
             }
             let open_above = inside.and_then(|i| {
                 let (plan, base) = solids.building(i.building)?;
+                // Buildings of halls are never drawn cut open: their
+                // walls and ceilings are all there, so the camera must
+                // stay clear of every one of them.
+                if plan.layout.is_some() {
+                    return None;
+                }
                 let f = &plan.floors[i.level as usize];
                 Some(base + f.elevation + 2.6)
             });
