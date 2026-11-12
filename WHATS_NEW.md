@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.223 (2026-11-12)
+
+- The picture going dark while walking through town is fixed at its source: a few people had hair and brow points the lighting could not handle. They are now lit correctly (Engine 0.061).
+
 ## 0.222 (2026-11-12)
 
 - Apartment blocks: where a plot is big enough, a block of flats now has a pillared lobby on the street, a wide stair with two lifts at the back, and on every storey above a landing with two big flats (a living room at the street, a kitchen to eat in, one or two bedrooms).
