@@ -243,10 +243,24 @@ const STANDSTILL: f64 = 2.0;
 /// without junctions instead of being driven there.
 const CATCH_UP: f64 = 120.0;
 /// A step is shared out over at most this many threads, and only with
-/// this many cars or more for each (below that starting a thread costs
+/// this many cars or more for each (below that handing lanes out costs
 /// more than it saves).
 const STEP_THREADS: usize = 8;
 const STEP_CARS_PER_THREAD: usize = 400;
+
+/// The threads a step is shared out over: started once and kept, so a
+/// step never waits for a thread to start.
+fn step_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(cores.clamp(1, STEP_THREADS))
+            .thread_name(|i| format!("hw-traffic-step-{i}"))
+            .build()
+            .expect("the traffic step's threads")
+    })
+}
 
 /// What a vehicle is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -1131,33 +1145,16 @@ impl Traffic {
         if threads <= 1 {
             return (0..lanes).map(|li| self.step_lane(order, li)).collect();
         }
-        // Each thread takes the next lane nobody has taken yet.
-        let taken = std::sync::atomic::AtomicUsize::new(0);
-        let work = || {
-            let mut done = Vec::new();
-            loop {
-                let li = taken.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if li >= lanes {
-                    return done;
-                }
-                done.push((li, self.step_lane(order, li)));
-            }
-        };
-        let mut next: Vec<Vec<Car>> = vec![Vec::new(); lanes];
-        std::thread::scope(|scope| {
-            let others: Vec<_> = (1..threads).map(|_| scope.spawn(work)).collect();
-            let mut done = work();
-            for t in others {
-                match t.join() {
-                    Ok(more) => done.extend(more),
-                    Err(panic) => std::panic::resume_unwind(panic),
-                }
-            }
-            for (li, cars) in done {
-                next[li] = cars;
-            }
-        });
-        next
+        // On threads that are kept: started for each step, they waited for
+        // a core while the town was being built on all of them (up to
+        // 181 ms was measured), and the frame waited for the step.
+        use rayon::prelude::*;
+        step_pool().install(|| {
+            (0..lanes)
+                .into_par_iter()
+                .map(|li| self.step_lane(order, li))
+                .collect()
+        })
     }
 
     /// Lane `li`'s cars after one step.

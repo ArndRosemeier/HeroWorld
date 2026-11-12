@@ -56,7 +56,10 @@ file; when they change, re-export the snapshot here.
 - **Work that takes time runs on a worker thread by default** (Arnd's standing rule): generation,
   mesh and texture building, simulation, anything with a loop over many things. The main thread
   only hands finished results to Engine. Keep something on it only for a strong reason, and say
-  why in a comment; never "on the main thread first, move it out later".
+  why in a comment; never "on the main thread first, move it out later". A worker thread that
+  builds things calls `engine::parallel::background_thread()` first thing, so the frame wins the
+  cores; work a frame waits for runs on threads that are kept (`engine::parallel::beside_frame`,
+  a pool), never on a thread started that frame.
 - Measure before and after a speed change: `scripts/bench.sh` (or `bench.bat`; `HW_BENCH=street|flight`,
   see `crates/hw-client/src/bench.rs`) writes frame times and the update's sections to `logs/bench-*.txt`.
 - Warnings are errors. Do not silence a lint or skip a test to get green.

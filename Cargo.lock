@@ -1884,6 +1884,7 @@ dependencies = [
  "hw-core",
  "hw-gen",
  "hw-net",
+ "rayon",
  "serde_json",
  "tungstenite",
 ]

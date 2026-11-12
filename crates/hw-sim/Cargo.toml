@@ -21,6 +21,8 @@ glam = { workspace = true }
 # Only for `engine::physics::PhysicsWorld`: physics without a window or GPU.
 engine = { workspace = true }
 serde_json = { workspace = true }
+# The traffic step's kept threads (the same rayon Engine uses).
+rayon = "1.10"
 
 [dev-dependencies]
 tungstenite = { workspace = true }
