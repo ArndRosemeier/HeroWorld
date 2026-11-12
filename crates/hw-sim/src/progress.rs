@@ -298,9 +298,15 @@ pub fn sanitize(mut s: Sheet) -> Sheet {
     let mine = Tree::of_origin(s.origin);
     let mut kept: Vec<OwnedPower> = Vec::new();
     for p in &s.powers {
-        let Some(d) = powers::get(p.power).filter(|d| !powers::is_free(d.id)) else {
+        let Some(d) = powers::get(p.power) else {
             continue;
         };
+        if powers::is_free(d.id) {
+            // Became free after this hero bought it (Super Jump, Sprint,
+            // 0.251): the karma paid comes back in full.
+            s.karma = s.karma.saturating_add(p.paid);
+            continue;
+        }
         let forked = d.fork != 0
             && kept.iter().any(|o| {
                 let od = powers::def_of(o.power);
@@ -380,9 +386,12 @@ mod tests {
         assert_eq!(can_buy(&s, SONIC), Err(BuyError::Needs(BURST)));
         buy(&mut s, BURST).unwrap();
         buy(&mut s, SONIC).unwrap();
-        // Travel powers are everyone's; Hero's Return needs two of them.
+        // Super Jump and Sprint are free for every hero (and open Glide,
+        // Flight and Super Speed); Hero's Return needs two bought travel
+        // powers.
+        assert_eq!(can_buy(&s, PowerId(2)), Err(BuyError::NotForSale));
         assert_eq!(can_buy(&s, PowerId(8)), Err(BuyError::NeedsMore(2)));
-        buy(&mut s, PowerId(2)).unwrap();
+        buy(&mut s, PowerId(4)).unwrap();
         buy(&mut s, PowerId(5)).unwrap();
         assert!(can_buy(&s, PowerId(8)).is_ok());
         // Wall Run needs Super Jump or Super Speed.

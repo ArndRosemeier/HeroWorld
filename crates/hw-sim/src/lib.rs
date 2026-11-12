@@ -2573,7 +2573,8 @@ mod tests {
         for _ in 0..TICK_HZ * 3 {
             sim.step();
         }
-        let peak = JUMP_SPEED * JUMP_SPEED / (2.0 * GRAVITY);
+        // Every hero has Super Jump, so one jump is a level-1 leap.
+        let peak = super_jump_height(1);
         assert!(sim.position(id).unwrap().y <= GROUND_Y + peak + 0.5);
     }
 

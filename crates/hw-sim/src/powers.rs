@@ -2494,7 +2494,8 @@ pub static POWERS: &[PowerDef] = &[
 pub const GATE_MARK: PowerId = PowerId::GATE_MARK;
 pub const GATE_OPEN: PowerId = PowerId::GATE_OPEN;
 
-/// Strike and the portal's buttons: every hero owns them, free.
+/// Strike, Super Jump, Sprint and the portal's buttons: every hero owns
+/// them, free.
 pub fn is_free(id: PowerId) -> bool {
     PowerId::FREE.contains(&id)
 }
@@ -2738,13 +2739,19 @@ pub struct Kit {
 
 impl Default for Kit {
     fn default() -> Self {
-        Kit {
-            owned: PowerId::FREE.iter().fold(0, |o, p| o | 1 << p.0),
+        let mut k = Kit {
+            owned: 0,
             on: 0,
             element: Element::None,
             passive: Fields::NONE,
             blast: None,
+        };
+        // The free powers count like bought ones (Super Jump and Sprint
+        // bring their travel bits).
+        for p in PowerId::FREE {
+            k.add(p);
         }
+        k
     }
 }
 

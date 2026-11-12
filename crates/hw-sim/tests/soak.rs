@@ -154,13 +154,7 @@ fn sheet() -> hw_net::Sheet {
     let mut s = hw_sim::progress::new_hero(0, hw_sim::powers::Element::Fire);
     s.lifetime = hw_sim::progress::karma_for_level(8);
     s.karma = 100_000;
-    for p in [
-        PowerId(10),
-        PowerId(2),
-        PowerId(5),
-        PowerId(11),
-        PowerId(15),
-    ] {
+    for p in [PowerId(10), PowerId(5), PowerId(11), PowerId(15)] {
         hw_sim::progress::buy(&mut s, p).unwrap_or_else(|e| panic!("{p:?}: {e:?}"));
     }
     s

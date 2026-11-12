@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.251 (2026-11-12)
+
+- Every new hero now starts with Super Jump and Sprint, free: leap over rooftops and run fast from the very first minute, instead of plodding along the street. Glide, Flight and Super Speed are open to buy from the start.
+- Heroes who already bought Super Jump or Sprint get all the karma they paid back.
+
 ## 0.250 (2026-11-12)
 
 - The game's server now keeps to a fixed time budget each tick: big crowds of villains no longer slow the game down (villains look for their way round walls in small steps, crowds spread out and look at each other faster, and a huge crowd of more than 400 acts a little slower rather than stalling). If a tick still runs long, the housekeeping that can wait is put off a few ticks.

@@ -65,15 +65,26 @@ pub struct PowerId(pub u8);
 
 impl PowerId {
     pub const STRIKE: PowerId = PowerId(1);
+    /// Super Jump, every hero's from the start, free: the travel tree's
+    /// first row (Glide and Flight build on it).
+    pub const SUPER_JUMP: PowerId = PowerId(2);
+    /// Sprint, every hero's from the start, free (Super Speed builds on it).
+    pub const SPRINT: PowerId = PowerId(3);
     /// The portal power's first button: marks where its portals lead
     /// (every hero's, free; see `hw_sim::gates`).
     pub const GATE_MARK: PowerId = PowerId(124);
     /// The portal power's second button: opens a portal to that mark.
     pub const GATE_OPEN: PowerId = PowerId(125);
 
-    /// Every hero owns these from the start, free: Strike and the portal's
-    /// two buttons.
-    pub const FREE: [PowerId; 3] = [Self::STRIKE, Self::GATE_MARK, Self::GATE_OPEN];
+    /// Every hero owns these from the start, free: Strike, Super Jump,
+    /// Sprint and the portal's two buttons.
+    pub const FREE: [PowerId; 5] = [
+        Self::STRIKE,
+        Self::SUPER_JUMP,
+        Self::SPRINT,
+        Self::GATE_MARK,
+        Self::GATE_OPEN,
+    ];
 }
 
 /// Power numbers are below this.
@@ -766,7 +777,7 @@ impl Sheet {
         })
     }
 
-    /// Whether the hero owns this power (Strike and the portal: always).
+    /// Whether the hero owns this power (the free powers: always).
     pub fn has(&self, power: PowerId) -> bool {
         PowerId::FREE.contains(&power) || self.powers.iter().any(|p| p.power == power)
     }

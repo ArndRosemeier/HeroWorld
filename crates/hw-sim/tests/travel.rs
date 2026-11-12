@@ -4,7 +4,7 @@
 
 use glam::{DVec2, DVec3};
 use hw_core::{NetId, Seed};
-use hw_net::{FxKind, InputState, PlayerId, PowerId, Status};
+use hw_net::{FxKind, InputState, PlayerId, Status};
 use hw_sim::balance::hero_sheet;
 use hw_sim::collision::{Body, Obstacles};
 use hw_sim::{step_moving, Moves, Sim, DT, GROUND_Y, RUN_SPEED, TICK_HZ};
@@ -146,7 +146,7 @@ fn sprint_and_super_speed_are_clearly_faster_and_grow() {
 fn a_hard_landing_stomps_the_villains_round_the_hero() {
     let mut sim = Sim::with_solids(Seed(9), Arc::new(Obstacles::flat(GROUND_Y)));
     sim.set_spawn((DVec2::new(35.0, 35.0), DVec2::X));
-    let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(10, &[PowerId(2)]));
+    let hero = sim.spawn_hero_with(PlayerId(1), ground(0.0, 0.0), hero_sheet(10, &[]));
     sim.step();
     sim.add_fight_spot(ground(30.0, 0.0), DVec2::new(-1.0, 0.0));
     sim.step();

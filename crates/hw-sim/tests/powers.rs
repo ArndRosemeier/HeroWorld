@@ -97,12 +97,10 @@ fn a_new_hero_reaches_level_five_in_about_an_hour() {
             reached.push((level, minutes));
         }
         // Spend like a player saving for flight: a hold first, then Super
-        // Jump, then Flight as soon as it can be paid for.
+        // Jump (free), then Flight as soon as it can be paid for.
         if t.is_multiple_of(TICK_HZ as u64 * 10) {
             if !sheet.has(PowerId(13)) {
                 let _ = sim.buy(me, PowerId(13));
-            } else if !sheet.has(PowerId(2)) {
-                let _ = sim.buy(me, PowerId(2));
             } else if sim.buy(me, PowerId(5)).is_ok() {
                 flight_at = Some(minutes);
             }
@@ -351,11 +349,11 @@ fn flight_is_an_unlock_and_super_jump_jumps_higher() {
         }
         top - GROUND_Y
     };
-    let plain = peak(&[], false);
-    let super_jump = peak(&[PowerId(2)], false);
-    assert!(plain < 2.0 && super_jump > 5.0, "{plain} {super_jump}");
-    // Flying without Flight is just a jump.
-    assert!(peak(&[], true) < 2.0);
+    // Super Jump is every hero's from the start.
+    let super_jump = peak(&[], false);
+    assert!(super_jump > 5.0, "{super_jump}");
+    // Flying without Flight is just jumping again.
+    assert!(peak(&[], true) < peak(&[PowerId(5)], true));
     assert!(peak(&[PowerId(5)], true) > 15.0);
 }
 

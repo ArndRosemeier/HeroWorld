@@ -235,7 +235,7 @@ mod tests {
     #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
     fn strike_first_then_the_powers_in_order() {
         let mut t = Tray::default();
-        t.sync(&sheet(&[PowerId(2), PowerId(10), PowerId(30)]));
+        t.sync(&sheet(&[PowerId(10), PowerId(30)]));
         assert_eq!(t.slots[0], Some(PowerId::STRIKE));
         assert_eq!(t.slots[1], Some(PowerId(10)));
         assert_eq!(t.slots[2], Some(PowerId(30)));

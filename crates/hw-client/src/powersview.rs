@@ -322,7 +322,7 @@ impl PowersView {
                     .color(egui::Color32::from_gray(170)),
                 );
                 ui.separator();
-                // Every hero's own, free: Strike and the portal's two keys.
+                // Every hero's own, free: Strike, Super Jump, Sprint and the portal.
                 ui.horizontal_wrapped(|ui| {
                     ui.label(
                         egui::RichText::new("Every hero's, free:")
@@ -338,7 +338,9 @@ impl PowersView {
                                 .color(power_ui_colour(p, sheet.element)),
                         )
                         .on_hover_text(what_it_does(d));
-                        self.tray_handle(ui, p);
+                        if tray::keyed(p) {
+                            self.tray_handle(ui, p);
+                        }
                         ui.add_space(8.0);
                     }
                 });

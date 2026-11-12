@@ -94,7 +94,6 @@ fn ten_bots_play_for_ten_minutes() {
     let mut flier = hw_sim::progress::new_hero(0, hw_sim::powers::Element::Energy);
     flier.lifetime = hw_sim::progress::karma_for_level(5);
     flier.karma = 5_000;
-    hw_sim::progress::buy(&mut flier, PowerId(2)).unwrap();
     hw_sim::progress::buy(&mut flier, PowerId(5)).unwrap();
     for b in &mut bots {
         b.send(ToServer::Sheet(flier.clone()));

@@ -381,11 +381,18 @@ mod tests {
         // A hero file with a power from a later version keeps the rest.
         let later = json!({"hero": {"version": 2, "lifetime_karma": 99, "karma": 5,
             "origin": 2, "element": 3,
-            "powers": [{"power": 2, "paid": 7}, {"power": 200}]}});
+            "powers": [{"power": 5, "paid": 7}, {"power": 200}]}});
         let h = Profile::from_json(&later).hero.unwrap();
         assert_eq!((h.lifetime, h.karma, h.origin, h.element), (99, 5, 2, 3));
         assert_eq!(h.powers.len(), 1);
-        assert!(h.has(PowerId(2)));
+        assert!(h.has(PowerId(5)));
+        // Super Jump bought before it became free: kept free, price back.
+        let bought = json!({"hero": {"version": 2, "lifetime_karma": 99, "karma": 5,
+            "origin": 2, "element": 3,
+            "powers": [{"power": 2, "paid": 7}, {"power": 5, "paid": 9}]}});
+        let h = Profile::from_json(&bought).hero.unwrap();
+        assert_eq!((h.karma, h.powers.len()), (12, 1));
+        assert!(h.has(PowerId::SUPER_JUMP) && h.has(PowerId::SPRINT));
         // A hero from before the power trees: all karma back, pick again.
         let old = json!({"hero": {"version": 1, "lifetime_karma": 9000, "karma": 50,
             "origin": 1, "affinity": [0, 1, 0, 0, 0],

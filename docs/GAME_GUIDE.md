@@ -81,8 +81,8 @@ the last run is pointed out once on the title.
   menu can switch it). It rides on every blow the hero lands (section 4).
 - **First power:** the top-left attack of the origin's tree (Atomic Ray, Arcane Bolt,
   Haymaker, Light Lance or One-Two), bought with the starting karma.
-- **Start:** 960 karma (exactly one first-row power), level 1, no powers except Strike and
-  the portal (Portal Home and Open Portal). A hero
+- **Start:** 960 karma (exactly one first-row power), level 1, no powers except the free ones: Strike,
+  Super Jump, Sprint (0.251) and the portal (Portal Home and Open Portal). A hero
   below level 5 starts on the **rookies' street**: the side street
   nearest the town centre that lies 120-300 m from a Chrome Jackets hangout and at least
   180 m out of the mad scientist's quarter (and clear of the pirates' landing), off the
@@ -254,6 +254,13 @@ does, what it needs, and Buy or Give up.
   `1 + 0.1 × (level − 1)`, so ×2.9 at level 20).
 - **No respec**, but giving a power up refunds 90% of what you paid. A power that another
   owned power needs cannot be given up until that one is.
+- **Free powers** (`PowerId::FREE`, 0.251): every hero starts with Strike, Super Jump (2),
+  Sprint (3) and the portal. Super Jump and Sprint are boxes of the travel tree that are
+  simply already owned (shown as free, never for sale), so Glide, Flight and Super Speed are
+  open from the start (Glide and Flight need Super Jump, Super Speed needs Sprint) and Wall
+  Run only needs Super Jump or Super Speed. They are not counted towards Hero's Return's
+  "two travel powers" (those must be bought). Heroes who had bought them earlier get the
+  karma they paid back in full the next time the hero file loads (`progress::sanitize`).
 - **Strike** is everyone's free punch (20 damage, 3 m, 0.7 s) and carries the element.
   **Q** fires the hero's first bolt power.
 - **The portal** (0.192, after MasterWorld's portal stone; `hw-sim/src/gates.rs`,
@@ -346,8 +353,8 @@ each one's numbers; the names and links:
 
 | Row | Power | What it does | Needs |
 | --- | --- | --- | --- |
-| 1 | **Super Jump** | leaps over rooftops; lands with a stomp | – |
-| 1 | **Sprint** | runs twice as fast | – |
+| 1 | **Super Jump** (free) | leaps over rooftops; lands with a stomp | – |
+| 1 | **Sprint** (free) | runs twice as fast | – |
 | 2 | **Glide** | hold jump to float down | Super Jump |
 | 2 | **Flight** | flies anywhere | Super Jump |
 | 2 | **Super Speed** | runs like the wind | Sprint |
