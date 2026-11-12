@@ -4,7 +4,7 @@
 //! One [`SpeechBubbles`] (owned by `FightView` as `speech`) keeps every
 //! bubble. Anything that makes someone talk adds a [`Speech`]:
 //!
-//! ```ignore
+//! ```text
 //! fight.speech.add(Speech::say(feet, "Lovely day!", Voice::Folk));
 //! fight.speech.add(Speech::shout(feet, "Stop, thief!", Voice::Folk).from(id));
 //! fight.bubble(&said); // a chat line: a shout when it carries SHOUT_RANGE

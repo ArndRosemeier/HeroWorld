@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.219 (2026-11-12)
+
+- Office buildings no longer go up right next to the rocket pad: the ground round a launch stays clear. Towns from older versions are built anew.
+- Cases on the street now turn up in the streets round you after you cross a big city, not back where you started.
+- Behind the scenes: four of the daily checks are green again.
+
 ## 0.218 (2026-11-12)
 
 - Small towns get roomy interiors too: the old town's shops are now shop houses with one big room across the whole house on every floor, a wide stair at the back, and now and then a room two storeys high with a gallery.

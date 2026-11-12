@@ -161,12 +161,14 @@ pub(super) fn plan(w: &TownWorld, core: DVec2, others: &[Landmark]) -> Vec<Landm
                     .is_some_and(|d| d.distance(p) < 60.0)
                     || placed
                         .iter()
-                        // The weather tower keeps its sky to itself.
+                        // The weather tower keeps its sky to itself, and the
+                        // rocket pad the ground round its launches (the room
+                        // plan_gantry keeps from the others).
                         .any(|o| {
-                            let clear = if o.kind == LandmarkKind::WeatherTower {
-                                170.0
-                            } else {
-                                30.0
+                            let clear = match o.kind {
+                                LandmarkKind::WeatherTower => 170.0,
+                                LandmarkKind::RocketGantry => 60.0,
+                                _ => 30.0,
                             };
                             o.pos.distance(p) < o.plaza + plaza + clear
                         })

@@ -318,7 +318,13 @@ mod sizes {
             assert!(!w.in_a_piece(pad.pos), "{pop}: the pad in town");
             for l in &w.landmarks {
                 if l.kind != LandmarkKind::RocketGantry {
-                    assert!(l.pos.distance(pad.pos) > l.plaza + pad.plaza + 50.0);
+                    assert!(
+                        l.pos.distance(pad.pos) > l.plaza + pad.plaza + 50.0,
+                        "{pop}: {:?} (plaza {}) {:.0} m from the pad",
+                        l.kind,
+                        l.plaza,
+                        l.pos.distance(pad.pos)
+                    );
                 }
             }
         }

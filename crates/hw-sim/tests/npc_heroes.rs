@@ -111,15 +111,22 @@ fn a_town_hero_answers_a_fight_nobody_came_to() {
         sim.sheet(PlayerId(1)).unwrap().karma <= karma,
         "karma for nothing"
     );
-    // Home again, on its feet.
+    // Home again, on its feet. (New trouble keeps coming, a call a minute,
+    // and a hero home and fit flies out again to the next one: being home
+    // once is what counts, not still being there at the end.)
+    let mut home = None;
     for _ in 0..TICK_HZ * 60 {
         stand(&mut sim, hero, start);
         sim.step();
+        let h = npcs(&mut sim)
+            .into_iter()
+            .find(|e| e.id == helper)
+            .expect("still here");
+        assert!(h.combat.unwrap().health > 0);
+        if h.grounded {
+            home = Some(h.pos);
+            break;
+        }
     }
-    let h = npcs(&mut sim)
-        .into_iter()
-        .find(|e| e.id == helper)
-        .expect("still here");
-    assert!(h.grounded, "not home: {:?}", h.pos);
-    assert!(h.combat.unwrap().health > 0);
+    assert!(home.is_some(), "not home within a minute");
 }

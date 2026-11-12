@@ -361,6 +361,19 @@ impl Missions {
         }
     }
 
+    /// The square with people and traffic moved (it follows the heroes
+    /// across a big city): street cases go to its streets from now on, and
+    /// the old square is let go.
+    pub fn set_area(&mut self, area: Arc<Area>) {
+        if let Some(p) = &mut self.places {
+            if p.area.is_some() {
+                let mut next = Places::clone(p);
+                next.area = Some(area);
+                *p = Arc::new(next);
+            }
+        }
+    }
+
     /// What the finders look at.
     pub fn places(&self) -> Option<&Arc<Places>> {
         self.places.as_ref()

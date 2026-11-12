@@ -868,6 +868,7 @@ impl Sim {
         self.incidents.set_town(area.clone());
         self.world.resource_mut::<combat::Fights>().area = Some(combat::Skyline(area.clone()));
         self.crimes.set_area(area.clone());
+        self.missions.set_area(area.clone());
         self.area = Some(area);
         self.area_moved = true;
     }
