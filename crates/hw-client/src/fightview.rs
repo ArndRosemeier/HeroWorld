@@ -3174,6 +3174,20 @@ fn rise(world: &mut World, at: Vec3, colour: Color) {
     );
 }
 
+/// How far (m, level) a ragdoll may lie from where the server has its mob
+/// once that mob can act again: about a blow's reach.
+pub const RAGDOLL_STRAY: f32 = 2.5;
+
+/// Has a knocked-down mob's drawn ragdoll strayed from the mob? The client
+/// throws ragdolls with its own physics, which knows no walls or props, so
+/// one can end up on the far side of a building while the server's mob, back
+/// on its feet (`up`), is attacking from where it stands: an invisible
+/// attacker. Then the body must be replaced by one at the server's place.
+pub fn ragdoll_strayed(up: bool, drawn: Vec3, server: Vec3) -> bool {
+    let off = Vec3::new(drawn.x - server.x, 0.0, drawn.z - server.z);
+    up && off.length() > RAGDOLL_STRAY
+}
+
 /// A scorch mark on the ground where a bolt knocked someone down.
 fn scorch(world: &mut World, at: Vec3, all: &[EntityState], to: NetId) {
     let feet = all
@@ -3392,6 +3406,17 @@ fn make_sounds() -> Sounds {
 mod tests {
     use super::*;
     use hw_net::CombatState;
+
+    #[test]
+    fn a_mob_back_on_its_feet_is_not_drawn_far_from_where_it_attacks() {
+        let at = Vec3::new(10.0, 0.0, 4.0);
+        // Thrown through a wall: lying 6 m off while the server's mob is up.
+        assert!(ragdoll_strayed(true, at + Vec3::new(6.0, -0.3, 0.0), at));
+        // Lying within a blow's reach (height does not count): kept.
+        assert!(!ragdoll_strayed(true, at + Vec3::new(1.0, 2.0, 1.0), at));
+        // Still knocked or cuffed (not up): it cannot attack, let it tumble.
+        assert!(!ragdoll_strayed(false, at + Vec3::new(30.0, 0.0, 0.0), at));
+    }
 
     fn villain(id: u32, at: [f64; 3]) -> EntityState {
         EntityState {

@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.252 (2026-11-12)
+
+- Villains knocked down by a blast no longer leave an invisible attacker: when one gets back up and its tumbled body ended up somewhere else (behind a wall, say), it now stands where it really is.
+
 ## 0.251 (2026-11-12)
 
 - Every new hero now starts with Super Jump and Sprint, free: leap over rooftops and run fast from the very first minute, instead of plodding along the street. Glide, Flight and Super Speed are open to buy from the start.

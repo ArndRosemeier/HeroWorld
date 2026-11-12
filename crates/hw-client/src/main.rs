@@ -3925,6 +3925,25 @@ fn main() -> EngineResult<()> {
                     .with_scale(size);
                 // A new model (their looks arrived) means a new body.
                 let same = !animated || hero_who.get(&h.id) == Some(&who);
+                // The server is the truth: a mob that can act again stands
+                // where the server has it. A ragdoll thrown elsewhere (the
+                // client's physics knows no walls) is replaced by a fresh
+                // body there, not left drawing a body nothing is attacking
+                // from.
+                if let Some(&(old, true)) = hero_entities.get(&h.id) {
+                    let drawn = world
+                        .ragdoll_state(old)
+                        .and_then(|_| world.world_transform(old).ok().map(|m| m.w_axis.truncate()));
+                    let up = h
+                        .combat
+                        .is_some_and(|c| c.status == hw_net::Status::Standing);
+                    if drawn.is_some_and(|at| fightview::ragdoll_strayed(up, at, feet)) {
+                        fight.drop_gun(world, old);
+                        world.despawn(old);
+                        hero_entities.remove(&h.id);
+                        settle.remove(&h.id);
+                    }
+                }
                 let (e, _) = match hero_entities.get(&h.id) {
                     Some(&(e, a)) if a == animated && same => (e, a),
                     old => {
