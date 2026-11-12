@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.225 (2026-11-12)
+
+- Faster at high resolutions (about 1 ms per frame at 4K on an RTX 5070): people outside the view, or outside a shadow map, are no longer drawn there, and the sky is drawn only where it shows (Engine 0.062).
+
 ## 0.224 (2026-11-12)
 
 - Doors in the new buildings: rooms off a lobby, the flats on a landing and the bedrooms inside them now have real double doors that stand shut. Open and shut them with E; villains and other people on foot open them as they walk up.
