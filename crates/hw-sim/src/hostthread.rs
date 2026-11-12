@@ -64,6 +64,9 @@ pub struct HostView {
     pub busy: f64,
     /// Ticks run since the last view.
     pub ticks: u32,
+    /// Where the server's time went since the last view, in microseconds:
+    /// the parts of the step, the host around it and the snapshot.
+    pub parts: Vec<(&'static str, u64)>,
 }
 
 /// What a view adds to the game's queues (news, fight events, our sheet).
@@ -467,13 +470,25 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
                 } else {
                     BTreeMap::new()
                 };
+                let snap = Instant::now();
+                let entities = host.sim.snapshot();
+                let snap_us = snap.elapsed().as_micros() as u64;
+                let busy_s = std::mem::take(&mut busy).as_secs_f64();
+                let mut parts = host.sim.take_step_times();
+                let stepped: u64 = parts.iter().map(|p| p.1).sum();
+                parts.push((
+                    "srv host around the step us",
+                    ((busy_s * 1e6) as u64).saturating_sub(stepped),
+                ));
+                parts.push(("srv snapshot us", snap_us));
                 let view = HostView {
                     tick: host.sim.tick,
-                    entities: host.sim.snapshot(),
+                    entities,
                     hero: host.sim.hero_of(me),
                     players: now,
-                    busy: std::mem::take(&mut busy).as_secs_f64(),
+                    busy: busy_s,
                     ticks: std::mem::take(&mut ticks),
+                    parts,
                 };
                 let p = Published {
                     view,

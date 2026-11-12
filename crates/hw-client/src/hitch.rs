@@ -42,6 +42,12 @@ const EVENT_SECONDS: f32 = 6.0;
 /// a new file; the last one is kept as `hitches.prev.log`).
 const MAX_LOG_BYTES: u64 = 16 << 20;
 
+/// A stretch is slow when a window of this many seconds averages under
+/// [`SLOW_FPS`]: it is written as one `SLOW STRETCH` report (single hitches
+/// are capped per minute; a long slow time is not a hitch but a state).
+const WINDOW_SECONDS: f32 = 3.0;
+const SLOW_FPS: f32 = 20.0;
+
 thread_local! {
     static GUARD: RefCell<Option<Guard>> = const { RefCell::new(None) };
 }
@@ -308,6 +314,42 @@ struct Guard {
     engine_log: bool,
     /// Every frame, while a benchmark runs.
     stats: Option<Stats>,
+    /// The frames of the current window (see [`WINDOW_SECONDS`]).
+    window: Window,
+    /// A slow stretch has been reported and has not ended.
+    slow_since: Option<(f32, u32)>,
+}
+
+/// Frames summed over a window, for the slow-stretch report.
+#[derive(Default)]
+struct Window {
+    frames: u32,
+    wall_ms: f64,
+    update_ms: f64,
+    worst_ms: f32,
+    sections: Vec<(&'static str, f64)>,
+    counts: Vec<(&'static str, u64)>,
+}
+
+impl Window {
+    fn add(&mut self, wall_ms: f32, r: &FrameRecord) {
+        self.frames += 1;
+        self.wall_ms += f64::from(wall_ms);
+        self.update_ms += f64::from(r.update_ms);
+        self.worst_ms = self.worst_ms.max(wall_ms);
+        for &(name, ms) in &r.sections {
+            match self.sections.iter_mut().find(|(k, _)| *k == name) {
+                Some(e) => e.1 += f64::from(ms),
+                None => self.sections.push((name, f64::from(ms))),
+            }
+        }
+        for &(name, n) in &r.counts {
+            match self.counts.iter_mut().find(|(k, _)| *k == name) {
+                Some(e) => e.1 += n,
+                None => self.counts.push((name, n)),
+            }
+        }
+    }
 }
 
 /// Frames and hitches since the last summary line.
@@ -350,6 +392,8 @@ impl Guard {
                 .unwrap_or(33.0),
             engine_log: false,
             stats: None,
+            window: Window::default(),
+            slow_since: None,
         }
     }
 
@@ -415,6 +459,13 @@ impl Guard {
                 st.add(wall_ms, &record, hitch);
             }
         }
+        if !pause {
+            self.window.add(wall_ms, &record);
+            if self.window.wall_ms >= f64::from(WINDOW_SECONDS) * 1000.0 {
+                self.close_window();
+            }
+        }
+        let m = &mut self.minute;
         if hitch {
             m.hitches += 1;
         } else if pause {
@@ -464,6 +515,114 @@ impl Guard {
             self.write(&line);
             self.minute = Minute::default();
         }
+    }
+
+    /// A window of frames is full: a slow one is written as a whole (what
+    /// every frame spent on average), the end of a slow stretch as a line.
+    fn close_window(&mut self) {
+        let w = std::mem::take(&mut self.window);
+        let frames = f64::from(w.frames.max(1));
+        let avg = w.wall_ms / frames;
+        let fps = 1000.0 / avg.max(1e-3);
+        if fps >= f64::from(SLOW_FPS) {
+            if let Some((t, n)) = self.slow_since.take() {
+                let line = format!(
+                    "SLOW STRETCH OVER at {} after {:.0} s ({n} windows)\n\n",
+                    clock_time(),
+                    self.started.elapsed().as_secs_f32() - t
+                );
+                if !self.full {
+                    self.write(&line);
+                }
+            }
+            return;
+        }
+        let now = self.started.elapsed().as_secs_f32();
+        let (since, n) = self
+            .slow_since
+            .map_or((now - WINDOW_SECONDS, 1), |(t, n)| (t, n + 1));
+        self.slow_since = Some((since, n));
+        if self.full {
+            return;
+        }
+        let mut s = String::with_capacity(2048);
+        let _ = writeln!(
+            s,
+            "SLOW STRETCH at {}: {fps:.1} fps over the last {:.1} s ({} frames, avg {avg:.0} ms, worst {:.0} ms), slow for {:.0} s so far",
+            clock_time(),
+            w.wall_ms / 1000.0,
+            w.frames,
+            w.worst_ms,
+            now - since
+        );
+        let update = w.update_ms / frames;
+        let _ = writeln!(
+            s,
+            "  per frame: game update {update:.1} ms, Engine after it {:.1} ms (animation, uploads, drawing, waiting for the GPU)",
+            (avg - update).max(0.0)
+        );
+        let mut sections = w.sections.clone();
+        sections.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let shown: Vec<String> = sections
+            .iter()
+            .map(|(k, ms)| (k, ms / frames))
+            .filter(|(_, ms)| *ms >= 0.3)
+            .take(10)
+            .map(|(k, ms)| format!("{k} {ms:.1}"))
+            .collect();
+        if !shown.is_empty() {
+            let _ = writeln!(s, "  sections (avg ms per frame): {}", shown.join(", "));
+        }
+        let mut counts = w.counts.clone();
+        counts.sort_by_key(|a| std::cmp::Reverse(a.1));
+        let c: Vec<String> = counts
+            .iter()
+            .map(|(k, n)| {
+                if k.ends_with(" us") {
+                    format!("{k} {:.1} ms/frame", *n as f64 / 1000.0 / frames)
+                } else {
+                    format!("{k} {:.1}/frame", *n as f64 / frames)
+                }
+            })
+            .collect();
+        if !c.is_empty() {
+            let _ = writeln!(s, "  counts: {}", c.join(", "));
+        }
+        if !self.jobs.is_empty() {
+            let j: Vec<String> = self
+                .jobs
+                .iter()
+                .map(|(k, v)| format!("{k} ({v})"))
+                .collect();
+            let _ = writeln!(s, "  other threads: {}", j.join(", "));
+        }
+        for (k, v) in &self.context {
+            let _ = writeln!(s, "  {k}: {v}");
+        }
+        if let Some(mem) = Memory::now() {
+            let _ = writeln!(
+                s,
+                "  memory: {:.0} MB in use, {:.0} MB committed",
+                mem.resident as f64 / 1048576.0,
+                mem.committed as f64 / 1048576.0
+            );
+        }
+        if let Some(c) = &self.census {
+            let _ = writeln!(s, "  holds: {c}");
+        }
+        let events: Vec<&(f32, String)> = self
+            .events
+            .iter()
+            .filter(|(t, _)| now - t <= WINDOW_SECONDS + EVENT_SECONDS)
+            .collect();
+        if !events.is_empty() {
+            let _ = writeln!(s, "  just before:");
+            for (t, e) in events {
+                let _ = writeln!(s, "    {:.2} s ago: {e}", now - t);
+            }
+        }
+        s.push('\n');
+        self.write(&s);
     }
 
     fn report(
@@ -769,6 +928,29 @@ mod tests {
         // About 80 s of frames: two minutes' worth of reports at most.
         assert!(log.matches("HITCH").count() <= 2 * REPORTS_PER_MINUTE as usize);
         assert!(log.contains("not written out"), "{log}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_long_slow_stretch_is_written_as_one_report_and_its_end() {
+        let dir = scratch("stretch");
+        let mut g = guard(&dir);
+        for _ in 0..60 {
+            frame(&mut g, 16.0);
+        }
+        // About 5 fps for ten seconds: every frame a hitch, but one report
+        // a window, with what the frames spent on average.
+        for _ in 0..50 {
+            g.counts.push(("srv combat us", 120_000));
+            frame(&mut g, 200.0);
+        }
+        for _ in 0..400 {
+            frame(&mut g, 16.0);
+        }
+        let log = std::fs::read_to_string(&g.path).unwrap();
+        assert!(log.contains("SLOW STRETCH at"), "{log}");
+        assert!(log.contains("SLOW STRETCH OVER"), "{log}");
+        assert!(log.contains("sections (avg ms per frame): town"), "{log}");
         let _ = std::fs::remove_dir_all(dir);
     }
 

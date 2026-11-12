@@ -611,6 +611,9 @@ pub struct Sim {
     fresh: BTreeSet<PlayerId>,
     schedule: Schedule,
     track: Schedule,
+    /// Microseconds each part of [`Sim::step`] took since the last
+    /// [`Sim::take_step_times`] (the hitch log names what makes the server slow).
+    step_times: Vec<(&'static str, u64)>,
     /// Engine physics for loose bodies.
     pub physics: Physics,
     /// The simulated areas around the players.
@@ -989,6 +992,7 @@ impl Sim {
             fresh: Default::default(),
             schedule,
             track,
+            step_times: Vec::new(),
             physics: Physics::new(solids),
             bubbles: Bubbles::default(),
             damage: Damage::default(),
@@ -1163,11 +1167,32 @@ impl Sim {
 
     /// Advance the simulation by one fixed tick: heroes move, bubbles
     /// regroup, physics steps inside the bubbles, changes are stamped.
+    /// Adds the time since `t` to the part `name` of the step, and starts the
+    /// next part.
+    fn lap(&mut self, name: &'static str, t: &mut std::time::Instant) {
+        let us = t.elapsed().as_micros() as u64;
+        *t = std::time::Instant::now();
+        match self.step_times.iter_mut().find(|(k, _)| *k == name) {
+            Some(e) => e.1 += us,
+            None => self.step_times.push((name, us)),
+        }
+    }
+
+    /// The step's parts and their microseconds since the last call.
+    pub fn take_step_times(&mut self) -> Vec<(&'static str, u64)> {
+        std::mem::take(&mut self.step_times)
+    }
+
     pub fn step(&mut self) {
+        let mut t = std::time::Instant::now();
         self.schedule.run(&mut self.world);
+        self.lap("srv schedule us", &mut t);
         combat::step(&mut self.world, self.tick);
+        self.lap("srv combat us", &mut t);
         sidekick::step(&mut self.world, self.tick);
+        self.lap("srv sidekick us", &mut t);
         npcheroes::step(&mut self.world, self.tick, &self.incidents.open);
+        self.lap("srv npcheroes us", &mut t);
         self.machines_break_the_city();
         self.incidents
             .collateral
@@ -1183,13 +1208,16 @@ impl Sim {
             &mut self.street,
             &mut self.alarms,
         );
+        self.lap("srv incidents+crimes us", &mut t);
         self.story.step(&mut self.world, self.tick);
         self.missions.step(&mut self.world, self.tick);
         self.raise_crime_alarms();
+        self.lap("srv story+missions us", &mut t);
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
         tube::step(&mut self.world, &mut self.tubes, self.tick, DT);
         self.alarms.step(self.tick);
+        self.lap("srv taxi+tube+alarms us", &mut t);
         // Cars stop for anyone in the road (heroes, villains on their feet
         // or knocked down, a mugging's victim, someone lying hurt), and
         // short of a fight or a collapse.
@@ -1242,6 +1270,7 @@ impl Sim {
         movers.extend(self.airships.solids_near(&heroes, now));
         movers.extend(self.story.statue_solids());
         movers.extend(self.lifts.solids_near(&heroes, 25.0, now));
+        self.lap("srv movers us", &mut t);
         if let Some(t) = self.wrecks.traffic.as_mut() {
             t.set_blockers(&standing, &stops);
             t.set_blocked(&self.alarms.road_blocks());
@@ -1249,11 +1278,13 @@ impl Sim {
             movers.extend(t.car_solids(&heroes, 25.0, now));
         }
         self.world.resource::<Solids>().0.set_movers(movers);
+        self.lap("srv traffic us", &mut t);
         self.walk_through_doors();
         self.keep_gate_homes();
         self.pay_karma();
         self.sync_levels();
         self.clear_rubble();
+        self.lap("srv doors+karma+levels+rubble us", &mut t);
         let heroes: Vec<(PlayerId, NetId, DVec3)> = self
             .world
             .query::<(&Hero, &Net, &Motion)>()
@@ -1263,6 +1294,7 @@ impl Sim {
         let players: Vec<(PlayerId, DVec3)> = heroes.iter().map(|(p, _, at)| (*p, *at)).collect();
         self.bubbles.update(&players);
         self.strike();
+        self.lap("srv bubbles+strike us", &mut t);
         if self.tick.is_multiple_of(TICK_HZ as u64) {
             let solids = self.solids();
             let at: Vec<DVec3> = heroes.iter().map(|h| h.2).collect();
@@ -1279,10 +1311,13 @@ impl Sim {
             }
             self.follow_heroes(&at);
         }
+        self.lap("srv every-second us", &mut t);
         self.step_physics(&heroes);
+        self.lap("srv physics us", &mut t);
         self.tick += 1;
         self.world.resource_mut::<Now>().0 = self.tick;
         self.track.run(&mut self.world);
+        self.lap("srv track us", &mut t);
     }
 
     /// The colossus's feet, hull and shells break what they hit.

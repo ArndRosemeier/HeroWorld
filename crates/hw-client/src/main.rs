@@ -3297,6 +3297,12 @@ fn main() -> EngineResult<()> {
             if let Some((busy, _)) = session.server_load() {
                 // The server thread's own time on the frame before's ticks.
                 hw_client::hitch::count("server busy us", (busy * 1e6) as u64);
+                // Which parts of it took long (1 ms and more).
+                for &(name, us) in session.server_parts() {
+                    if us >= 1000 {
+                        hw_client::hitch::count(name, us);
+                    }
+                }
             }
             hw_client::hitch::mark("news");
             // Damage: broken buildings, repairs, impacts.

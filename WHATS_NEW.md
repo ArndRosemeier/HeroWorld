@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.245 (2026-11-12)
+
+- Behind the scenes: when the game runs slow for a while, the log now says what took the time (the server's parts, the drawing, the rest) instead of only listing single stutters.
+
 ## 0.244 (2026-11-12)
 
 - **No more floating lifts.** Every way down into the underground is now a real stair you walk: a spiral of stone steps round a pillar, with the way in on one side and a rail round the hole on the other three. It goes down from the Googie pavilions to the utility tunnels, into Molehaven, down the tube stations' stairs, through the news kiosk into the Doctor's lab, up out of the tube exits and between the deep layers. The deepest ones are a proper walk.

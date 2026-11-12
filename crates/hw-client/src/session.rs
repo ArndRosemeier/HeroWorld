@@ -410,6 +410,15 @@ impl Session {
         }
     }
 
+    /// Where the server's time went since the last [`Self::sync`]
+    /// (single player), in microseconds.
+    pub fn server_parts(&self) -> &[(&'static str, u64)] {
+        match self {
+            Session::Local { host, .. } => &host.view().parts,
+            Session::Remote { .. } => &[],
+        }
+    }
+
     /// Everything to draw this frame. Our own hero comes first if present.
     /// `frac` is how far into the next tick the frame is
     /// ([`hw_sim::hostthread::TickClock::frac`]): in single player
