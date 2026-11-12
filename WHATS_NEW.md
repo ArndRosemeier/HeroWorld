@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.218 (2026-11-12)
+
+- Small towns get roomy interiors too: the old town's shops are now shop houses with one big room across the whole house on every floor, a wide stair at the back, and now and then a room two storeys high with a gallery.
+- These houses are wider and a little taller than before, so the old town's streets look different. Towns from older versions are built anew.
+
 ## 0.217 (2026-11-12)
 
 - The town's new office buildings now break the way they are built: punch a hole in the wall, the floor or the stairs you see, not in an invisible old floor plan. What is left standing is what you can walk on.

@@ -44,6 +44,7 @@ fn livery(s: Scheme) -> (Color, Color, Color) {
         Scheme::Atrium => (rgb(238, 230, 210), rgb(40, 132, 140), rgb(228, 176, 70)),
         Scheme::GrandHall => (rgb(226, 214, 196), rgb(150, 62, 48), rgb(214, 170, 90)),
         Scheme::SplitLevel => (rgb(214, 226, 226), rgb(46, 84, 150), rgb(236, 120, 60)),
+        Scheme::ShopHouse => (rgb(232, 222, 200), rgb(92, 112, 74), rgb(206, 150, 84)),
     }
 }
 
@@ -1005,7 +1006,14 @@ fn view_of(
                 SpaceKind::Lobby | SpaceKind::Atrium | SpaceKind::Canyon
             )
         })
-        .max_by(|a, b| a.h.total_cmp(&b.h))?;
+        .max_by(|a, b| a.h.total_cmp(&b.h))
+        // (A shop house has no lobby: its shop, or its tallest room.)
+        .or_else(|| {
+            plan.spaces
+                .iter()
+                .filter(|s| matches!(s.kind, SpaceKind::Shop | SpaceKind::Hall))
+                .max_by(|a, b| a.h.total_cmp(&b.h).then(b.y.total_cmp(&a.y)))
+        })?;
     let heart = tall.rect.center();
     Some(match which {
         "lobby" => {

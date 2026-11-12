@@ -156,3 +156,36 @@ fn storeys_differ_from_each_other() {
         "{kinds} plans on {floors} storeys"
     );
 }
+
+/// Every narrow old-town plot gets a sound shop house: a shop at the
+/// street, a way up to every storey, and now and then a tall room with a
+/// gallery.
+#[test]
+fn shop_houses_are_sound_on_narrow_plots() {
+    use super::office::{plan_town, MIN_HOUSE};
+    let (mut tall, mut all) = (0, 0);
+    for k in 0..120u64 {
+        let size = DVec2::new(
+            MIN_HOUSE.x + (k % 7) as f64 * 0.5,
+            MIN_HOUSE.y + (k % 13) as f64 * 0.5,
+        );
+        let storeys = 2 + (k % 3) as u32;
+        let l = plan_town(Seed(700 + k), size, storeys);
+        assert_eq!(l.scheme, Scheme::ShopHouse);
+        assert!(l.problems().is_empty(), "{k} {size:?}: {:?}", l.problems());
+        assert_eq!(l.levels().len() as u32, storeys, "{k}");
+        assert!(l
+            .spaces
+            .iter()
+            .any(|s| s.kind == SpaceKind::Shop && s.y == 0.0));
+        assert!(l.lifts.is_empty());
+        all += 1;
+        if l.spaces.iter().any(|s| s.kind == SpaceKind::Gallery) {
+            tall += 1;
+        }
+    }
+    assert!(
+        tall * 6 > all && tall < all,
+        "{tall} of {all} have a tall room"
+    );
+}

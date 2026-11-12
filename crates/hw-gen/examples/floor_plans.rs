@@ -29,6 +29,7 @@ fn main() {
                 "grand" => Some(Scheme::GrandHall),
                 "atrium" => Some(Scheme::Atrium),
                 "split" => Some(Scheme::SplitLevel),
+                "house" => Some(Scheme::ShopHouse),
                 _ => None,
             });
             jobs.push((seed as u64, w, d, st as u32, scheme));
@@ -109,6 +110,7 @@ fn scheme_name(s: Scheme) -> &'static str {
         Scheme::GrandHall => "Grand hall",
         Scheme::Atrium => "Atrium",
         Scheme::SplitLevel => "Split level",
+        Scheme::ShopHouse => "Shop house",
     }
 }
 

@@ -15,6 +15,9 @@ use hw_core::{Rng, Seed};
 /// The smallest office plot (width along the street, depth) at game scale.
 pub const MIN_SIZE: DVec2 = DVec2::new(32.0, 38.0);
 /// Width of a gallery or arcade (m).
+/// The least plot a shop house fits on (m): a room at least a hall wide
+/// at the street, and the stair behind it.
+pub const MIN_HOUSE: DVec2 = DVec2::new(12.0, 22.0);
 const GALLERY: f64 = 5.0;
 /// Column spacing in open-plan halls (m).
 const COLUMNS: f64 = 9.0;
@@ -33,6 +36,10 @@ pub fn plan(seed: Seed, size: DVec2, storeys: u32) -> Layout {
 /// Plans an office building for a town plot: one whose floors run level
 /// through the whole building, so the facade's rows of windows fit it.
 pub fn plan_town(seed: Seed, size: DVec2, storeys: u32) -> Layout {
+    if size.x < MIN_SIZE.x || size.y < MIN_SIZE.y {
+        return shop_house(seed, size.max(MIN_HOUSE), storeys.max(2))
+            .expect("a shop house fits every plot of at least MIN_HOUSE");
+    }
     let mut order = [Scheme::Atrium, Scheme::GrandHall];
     seed.child("scheme").rng().shuffle(&mut order);
     order
@@ -44,13 +51,19 @@ pub fn plan_town(seed: Seed, size: DVec2, storeys: u32) -> Layout {
 
 /// Plans an office building in one scheme, if it fits.
 pub fn plan_scheme(seed: Seed, size: DVec2, storeys: u32, scheme: Scheme) -> Option<Layout> {
-    if size.x < MIN_SIZE.x || size.y < MIN_SIZE.y || storeys < 2 {
+    let least = if scheme == Scheme::ShopHouse {
+        MIN_HOUSE
+    } else {
+        MIN_SIZE
+    };
+    if size.x < least.x || size.y < least.y || storeys < 2 {
         return None;
     }
     match scheme {
         Scheme::GrandHall => grand_hall(seed, size, storeys),
         Scheme::Atrium => atrium(seed, size, storeys),
         Scheme::SplitLevel => split_level(seed, size, storeys),
+        Scheme::ShopHouse => shop_house(seed, size, storeys),
     }
 }
 
@@ -763,6 +776,97 @@ fn atrium(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
         }
     }
     Some(b.finish(Scheme::Atrium, size))
+}
+
+/// A shop house (see [`Scheme::ShopHouse`]): lower storeys than an office
+/// building's, the stair in a back corner with a small room beside it,
+/// and in front of them one room across the whole house on every storey.
+/// Where the house is deep enough, a storey's room is now and then two
+/// storeys high, with an arcade under a gallery along its back.
+fn shop_house(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
+    let (w, d) = (size.x, size.y);
+    let n = n as usize;
+    if w < MIN_HOUSE.x || n < 2 {
+        return None;
+    }
+    let mut rng = seed.child("shop house").rng();
+    let ground = *rng.pick(&[5.5, 6.0]);
+    let hs: Vec<f64> = (0..n)
+        .map(|i| match i {
+            0 => ground,
+            _ => *rng.pick(&[4.5, 5.0, 5.0, 5.5]),
+        })
+        .collect();
+    let ys = levels(&hs);
+    let top = ys[n];
+    let floors = &ys[..n];
+    let bd = dog_leg_depth(floors);
+    // Where the front room ends and the stair begins.
+    let fz = d - bd;
+    if fz < MIN_HALL {
+        return None;
+    }
+    let mut b = Builder::default();
+    // The stair in one back corner, the small room in the other.
+    let left = rng.chance(0.5);
+    let (sx, bx) = if left {
+        ((0.0, DOG_LEG_WIDTH), (DOG_LEG_WIDTH, w))
+    } else {
+        ((w - DOG_LEG_WIDTH, w), (0.0, w - DOG_LEG_WIDTH))
+    };
+    let hall = dog_leg_hall(&mut b, rect(sx.0, fz, sx.1, d), floors, top, None);
+    // A room two storeys high needs depth for its gallery.
+    let tall = if fz >= MIN_HALL + GALLERY {
+        spans(&mut rng, n, 0, 0.35)
+    } else {
+        vec![Span::Own; n]
+    };
+    let gz = fz - GALLERY;
+    let mut high: Option<usize> = None;
+    for i in 0..n {
+        let (y, h) = (ys[i], hs[i]);
+        let kind = if i == 0 {
+            SpaceKind::Shop
+        } else {
+            SpaceKind::Hall
+        };
+        // The room in front, and what of it lies along the stair's wall.
+        let (front, by_stair) = match tall[i] {
+            Span::Own => {
+                let rooms = if i == 0 {
+                    vec![b.space(kind, rect(0.0, 0.0, w, fz), y, h)]
+                } else {
+                    divide(&mut b, &mut rng, rect(0.0, 0.0, w, fz), y, h, kind)
+                };
+                (rooms.first().copied(), rooms)
+            }
+            Span::Tall => {
+                let room = b.space(kind, rect(0.0, 0.0, w, gz), y, h + hs[i + 1]);
+                let under = b.space(SpaceKind::Arcade, rect(0.0, gz, w, fz), y, h);
+                b.edge(room, under, LinkKind::Open, y);
+                high = Some(room);
+                (Some(room), vec![under])
+            }
+            Span::Void => {
+                let gallery = b.space(SpaceKind::Gallery, rect(0.0, gz, w, fz), y, h);
+                if let Some(room) = high.take() {
+                    rail_except(&mut b, room, gallery, y, Vec::new());
+                }
+                (None, vec![gallery])
+            }
+        };
+        if let (0, Some(shop)) = (i, front) {
+            b.entrance(shop, snap(w * 0.5), DOUBLE);
+        }
+        if !join_all(&mut b, &by_stair, hall, LinkKind::Double, y, DOUBLE) {
+            return None;
+        }
+        let back = b.space(SpaceKind::Service, rect(bx.0, fz, bx.1, d), y, h);
+        if !join_all(&mut b, &by_stair, back, LinkKind::Door, y, DOOR) {
+            return None;
+        }
+    }
+    Some(b.finish(Scheme::ShopHouse, size))
 }
 
 /// Front and back blocks half a storey apart. Between them a canyon as

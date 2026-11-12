@@ -43,6 +43,7 @@ fn scheme_key(s: Scheme) -> u8 {
         Scheme::GrandHall => 0,
         Scheme::Atrium => 1,
         Scheme::SplitLevel => 2,
+        Scheme::ShopHouse => 3,
     }
 }
 

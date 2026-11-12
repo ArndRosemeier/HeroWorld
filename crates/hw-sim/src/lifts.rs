@@ -289,7 +289,8 @@ mod tests {
             .everything()
             .buildings
             .into_iter()
-            .filter(|(_, b)| b.site.halls.is_some());
+            // (Office buildings: a shop house has only its stair.)
+            .filter(|(_, b)| b.site.layout().is_some_and(|l| !l.lifts.is_empty()));
         for (_, b) in halls.take(6) {
             let s = &b.site;
             let plan = BuildingPlan::generate(s);

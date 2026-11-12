@@ -382,6 +382,10 @@ pub enum Scheme {
     /// Front and back blocks half a storey apart, joined by half flights
     /// across a tall canyon between them.
     SplitLevel,
+    /// A house on a narrow old-town plot: one room the full width on
+    /// every storey (the shop at the street), now and then two storeys
+    /// high with a gallery, and a stair at the back.
+    ShopHouse,
 }
 
 /// A building's interior.
