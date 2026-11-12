@@ -367,6 +367,7 @@ impl BuildingSite {
             BuildingUse::Lab => furnish::Fit::Lab,
             BuildingUse::Works => furnish::Fit::Works,
             BuildingUse::Pavilion => furnish::Fit::Expo,
+            _ if self.is_hideout() => furnish::Fit::Hideout,
             _ => furnish::Fit::Plain,
         };
         furnish::items_for(l, club, fit)
@@ -397,6 +398,20 @@ impl BuildingSite {
     /// (x, z): the same for everyone who asks.
     pub fn layout(&self) -> Option<Layout> {
         self.halls.map(|_| self.plan_halls())
+    }
+
+    /// Is this a gang hideout? Only a building of halls with two or more
+    /// floors and room for a gang: every tenement, one in six
+    /// shop-and-office blocks (works keep their machines). Decided by its seed alone.
+    pub fn is_hideout(&self) -> bool {
+        if self.halls.is_none() || self.floors < 2 || self.size.min_element() < 12.0 {
+            return false;
+        }
+        match self.usage {
+            BuildingUse::Tenement => true,
+            BuildingUse::ShopsAndOffices => self.seed.child("hideout").rng().chance(1.0 / 6.0),
+            _ => false,
+        }
     }
 
     /// The building's mass as tiers of floors, upper ones stepped back as

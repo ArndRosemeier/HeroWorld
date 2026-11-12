@@ -2981,6 +2981,563 @@ pub fn crates(m: &mut Maker) {
     );
 }
 
+/// A gang's cot (0.9 wide, 2.0 long, 0.5 high): a canvas bed on a steel
+/// frame, a rumpled grey blanket and a flat pillow at the head (at -z).
+pub fn cot(m: &mut Maker) {
+    let steel = Mat::Paint(rgb(88, 96, 90));
+    for x in [-0.4, 0.4] {
+        m.block(
+            steel,
+            DVec3::new(x - 0.025, 0.24, -0.95),
+            DVec3::new(x + 0.025, 0.3, 0.95),
+        );
+        for z in [-0.9, 0.9] {
+            m.block(
+                steel,
+                DVec3::new(x - 0.03, 0.0, z - 0.03),
+                DVec3::new(x + 0.03, 0.26, z + 0.03),
+            );
+        }
+    }
+    for z in [-0.9, 0.0, 0.9] {
+        m.block(
+            steel,
+            DVec3::new(-0.42, 0.26, z - 0.02),
+            DVec3::new(0.42, 0.29, z + 0.02),
+        );
+    }
+    m.block(
+        Mat::Cloth(rgb(112, 118, 86)),
+        DVec3::new(-0.39, 0.29, -0.93),
+        DVec3::new(0.39, 0.33, 0.93),
+    );
+    m.blob(
+        Mat::Cloth(rgb(98, 104, 112)),
+        DVec3::new(0.0, 0.39, 0.22),
+        DVec3::new(0.36, 0.075, 0.6),
+        0.0,
+        (0.5, 0.5),
+    );
+    m.blob(
+        Mat::Cloth(rgb(226, 222, 208)),
+        DVec3::new(0.02, 0.37, -0.72),
+        DVec3::new(0.26, 0.05, 0.16),
+        0.0,
+        (0.5, 0.5),
+    );
+}
+
+/// A round card table (1.95 across, 0.78 high): a walnut rail round green
+/// felt, stacks of chips, a fan of cards, an ashtray and a glass of
+/// something amber.
+pub fn poker_table(m: &mut Maker) {
+    let walnut = Mat::Wood(rgb(96, 58, 36));
+    m.lathe(
+        walnut,
+        DVec3::ZERO,
+        &[
+            (0.0, 0.0),
+            (0.36, 0.0),
+            (0.3, 0.07),
+            (0.11, 0.13),
+            (0.1, 0.66),
+            (0.3, 0.7),
+            (0.0, 0.7),
+        ],
+    );
+    m.lathe(
+        walnut,
+        DVec3::new(0.0, 0.7, 0.0),
+        &[
+            (0.84, 0.0),
+            (0.97, 0.0),
+            (0.98, 0.03),
+            (0.98, 0.07),
+            (0.9, 0.09),
+            (0.84, 0.08),
+        ],
+    );
+    m.lathe(
+        Mat::Cloth(rgb(30, 104, 66)),
+        DVec3::new(0.0, 0.7, 0.0),
+        &[(0.0, 0.0), (0.85, 0.0), (0.85, 0.07), (0.0, 0.07)],
+    );
+    let top = 0.77;
+    let chips = [
+        rgb(200, 40, 40),
+        rgb(40, 80, 190),
+        rgb(236, 232, 220),
+        rgb(30, 30, 34),
+    ];
+    for (k, (x, z)) in [
+        (-0.45, 0.2),
+        (-0.25, 0.5),
+        (0.3, 0.45),
+        (0.5, 0.1),
+        (0.1, -0.5),
+        (-0.4, -0.35),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let n = 3 + (k * 2) % 5;
+        m.lathe(
+            Mat::Plain(chips[k % 4]),
+            DVec3::new(x, top, z),
+            &[
+                (0.0, 0.0),
+                (0.032, 0.0),
+                (0.032, 0.012 * n as f64),
+                (0.0, 0.012 * n as f64),
+            ],
+        );
+        m.lathe(
+            Mat::Plain(scale(chips[(k + 1) % 4], 1.1)),
+            DVec3::new(x, top + 0.012 * n as f64 * 0.5, z),
+            &[(0.0, 0.0), (0.034, 0.0), (0.034, 0.004), (0.0, 0.004)],
+        );
+    }
+    // A fan of cards.
+    for k in 0..4 {
+        let a = -0.5 + k as f64 * 0.33;
+        let mut c = m.sub(DVec3::new(0.05, top, 0.05), a);
+        c.block(
+            Mat::Paint(rgb(240, 236, 224)),
+            DVec3::new(-0.03, 0.0, -0.05 + k as f64 * 0.003),
+            DVec3::new(0.03, 0.004, 0.05 + k as f64 * 0.003),
+        );
+    }
+    m.lathe(
+        Mat::Chrome,
+        DVec3::new(0.62, top, -0.3),
+        &[
+            (0.0, 0.0),
+            (0.07, 0.0),
+            (0.075, 0.02),
+            (0.05, 0.025),
+            (0.0, 0.02),
+        ],
+    );
+    m.lathe(
+        Mat::Glass(rgb(224, 160, 70)),
+        DVec3::new(-0.7, top, -0.1),
+        &[(0.0, 0.0), (0.03, 0.0), (0.04, 0.09), (0.0, 0.09)],
+    );
+}
+
+/// A safe (0.8 deep, 1.5 high) in dark green enamel: a chrome-rimmed
+/// door with a brass dial and a spoked wheel handle, on little feet.
+pub fn safe(m: &mut Maker, w: f64) {
+    let hw = w * 0.5;
+    let enamel = Mat::Paint(rgb(40, 72, 60));
+    casing(
+        m,
+        enamel,
+        DVec3::new(-hw, 0.07, -0.4),
+        DVec3::new(hw, 1.5, 0.4),
+    );
+    for x in [-hw + 0.1, hw - 0.1] {
+        m.block(
+            cast_iron(),
+            DVec3::new(x - 0.07, 0.0, -0.32),
+            DVec3::new(x + 0.07, 0.08, 0.32),
+        );
+    }
+    // The door, a step proud of the front, with a chrome rim.
+    m.block(
+        Mat::Chrome,
+        DVec3::new(-hw + 0.07, 0.2, 0.37),
+        DVec3::new(hw - 0.07, 1.4, 0.4),
+    );
+    m.block(
+        Mat::Paint(rgb(52, 90, 76)),
+        DVec3::new(-hw + 0.11, 0.24, 0.395),
+        DVec3::new(hw - 0.11, 1.36, 0.42),
+    );
+    dial(m, DVec3::new(0.0, 1.0, 0.42), 0.11, rgb(255, 226, 170));
+    // The wheel handle: a hub, three spokes.
+    m.lathe_along(
+        Mat::Chrome,
+        DVec3::new(0.0, 0.58, 0.42),
+        DVec3::Z,
+        &[(0.0, 0.0), (0.05, 0.0), (0.05, 0.05), (0.0, 0.05)],
+    );
+    for k in 0..3 {
+        let a = k as f64 * TAU / 3.0 + 0.4;
+        m.tube(
+            Mat::Chrome,
+            &[
+                DVec3::new(0.0, 0.58, 0.46),
+                DVec3::new(a.cos() * 0.15, 0.58 + a.sin() * 0.15, 0.46),
+            ],
+            0.014,
+        );
+    }
+    // Hinges at the left edge.
+    for y in [0.4, 1.2] {
+        m.block(
+            Mat::Chrome,
+            DVec3::new(-hw + 0.02, y, 0.34),
+            DVec3::new(-hw + 0.09, y + 0.12, 0.43),
+        );
+    }
+}
+
+/// A planning board on legs (0.5 deep, 1.9 high): a map of the city with
+/// photographs, coloured pins and red string between them.
+pub fn pin_board(m: &mut Maker, w: f64) {
+    let hw = w * 0.5;
+    let steel = Mat::Paint(rgb(74, 80, 86));
+    for x in [-hw + 0.1, hw - 0.1] {
+        m.block(
+            steel,
+            DVec3::new(x - 0.03, 0.0, -0.22),
+            DVec3::new(x + 0.03, 1.4, -0.16),
+        );
+        m.block(
+            steel,
+            DVec3::new(x - 0.05, 0.0, -0.25),
+            DVec3::new(x + 0.05, 0.04, 0.2),
+        );
+    }
+    m.block(
+        Mat::Wood(rgb(120, 82, 52)),
+        DVec3::new(-hw, 0.8, -0.21),
+        DVec3::new(hw, 1.9, -0.15),
+    );
+    m.block(
+        Mat::Paint(rgb(196, 160, 112)),
+        DVec3::new(-hw + 0.05, 0.85, -0.15),
+        DVec3::new(hw - 0.05, 1.85, -0.135),
+    );
+    // The map: a pale sheet with street lines and a blue river.
+    m.block(
+        Mat::Paint(rgb(236, 226, 190)),
+        DVec3::new(-hw + 0.25, 0.95, -0.135),
+        DVec3::new(hw - 0.4, 1.75, -0.125),
+    );
+    for k in 0..5 {
+        let y = 1.0 + k as f64 * 0.16;
+        m.block(
+            Mat::Paint(rgb(150, 142, 124)),
+            DVec3::new(-hw + 0.28, y, -0.125),
+            DVec3::new(hw - 0.43, y + 0.012, -0.12),
+        );
+    }
+    m.block(
+        Mat::Paint(rgb(110, 160, 200)),
+        DVec3::new(-hw + 0.5, 0.97, -0.125),
+        DVec3::new(-hw + 0.6, 1.73, -0.118),
+    );
+    // Photographs and pins, joined by string.
+    let spots = [
+        (hw - 0.3, 1.62),
+        (hw - 0.34, 1.2),
+        (-hw + 0.45, 1.5),
+        (0.1, 1.25),
+        (-0.15, 1.65),
+    ];
+    for (k, &(x, y)) in spots.iter().enumerate() {
+        let x = x.clamp(-hw + 0.15, hw - 0.15);
+        m.block(
+            Mat::Paint(rgb(230, 230, 222)),
+            DVec3::new(x - 0.08, y - 0.1, -0.12),
+            DVec3::new(x + 0.08, y + 0.1, -0.105),
+        );
+        m.block(
+            Mat::Paint(rgb(70, 70, 76)),
+            DVec3::new(x - 0.065, y - 0.04, -0.105),
+            DVec3::new(x + 0.065, y + 0.085, -0.1),
+        );
+        m.blob(
+            Mat::Plain(if k % 2 == 0 {
+                rgb(210, 40, 40)
+            } else {
+                rgb(230, 190, 40)
+            }),
+            DVec3::new(x, y + 0.12, -0.09),
+            DVec3::splat(0.018),
+            0.0,
+            (1.0, 1.0),
+        );
+        if let Some(&(nx, ny)) = spots.get(k + 1) {
+            let nx = nx.clamp(-hw + 0.15, hw - 0.15);
+            m.tube(
+                Mat::Plain(rgb(190, 30, 36)),
+                &[
+                    DVec3::new(x, y + 0.12, -0.085),
+                    DVec3::new(nx, ny + 0.12, -0.085),
+                ],
+                0.004,
+            );
+        }
+    }
+}
+
+/// Three oil drums (1.1 across, 1.0 high): rust red, olive and yellow
+/// with a hazard band, ribbed, with bungs in their lids.
+pub fn drums(m: &mut Maker) {
+    for (k, (x, z, col)) in [
+        (-0.28, -0.2, rgb(150, 62, 40)),
+        (0.3, -0.15, rgb(92, 104, 70)),
+        (0.0, 0.3, rgb(214, 170, 40)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let h = 0.9 + 0.04 * k as f64;
+        m.lathe(
+            Mat::Paint(col),
+            DVec3::new(x, 0.0, z),
+            &[
+                (0.0, 0.0),
+                (0.26, 0.0),
+                (0.28, 0.03),
+                (0.28, h - 0.03),
+                (0.26, h),
+                (0.0, h),
+            ],
+        );
+        for y in [h * 0.33, h * 0.66] {
+            m.lathe(
+                Mat::Paint(scale(col, 0.8)),
+                DVec3::new(x, y, z),
+                &[(0.278, 0.0), (0.292, 0.012), (0.292, 0.028), (0.278, 0.04)],
+            );
+        }
+        m.lathe(
+            Mat::Chrome,
+            DVec3::new(x + 0.1, h, z + 0.05),
+            &[(0.0, 0.0), (0.035, 0.0), (0.035, 0.012), (0.0, 0.012)],
+        );
+        if k == 2 {
+            m.lathe(
+                Mat::Plain(rgb(28, 28, 30)),
+                DVec3::new(x, h * 0.45, z),
+                &[(0.279, 0.0), (0.285, 0.0), (0.285, 0.16), (0.279, 0.16)],
+            );
+        }
+    }
+}
+
+/// The thing a gang is hiding, lying on the floor for a hero to find
+/// (about 0.7 m across, 0.4 high): a real object with a small glint
+/// of its own (a lit seal, a glowing coil, a gilt rim) so it shows from
+/// across the room.
+pub fn evidence(m: &mut Maker, kind: hw_sim::missions::board::CrimeKind) {
+    use hw_sim::missions::board::CrimeKind as K;
+    let glint = Mat::Glow(rgb(255, 214, 120));
+    match kind {
+        K::Payroll => {
+            // A steel strongbox, lid thrown back on bundles of banknotes.
+            let steel = Mat::Paint(rgb(78, 92, 100));
+            casing(
+                m,
+                steel,
+                DVec3::new(-0.34, 0.0, -0.22),
+                DVec3::new(0.34, 0.24, 0.22),
+            );
+            m.block(
+                Mat::Chrome,
+                DVec3::new(-0.35, 0.22, -0.23),
+                DVec3::new(0.35, 0.25, 0.23),
+            );
+            for (k, (x, z)) in [(-0.17, -0.08), (0.05, -0.08), (-0.17, 0.1), (0.05, 0.1)]
+                .into_iter()
+                .enumerate()
+            {
+                m.block(
+                    Mat::Paint(rgb(138, 178, 112)),
+                    DVec3::new(x, 0.25, z - 0.05),
+                    DVec3::new(x + 0.2, 0.25 + 0.06 + 0.01 * k as f64, z + 0.05),
+                );
+                m.block(
+                    Mat::Paint(rgb(236, 226, 190)),
+                    DVec3::new(x + 0.08, 0.25, z - 0.052),
+                    DVec3::new(x + 0.12, 0.26 + 0.01 * k as f64 + 0.06, z + 0.052),
+                );
+            }
+            // The lid, hinged back.
+            let mut lid = m.sub(DVec3::new(0.0, 0.25, -0.22), 0.0);
+            lid.block(
+                steel,
+                DVec3::new(-0.34, 0.0, -0.03),
+                DVec3::new(0.34, 0.2, 0.0),
+            );
+            // A lit seal on the front.
+            m.block(
+                glint,
+                DVec3::new(-0.06, 0.1, 0.22),
+                DVec3::new(0.06, 0.16, 0.23),
+            );
+        }
+        K::Counterfeit => {
+            // A stack of engraved printing plates in a tray, an ink roller.
+            m.block(
+                Mat::Paint(rgb(60, 64, 70)),
+                DVec3::new(-0.3, 0.0, -0.22),
+                DVec3::new(0.3, 0.06, 0.22),
+            );
+            for k in 0..5 {
+                let y = 0.06 + 0.025 * k as f64;
+                m.block(
+                    Mat::Chrome,
+                    DVec3::new(-0.26 + 0.01 * k as f64, y, -0.18),
+                    DVec3::new(0.24 + 0.01 * k as f64, y + 0.02, 0.18),
+                );
+            }
+            m.lathe_along(
+                Mat::Plain(rgb(40, 90, 56)),
+                DVec3::new(-0.32, 0.12, 0.0),
+                DVec3::X,
+                &[(0.0, 0.0), (0.05, 0.0), (0.05, 0.64), (0.0, 0.64)],
+            );
+            m.block(
+                glint,
+                DVec3::new(-0.2, 0.185, -0.1),
+                DVec3::new(0.2, 0.19, -0.06),
+            );
+        }
+        K::Smuggling => {
+            // A crate, its lid pried off, packed with straw and a glowing
+            // canister of something that should not be there.
+            crate_box(
+                m,
+                DVec3::new(-0.34, 0.0, -0.26),
+                DVec3::new(0.34, 0.34, 0.26),
+                rgb(190, 148, 96),
+            );
+            m.block(
+                Mat::Paint(rgb(214, 190, 120)),
+                DVec3::new(-0.3, 0.33, -0.22),
+                DVec3::new(0.3, 0.36, 0.22),
+            );
+            m.lathe(
+                Mat::Glass(rgb(120, 255, 130)),
+                DVec3::new(0.0, 0.36, 0.0),
+                &[
+                    (0.0, 0.0),
+                    (0.09, 0.0),
+                    (0.09, 0.26),
+                    (0.06, 0.3),
+                    (0.0, 0.3),
+                ],
+            );
+            m.lathe(
+                Mat::Glow(rgb(130, 255, 120)),
+                DVec3::new(0.0, 0.4, 0.0),
+                &[(0.0, 0.0), (0.075, 0.0), (0.075, 0.17), (0.0, 0.17)],
+            );
+            let mut lid = m.sub(DVec3::new(0.46, 0.0, 0.14), 0.5);
+            lid.block(
+                Mat::Paint(rgb(180, 138, 88)),
+                DVec3::new(-0.3, 0.0, -0.22),
+                DVec3::new(0.3, 0.035, 0.22),
+            );
+        }
+        K::Prototype => {
+            // A prototype ray gun in its case, on blue velvet, its coil lit.
+            m.block(
+                Mat::Paint(rgb(44, 48, 60)),
+                DVec3::new(-0.36, 0.0, -0.22),
+                DVec3::new(0.36, 0.12, 0.22),
+            );
+            m.block(
+                Mat::Cloth(rgb(30, 50, 120)),
+                DVec3::new(-0.32, 0.1, -0.18),
+                DVec3::new(0.32, 0.125, 0.18),
+            );
+            casing(
+                m,
+                Mat::Chrome,
+                DVec3::new(-0.26, 0.125, -0.05),
+                DVec3::new(0.1, 0.2, 0.07),
+            );
+            m.blob(
+                Mat::Paint(rgb(200, 50, 40)),
+                DVec3::new(-0.18, 0.2, 0.1),
+                DVec3::new(0.05, 0.08, 0.04),
+                -0.3,
+                (0.5, 0.5),
+            );
+            m.lathe_along(
+                Mat::Glow(rgb(120, 220, 255)),
+                DVec3::new(0.1, 0.165, 0.0),
+                DVec3::X,
+                &[(0.0, 0.0), (0.035, 0.0), (0.035, 0.18), (0.0, 0.2)],
+            );
+        }
+        K::Art => {
+            // A gilt-framed landscape propped on two blocks, a lit plaque.
+            for x in [-0.22, 0.22] {
+                m.block(
+                    Mat::Wood(rgb(120, 84, 52)),
+                    DVec3::new(x - 0.04, 0.0, -0.06),
+                    DVec3::new(x + 0.04, 0.1, 0.06),
+                );
+            }
+            let mut f = m.sub(DVec3::new(0.0, 0.1, 0.0), 0.0);
+            f.blob(
+                Mat::Brass,
+                DVec3::new(0.0, 0.3, 0.0),
+                DVec3::new(0.36, 0.3, 0.025),
+                0.0,
+                (0.2, 0.2),
+            );
+            f.block(
+                Mat::Paint(rgb(118, 176, 220)),
+                DVec3::new(-0.3, 0.06, 0.02),
+                DVec3::new(0.3, 0.54, 0.03),
+            );
+            f.block(
+                Mat::Paint(rgb(86, 140, 84)),
+                DVec3::new(-0.3, 0.06, 0.03),
+                DVec3::new(0.3, 0.22, 0.035),
+            );
+            f.blob(
+                Mat::Plain(rgb(255, 230, 120)),
+                DVec3::new(0.18, 0.43, 0.04),
+                DVec3::new(0.05, 0.05, 0.01),
+                0.0,
+                (1.0, 1.0),
+            );
+            f.block(
+                glint,
+                DVec3::new(-0.08, 0.02, 0.025),
+                DVec3::new(0.08, 0.05, 0.03),
+            );
+        }
+        K::Racket => {
+            // A fat black ledger with a brass clasp, a pencil, bills tucked in.
+            m.block(
+                Mat::Paint(rgb(40, 36, 40)),
+                DVec3::new(-0.24, 0.0, -0.17),
+                DVec3::new(0.24, 0.1, 0.17),
+            );
+            m.block(
+                Mat::Paint(rgb(236, 228, 204)),
+                DVec3::new(-0.22, 0.02, -0.15),
+                DVec3::new(0.23, 0.08, 0.16),
+            );
+            m.block(
+                Mat::Paint(rgb(138, 178, 112)),
+                DVec3::new(0.1, 0.095, -0.1),
+                DVec3::new(0.26, 0.11, 0.0),
+            );
+            m.tube(
+                Mat::Plain(rgb(220, 180, 40)),
+                &[DVec3::new(-0.2, 0.11, 0.22), DVec3::new(0.2, 0.11, 0.2)],
+                0.012,
+            );
+            m.block(
+                glint,
+                DVec3::new(-0.04, 0.05, 0.17),
+                DVec3::new(0.04, 0.09, 0.18),
+            );
+        }
+    }
+}
+
 /// An exhibit's round plinth (0.56 high) with a brass band and a lit
 /// label at the front.
 fn plinth(m: &mut Maker) {

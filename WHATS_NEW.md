@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.242 (2026-11-12)
+
+- No more running to Atomic Annie for a case: the **police computer** has them. Click the little monitor at the top right (or press Y) to log in; its desktop holds **Crime-o-Vision**, your case files, the crime scanner, the city map and your powers, each with an icon.
+- **Crime-o-Vision** is a glassy screen whose picture wavers like an old tube. It lists gang hideouts to bust, nearest first, with a symbol for each crime (payroll robbery, counterfeit ring, smuggling den, stolen prototype, art theft, protection racket), how far away it is, the gang and the gangsters' level. Press TAKE to open the case.
+- For now every case is a **hideout**: arrest the boss, or find the thing the gang is hiding. The thing is a real object (a strongbox, printing plates, a canister, a prototype, a painting, a ledger) with a small glint so you spot it.
+- Hideouts are furnished like hideouts: cots, card tables, safes, planning boards with red string, oil drums and crates.
+- Villains standing guard are alive: they stroll a few steps now and then, lounge, keep a lookout, count their money or share a laugh.
+
 ## 0.241 (2026-11-12)
 
 - The works and the fair's pavilions are roomy buildings of halls now, like the offices: a works holds stamping presses, lathes, humming Aether dynamos, workbenches and stacks of crates; a pavilion shows model rockets, great atoms and globes of the world on plinths, with show cases and seats along the walls.

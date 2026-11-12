@@ -915,6 +915,14 @@ impl Session {
         }
     }
 
+    /// Takes crime `number` from the police computer's board.
+    pub fn take_case(&mut self, number: u16) {
+        match self {
+            Session::Local { host, .. } => host.post(move |h, _| h.sim.missions.take_case(number)),
+            Session::Remote { conn, .. } => conn.send(hw_net::ToServer::TakeCase { number }),
+        }
+    }
+
     /// Rides the Aether Tube to station `dest`, or ([`hw_sim::tube::HOP_OUT`])
     /// gets out.
     pub fn ride_tube(&mut self, dest: u16) {

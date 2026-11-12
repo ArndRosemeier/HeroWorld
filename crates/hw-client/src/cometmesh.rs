@@ -228,6 +228,11 @@ fn piece(m: &mut crate::interior::pieces::Maker, scheme: Scheme, (kind, w, c): L
         K::RocketModel => pc::rocket_model(m),
         K::AtomModel => pc::atom_model(m),
         K::Orrery => pc::orrery(m),
+        K::Cot => pc::cot(m),
+        K::PokerTable => pc::poker_table(m),
+        K::Safe => pc::safe(m, w),
+        K::PinBoard => pc::pin_board(m, w),
+        K::Drums => pc::drums(m),
     }
 }
 
@@ -1498,6 +1503,11 @@ mod tests {
             (K::RocketModel, 160),
             (K::AtomModel, 160),
             (K::Orrery, 160),
+            (K::Cot, 90),
+            (K::PokerTable, 195),
+            (K::Safe, 100),
+            (K::PinBoard, 240),
+            (K::Drums, 110),
         ] {
             for seg in FURNITURE_SEGS {
                 let mesh = piece_mesh(Scheme::Atrium, (kind, w, 1), seg);

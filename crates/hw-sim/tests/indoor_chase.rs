@@ -40,14 +40,12 @@ fn building(scheme: Scheme) -> (Sim, Layout) {
     );
     let mut sim = Sim::with_solids(Seed(5), Arc::new(o));
     sim.set_spawn((DVec2::new(size.x * 0.5, -8.0), DVec2::X));
-    sim.world.resource_mut::<Fights>().floors = Some(Arc::new(Floors {
-        buildings: vec![Building {
-            pos: size * 0.5,
-            dir: DVec2::new(0.0, -1.0),
-            base: GROUND_Y,
-            graph: FloorGraph::new(&l),
-        }],
-    }));
+    sim.world.resource_mut::<Fights>().floors = Some(Arc::new(Floors::of(vec![Building::at(
+        size * 0.5,
+        DVec2::new(0.0, -1.0),
+        GROUND_Y,
+        FloorGraph::new(&l),
+    )])));
     (sim, l)
 }
 

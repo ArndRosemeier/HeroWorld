@@ -87,6 +87,16 @@ pub enum ItemKind {
     AtomModel,
     /// A globe of the world with its moons on a plinth.
     Orrery,
+    /// A gang hideout's cot with a rumpled blanket.
+    Cot,
+    /// A round card table, felt and chips.
+    PokerTable,
+    /// A heavy safe with its dial.
+    Safe,
+    /// A pin board on legs: a city map, photographs and red string.
+    PinBoard,
+    /// A cluster of oil drums.
+    Drums,
 }
 
 /// How a building of halls is furnished.
@@ -100,6 +110,8 @@ pub enum Fit {
     Works,
     /// A fair pavilion: exhibits.
     Expo,
+    /// A gang's hideout: cots, card tables, safes, planning boards.
+    Hideout,
 }
 
 impl ItemKind {
@@ -144,6 +156,11 @@ impl ItemKind {
             Self::RocketModel => (1.6, 3.0),
             Self::AtomModel => (1.6, 2.5),
             Self::Orrery => (1.6, 2.3),
+            Self::Cot => (2.0, 0.5),
+            Self::PokerTable => (1.95, 0.78),
+            Self::Safe => (0.8, 1.5),
+            Self::PinBoard => (0.5, 1.9),
+            Self::Drums => (1.1, 1.0),
         }
     }
 
@@ -582,6 +599,52 @@ impl Room<'_> {
                 (ItemKind::Cabinet, 0.48),
             ],
         );
+    }
+
+    /// A hideout's room: the room's own furniture where a gang would keep
+    /// it (a kitchen to eat in, a lobby to guard), but cots, card tables,
+    /// safes, planning boards, crates and drums besides.
+    fn hideout(&mut self, kind: SpaceKind, entrance: Option<DVec2>) {
+        const CLUTTER: &[(ItemKind, f64)] = &[
+            (ItemKind::Cot, 0.9),
+            (ItemKind::Crates, 1.6),
+            (ItemKind::PinBoard, 2.4),
+            (ItemKind::Drums, 1.1),
+            (ItemKind::Safe, 1.0),
+            (ItemKind::Crates, 1.6),
+        ];
+        match kind {
+            SpaceKind::Lobby => self.lobby(entrance),
+            SpaceKind::Atrium => self.lobby(None),
+            SpaceKind::Vestibule => self.house_hall(entrance),
+            SpaceKind::Kitchen => self.kitchen(),
+            SpaceKind::Living => {
+                self.grid(&[(ItemKind::PokerTable, 1.95)], 6.0, false, 1);
+                self.living();
+            }
+            SpaceKind::Bedroom => {
+                self.grid(&[(ItemKind::Cot, 0.9)], 2.4, false, 4);
+            }
+            SpaceKind::Gallery | SpaceKind::Arcade | SpaceKind::Concourse => {
+                self.walkway();
+                return;
+            }
+            SpaceKind::Hall | SpaceKind::Boardroom | SpaceKind::Shop | SpaceKind::Service => {
+                self.grid(
+                    &[
+                        (ItemKind::PokerTable, 1.95),
+                        (ItemKind::Crates, 1.6),
+                        (ItemKind::Cot, 0.9),
+                        (ItemKind::Drums, 1.1),
+                    ],
+                    5.5,
+                    false,
+                    10,
+                );
+            }
+            _ => return,
+        }
+        self.along_walls(4.0, CLUTTER);
     }
 
     /// A pavilion's hall: exhibits on the floor, cases and seats along
@@ -1229,6 +1292,7 @@ pub fn items_for(l: &Layout, club: Option<usize>, fit: Fit) -> Vec<Item> {
         };
         match s.kind {
             _ if club == Some(i) => room.club(),
+            _ if fit == Fit::Hideout => room.hideout(s.kind, entrance),
             SpaceKind::Hall | SpaceKind::Boardroom | SpaceKind::Shop | SpaceKind::Service
                 if fit != Fit::Plain =>
             {

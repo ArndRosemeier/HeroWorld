@@ -13,6 +13,7 @@ use hw_net::{InputState, PlayerId};
 use hw_sim::collision::{solids_of, Body, Obstacles};
 use hw_sim::combat::{EnemyKind, Fights};
 use hw_sim::floornav::{Building, FloorGraph, Floors};
+use hw_sim::missions::board;
 use hw_sim::missions::{self, CaseKind, Missions, GANGS};
 use hw_sim::{Sim, GROUND_Y, TICK_HZ};
 use std::sync::Arc;
@@ -48,19 +49,20 @@ fn town_of(n: usize) -> (Sim, Arc<Floors>) {
     }
     let mut sim = Sim::with_solids(Seed(9), Arc::new(o));
     sim.set_spawn((DVec2::new(-150.0, -150.0), DVec2::X));
-    let floors = Arc::new(Floors {
-        buildings: (0..n)
-            .map(|k| Building {
-                pos: size * 0.5 + at(k),
-                dir: DVec2::new(0.0, -1.0),
-                base: GROUND_Y,
-                graph: FloorGraph::new(&l),
+    let floors = Arc::new(Floors::of(
+        (0..n)
+            .map(|k| {
+                Building::at(
+                    size * 0.5 + at(k),
+                    DVec2::new(0.0, -1.0),
+                    GROUND_Y,
+                    FloorGraph::new(&l),
+                )
             })
             .collect(),
-    });
+    ));
     sim.world.resource_mut::<Fights>().floors = Some(floors.clone());
-    let contact = DVec3::new(-150.0, GROUND_Y, -150.0);
-    sim.missions = Missions::new(floors.clone(), Some(contact), 9);
+    sim.missions = Missions::new(floors.clone(), 9);
     (sim, floors)
 }
 
@@ -91,22 +93,7 @@ fn a_hero_takes_a_case_and_closes_it() {
     let (mut sim, floors) = town();
     let contact = DVec3::new(-150.0, GROUND_Y, -150.0);
     let hero = sim.spawn_hero(PlayerId(1), contact + DVec3::X);
-    // Asking: hold E beside the contact.
-    sim.set_input(
-        PlayerId(1),
-        InputState {
-            revive: true,
-            ..InputState::default()
-        },
-    );
-    for _ in 0..TICK_HZ * 3 {
-        sim.step();
-    }
-    sim.set_input(PlayerId(1), InputState::default());
-    assert_eq!(sim.missions.cases.len(), 1);
-    assert_eq!(sim.missions.cases[0].stage, missions::GO);
     // An evidence case in the building (the test's own pick).
-    // It takes the place of the asked one (one case to a building).
     let number = sim.missions.force(&mut sim.world, CaseKind::Evidence, 0, 0);
     assert_eq!(sim.missions.cases.len(), 1);
     let b = &floors.buildings[0];
@@ -155,12 +142,12 @@ fn a_hero_takes_a_case_and_closes_it() {
     // The clues, each held for its seconds.
     let clues = sim.missions.case(number).expect("open").clues();
     assert_eq!(clues.len(), missions::CLUES);
-    let mut ys: Vec<i64> = clues
-        .iter()
-        .map(|c| (c.0.y * 10.0).round() as i64)
-        .collect();
-    ys.dedup();
-    assert!(ys.len() >= 2, "clues on one floor: {clues:?}");
+    // One thing to find, up on a floor above the street.
+    assert_eq!(clues.len(), 1, "one thing to find: {clues:?}");
+    assert!(
+        clues[0].0.y > GROUND_Y + 1.0,
+        "on the ground floor: {clues:?}"
+    );
     let karma = sim.sheet(PlayerId(1)).expect("a sheet").karma;
     for (at, _) in clues {
         sim.set_input(
@@ -286,36 +273,24 @@ fn hostages_are_freed_room_by_room_and_walk_out() {
 }
 
 #[test]
-fn annie_hands_out_a_case_per_press_one_to_a_building() {
+fn crimes_are_taken_from_the_board_one_to_a_building() {
     let (mut sim, _) = town_of(2);
     let contact = DVec3::new(-150.0, GROUND_Y, -150.0);
     sim.spawn_hero(PlayerId(1), contact + DVec3::X);
-    let press = |sim: &mut Sim, seconds: f64| {
-        sim.set_input(
-            PlayerId(1),
-            InputState {
-                revive: true,
-                ..InputState::default()
-            },
-        );
-        for _ in 0..(seconds * TICK_HZ as f64) as usize {
-            sim.step();
-        }
-        sim.set_input(PlayerId(1), InputState::default());
-        // Annie's files are made up on a worker and open a set time later.
-        for _ in 0..missions::PLAN_TICKS + TICK_HZ as u64 / 2 {
+    let take = |sim: &mut Sim, number: u16| {
+        sim.missions.take_case(number);
+        for _ in 0..TICK_HZ / 2 {
             sim.step();
         }
     };
-    // Holding on is one press: one case.
-    press(&mut sim, 3.0);
+    // Crime 1, then crime 2 (the other building).
+    take(&mut sim, 1);
     assert_eq!(sim.missions.cases.len(), 1);
-    // A second press, a second case, in the other building.
-    press(&mut sim, 0.5);
+    take(&mut sim, 2);
     assert_eq!(sim.missions.cases.len(), 2);
     let numbers: Vec<u16> = sim.missions.cases.iter().map(|r| r.number).collect();
     assert_eq!(numbers, vec![1, 2]);
-    // With only buildings in this town, each case is one step there.
+    // Each case is one step in a hideout.
     for r in &sim.missions.cases {
         assert_eq!(r.steps().len(), 1);
     }
@@ -323,14 +298,13 @@ fn annie_hands_out_a_case_per_press_one_to_a_building() {
         sim.missions.cases[0].site().building,
         sim.missions.cases[1].site().building
     );
-    // No building left: no third, however often she is asked.
-    press(&mut sim, 0.5);
+    // Crime 3 is in building 0 again: not while case 1 is open there. One
+    // past the board's window is no crime yet.
+    take(&mut sim, 3);
+    take(&mut sim, board::BOARD as u16 + 1);
     assert_eq!(sim.missions.cases.len(), 2);
-    assert!(!sim.missions.can_take());
-    press(&mut sim, 0.5);
-    assert_eq!(sim.missions.cases.len(), 2);
-    // Both are on the air, each by its number, and the desk says she is
-    // out of cases.
+    // Both are on the air, each by its number, and the board says which
+    // crimes are taken.
     let news = sim.missions.snapshot();
     let told: Vec<u16> = news
         .iter()
@@ -340,14 +314,26 @@ fn annie_hands_out_a_case_per_press_one_to_a_building() {
         })
         .collect();
     assert_eq!(told, vec![1, 2]);
-    assert!(news.iter().any(|m| matches!(
-        m,
-        hw_net::ToClient::CaseDesk {
-            open: 2,
-            can_take: false,
-            ..
-        }
-    )));
+    let crimes = news
+        .iter()
+        .find_map(|m| match m {
+            hw_net::ToClient::CaseBoard { crimes, open, .. } => {
+                assert_eq!(*open, 2);
+                Some(crimes)
+            }
+            _ => None,
+        })
+        .expect("the board");
+    assert_eq!(crimes.len(), board::BOARD);
+    let taken: Vec<u16> = crimes
+        .iter()
+        .filter(|c| c.taken)
+        .map(|c| c.number)
+        .collect();
+    assert!(
+        taken.starts_with(&[1, 2]) && taken.contains(&3),
+        "{taken:?}"
+    );
 }
 
 #[test]
@@ -356,9 +342,10 @@ fn open_cases_come_back_from_the_hosts_file() {
     let contact = DVec3::new(-150.0, GROUND_Y, -150.0);
     // Case 7 as it was planned: planned again from the same numbers.
     let places = sim.missions.places().expect("places").clone();
-    let (variant, was) = (0..missions::plan::VARIANTS)
-        .find_map(|v| missions::plan::plan(&places, 9, 7, 2, v).map(|p| (v, p)))
-        .expect("a plan");
+    let (variant, was) = (
+        0,
+        missions::plan::crime_plan(&places, 9, 7, 2).expect("a plan"),
+    );
     let mut sheet = hw_sim::progress::starter();
     sheet.cases = hw_net::CaseBook {
         world: 9,
@@ -380,15 +367,9 @@ fn open_cases_come_back_from_the_hosts_file() {
     assert_eq!(r.gang, 2);
     assert_eq!(r.steps(), &was.steps[..]);
     let first = r.site().building.expect("in a building");
-    // A new one gets the next number and the other building, and both
+    // A taken crime gets its own number and the other building, and both
     // are written back into the file.
-    sim.set_input(
-        PlayerId(1),
-        InputState {
-            revive: true,
-            ..InputState::default()
-        },
-    );
+    sim.missions.take_case(8);
     for _ in 0..TICK_HZ * 3 {
         sim.step();
     }

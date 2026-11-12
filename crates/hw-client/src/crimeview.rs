@@ -580,3 +580,23 @@ fn victim_lines(kind: CrimeKind, deed: Deed) -> &'static [&'static str] {
         _ => &[],
     }
 }
+
+/// What a villain standing about (a hideout's guard, a crook on a corner)
+/// does with its time: mostly its idle, now and then lounging, keeping a
+/// lookout, counting its money or sharing a laugh. Each villain has its own
+/// rhythm (by its number) and changes every 12-20 seconds.
+pub fn idle_act(id: u32, time: f32) -> &'static str {
+    let period = 12.0 + (id % 9) as f32;
+    let slot = ((time + id as f32 * 3.7) / period) as u32;
+    let mut x = id.wrapping_mul(0x9E37_79B9) ^ slot.wrapping_mul(0x85EB_CA6B);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x2C1B_3C6D);
+    x ^= x >> 13;
+    match x % 8 {
+        0 | 1 => "lounge",
+        2 | 3 => "lookout",
+        4 => "count",
+        5 => "laugh",
+        _ => "idle",
+    }
+}

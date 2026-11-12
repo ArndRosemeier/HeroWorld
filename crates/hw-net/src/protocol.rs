@@ -1598,17 +1598,41 @@ pub enum ToClient {
         boss: u8,
         clues: Vec<([f32; 3], u8)>,
         held: u8,
+        /// What the crime is (`hw_sim::missions::board::CrimeKind`) and
+        /// the level of the gang.
+        crime: u8,
+        level: u8,
     },
-    /// Atomic Annie's desk: where she stands, cases closed so far, cases
-    /// open and how many may be, and whether she has one to hand out.
-    CaseDesk {
-        at: [f32; 3],
-        closed: u16,
-        open: u8,
+    /// The police computer's list of crimes (Crime-o-Vision), newest
+    /// first; sent when it changes.
+    CaseBoard {
+        crimes: Vec<BoardCrime>,
+        /// Cases open at once, at most, and open now.
         limit: u8,
-        can_take: bool,
+        open: u8,
     },
 }
+
+/// One crime on the police computer: a gang hideout to bust.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BoardCrime {
+    /// Its number: the case's, if taken.
+    pub number: u16,
+    /// `hw_sim::missions::board::CrimeKind` code and the job
+    /// (`CaseKind` code: arrest the boss or find the thing).
+    pub crime: u8,
+    pub job: u8,
+    pub gang: u8,
+    /// The gangsters' level.
+    pub level: u8,
+    pub at: [f32; 3],
+    pub name: String,
+    /// A case is open on it already.
+    pub taken: bool,
+}
+
+/// Most crimes on the board.
+pub const MAX_BOARD: usize = 16;
 
 /// Most clues one [`ToClient::Case`] carries.
 pub const MAX_CLUES: usize = 8;
@@ -1664,6 +1688,10 @@ pub enum ToServer {
         key: u32,
         open: bool,
     },
+    /// Take the crime on the police computer's board with this number.
+    TakeCase {
+        number: u16,
+    },
 }
 
 impl ToClient {
@@ -1710,8 +1738,16 @@ impl ToClient {
                     + 1
                     + 13 * clues.len().min(MAX_CLUES)
                     + 1
+                    + 2
             }
-            ToClient::CaseDesk { .. } => 1 + 12 + 2 + 1 + 1 + 1,
+            ToClient::CaseBoard { crimes, .. } => {
+                2 + 1
+                    + crimes
+                        .iter()
+                        .take(MAX_BOARD)
+                        .map(|c| 2 + 3 + 1 + 12 + s(&place_name(&c.name)) + 1)
+                        .sum::<usize>()
+            }
         }
     }
 
@@ -1924,6 +1960,8 @@ impl ToClient {
                 boss,
                 clues,
                 held,
+                crime,
+                level,
             } => {
                 w.u8(24).u16(*number).u8(*stage).u8(*gang).u8(*step);
                 let n = steps.len().min(MAX_CASE_STEPS);
@@ -1947,20 +1985,23 @@ impl ToClient {
                     }
                     w.u8(*state);
                 }
-                w.u8(*held);
+                w.u8(*held).u8(*crime).u8(*level);
             }
-            ToClient::CaseDesk {
-                at,
-                closed,
-                open,
+            ToClient::CaseBoard {
+                crimes,
                 limit,
-                can_take,
+                open,
             } => {
-                w.u8(25);
-                for v in at {
-                    w.f32(*v);
+                w.u8(25).u8(*limit).u8(*open);
+                let n = crimes.len().min(MAX_BOARD);
+                w.u8(n as u8);
+                for c in &crimes[..n] {
+                    w.u16(c.number).u8(c.crime).u8(c.job).u8(c.gang).u8(c.level);
+                    for v in c.at {
+                        w.f32(v);
+                    }
+                    w.str(&place_name(&c.name)).bool(c.taken);
                 }
-                w.u16(*closed).u8(*open).u8(*limit).bool(*can_take);
             }
         }
     }
@@ -2198,15 +2239,36 @@ impl ToClient {
                     boss,
                     clues,
                     held: r.u8()?,
+                    crime: r.u8()?,
+                    level: r.u8()?,
                 }
             }
-            25 => ToClient::CaseDesk {
-                at: [r.f32()?, r.f32()?, r.f32()?],
-                closed: r.u16()?,
-                open: r.u8()?,
-                limit: r.u8()?,
-                can_take: r.bool()?,
-            },
+            25 => {
+                let limit = r.u8()?;
+                let open = r.u8()?;
+                let n = r.u8()? as usize;
+                if n > MAX_BOARD {
+                    return Err(WireError);
+                }
+                let mut crimes = Vec::with_capacity(n);
+                for _ in 0..n {
+                    crimes.push(BoardCrime {
+                        number: r.u16()?,
+                        crime: r.u8()?,
+                        job: r.u8()?,
+                        gang: r.u8()?,
+                        level: r.u8()?,
+                        at: [r.f32()?, r.f32()?, r.f32()?],
+                        name: r.str()?,
+                        taken: r.bool()?,
+                    });
+                }
+                ToClient::CaseBoard {
+                    crimes,
+                    limit,
+                    open,
+                }
+            }
             15 => ToClient::Incident {
                 id: r.u32()?,
                 kind: r.u8()?,
@@ -2233,6 +2295,7 @@ impl ToServer {
             ToServer::GiveUp { .. } => 2,
             ToServer::Look { bytes, .. } => 1 + 2 + 2 + bytes.len(),
             ToServer::Door { .. } => 1 + 8 + 4 + 1,
+            ToServer::TakeCase { .. } => 1 + 2,
         }
     }
 
@@ -2267,6 +2330,9 @@ impl ToServer {
             } => {
                 w.u8(8).u64(*building).u32(*key).bool(*open);
             }
+            ToServer::TakeCase { number } => {
+                w.u8(9).u16(*number);
+            }
         }
     }
 
@@ -2292,6 +2358,7 @@ impl ToServer {
                 key: r.u32()?,
                 open: r.bool()?,
             },
+            9 => ToServer::TakeCase { number: r.u16()? },
             _ => return Err(WireError),
         })
     }
@@ -2749,6 +2816,7 @@ mod tests {
                             open: true,
                         },
                     ),
+                    (10, ToServer::TakeCase { number: 14 }),
                 ],
             },
             ClientMsg::Bye,
@@ -2862,16 +2930,25 @@ mod tests {
                         boss: 1,
                         clues: vec![([3.0, 12.5, 4.0], 2), ([-1.0, 0.25, 9.5], 0)],
                         held: 112,
+                        crime: 4,
+                        level: 7,
                     },
                 ),
                 (
                     9,
-                    ToClient::CaseDesk {
-                        at: [4.0, 0.5, -9.0],
-                        closed: 12,
-                        open: 2,
+                    ToClient::CaseBoard {
+                        crimes: vec![BoardCrime {
+                            number: 14,
+                            crime: 2,
+                            job: 1,
+                            gang: 3,
+                            level: 6,
+                            at: [4.0, 0.5, -9.0],
+                            name: "tenement on Juniper Street".into(),
+                            taken: true,
+                        }],
                         limit: 3,
-                        can_take: true,
+                        open: 2,
                     },
                 ),
                 (

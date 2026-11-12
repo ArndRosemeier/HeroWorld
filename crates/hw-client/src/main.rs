@@ -658,6 +658,16 @@ fn main() -> EngineResult<()> {
     let mut power_pose_until = f32::NEG_INFINITY;
     // The hand goes to the temple to switch the police visor until then.
     let mut visor_tap_until = f32::NEG_INFINITY;
+    // The police computer (Y, or the monitor in the HUD), and a visor
+    // switch asked of it.
+    let mut police = hw_client::police::Police::default();
+    let mut visor_asked = false;
+    // `HW_POLICE=desktop|crimes`: the police computer open (screenshots).
+    match std::env::var("HW_POLICE").as_deref() {
+        Ok("desktop") => police.desktop = true,
+        Ok("crimes") => police.crimes = true,
+        _ => {}
+    }
     powers.tray = profile.tray.clone();
     let mut hero_file: Option<hw_net::Sheet> = profile.hero.clone();
     // HW_LEVEL=n starts a hero at level n with karma to spend (for trying
@@ -3378,7 +3388,7 @@ fn main() -> EngineResult<()> {
                     story.hear(m);
                     false
                 }
-                hw_net::ToClient::Case { .. } | hw_net::ToClient::CaseDesk { .. } => {
+                hw_net::ToClient::Case { .. } | hw_net::ToClient::CaseBoard { .. } => {
                     cases.hear(m);
                     false
                 }
@@ -3986,6 +3996,15 @@ fn main() -> EngineResult<()> {
                             ("threaten", false)
                         }
                     }
+                    // Villains standing about are never statues: each has its
+                    // own way of killing time, changing now and then.
+                    None if villain
+                        && d.clip == "idle"
+                        && carry.is_none()
+                        && h.combat.is_none_or(|c| c.target.is_none()) =>
+                    {
+                        (hw_client::crimeview::idle_act(h.id.0, frame.time), false)
+                    }
                     None if trick.is_some() => trick.expect("a trick"),
                     // The one being mugged cowers until it is over.
                     None if bystander && d.clip == "idle" => ("hands up", false),
@@ -4034,6 +4053,10 @@ fn main() -> EngineResult<()> {
                                 | "jump land"
                                 | "fight stance"
                                 | "pistol idle"
+                                | "lounge"
+                                | "lookout"
+                                | "count"
+                                | "laugh"
                                 | "carry idle"
                                 | "carry walk"
                                 | "carry jog"
@@ -4667,7 +4690,9 @@ fn main() -> EngineResult<()> {
                 let me_state = mine.and_then(|id| heroes.iter().find(|e| e.id == id));
                 // The police visor first, so the HUD's panels sit over it.
                 {
-                    let toggle = frame.input.pressed(Key::T) && !chat.typing && !on_ui_keys(frame);
+                    let toggle =
+                        (frame.input.pressed(Key::T) && !chat.typing && !on_ui_keys(frame))
+                            || std::mem::take(&mut visor_asked);
                     let why = visor.update(frame.dt, toggle, &radio);
                     if visor.take_tap() {
                         visor_tap_until = frame.time + hw_client::visor::TAP_SECONDS;
@@ -4936,6 +4961,40 @@ fn main() -> EngineResult<()> {
                     case_file.relock = true;
                 }
                 if !case_file.taking_pointer() && std::mem::take(&mut case_file.relock) {
+                    world.set_pointer_lock(true);
+                }
+                // The police computer (Y, or its monitor): Crime-o-Vision
+                // and the desktop of tools; it takes the pointer.
+                if frame.input.pressed(Key::Y) && !chat.typing && !on_ui_keys(frame) {
+                    police.toggle();
+                }
+                if police.icon(frame.ui.ctx(), &cases.board) && !police.crimes {
+                    police.desktop = !police.desktop;
+                }
+                let my_level = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
+                for act in police.show(frame.ui.ctx(), &cases.board, hero_at, my_level) {
+                    use hw_client::police::{Action, App};
+                    match act {
+                        Action::Take(n) => session.take_case(n),
+                        Action::Open(app) => {
+                            if app != App::CrimeOVision {
+                                police.desktop = false;
+                            }
+                            match app {
+                                App::CrimeOVision => {}
+                                App::CaseFile => case_file.toggle(),
+                                App::Visor => visor_asked = true,
+                                App::Map => town_map.toggle(hero_at),
+                                App::Powers => powers.open = true,
+                            }
+                        }
+                    }
+                }
+                if police.taking_pointer() && world.pointer_lock() {
+                    world.set_pointer_lock(false);
+                    police.relock = true;
+                }
+                if !police.taking_pointer() && std::mem::take(&mut police.relock) {
                     world.set_pointer_lock(true);
                 }
                 if let Some(h) = hero_at {

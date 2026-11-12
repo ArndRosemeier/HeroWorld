@@ -356,10 +356,14 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
     // comma-separated list of `<job>[@<place>]` (`hostages`, `crew@street`,
     // `takeover@station`; jobs takeover|evidence|hostages|crew, places
     // building|street|plaza|tunnel|station|grotto|ruin|lair; a building by
-    // default, one to a building) or `chain` (a whole case as Annie plans it).
+    // default, one to a building) `chain` (a whole case, several steps) or `hideout[:<n>]` (crime n of
+    // the police board).
     let mut case: Vec<String> = std::env::var("HW_CASE")
         .map(|v| v.split(',').map(|k| k.trim().to_string()).collect())
         .unwrap_or_default();
+    // `hideout:<n>@thing`: the hero is put beside the thing to find once
+    // the gang stands (screenshots).
+    let mut thing_case: Option<u16> = None;
     let mut busy = Duration::ZERO;
     let mut ticks = 0u32;
     let mut players: Option<BTreeMap<PlayerId, PlayerInfo>> = None;
@@ -382,20 +386,59 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
                 if let Some(n) = colossus_break {
                     host.sim.break_colossus(n);
                 }
+                if let Some(n) = thing_case {
+                    let sim = &mut host.sim;
+                    let clue = sim
+                        .missions
+                        .case(n)
+                        .filter(|r| r.stage == crate::missions::INSIDE)
+                        .and_then(|r| r.clues().first().map(|c| c.0));
+                    if let (Some(at), Some(hero)) = (clue, sim.hero_of(me)) {
+                        thing_case = None;
+                        sim.set_body(
+                            hero,
+                            crate::collision::Body {
+                                pos: at + glam::DVec3::new(2.2, 0.3, 0.0),
+                                grounded: true,
+                                ..Default::default()
+                            },
+                        );
+                    }
+                }
                 let mut first = true;
                 for (i, c) in std::mem::take(&mut case).into_iter().enumerate() {
                     let sim = &mut host.sim;
                     if !sim.missions.available() {
                         continue;
                     }
-                    let number = force_case(sim, &c, i);
+                    let number =
+                        force_case(sim, c.trim_end_matches("@in").trim_end_matches("@thing"), i);
                     // The hero stands at the first one's way in.
                     let hero = sim.hero_of(me);
                     // Out in the open, a little way off: not in the crew's
                     // middle.
+                    let inside = c.ends_with("@in");
+                    if c.ends_with("@thing") {
+                        thing_case = number;
+                    }
+                    let places = sim.missions.places().cloned();
                     let at = number.and_then(|n| sim.missions.case(n)).map(|r| {
                         let site = r.site();
-                        if site.building.is_none() && !site.place.underground() {
+                        // `@in` (screenshots): in the middle of the building,
+                        // on its ground floor.
+                        let middle = inside
+                            .then(|| {
+                                let b = &places.as_ref()?.floors.buildings[site.building?];
+                                Some(b.to_town(glam::DVec3::new(
+                                    b.graph.size.x * 0.5,
+                                    0.6,
+                                    b.graph.size.y * 0.35,
+                                )))
+                            })
+                            .flatten();
+                        if let Some(m) = middle {
+                            m
+                        } else if site.building.is_none() && !site.place.underground() {
                             let f = site.facing * 22.0;
                             site.at + glam::DVec3::new(f.x, 0.5, f.y)
                         } else {
@@ -461,6 +504,14 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
 fn force_case(sim: &mut crate::Sim, token: &str, i: usize) -> Option<u16> {
     use crate::missions::{CaseKind, Place};
     let gang = 1 + i % 2;
+    // `hideout` or `hideout:<crime number>`: a crime of the police board.
+    if let Some(rest) = token.strip_prefix("hideout") {
+        let n = rest
+            .strip_prefix(':')
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(1 + i as u16);
+        return sim.missions.force_crime(&mut sim.world, n);
+    }
     if token == "chain" {
         return sim.missions.force_plan(&mut sim.world, gang);
     }

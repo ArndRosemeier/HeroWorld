@@ -1,8 +1,8 @@
 //! Cases on screen: every open case, one of them tracked (its goal on
 //! the wrist radio, a teal mark on the compass and the map, a teal light
 //! over its place, or its way down, while the heroes head there),
-//! sparkles over the clues, Atomic Annie's words on the air (text only),
-//! the prompt at her desk and the bar at a clue or a hostage, and the
+//! sparkles over the clues, Police HQ's words on the air, the bar at a
+//! clue or a hostage, the police computer's board of crimes, and the
 //! cases closed. A case is a chain of steps, each a job at a place; the
 //! words come from the place's kind and name as the server sends them.
 //! The rules are the server's (`hw_sim::missions`); this only shows what
@@ -15,11 +15,14 @@ use engine::ui::egui;
 use glam::Vec3;
 use hw_gen::urban::world::TownWorld;
 use hw_net::ToClient;
+use hw_sim::missions::board::CrimeKind;
 use hw_sim::missions::Place;
 use hw_sim::missions::{
-    CaseKind, ASK_REACH, CLOSED, CLUES, CLUE_REACH, CONTACT_NAME, DONE, GANGS, GO, GUARDED,
-    HOSTAGES, IDLE, INSIDE,
+    CaseKind, CLOSED, CLUES, CLUE_REACH, DONE, GANGS, GO, GUARDED, HOSTAGES, IDLE, INSIDE,
 };
+
+/// Who speaks on the wrist radio.
+pub const DISPATCH: &str = "Police HQ";
 use std::collections::{BTreeMap, VecDeque};
 
 /// The cases' colour on the radio, the compass and the map.
@@ -61,6 +64,9 @@ pub struct State {
     pub clues: Vec<(Vec3, u8)>,
     /// How far along holding the help key is (0-1).
     pub held: f32,
+    /// What the gang is up to, and the gangsters' level.
+    pub crime: CrimeKind,
+    pub level: u8,
 }
 
 impl State {
@@ -84,14 +90,25 @@ impl State {
     }
 }
 
-/// Annie's desk, as the server last said.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Desk {
+/// One crime on the police computer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CrimeView {
+    pub number: u16,
+    pub crime: CrimeKind,
+    pub job: CaseKind,
+    pub gang: usize,
+    pub level: u8,
     pub at: Vec3,
-    pub closed: u16,
-    pub open: u8,
+    pub name: String,
+    pub taken: bool,
+}
+
+/// The police computer's board, as the server last said.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Board {
+    pub crimes: Vec<CrimeView>,
     pub limit: u8,
-    pub can_take: bool,
+    pub open: u8,
 }
 
 /// A case that was closed, for the cabinet.
@@ -137,7 +154,7 @@ pub enum Event {
 pub struct MissionView {
     /// The open cases, by number.
     pub cases: BTreeMap<u16, State>,
-    pub desk: Option<Desk>,
+    pub board: Board,
     /// The case the radio, the compass and the map follow.
     pub tracked: Option<u16>,
     /// Cases closed, oldest first.
@@ -155,26 +172,50 @@ pub struct MissionView {
     beam: Option<(EntityId, Vec3)>,
     /// Seconds to the next sparkle over the clues.
     sparkle: f32,
+    /// The things to find, standing in the rooms: by case and clue.
+    things: BTreeMap<(u16, usize), EntityId>,
+}
+
+/// The mesh of the thing a gang hides (see `interior::pieces::evidence`).
+fn thing_mesh(kind: CrimeKind) -> Mesh {
+    let mut b = crate::citymesh::MeshBuilder::new();
+    let mut m = crate::interior::pieces::Maker::new(
+        &mut b,
+        glam::DVec3::ZERO,
+        glam::DVec3::Z,
+        24,
+        crate::skins::Wear::Fresh,
+    );
+    crate::interior::pieces::evidence(&mut m, kind);
+    b.finish()
 }
 
 impl MissionView {
     /// A case or desk message; false for other messages.
     pub fn hear(&mut self, m: &ToClient) -> bool {
         match m {
-            ToClient::CaseDesk {
-                at,
-                closed,
-                open,
+            ToClient::CaseBoard {
+                crimes,
                 limit,
-                can_take,
+                open,
             } => {
-                self.desk = Some(Desk {
-                    at: Vec3::from_array(*at),
-                    closed: *closed,
-                    open: *open,
+                self.board = Board {
+                    crimes: crimes
+                        .iter()
+                        .map(|c| CrimeView {
+                            number: c.number,
+                            crime: CrimeKind::from_code(c.crime),
+                            job: CaseKind::from_code(c.job),
+                            gang: (c.gang as usize).min(GANGS.len() - 1),
+                            level: c.level,
+                            at: Vec3::from_array(c.at),
+                            name: c.name.clone(),
+                            taken: c.taken,
+                        })
+                        .collect(),
                     limit: *limit,
-                    can_take: *can_take,
-                });
+                    open: *open,
+                };
                 true
             }
             ToClient::Case {
@@ -189,6 +230,8 @@ impl MissionView {
                 boss,
                 clues,
                 held,
+                crime,
+                level,
             } => {
                 let steps: Vec<StepView> = steps
                     .iter()
@@ -216,6 +259,8 @@ impl MissionView {
                         .map(|(p, f)| (Vec3::from_array(*p), *f))
                         .collect(),
                     held: *held as f32 / 255.0,
+                    crime: CrimeKind::from_code(*crime),
+                    level: *level,
                 };
                 let before = if matches!(next.stage, CLOSED | IDLE) {
                     self.cases.remove(number)
@@ -315,6 +360,44 @@ impl MissionView {
                 }
             }
         }
+        // The things to find: real objects on the floor, until found.
+        let wanted: Vec<((u16, usize), Vec3, CrimeKind)> = self
+            .cases
+            .values()
+            .filter(|s| s.stage == INSIDE && s.kind == CaseKind::Evidence)
+            .flat_map(|s| {
+                s.clues
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, c)| c.1 != DONE)
+                    .map(move |(i, c)| ((s.number, i), c.0, s.crime))
+            })
+            .collect();
+        let gone: Vec<(u16, usize)> = self
+            .things
+            .keys()
+            .filter(|k| !wanted.iter().any(|w| w.0 == **k))
+            .copied()
+            .collect();
+        for k in gone {
+            if let Some(e) = self.things.remove(&k) {
+                world.despawn(e);
+            }
+        }
+        for (key, at, crime) in wanted {
+            if self.things.contains_key(&key) {
+                continue;
+            }
+            let yaw = (key.0 as f32 * 71.0 + key.1 as f32 * 40.0) % 360.0;
+            if let Ok(e) = world.place(
+                thing_mesh(crime),
+                engine::prelude::Place::new(at.x, at.y + 0.02, at.z)
+                    .with_yaw_deg(yaw)
+                    .with_scale(1.35),
+            ) {
+                self.things.insert(key, e);
+            }
+        }
         self.sparkle -= dt;
         if self.sparkle <= 0.0 {
             self.sparkle = 0.45;
@@ -345,32 +428,9 @@ impl MissionView {
         }
     }
 
-    /// What to say at the hero's feet: Annie's desk, or a clue or hostage
-    /// in reach (with the bar), from whichever case it belongs to.
+    /// What to say at the hero's feet: a clue or hostage in reach (with
+    /// the bar), from whichever case it belongs to.
     pub fn prompt(&self, hero: Vec3) -> Option<(String, Option<f32>)> {
-        if let Some(d) = self
-            .desk
-            .filter(|d| hero.distance(d.at) < ASK_REACH as f32 + 2.5)
-        {
-            return Some(if d.can_take {
-                (format!("Hold E: ask {CONTACT_NAME} for a case"), None)
-            } else if d.open >= d.limit {
-                (
-                    format!(
-                        "{CONTACT_NAME}: \"You've got {} cases on the go, hon. Close one first.\"",
-                        d.open
-                    ),
-                    None,
-                )
-            } else {
-                (
-                    format!(
-                        "{CONTACT_NAME}: \"Nothing new right now. Every place on my list is taken.\""
-                    ),
-                    None,
-                )
-            });
-        }
         self.cases
             .values()
             .filter(|s| s.stage == INSIDE)
@@ -382,7 +442,7 @@ impl MissionView {
             .map(|(s, (_, state))| match (s.kind, *state) {
                 (CaseKind::Hostages, GUARDED) => ("Beat their guards first".to_string(), None),
                 (CaseKind::Hostages, _) => ("Hold E to untie them".to_string(), Some(s.held)),
-                _ => ("Hold E to search here".to_string(), Some(s.held)),
+                _ => (format!("Hold E to take {}", s.crime.thing()), Some(s.held)),
             })
     }
 
@@ -453,7 +513,10 @@ impl MissionView {
             world.despawn(e);
         }
         self.cases.clear();
-        self.desk = None;
+        self.board = Board::default();
+        for (_, e) in std::mem::take(&mut self.things) {
+            world.despawn(e);
+        }
         self.tracked = None;
         self.pending.clear();
         self.lines.clear();
@@ -474,10 +537,13 @@ fn goal(s: &State) -> String {
     };
     match s.kind {
         CaseKind::Takeover if s.in_building() => {
-            format!("Beat their boss on the top floor{groups}")
+            format!("Arrest their boss on the top floor{groups}")
         }
         CaseKind::Takeover => format!("Beat their boss{groups}"),
         CaseKind::Crew => format!("Beat the crew: {} of {}", s.cleared, s.groups.max(1)),
+        CaseKind::Evidence if s.clues.len() <= 1 && CLUES == 1 => {
+            format!("Find {}{groups}", s.crime.thing())
+        }
         CaseKind::Evidence => format!(
             "Find the clues: {} of {}{groups}",
             s.found(),
@@ -518,7 +584,7 @@ pub fn mark(s: &State) -> Option<StoryMark> {
 }
 
 /// Annie's words for a step starting: where, and what to do there.
-fn brief(gang: &str, step: &StepView, last: bool) -> Vec<String> {
+fn brief(gang: &str, step: &StepView, last: bool, crime: CrimeKind) -> Vec<String> {
     let at = step.at_place();
     let gang_cap = crate::casefile::capitalised(gang);
     let building = step.place == Place::Building;
@@ -532,18 +598,19 @@ fn brief(gang: &str, step: &StepView, last: bool) -> Vec<String> {
             "Search the place: whatever they left behind will tell us more.".to_string(),
         ],
         CaseKind::Takeover if building => vec![
-            format!("Trouble {at}: {gang} have taken the whole place over."),
-            "Their boss sits on the top floor. Bring them down, and the rest will scatter."
-                .to_string(),
+            format!("{}: {gang} are holed up {at}.", crime.title()),
+            "Arrest their boss upstairs. The rest will scatter.".to_string(),
         ],
         CaseKind::Takeover => vec![
             format!("{gang_cap} have dug in {at}, boss and all."),
             "Bring the boss down, and the rest will scatter.".to_string(),
         ],
         CaseKind::Evidence if building => vec![
-            format!("{gang_cap} are holed up {at}, and they're hiding something."),
-            "Find three clues for me. They'll be tucked away in the rooms, upstairs too."
-                .to_string(),
+            format!("{}: {gang} are holed up {at}.", crime.title()),
+            format!(
+                "Find {} before they move it. Look upstairs too.",
+                crime.thing()
+            ),
         ],
         CaseKind::Evidence => vec![
             format!("{gang_cap} are hiding something {at}."),
@@ -567,7 +634,7 @@ fn brief(gang: &str, step: &StepView, last: bool) -> Vec<String> {
 /// to `now`; `open` cases are left after it.
 pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
     let say = |text: String| Line {
-        who: CONTACT_NAME,
+        who: DISPATCH,
         text,
     };
     let gang = GANGS[now.gang].name;
@@ -580,7 +647,7 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
                 crate::casefile::capitalised(&place)
             )));
             out.push(say(match open {
-                0 => "Come and see me at Hero Hall when you want the next one.".to_string(),
+                0 => "More crimes are on the police computer when you want one.".to_string(),
                 1 => "One case still open: check your file (J).".to_string(),
                 n => format!("{n} cases still open: check your file (J)."),
             }));
@@ -600,7 +667,7 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
                 "Something's brewing with {gang}. Let's pull the thread."
             )));
         }
-        out.extend(brief(gang, here, last).into_iter().map(say));
+        out.extend(brief(gang, here, last, now.crime).into_iter().map(say));
         return out;
     };
     if now.step > b.step {
@@ -610,7 +677,12 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
             CaseKind::Crew => format!("They talked! The trail leads {}.", here.at_place()),
             _ => format!("That's what we needed. It points {}.", here.at_place()),
         }));
-        out.extend(brief(gang, here, last).into_iter().skip(1).map(say));
+        out.extend(
+            brief(gang, here, last, now.crime)
+                .into_iter()
+                .skip(1)
+                .map(say),
+        );
         return out;
     }
     match (b.stage, now.stage) {
@@ -677,6 +749,8 @@ mod tests {
                 })
                 .collect(),
             held: 0.0,
+            crime: CrimeKind::Payroll,
+            level: 5,
         }
     }
 
@@ -769,6 +843,8 @@ mod tests {
             boss: 1,
             clues: Vec::new(),
             held: 0,
+            crime: 0,
+            level: 3,
         }
     }
     #[test]

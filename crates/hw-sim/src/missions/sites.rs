@@ -131,6 +131,8 @@ pub struct Places {
     pub floors: Arc<Floors>,
     /// The buildings' names, by index.
     pub names: Vec<String>,
+    /// The hideouts' indices in `floors`, in the order crimes use them.
+    pub hideouts: Vec<usize>,
     /// No case on the street this near these (Hero Hall, where heroes
     /// appear).
     pub keep_clear: Vec<DVec2>,
@@ -226,6 +228,41 @@ pub fn building_site(places: &Places, k: usize) -> Site {
         around: Vec::new(),
         building: Some(k),
     }
+}
+
+/// What a hideout building is called: a tenement as it is, a shop-and-office block as one of a few shabby kinds (by its seed).
+pub fn hideout_noun(site: &hw_gen::building::BuildingSite) -> &'static str {
+    use hw_gen::building::BuildingUse::*;
+    match site.usage {
+        Tenement => "tenement",
+        _ => {
+            const KINDS: [&str; 5] = [
+                "shuttered shop block",
+                "derelict office block",
+                "closed-down arcade",
+                "old hotel",
+                "boarded-up emporium",
+            ];
+            KINDS[site.seed.child("noun").rng().index(KINDS.len())]
+        }
+    }
+}
+
+/// The name of the street nearest `p` in `area`.
+pub fn street_near(area: &Area, p: DVec2) -> String {
+    area.roads
+        .iter()
+        .filter(|r| r.pts.len() >= 2)
+        .min_by(|a, b| {
+            let d = |r: &hw_gen::urban::world::WorldRoad| {
+                r.pts
+                    .windows(2)
+                    .map(|w| hw_gen::water::segment_distance(p, w[0], w[1]))
+                    .fold(f64::MAX, f64::min)
+            };
+            d(a).total_cmp(&d(b))
+        })
+        .map_or_else(|| street_name(p), |r| street_name(r.pts[0]))
 }
 
 const STREET_FIRST: [&str; 16] = [

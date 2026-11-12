@@ -786,15 +786,31 @@ fn walk_points(f: &Flight) -> Vec<DVec3> {
     }
 }
 
+/// How a building's layout sits in the town.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Frame {
+    /// A landmark: its place and the way it faces.
+    Landmark { pos: DVec2, dir: DVec2 },
+    /// A building site: the layout's x runs `along` from `origin`, its z
+    /// `inward` (see `BuildingSite::to_city`).
+    Site {
+        origin: DVec2,
+        along: DVec2,
+        inward: DVec2,
+    },
+}
+
 /// A building in town with its route map.
 #[derive(Clone, Debug)]
 pub struct Building {
-    /// Where the layout's frame stands: the landmark's place, facing and
-    /// floor height.
-    pub pos: DVec2,
-    pub dir: DVec2,
+    pub frame: Frame,
+    /// Floor height of the layout's ground.
     pub base: f64,
     pub graph: FloorGraph,
+    /// Where the building's front door looks, and the middle of its
+    /// outline (town frame, flat).
+    pub dir: DVec2,
+    pub pos: DVec2,
 }
 
 impl Building {
@@ -802,30 +818,97 @@ impl Building {
     pub fn of(l: &Landmark) -> Option<Self> {
         let plan = hw_gen::urban::comet::layout(l)?;
         Some(Building {
-            pos: l.pos,
-            dir: l.dir,
+            frame: Frame::Landmark {
+                pos: l.pos,
+                dir: l.dir,
+            },
             base: l.base,
             graph: FloorGraph::new(&plan),
+            dir: l.dir,
+            pos: l.pos,
         })
+    }
+
+    /// A landmark-style building at `pos` facing `dir` (the layout's frame
+    /// as the landmark's).
+    pub fn at(pos: DVec2, dir: DVec2, base: f64, graph: FloorGraph) -> Self {
+        Building {
+            frame: Frame::Landmark { pos, dir },
+            base,
+            graph,
+            dir,
+            pos,
+        }
+    }
+
+    /// A town building of halls' map.
+    pub fn of_site(b: &hw_gen::urban::world::WorldBuilding) -> Option<Self> {
+        let plan = b.site.layout()?;
+        let s = &b.site;
+        let graph = FloorGraph::new(&plan);
+        let mut me = Building {
+            frame: Frame::Site {
+                origin: s.origin,
+                along: s.along,
+                inward: s.inward,
+            },
+            base: b.base,
+            graph,
+            dir: DVec2::ZERO,
+            pos: DVec2::ZERO,
+        };
+        let mid = me.to_town(DVec3::new(
+            me.graph.size.x * 0.5,
+            0.0,
+            me.graph.size.y * 0.5,
+        ));
+        let front = me.to_town(me.graph.front());
+        me.pos = DVec2::new(mid.x, mid.z);
+        me.dir = DVec2::new(front.x - mid.x, front.z - mid.z).normalize_or(DVec2::X);
+        Some(me)
     }
 
     /// A town point in the layout's frame.
     pub fn to_layout(&self, p: DVec3) -> DVec3 {
-        // The landmark's frame: x to the right, z the way it faces.
-        let x = DVec2::new(self.dir.y, -self.dir.x);
-        let d = DVec2::new(p.x, p.z) - self.pos;
-        let local = DVec2::new(d.dot(x), d.dot(self.dir));
-        // The layout's frame from the landmark's: see `comet::point_to_local`.
-        let q = self.graph.size * 0.5 - local;
-        DVec3::new(q.x, p.y - self.base, q.y)
+        match self.frame {
+            Frame::Landmark { pos, dir } => {
+                // The landmark's frame: x to the right, z the way it faces.
+                let x = DVec2::new(dir.y, -dir.x);
+                let d = DVec2::new(p.x, p.z) - pos;
+                let local = DVec2::new(d.dot(x), d.dot(dir));
+                // The layout's frame from the landmark's: see `comet::point_to_local`.
+                let q = self.graph.size * 0.5 - local;
+                DVec3::new(q.x, p.y - self.base, q.y)
+            }
+            Frame::Site {
+                origin,
+                along,
+                inward,
+            } => {
+                let d = DVec2::new(p.x, p.z) - origin;
+                DVec3::new(d.dot(along), p.y - self.base, d.dot(inward))
+            }
+        }
     }
 
     /// A layout point in the town's frame.
     pub fn to_town(&self, p: DVec3) -> DVec3 {
-        let local = self.graph.size * 0.5 - DVec2::new(p.x, p.z);
-        let x = DVec2::new(self.dir.y, -self.dir.x);
-        let q = self.pos + x * local.x + self.dir * local.y;
-        DVec3::new(q.x, p.y + self.base, q.y)
+        match self.frame {
+            Frame::Landmark { pos, dir } => {
+                let local = self.graph.size * 0.5 - DVec2::new(p.x, p.z);
+                let x = DVec2::new(dir.y, -dir.x);
+                let q = pos + x * local.x + dir * local.y;
+                DVec3::new(q.x, p.y + self.base, q.y)
+            }
+            Frame::Site {
+                origin,
+                along,
+                inward,
+            } => {
+                let q = origin + along * p.x + inward * p.z;
+                DVec3::new(q.x, p.y + self.base, q.y)
+            }
+        }
     }
 
     /// Is a town point inside (or within `margin` m of) the outline?
@@ -847,13 +930,44 @@ impl Building {
 #[derive(Clone, Debug, Default)]
 pub struct Floors {
     pub buildings: Vec<Building>,
+    /// Gang hideouts among the buildings: the index in `area.buildings` and the
+    /// index in `buildings`.
+    pub hideouts: Vec<(usize, usize)>,
 }
 
 impl Floors {
+    /// Just these buildings, none of them a hideout.
+    pub fn of(buildings: Vec<Building>) -> Self {
+        Self {
+            buildings,
+            hideouts: Vec::new(),
+        }
+    }
+
     pub fn new(town: &hw_gen::urban::world::TownWorld) -> Self {
         Self {
             buildings: town.landmarks.iter().filter_map(Building::of).collect(),
+            ..Self::default()
         }
+    }
+
+    /// The Comet buildings and the town buildings of halls in `area` that
+    /// are gang hideouts (see `BuildingSite::is_hideout`), those last in
+    /// the order of [`Self::hideouts`].
+    pub fn with_hideouts(
+        town: &hw_gen::urban::world::TownWorld,
+        area: &hw_gen::urban::area::Area,
+    ) -> Self {
+        let mut me = Self::new(town);
+        for (n, wb) in area.buildings.iter().enumerate() {
+            if wb.site.is_hideout() {
+                if let Some(b) = Building::of_site(wb) {
+                    me.hideouts.push((n, me.buildings.len()));
+                    me.buildings.push(b);
+                }
+            }
+        }
+        me
     }
 
     /// The building a town point is in (or right at the door of).
@@ -1008,14 +1122,12 @@ mod tests {
                     .collect(),
             );
             // The layout's own frame as the town's.
-            let floors = Floors {
-                buildings: vec![Building {
-                    pos: l.size * 0.5,
-                    dir: DVec2::new(0.0, -1.0),
-                    base: 0.0,
-                    graph: FloorGraph::new(&l),
-                }],
-            };
+            let floors = Floors::of(vec![Building::at(
+                l.size * 0.5,
+                DVec2::new(0.0, -1.0),
+                0.0,
+                FloorGraph::new(&l),
+            )]);
             let g = &floors.buildings[0].graph;
             let street = DVec3::new(l.size.x * 0.5, 0.0, -6.0);
             // Points on each floor, a few per height.

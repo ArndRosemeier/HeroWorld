@@ -80,6 +80,11 @@ pub const POD_SECONDS: f64 = 5.0;
 pub const RESPAWN_SECONDS: f64 = 15.0;
 /// A group does not come back while a hero stands this close.
 pub const RESPAWN_CLEAR: f64 = 25.0;
+/// Standing about: a villain strolls to somewhere within this of its place
+/// (m), in slots of this many seconds, a few steps in about half of them.
+pub const STROLL_RADIUS: f64 = 2.8;
+pub const STROLL_SLOT: f64 = 8.0;
+
 /// An ambient corner's group goes home once no hero is this near (m).
 pub const SLEEP: f64 = 420.0;
 /// Heroes this close to a defeat share its karma.
@@ -489,6 +494,21 @@ pub fn enemy_spec(k: EnemyKind) -> EnemySpec {
             aggro: 26.0,
             karma: 24.0,
         },
+    }
+}
+
+impl EnemyKind {
+    /// Does it stroll about while standing guard (people do, robots and
+    /// robot parts stand)?
+    pub fn strolls(self) -> bool {
+        !matches!(
+            self,
+            EnemyKind::Sentry
+                | EnemyKind::Colossus
+                | EnemyKind::WeakPoint
+                | EnemyKind::Doctor
+                | EnemyKind::Orderly
+        )
     }
 }
 
@@ -4502,6 +4522,7 @@ fn enemies_act(
             spec.reach *= PERCH_RANGE;
         }
         let ranged = en.kind.ranged();
+        let strolls = en.kind.strolls() && !en.leaving;
         let mut input = InputState::default();
         let getting_up = tick < actors[i].f.busy_until;
         let held = actors[i].f.held(tick) || actors[i].f.frozen(tick);
@@ -4640,7 +4661,7 @@ fn enemies_act(
                             input.move_x = d.x as f32;
                             input.move_z = d.y as f32;
                         }
-                    } else if flat.length() > 1.0 {
+                    } else if flat.length() > if strolls { STROLL_RADIUS + 0.5 } else { 1.0 } {
                         // Walking back to its corner; making off at a jog.
                         let pace = if en.leaving { 0.62 } else { 0.3 };
                         let d = heading(paths, solids, floors, id, tick, here, en.home) * pace;
@@ -4648,6 +4669,30 @@ fn enemies_act(
                         input.move_z = d.y as f32;
                     } else {
                         paths.remove(&id);
+                        // Standing about is not standing still: now and
+                        // then a few steps to somewhere near, straight
+                        // over clear floor.
+                        if strolls {
+                            let slot = tick / ticks(STROLL_SLOT);
+                            let phase = tick % ticks(STROLL_SLOT);
+                            if roll(slot, id) < 0.5 && phase < ticks(STROLL_SLOT * 0.5) {
+                                let a = roll(slot ^ 0x5151, id) * std::f64::consts::TAU;
+                                let r = 1.0 + roll(slot ^ 0x77, id) * (STROLL_RADIUS - 1.0);
+                                let goal = DVec3::new(
+                                    en.home.x + a.cos() * r,
+                                    here.y,
+                                    en.home.z + a.sin() * r,
+                                );
+                                let to = DVec2::new(goal.x - here.x, goal.z - here.z);
+                                if to.length() > 0.5
+                                    && crate::nav::walkable_line(solids, here, goal)
+                                {
+                                    let d = to.normalize_or_zero() * 0.22;
+                                    input.move_x = d.x as f32;
+                                    input.move_z = d.y as f32;
+                                }
+                            }
+                        }
                     }
                 }
                 Some(j) => {

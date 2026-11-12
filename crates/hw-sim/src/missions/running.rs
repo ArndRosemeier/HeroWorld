@@ -253,6 +253,11 @@ impl Running {
                 .map(|k| (self.clues[k].at.as_vec3().to_array(), self.state(world, k)))
                 .collect(),
             held,
+            crime: self.plan.crime.code(),
+            level: world
+                .resource::<Fights>()
+                .team_level
+                .saturating_add(self.plan.extra),
         }
     }
 
@@ -280,7 +285,7 @@ impl Running {
     ) -> Room {
         let gang = GANGS[self.gang];
         let spot = Spot {
-            extra: if boss { BOSS_EXTRA } else { 0 },
+            extra: self.plan.extra + if boss { BOSS_EXTRA } else { 0 },
             size: Some(size),
             crew: gang.crew,
             once: true,
@@ -407,7 +412,8 @@ impl Running {
             .rooms()
             .into_iter()
             .filter(|(k, r, _)| {
-                matches!(
+                let size = r.size().min_element();
+                (matches!(
                     k,
                     SpaceKind::Hall
                         | SpaceKind::Boardroom
@@ -415,7 +421,15 @@ impl Running {
                         | SpaceKind::Shop
                         | SpaceKind::Concourse
                         | SpaceKind::Vestibule
-                ) && r.size().min_element() >= 8.0
+                ) && size >= 8.0)
+                    // A hideout's flats and back rooms are smaller.
+                    || (matches!(
+                        k,
+                        SpaceKind::Living
+                            | SpaceKind::Kitchen
+                            | SpaceKind::Bedroom
+                            | SpaceKind::Service
+                    ) && size >= 4.5)
             })
             .collect();
         // Lowest first, then the biggest.
@@ -525,6 +539,21 @@ impl Running {
                     });
                     used.push(i);
                 }
+            }
+        }
+        // Whatever the rooms hold, a thing to find must be somewhere: the
+        // boss's room, or any room with open floor.
+        if self.clues.is_empty() && job == CaseKind::Evidence {
+            let from = self.boss.as_ref().map_or(door, |b| b.at);
+            let at = std::iter::once(&top)
+                .chain(rooms.iter())
+                .find_map(|r| far_corner(&solids, b, &r.1, r.2, from));
+            if let Some(at) = at {
+                self.clues.push(Clue {
+                    at,
+                    found: false,
+                    hostage: None,
+                });
             }
         }
     }
@@ -754,7 +783,7 @@ fn beaten(world: &World, spot: usize) -> bool {
         .is_some_and(|s| s.groups > 0 && s.members == 0)
 }
 
-fn flat(a: DVec3, b: DVec3) -> f64 {
+pub(crate) fn flat(a: DVec3, b: DVec3) -> f64 {
     DVec2::new(a.x - b.x, a.z - b.z).length()
 }
 

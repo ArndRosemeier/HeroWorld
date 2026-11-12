@@ -827,78 +827,79 @@ the **host's** story, as it fights at the host's level: anyone near can be brief
 a chapter for the team, and it is written into the host's file and into the files of those
 who were there; a guest further along keeps their own place.
 
-### Cases (`hw-sim/src/missions/`, `hw-client/src/missionview.rs`)
+### Cases (`hw-sim/src/missions/`, `hw-client/src/{missionview,police}.rs`)
 
-**Atomic Annie** (Hero Hall's second hero) hands out cases: hold **E** near her (3.5 m). She
-never leaves the hall to answer calls, so she is always at her place on its steps. Each
-press of E gives one case; it is made up on a worker thread and opens **2 s** later. The team
-can have up to **3 cases open** at once (`OPEN_LIMIT`; nothing else assumes a number), never
-two at one place (the same building, or within 60 m); when she finds no free place she says
-so until a case closes. Cases are numbered (No. 1, 2, ...) and each is against one of five
-gangs (the Doctor's sentries, Jackets or Syndicate, sky pirates, the Iron Legion, the Zorrak;
-the last two only from their levels on).
+**Gang hideouts** are the one kind of case for now (the street, plaza, tunnel, Deeps and
+chain cases are parked in the code, not offered). They are **found on the police computer**, not
+at Atomic Annie (she keeps the hall's steps and no longer hands anything out):
 
-**A case is a chain of 1-3 steps** (`missions/plan.rs`; two steps the most often): **leads**
-first, then **the job**. A lead is a **crew** to shake down (beat them; down and cuffed is
-enough, "They talked!") or a place to **search** (3 clues); what it turns up points to the next
-place, which stays blacked out in the case file until then. The job is a **takeover** (beat the
-boss), **evidence** (3 clues) or **hostages** (3 people). Each step plays at a **place**
-(`missions/sites.rs`), picked from the kinds of place its gang likes (`Gang::haunts`):
+- **The police computer**: a cheesy monitor with antennae in the HUD (top right, under the
+  version; a red badge counts the crimes waiting), or key **Y**. It opens a **desktop** of
+  icons: **Crime-o-Vision**, Case files (J), Crime scanner (the visor, T), City map (M) and
+  Hero powers (B). It takes the pointer; Y or the sputnik button closes it.
+- **Crime-o-Vision** (`police.rs`): a glassy overlay whose opacity wavers like a bad picture
+  tube (with a rolling band and the odd glitch; steady with reduced motion). It lists the next
+  **10 crimes** nearest first. Each row has the crime's **symbol** (payroll robbery: money
+  sack; counterfeit ring: banknotes; smuggling den: crate; stolen prototype: ray gun; art
+  theft: framed painting; protection racket: ledger), its title and the hideout's name ("Old
+  hotel on Juniper Street"), the **job** with an icon (**arrest the boss**: handcuffs, **find
+  the thing**: magnifier), the **gang** (a coloured dot and its short name), the gangsters'
+  **level** (the team's level plus 0-2; green when easy, gold on par, orange and red when tough)
+  and the **distance** from the hero. **TAKE** opens the case (FULL when 3 are open, ON IT when
+  taken). The radio's heading and compass then follow it.
+- **The board** (`missions/board.rs`): crime number *n* is a pure function of the world's seed
+  and *n* (which hideout, what crime, which job, how many levels over the team). The board shows
+  crimes *closed+1 .. closed+10*, so closing a case slides it along. The gang is picked from
+  those that come out at the team's level. Hideouts are the town's **buildings of halls** with 2+
+  floors and at least 12 m a side: every tenement, one shop-and-office block in six (works keep their machines).
+  A town of seed 3 has about 85.
 
-| Place | Where | Gangs that like it most |
-| --- | --- | --- |
-| Building | the Comet buildings' rooms, floor by floor (the job only, never a lead) | Jackets, Iron Legion |
-| Street | the pavement of a street round the start (180 m clear of Hero Hall and where heroes appear); streets get made-up names ("Atlas Drive") | Jackets, Iron Legion |
-| Plaza | a landmark's plaza (Aether Spire, lighthouse, Tesla tower, airship mast, rocket port, atomic plant, mole drill, weather tower, robot works) | sky pirates, Zorrak |
-| Tunnel | the utility tunnels under a main road | the Doctor's men |
-| Station | an Aether Tube station's hall | Jackets |
-| Grotto | a cave chamber of the Deeps | Zorrak |
-| Ruin | the buried city's vault and streets | Jackets |
-| Lair | the Doctor's own lab (the Doctor's men only) | the Doctor's men |
+The team can have up to **3 cases open** at once (`OPEN_LIMIT`; nothing else assumes a number),
+never two in one building. Cases are numbered with the crime's number and each is against one of
+five gangs (the Doctor's sentries, Jackets or Syndicate, sky pirates, the Iron Legion, the
+Zorrak; the last two only from their levels on).
 
-Under the ground the radio leads to **the way down** first (the tube pavilion, a green exit, the
-kiosk over the lab), then to the place once a hero is below the street. The gang there stands
-only for a hero below the street, within **70 m**.
+**A hideout case is one step in one building**, one of two jobs:
+- **Arrest the boss** (takeover): the gang holds up to **6 rooms** (halls, boardrooms, lobbies,
+  shops, concourses, at least 8 m a side; a flat's living rooms, kitchens and bedrooms, 4.5 m),
+  spread over the floors, **3 villains a room** for one hero and one more for each friend. The
+  **boss** waits on the top floor with 3 guards, **1 level over the gang's**. Beating the boss
+  closes the case.
+- **Find the thing** (evidence): the same gang, plus **one real object** the crime is about
+  (a strongbox of cash, printing plates, a crate with a glowing canister, the prototype in its
+  case, a painting propped up, a ledger), lying in a far corner of a room on a high floor. It
+  has a small glint of its own (a lit seal, a glowing coil) and sparkles lightly; hold **E**
+  within 2.8 m for 3 s to take it. That closes the case.
+- **Hideouts are furnished like hideouts** (`Fit::Hideout`): cots with rumpled blankets,
+  card tables with chips and cards, safes, planning boards with a pinned map, photos and red
+  string, oil drums and crates, besides the room's own furniture.
+- **Standing about is not standing still**: villains that stand guard (hideouts, corners) take a
+  few steps to somewhere within 2.8 m now and then (about half of every 8 s), and each has its
+  own idle: lounging, keeping a lookout, counting money or sharing a laugh, changing every
+  12-20 s.
 
-**Out in the open** (every place but a building) the gang stands in the middle and on open floor
-round it: a takeover is the boss with 3 guards plus **2 side crews**; a crew is **2 crews**;
-hostages are 2 crews with **3 hostages** further out, each guarded by the nearest crew; evidence
-is 1 crew and **3 clues** on the far spots. Crews are **3 villains** for one hero, one more for
-each friend. Freed hostages walk off a few metres and are gone.
+Out in the open the gang stands in the middle and on open floor round it (parked): a takeover is
+the boss with 3 guards plus 2 side crews; hostages, crews and clues as in the code.
 
 The radio, the compass, the map diamond and the teal beacon follow **one tracked case**
-(the newest, until you pick another in the case file); the radio heading says how many are
-open and which step ("step 1 of 2"). Every open case plays on regardless: its gang stands when
-a hero comes near, its clues sparkle and its hostages can be freed, tracked or not.
+(the newest, until you pick another in the case file). Every open case plays on regardless: its
+gang stands when a hero comes near and the thing can be taken, tracked or not.
 
 In a building:
-- **Takeover**: the gang holds up to **6 rooms** (halls, boardrooms, lobbies, shops,
-  concourses; at least 8 m a side), spread over the floors, **3 villains a room** for one
-  hero and one more for each friend. The **boss** waits in the top floor's boardroom (or its
-  biggest room) with 3 guards, **1 level over the team**. Beating the boss closes the case.
-- **Evidence**: the same gang, plus **3 clues** hidden in far corners of rooms on different
-  floors. Hold **E** within 2.8 m of a clue for 3 s to search it (sparkles mark them);
-  finding all three closes the case.
-- **Hostages**: the same gang holding **3 townsfolk** (hands up) in rooms on different
-  floors. While that room's crew is on its feet nobody can be untied ("Beat their guards
-  first"); once they are all down, hold **E** by a hostage for **2 s**. They thank you, then
-  hurry out by the building's route map (2.2 m/s, stairs and all) and are gone outside the
-  door. Freeing all three closes the case.
 - **Room by room**: each room is its own group with its own sight. A group notices a hero
   only in aggro range and in sight, and only its own room's friends come along, so a floor
   can be cleared one room at a time without bringing the whole gang. Villains who saw you
   follow you through doors and up stairs by the building's route map (see Villain AI).
-- The gang moves in when a hero comes within **90 m** of the place (on the flat; underground
-  70 m and below the street), and leaves if no hero is within **250 m** for **30 s** (the
-  case stays at its step; it comes back when you do).
-- **Reward**: every hero within 150 m gets **10 %** of the karma their next level takes for
-  each lead, and **40 %** when the case closes.
+- The gang moves in when a hero comes within **90 m** of the place (on the flat), and leaves if
+  no hero is within **250 m** for **30 s** (the case stays; it comes back when you do).
+- **Reward**: every hero within 150 m gets **40 %** of the karma their next level takes when
+  the case closes.
 
-**Adding to cases** (the hooks): a new kind of place is a `Place` value, a finder function and a
-line in `sites::SOURCES`, plus its weight in the gangs' `haunts`; a new job is a `CaseKind`
-value (where it fits, as a lead or a last step in `plan.rs`, how its gang stands and when it is
-done in `running.rs`, its words in missionview and casefile). Everything else (steps, radio, case
-file, saving) works from those.
+**Adding to cases** (the hooks): a new crime is a `CrimeKind` value (its words, symbol in
+`police::crime_icon`, the thing in `pieces::evidence`); a new kind of place is a `Place` value, a
+finder function and a line in `sites::SOURCES`; a new job is a `CaseKind` value (how its gang
+stands and when it is done in `running.rs`, its words in missionview and casefile). Everything
+else (steps, radio, case file, saving) works from those.
 
 **The case file** (J; `hw-client/src/casefile.rs`): Hero Hall's manila folder, typed on a
 typewriter. It slides in on its own for 7 s when a case opens (a NEW CASE stamp) or closes
@@ -910,23 +911,22 @@ click turns the tabs). Tabs:
   gang is known for, then the step's job); **the trail** (every step with its place, ticked when
   done, the ones to come blacked out); a progress checklist for the step (rooms cleared, the boss at large or
   bagged, each clue with what it turned out to be, each hostage held, under guard or freed); the
-  boss's mugshot clipped on; one of Annie's notes in blue ink in the margin. With no case: where
-  to find Annie.
+  boss's mugshot clipped on; one of Annie's notes in blue ink in the margin. With no case: how to open the police computer.
 - **The Doctor**: Commander Starling's dossier. Chapters done are stamped SOLVED, the current one
   shows its goal (or the level it opens at), the rest are blacked out.
 - **Closed**: the cabinet. A tally per gang, then the closed cases newest first (8 at a time;
   the wheel scrolls), each stamped CLOSED. It is kept in the profile on this PC (the newest
   500).
 
-**Saving**: each open case is kept as its number, gang, **variant** (which of the plans for that
-number it is) and the step reached; with the world's seed that plans it again exactly (same
-seed, same cases), so nothing about places is saved. The opened and closed counts go along
+**Saving**: each open case is kept as its number (the crime's), gang and the step reached;
+with the world's seed that makes the case again exactly (same seed, same crimes), so nothing
+about places is saved. The opened and closed counts go along
 (`Sheet.cases`, up to 16 open). The host's file wins: on starting, the server plans the host's
 saved cases again and opens them at their step (in stage "go there"); a book from another world
-keeps its counts but not its cases. Cases saved by 0.209 (before the chains) are dropped. Every
+keeps its counts but not its cases. Cases saved by earlier versions come back as the hideout crime of their number. Every
 change is written back into every hero's file.
 
-Not yet: villains riding lifts, cases in ordinary town offices, parks and rooftops as places.
+Not yet: villains riding lifts, parks and rooftops as places, more kinds of case (parked until hideouts are good).
 
 ---
 

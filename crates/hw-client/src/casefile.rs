@@ -409,16 +409,16 @@ fn short(place: &str) -> String {
 fn empty_sheet(pen: &mut Pen, sheet: Rect, cases: &MissionView, type_font: &dyn Fn(f32) -> FontId) {
     pen.line_font("NO OPEN CASE", type_font(24.0), TYPE);
     pen.gap(10.0);
-    pen.para(&format!(
-        "The cabinet is quiet. {CONTACT_NAME} keeps the cases on the steps of Hero Hall: \
-         stand beside her and hold E, and she'll hand you the next one."
-    ));
+    pen.para(
+        "The cabinet is quiet. The police computer (key Y, or the monitor at the top right) \
+         lists the gang hideouts that want busting: open Crime-o-Vision and take one.",
+    );
     pen.gap(16.0);
-    if let Some(d) = cases.desk {
+    if cases.board.limit > 0 {
         pen.para(&format!(
-            "She lets a team work up to {} cases at once, never two at one place. A case \
-             can start on a street corner and end in a tube station, or the other way round.",
-            d.limit
+            "A team can work up to {} cases at once, never two in one building. Each is a \
+             hideout: arrest the boss, or find the thing the gang is hiding.",
+            cases.board.limit
         ));
         pen.gap(10.0);
     }
@@ -429,7 +429,7 @@ fn empty_sheet(pen: &mut Pen, sheet: Rect, cases: &MissionView, type_font: &dyn 
     margin_note(
         pen.painter,
         pos2(sheet.right() - 250.0, sheet.top() + 150.0),
-        "Coffee's on me\nwhen you're ready! -A.",
+        "Mind the stairs,\nthey're full of\ncrooks! -A.",
     );
 }
 

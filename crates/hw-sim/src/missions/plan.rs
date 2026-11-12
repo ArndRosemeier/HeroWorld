@@ -35,6 +35,25 @@ pub struct Plan {
     pub gang: usize,
     pub variant: u8,
     pub steps: Vec<Step>,
+    /// What the gang is up to (a hideout's crime).
+    pub crime: super::board::CrimeKind,
+    /// Levels the gangsters stand over the team.
+    pub extra: u8,
+}
+
+/// The case for crime `number` against `gang`: one step in its hideout.
+pub fn crime_plan(places: &Places, seed: u64, number: u16, gang: usize) -> Option<Plan> {
+    let c = super::board::crime(places, seed, number)?;
+    Some(Plan {
+        gang: gang.min(GANGS.len() - 1),
+        variant: 0,
+        steps: vec![Step {
+            job: c.job,
+            site: sites::building_site(places, c.building),
+        }],
+        crime: c.kind,
+        extra: c.extra,
+    })
 }
 
 /// Jobs a lead step can be, and a last step.
@@ -71,6 +90,8 @@ pub fn plan(places: &Places, seed: u64, number: u16, gang: usize, variant: u8) -
         gang,
         variant,
         steps: out,
+        crime: Default::default(),
+        extra: 0,
     })
 }
 

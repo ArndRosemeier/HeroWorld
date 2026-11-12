@@ -409,6 +409,7 @@ impl Host {
                     key,
                     open,
                 } => self.sim.use_door(player, building, key, open),
+                ToServer::TakeCase { number } => self.sim.missions.take_case(number),
                 ToServer::Sheet(sheet) => self.sim.set_sheet(player, sheet),
                 ToServer::Buy { power } => {
                     // A refused buy changes nothing; the client checks first.
