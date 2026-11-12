@@ -37,7 +37,8 @@ pub use nooks::{Folk, Livery, Nook, NookKind, SECTION, SLOT, STYLES};
 pub use tube::{TubeLine, TubeNet, TubeStation, TUBE_HALF, TUBE_HEIGHT};
 
 use super::footprint::Footprint;
-use super::underground::{Underground, Void, VoidKind, SHAFT_HALF};
+use super::spiral::Spiral;
+use super::underground::{Underground, Void, VoidKind};
 use super::world::TownWorld;
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
@@ -264,7 +265,7 @@ pub struct DeepLamp {
     pub range: f32,
 }
 
-/// What a lift up to the street is for.
+/// What a stair up to the street is for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntranceKind {
     /// A tube station's Googie pavilion.
@@ -275,7 +276,7 @@ pub enum EntranceKind {
     Exit,
 }
 
-/// A lift from the street down.
+/// A stair from the street down.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DeepEntrance {
     pub kind: EntranceKind,
@@ -285,14 +286,17 @@ pub struct DeepEntrance {
     pub door: DVec2,
     pub top: f64,
     pub bottom: f64,
+    /// The spiral stair down the shaft.
+    pub spiral: Spiral,
 }
 
-/// A lift between two deep layers (a closed shaft).
+/// A stair between two deep layers (a closed shaft).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InnerLift {
     pub pos: DVec2,
     pub bottom: f64,
     pub top: f64,
+    pub spiral: Spiral,
 }
 
 /// A tube station as planned in its tile.
@@ -423,7 +427,13 @@ impl DeepTile {
                 }
             }
         }
+        // Fixtures, and the stairs down the shafts (with a rail round the
+        // hole where it opens on the street).
         self.solids = self.fixtures.iter().flat_map(|f| f.footprints()).collect();
+        self.solids
+            .extend(self.entrances.iter().flat_map(|e| e.spiral.solids(true)));
+        self.solids
+            .extend(self.lifts.iter().flat_map(|l| l.spiral.solids(false)));
         self.solid_grid.clear();
         for (i, f) in self.solids.iter().enumerate() {
             let r = f.reach();
@@ -710,19 +720,6 @@ impl TownWorld {
             .any(|t| !t.near(p, r).is_empty())
     }
 
-    /// Is `p` (feet) in a deep lift shaft?
-    pub fn deep_in_shaft(&self, p: DVec3) -> bool {
-        let q = DVec2::new(p.x, p.z);
-        let ground = self.ground(q);
-        self.deep_near(q, 0.0).iter().any(|t| {
-            t.at(q).any(|(_, v)| {
-                v.kind == VoidKind::Shaft
-                    && p.y >= v.floor_at(q) - 0.5
-                    && p.y <= v.ceiling_at(q).unwrap_or(ground + 2.5)
-            })
-        })
-    }
-
     /// Solid fixture parts within `r` of `p`.
     pub fn deep_solids_near(&self, p: DVec2, r: f64) -> Vec<Footprint> {
         self.deep_near(p, r)
@@ -805,22 +802,15 @@ impl Plan<'_> {
         roofed(self.w, v, cover)
     }
 
-    /// A closed lift shaft from `bottom` up to `top` at `c`.
+    /// A closed stair shaft from `bottom` up to `top` at `c`.
     pub fn inner_lift(&mut self, c: DVec2, bottom: f64, top: f64) {
-        self.t.voids.push(Void {
-            kind: VoidKind::Shaft,
-            origin: c - DVec2::splat(SHAFT_HALF),
-            along: DVec2::X,
-            min: DVec2::ZERO,
-            max: DVec2::splat(SHAFT_HALF * 2.0),
-            floor: [bottom, bottom],
-            height: top - bottom + 4.0,
-            open: false,
-        });
+        let spiral = Spiral::new(c, DVec2::Y, top, bottom);
+        self.t.voids.push(spiral.shaft(Some(top - bottom + 4.0)));
         self.t.lifts.push(InnerLift {
             pos: c,
             bottom,
             top,
+            spiral,
         });
         self.t.lamps.push(DeepLamp {
             pos: DVec3::new(c.x, bottom + 2.6, c.y),
@@ -836,7 +826,7 @@ impl Plan<'_> {
         });
     }
 
-    /// A lift from the deep layer above down to the Deeps at `c` (the caves
+    /// A stair from the deep layer above down to the Deeps at `c` (the caves
     /// connect its foot to the tile's galleries).
     pub fn lift_to_deeps(&mut self, c: DVec2, top: f64) {
         let bottom = deep_floor(self.w, c);
@@ -978,8 +968,9 @@ fn overlaps_flat(a: &Void, b: &Void, margin: f64) -> bool {
 
 /// The floor under `p` for something at `y`, among `voids` covering `p`:
 /// the highest floor at most a step above `y` whose space reaches `y`.
-/// Inside a lift shaft the floor is the shaft's own: the floors of the
-/// rooms it passes through do not stop the lift.
+/// Inside a stair shaft the floor is the shaft's own, far below: the floors
+/// of the rooms it passes through are cut away over it (the steps, being
+/// solids, hold a body up).
 pub fn floor_for_in<'a>(voids: impl Iterator<Item = &'a Void>, p: DVec2, y: f64) -> Option<f64> {
     let voids: Vec<&Void> = voids.collect();
     let shaft = voids.iter().find(|v| {

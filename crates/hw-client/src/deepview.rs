@@ -200,11 +200,9 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
             _ => {}
         }
     }
-    // Lift rings where the inner lifts stop.
+    // The stairs between the layers.
     for l in &t.lifts {
-        for y in [l.bottom, l.top] {
-            uv::lift_ring(&mut inner, l.pos, y, rgb(130, 230, 255));
-        }
+        uv::spiral_stair(&mut inner, &l.spiral);
     }
     for f in &t.fixtures {
         fixture(&mut inner, f, &mut glows);
@@ -271,7 +269,7 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
     }
     for e in &t.entrances {
         let glow_col = entrance_glow(e.kind);
-        uv::lift_ring(&mut inner, e.pos, e.bottom, glow_col);
+        uv::spiral_stair(&mut inner, &e.spiral);
         glows.push(Glow {
             pos: DVec3::new(e.pos.x, e.bottom + 2.6, e.pos.y),
             color: glow_col,
@@ -317,7 +315,6 @@ fn street(town: &TownWorld, t: &DeepTile) -> Built {
                 uv::collar(&mut outer, e.pos, e.door, town);
             }
         }
-        uv::lift_ring(&mut outer, e.pos, e.top, glow_col);
     }
     Built {
         meshes: prepared(outer),

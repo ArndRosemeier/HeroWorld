@@ -1,12 +1,13 @@
 //! The Doctor's lab under the dystopia quarter: a newspaper kiosk on a back
-//! street that is really a lift, a vestibule and a long corridor, the great
+//! street that is really a stair, a vestibule and a long corridor, the great
 //! lab hall with Tesla coils, bubbling vats and a ray cannon, a reactor, a
-//! row of cells and a control room. An escape lift drops to the Deeps.
+//! row of cells and a control room. An escape stair drops to the Deeps.
 
 use super::{
     datum, overlaps, room, run, tile_of, tube::spot_free, DeepEntrance, DeepLamp, DeepSpot,
     EntranceKind, Fixture, FixtureKind, Lair, Plan, SpotKind, LAIR_DEPTH,
 };
+use crate::urban::spiral::Spiral;
 use crate::urban::underground::{Void, VoidKind, SHAFT_HALF};
 use crate::urban::world::TownWorld;
 use glam::{DVec2, DVec3};
@@ -93,16 +94,10 @@ pub(super) fn plan_tile(plan: &mut Plan) {
             for d in 0..8 {
                 let dir = hw_core::det::dir2(std::f64::consts::TAU * d as f64 / 8.0 + 0.2);
                 let l = layout(c, dir, f);
-                let shaft = Void {
-                    kind: VoidKind::Shaft,
-                    origin: c - DVec2::splat(SHAFT_HALF),
-                    along: DVec2::X,
-                    min: DVec2::ZERO,
-                    max: DVec2::splat(SHAFT_HALF * 2.0),
-                    floor: [f, f],
-                    height: 0.0,
-                    open: true,
-                };
+                // The kiosk's door faces away from the lab: the stair's top
+                // landing is by it, its foot opens into the vestibule.
+                let spiral = Spiral::new(c, -dir, w.ground(c), f);
+                let shaft = spiral.shaft(None);
                 let tubes = net.stretch_voids_near(c + dir * 50.0, 120.0);
                 let fits = l.voids.iter().chain(std::iter::once(&shaft)).all(|v| {
                     plan.roofed(v, 3.0)
@@ -110,13 +105,13 @@ pub(super) fn plan_tile(plan: &mut Plan) {
                         && tubes.iter().all(|(_, _, t)| !overlaps(v, t, 2.0))
                 });
                 if fits {
-                    found = Some((c, dir, f, l, shaft));
+                    found = Some((c, dir, f, l, shaft, spiral));
                     break 'search;
                 }
             }
         }
     }
-    let Some((c, dir, f, l, shaft)) = found else {
+    let Some((c, dir, f, l, shaft, spiral)) = found else {
         return;
     };
     let base = plan.t.voids.len();
@@ -134,6 +129,7 @@ pub(super) fn plan_tile(plan: &mut Plan) {
         door: -dir,
         top: w.ground(c),
         bottom: f,
+        spiral,
     });
     plan.t.fixtures.push(Fixture {
         kind: FixtureKind::Kiosk,
@@ -298,6 +294,6 @@ pub(super) fn plan_tile(plan: &mut Plan) {
             facing: face,
         });
     }
-    // The escape lift down to the Deeps, in the hall's far corner.
+    // The escape stair down to the Deeps, in the hall's far corner.
     plan.lift_to_deeps(at(70.0, -10.0), f);
 }

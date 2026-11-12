@@ -86,8 +86,6 @@ pub const RUN_ACCEL: f64 = 40.0;
 pub const AIR_ACCEL: f64 = 12.0;
 pub const GRAVITY: f64 = 20.0;
 pub const JUMP_SPEED: f64 = 7.5;
-/// Vertical speed in a lift shaft.
-pub const LIFT_SPEED: f64 = 5.0;
 /// Flight: cruising speed, with boost, and how quickly it is reached.
 pub const FLY_SPEED: f64 = 22.0;
 pub const FLY_BOOST_SPEED: f64 = 60.0;
@@ -499,54 +497,42 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
     } else {
         delta
     };
-    if solids.in_lift(body.pos) {
-        // The Aether lift in every core: hold jump to rise, descend to sink,
-        // otherwise hover. Step out at any floor.
-        body.vel.y = if input.jump {
-            LIFT_SPEED
-        } else if input.descend {
-            -LIFT_SPEED
-        } else {
-            0.0
-        };
-    } else {
-        let rising_leap = moves.super_jump && !body.grounded && body.vel.y > JUMP_SPEED;
-        if input.jump && body.grounded {
-            if moves.super_jump {
-                body.vel.y = super_jump_speed(level);
-                // Launch: the leap carries on the way the hero was going at
-                // once, instead of speeding up in the air.
-                let stick = DVec2::new(input.move_x as f64, input.move_z as f64);
-                if stick.length_squared() > 1e-6 {
-                    let keep = horizontal_speed(body).max(super_leap_speed(level) * 0.8);
-                    let v = stick.normalize() * keep * stick.length().min(1.0);
-                    let v = DVec3::new(v.x, 0.0, v.y);
-                    body.vel.x = v.x;
-                    body.vel.z = v.z;
-                }
-            } else {
-                body.vel.y = JUMP_SPEED;
+    let rising_leap = moves.super_jump && !body.grounded && body.vel.y > JUMP_SPEED;
+    if input.jump && body.grounded {
+        if moves.super_jump {
+            body.vel.y = super_jump_speed(level);
+            // Launch: the leap carries on the way the hero was going at
+            // once, instead of speeding up in the air.
+            let stick = DVec2::new(input.move_x as f64, input.move_z as f64);
+            if stick.length_squared() > 1e-6 {
+                let keep = horizontal_speed(body).max(super_leap_speed(level) * 0.8);
+                let v = stick.normalize() * keep * stick.length().min(1.0);
+                let v = DVec3::new(v.x, 0.0, v.y);
+                body.vel.x = v.x;
+                body.vel.z = v.z;
             }
-        }
-        // Let go on the way up and the leap tops out sooner.
-        let pull = if rising_leap && !input.jump {
-            SUPER_JUMP_CUT
         } else {
-            1.0
-        };
-        body.vel.y -= GRAVITY * pull * DT;
-        // A glider holding jump floats down.
-        if moves.glide && input.jump && !body.grounded {
-            body.vel.y = body.vel.y.max(-GLIDE_FALL);
+            body.vel.y = JUMP_SPEED;
         }
-        // A wall runner running into a wall runs up it.
-        let way = DVec3::new(want.x, 0.0, want.z).normalize_or_zero();
-        if moves.wall_run
-            && way != DVec3::ZERO
-            && solids.solid_at(body.pos + way * 0.7 + DVec3::Y * 1.0)
-        {
-            body.vel.y = body.vel.y.max(WALL_CLIMB);
-        }
+    }
+    // Let go on the way up and the leap tops out sooner.
+    let pull = if rising_leap && !input.jump {
+        SUPER_JUMP_CUT
+    } else {
+        1.0
+    };
+    body.vel.y -= GRAVITY * pull * DT;
+    // A glider holding jump floats down.
+    if moves.glide && input.jump && !body.grounded {
+        body.vel.y = body.vel.y.max(-GLIDE_FALL);
+    }
+    // A wall runner running into a wall runs up it.
+    let way = DVec3::new(want.x, 0.0, want.z).normalize_or_zero();
+    if moves.wall_run
+        && way != DVec3::ZERO
+        && solids.solid_at(body.pos + way * 0.7 + DVec3::Y * 1.0)
+    {
+        body.vel.y = body.vel.y.max(WALL_CLIMB);
     }
     solids.move_body(body, DT);
 }

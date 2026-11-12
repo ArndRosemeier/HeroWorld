@@ -1,10 +1,11 @@
-//! The deep underground: down a station's street lift into the tube hall,
+//! The deep underground: down a station's street stair into the tube hall,
 //! about the hall without leaving it, and down into the Deeps. The hero
 //! must land on the floors down there and be kept in by the rock.
 
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
 use hw_gen::urban::deep::{tile_of, EntranceKind};
+use hw_gen::urban::underground::SHAFT_HALF;
 use hw_net::{InputState, PlayerId};
 use hw_sim::collision::Body;
 use hw_sim::{GeneratedTown, Sim, TICK_HZ};
@@ -35,11 +36,37 @@ fn walk(dir: DVec2) -> InputState {
     }
 }
 
-fn descend() -> InputState {
-    InputState {
-        descend: true,
-        ..Default::default()
+/// Walks the hero over `route` (feet points), steering at each in turn.
+fn follow(sim: &mut Sim, me: PlayerId, hero: hw_core::NetId, route: &[DVec3]) {
+    for (k, t) in route.iter().enumerate() {
+        let mut tries = 0;
+        loop {
+            let p = sim.position(hero).unwrap();
+            let d = DVec2::new(t.x - p.x, t.z - p.z);
+            if d.length() < 0.35 {
+                break;
+            }
+            tries += 1;
+            assert!(
+                tries < 3000,
+                "stuck on the way to point {k} {t:?}: at {p:?}"
+            );
+            // Slowly: a bot that cuts corners at a run falls off the stair.
+            run(sim, me, walk(d.normalize() * 0.4), 1.0 / TICK_HZ as f64);
+        }
     }
+}
+
+/// The passage void that joins entrance `e`'s shaft to the rest, if any.
+fn tile_passage(
+    w: &hw_gen::urban::world::TownWorld,
+    e: &hw_gen::urban::deep::DeepEntrance,
+) -> Option<hw_gen::urban::underground::Void> {
+    w.deep_tile(tile_of(e.pos))
+        .voids
+        .iter()
+        .find(|v| v.kind == hw_gen::urban::underground::VoidKind::Passage && v.covers(e.pos, 0.0))
+        .cloned()
 }
 
 #[test]
@@ -65,16 +92,19 @@ fn down_into_a_tube_station_and_about_its_hall() {
             Some((t, e))
         })
         .expect("a station with a street lift");
-    put(&mut sim, hero, DVec3::new(e.pos.x, e.top + 0.2, e.pos.y));
-    run(&mut sim, me, descend(), 12.0);
+    let r0 = e.spiral.route()[0];
+    put(&mut sim, hero, DVec3::new(r0.x, r0.y + 0.2, r0.z));
+    follow(&mut sim, me, hero, &e.spiral.route());
+    run(&mut sim, me, walk(-e.door), 0.6);
+    run(&mut sim, me, InputState::default(), 0.5);
     let p = sim.position(hero).unwrap();
     assert!(
         (p.y - e.bottom).abs() < 0.4,
-        "at {:.1}, lift floor {:.1}",
+        "at {:.1}, stair foot {:.1}",
         p.y,
         e.bottom
     );
-    // Out through the lift's door and about the hall.
+    // Out of the stair's foot and about the hall.
     let hall = &tile.voids[tile.stations[0].hall];
     for dir in [
         e.door,
@@ -98,7 +128,7 @@ fn down_into_a_tube_station_and_about_its_hall() {
 
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
-fn down_a_lift_to_the_deeps() {
+fn down_a_stair_to_the_deeps() {
     let town = GeneratedTown::generate(Seed(1), 40_000.0);
     let w = town.world.clone();
     let mut sim = Sim::for_town(Seed(1), &town);
@@ -110,9 +140,14 @@ fn down_a_lift_to_the_deeps() {
         .iter()
         .flat_map(|t| t.lifts.clone())
         .next()
-        .expect("a lift to the Deeps");
-    put(&mut sim, hero, DVec3::new(l.pos.x, l.top + 0.2, l.pos.y));
-    run(&mut sim, me, descend(), 14.0);
+        .expect("a stair to the Deeps");
+    eprintln!("lift top {} bottom {} pos {}", l.top, l.bottom, l.pos);
+    let r0 = l.spiral.route()[0];
+    put(&mut sim, hero, DVec3::new(r0.x, r0.y + 0.2, r0.z));
+    follow(&mut sim, me, hero, &l.spiral.route());
+    eprintln!("after route {:?}", sim.position(hero));
+    run(&mut sim, me, walk(DVec2::X), 0.6);
+    run(&mut sim, me, InputState::default(), 0.5);
     let p = sim.position(hero).unwrap();
     assert!(
         (p.y - l.bottom).abs() < 0.4,
@@ -221,7 +256,7 @@ fn out_of_the_tube_by_an_exit() {
                 .total_cmp(&b.0.mouth.distance(core))
         })
         .expect("a tube exit");
-    // On the walkway at its mouth, then along the passage into the lift.
+    // On the walkway at its mouth, then along the passage into the stair.
     put(
         &mut sim,
         hero,
@@ -233,37 +268,35 @@ fn out_of_the_tube_by_an_exit() {
     while steps < 40 {
         let p = sim.position(hero).unwrap();
         let q = DVec2::new(p.x, p.z);
-        if q.distance(e.pos) < 0.6 {
+        if q.distance(e.pos) < SHAFT_HALF + 1.0 {
             break;
         }
         run(&mut sim, me, walk((e.pos - q).normalize_or(way)), 0.1);
         steps += 1;
     }
     let p = sim.position(hero).unwrap();
-    let q = DVec2::new(p.x, p.z);
     assert!(
-        q.distance(e.pos) < 1.2,
-        "could not walk to the lift: at {q}, lift at {}",
+        DVec2::new(p.x, p.z).distance(e.pos) < SHAFT_HALF + 1.4,
+        "could not walk to the stair: at {p:?}, stair at {}",
         e.pos
     );
-    assert!((p.y - e.bottom).abs() < 0.6, "not on the lift's floor");
-    // Stand still in the lift, then up.
-    run(&mut sim, me, InputState::default(), 1.0);
-    let p = sim.position(hero).unwrap();
-    assert!(w.deep_in_shaft(p), "not in the lift at {p:?}");
-    run(
-        &mut sim,
-        me,
-        InputState {
-            jump: true,
-            ..Default::default()
-        },
-        8.0,
-    );
+    assert!((p.y - e.bottom).abs() < 0.6, "not on the stair's floor");
+    // Up it: the foot's way, then the steps from the lowest.
+    let passage = tile_passage(&w, &e);
+    let mut way = e
+        .spiral
+        .foot_route(passage.as_ref())
+        .expect("a way into the foot");
+    way.reverse();
+    let mut climb: Vec<DVec3> = way.iter().map(|q| DVec3::new(q.x, e.bottom, q.y)).collect();
+    let mut steps_up = e.spiral.route();
+    steps_up.reverse();
+    climb.extend(steps_up);
+    follow(&mut sim, me, hero, &climb);
     let p = sim.position(hero).unwrap();
     assert!(
         p.y > e.top - 0.5,
-        "lift stopped at {:.1} (street {:.1})",
+        "stair stopped at {:.1} (street {:.1})",
         p.y,
         e.top
     );

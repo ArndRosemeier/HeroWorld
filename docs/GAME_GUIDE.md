@@ -116,9 +116,9 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | Right mouse (hold) / P | Look around (P locks the pointer) |
 | W A S D | Run |
 | R | Autorun: the mouse steers, A/D step aside, S or R stops |
-| Space | Jump; climb when flying or in a lift |
+| Space | Jump; climb when flying |
 | V | Fly (once you own Flight); V again drops you |
-| Ctrl / Shift | Sink / faster when flying (Ctrl also sinks in a lift); Shift also runs at full tilt with Super Speed |
+| Ctrl / Shift | Sink / faster when flying Shift also runs at full tilt with Super Speed |
 | Mouse wheel | Zoom in / out (all the way in: first person) |
 | Tab | Target the nearest villain in view; again: the next nearest not yet picked, round and round |
 | Left click on a villain | Target that villain, up to 150 m away (Tab reaches 60 m); within punching reach (3 m) it also punches |
@@ -662,7 +662,7 @@ shows where you stand.
 | The Doctor's Lab | the mad scientist's mutants, technicians and robots | Unfriendly (−40) | Hates the Patrol and the Syndicate. |
 | Chrome Jackets | greaser street gang | Unfriendly (−30) | At war with the Syndicate. |
 | Velvet Syndicate | pinstriped gunsels, organised crime | Neutral (−10) | Keeps the peace when it suits business. |
-| Moles | Molehaven's mole folk | Neutral (0) | Hate the Lab and the Empire. Delvers guard Molehaven's lift. Their surfacing event (talk them down with E for +6 Molehaven) is parked until it is redesigned: it no longer comes up on its own (HW_INCIDENT=moles still forces it). |
+| Moles | Molehaven's mole folk | Neutral (0) | Hate the Lab and the Empire. Delvers guard Molehaven's stair. Their surfacing event (talk them down with E for +6 Molehaven) is parked until it is redesigned: it no longer comes up on its own (HW_INCIDENT=moles still forces it). |
 | Sky Pirates | an airship crew | Unfriendly (−30) | Moor over the harbour with lookouts on the quay (warn, then fight); raid shops from an airship moored over the street (12 m reach). |
 | Iron-Masked Empire | the Iron Legion, from beyond the sea | Unfriendly (−55) | Hates everyone. Lands in iron capsules and holds two townsfolk captive (20 m reach); only once the team is level 2 and has two heroes, or rarely alone. Never attacks an unknown hero on sight. |
 | Zorrak Invaders | bug-eyed troopers from Zorrak, the small quick moon | Unfriendly (−55) | Hate everyone, the Empire most. A flying saucer hangs over a street (solid, its lens 13 m up and 4 m over any roof) and beams two townsfolk up through a green tractor beam while its troopers guard them (20 m reach); only once the team is level 2. Never attack an unknown hero on sight. |
@@ -1057,8 +1057,9 @@ between them) is designed but not built; the town stands in endless streamed gro
   buildings of 12 m and more and main roads beyond (dithered cross-fade, Engine LOD set),
   fading out at 6 km; it hides once all its cells are built. `HW_SKYLINE=0` leaves it out.
   Uses: offices, shops and offices, apartments, houses, works, pavilions, labs, tenements.
-  Every building has a furnished interior (lobbies, offices, flats, shops, labs) and a
-  glowing **Aether lift** in its core (Space rises, Ctrl sinks). Interiors follow the
+  Every building has a furnished interior (lobbies, offices, flats, shops, labs) and real
+  stairs and timetable lifts (nothing floats you up a shaft; the few old-style narrow
+  apartment houses without halls have sealed upper floors, like a family house). Interiors follow the
   building's era: wallpaper (stripes, damask, atomic) and picture rails in old and deco
   houses, painted plaster in modern ones; parquet in flats, lino in kitchens and diners,
   terrazzo in lobbies. Flats have a kitchen, dining table, sofa group,
@@ -1336,8 +1337,10 @@ thread near the works. Views: `HW_VIEW=works`, `worksline`, `worksdock`, `worksh
 ### The town below (`hw-gen/src/urban/underground.rs`)
 
 - **Utility tunnels** under the main roads: concrete, pipes, a glowing Aether conduit along
-  the ceiling. Entered through **Aether lifts** in Googie pavilions on the pavements (look
-  for the glowing atom signs): step in and hold Ctrl to sink, jump to ride back up.
+  the ceiling. Entered through **spiral stairs** in Googie pavilions on the pavements (look
+  for the glowing atom signs): a 1 m wide ring of stone steps round a pillar, 16 steps and
+  3.2 m of depth to a turn, a rail round the hole on three sides, the way in on the fourth.
+  You walk down (and back up); the foot opens into the passage to the tunnel.
 - **Molehaven**, the mole people's cavern: mushroom houses with round doors, glowing
   toadstools and crystals, a market of striped stalls round a glowing well under an iron
   arch, side caves. Its own lift has an amber sign, and a ramp leads there from the
@@ -1411,8 +1414,9 @@ ground nearby, so the layers keep level under hills.
   hold a mole camp (tents round a fire). Molehaven has a lift down to them.
 
 Everything down there is solid: floors, rock walls and roofs, and every fixture (columns,
-vats, coils, tents, crystals) has a footprint the hero bumps into. Lifts work like the
-Aether lifts (hold Ctrl to sink, jump to rise). The factions place people at
+vats, coils, tents, crystals) has a footprint the hero bumps into. The ways between layers
+are the same spiral stairs (`hw_gen::urban::spiral::Spiral`: pillar and steps are solid
+footprints; the deepest take a minute to walk). The factions place people at
 `TownWorld::deep_spots_in(lo, hi)` (`SpotKind::MoleCamp`, `LairGuard`, `RuinProwler`).
 
 ---

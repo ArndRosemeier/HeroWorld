@@ -15,6 +15,7 @@ use crate::tilestream::{Built, Glow, Key, Layer, Reach, Settings, UnderTiles, Un
 use engine::prelude::*;
 use engine::texgen::{FacadeLayer, GroundLayer};
 use glam::{DVec2, DVec3, Vec3};
+use hw_gen::urban::spiral::{Spiral, NEWEL};
 use hw_gen::urban::underground::{Underground, Void, VoidKind};
 use hw_gen::urban::world::TownWorld;
 use std::collections::BTreeSet;
@@ -162,7 +163,6 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
             Layer::Street => {
                 pavilion(&mut b, e.pos, e.door, e.top, e.molehaven);
                 collar(&mut b, e.pos, e.door, town);
-                lift_ring(&mut b, e.pos, e.top, col);
                 out.openings.push(e.pos);
             }
             Layer::Below => {
@@ -172,7 +172,7 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
                     strength: 6.0,
                     range: 10.0,
                 });
-                lift_ring(&mut b, e.pos, e.bottom, col);
+                spiral_stair(&mut b, &e.spiral);
             }
         }
     }
@@ -513,23 +513,77 @@ pub(crate) fn collar(b: &mut MeshBuilder, c: DVec2, door: DVec2, town: &TownWorl
     b.surf = Surf::Plain;
 }
 
-/// A glowing ring on a lift's floor (and at the top of the shaft).
-pub(crate) fn lift_ring(b: &mut MeshBuilder, c: DVec2, y: f64, col: Color) {
-    b.surf = Surf::Glow;
-    let seg = 24;
-    let (r0, r1) = (1.0, 1.25);
-    for k in 0..seg {
-        let (a0, a1) = (
-            TAU * k as f64 / seg as f64,
-            TAU * (k + 1) as f64 / seg as f64,
+/// A spiral stair down a shaft: the pillar in the middle and every step, a
+/// slab of stone, from the numbers the collision uses.
+pub(crate) fn spiral_stair(b: &mut MeshBuilder, sp: &Spiral) {
+    let stone = rgb(172, 168, 160);
+    let side = rgb(138, 134, 128);
+    let under = rgb(104, 102, 98);
+    let pillar = rgb(196, 190, 176);
+    // The pillar.
+    b.tex = Some(FacadeLayer::Concrete.into());
+    let corners = [
+        DVec2::new(-NEWEL, -NEWEL),
+        DVec2::new(NEWEL, -NEWEL),
+        DVec2::new(NEWEL, NEWEL),
+        DVec2::new(-NEWEL, NEWEL),
+    ];
+    for k in 0..4 {
+        let (a, c) = (corners[k], corners[(k + 1) % 4]);
+        let out = sp.world(((a + c) * 0.5).normalize()) - sp.c;
+        b.quad(
+            [
+                v3(sp.world(a), sp.bottom),
+                v3(sp.world(c), sp.bottom),
+                v3(sp.world(c), sp.top),
+                v3(sp.world(a), sp.top),
+            ],
+            v3(out, 0.0),
+            pillar,
         );
-        let p = |r: f64, a: f64| DVec3::new(c.x + r * a.cos(), y + 0.03, c.y + r * a.sin());
-        b.quad([p(r0, a0), p(r1, a0), p(r1, a1), p(r0, a1)], DVec3::Y, col);
     }
-    b.surf = Surf::Plain;
+    b.tex = None;
+    b.quad(corners.map(|c| v3(sp.world(c), sp.top)), DVec3::Y, pillar);
+    for st in sp.steps() {
+        let (lo, hi) = (st.at - st.half, st.at + st.half);
+        let c = [
+            DVec2::new(lo.x, lo.y),
+            DVec2::new(hi.x, lo.y),
+            DVec2::new(hi.x, hi.y),
+            DVec2::new(lo.x, hi.y),
+        ];
+        b.tex = Some(GroundLayer::Paving.into());
+        b.quad(c.map(|p| v3(sp.world(p), st.top)), DVec3::Y, stone);
+        b.tex = None;
+        b.quad(
+            c.map(|p| v3(sp.world(p), st.bottom))
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .try_into()
+                .expect("four"),
+            -DVec3::Y,
+            under,
+        );
+        for k in 0..4 {
+            let (a, d) = (c[k], c[(k + 1) % 4]);
+            let out = sp.world((a + d) * 0.5 - st.at) - sp.c;
+            let out = out - (sp.world(DVec2::ZERO) - sp.c);
+            b.quad(
+                [
+                    v3(sp.world(a), st.bottom),
+                    v3(sp.world(d), st.bottom),
+                    v3(sp.world(d), st.top),
+                    v3(sp.world(a), st.top),
+                ],
+                v3(out, 0.0),
+                side,
+            );
+        }
+    }
 }
 
-/// A Googie pavilion over a lift: four tapered chrome posts, a thin swept
+/// A Googie pavilion over a stair: four tapered chrome posts, a thin swept
 /// canopy with a glowing front edge, and a glowing atomic sign on a mast
 /// (amber for Molehaven, Aether blue for the tunnels).
 fn pavilion(b: &mut MeshBuilder, c: DVec2, door: DVec2, top: f64, molehaven: bool) {

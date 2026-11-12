@@ -150,8 +150,6 @@ struct DoorSolids {
 #[derive(Clone, Debug)]
 struct Damaged {
     solids: Arc<[Solid]>,
-    /// The lift still works (the building has not collapsed).
-    lift: bool,
 }
 
 /// The solids of one collider: its own, or a damaged building's shared copy.
@@ -723,6 +721,10 @@ impl Obstacles {
         });
         out.terrain = Some(terrain);
         out.under = Some(Arc::new(world.underground().clone()));
+        // The stairs down from the street: pillars, steps, rails.
+        for e in &world.underground().entrances {
+            out.add_all(e.spiral.solids(true).iter().flat_map(solids_of).collect());
+        }
         out.deep = Some(DeepSolids {
             town: world.clone(),
             tiles: RwLock::new(BTreeMap::new()),
@@ -788,7 +790,7 @@ impl Obstacles {
     }
 
     pub fn set_prop_broken(&self, prop: DetailId, broken: bool) {
-        self.set_damage(prop_collider(prop), broken.then(Vec::new), true);
+        self.set_damage(prop_collider(prop), broken.then(Vec::new));
     }
 
     /// How many town tiles are loaded now.
@@ -995,17 +997,14 @@ impl Obstacles {
     }
 
     /// Replaces building `i`'s solids with what is left of it after damage
-    /// (`None`: whole again). `lift`: its lift still works. Its plinth stays.
-    pub fn set_damage(&self, i: ColliderId, solids: Option<Vec<Solid>>, lift: bool) {
+    /// (`None`: whole again). Its plinth stays.
+    pub fn set_damage(&self, i: ColliderId, solids: Option<Vec<Solid>>) {
         let c = self.find(i);
         let d = solids.map(|mut s| {
             if let Some(c) = &c {
                 s.extend(c.plinth_solid());
             }
-            Damaged {
-                solids: s.into(),
-                lift,
-            }
+            Damaged { solids: s.into() }
         });
         if let Some(town) = self.town.as_ref().filter(|_| i & FIXED != FIXED) {
             let mut changed = town.changed.write().expect("changed lock");
@@ -1319,41 +1318,6 @@ impl Obstacles {
         c.plan().map(|p| (p.clone(), c.base))
     }
 
-    /// Is `p` (feet) inside a lift shaft?
-    pub fn in_lift(&self, p: DVec3) -> bool {
-        let q = DVec2::new(p.x, p.z);
-        if let Some(u) = &self.under {
-            if u.in_shaft(p, self.ground_at(q)) {
-                return true;
-            }
-        }
-        if self.deep_town(q, p.y).is_some_and(|t| t.deep_in_shaft(p)) {
-            return true;
-        }
-        self.near_colliders(q, 0.0).into_iter().any(|(_, c)| {
-            let Some(plan) = c.plan() else { return false };
-            let Some(core) = plan.core else { return false };
-            if c.damage
-                .read()
-                .expect("damage lock")
-                .as_ref()
-                .is_some_and(|d| !d.lift)
-            {
-                return false;
-            }
-            let s = &plan.site;
-            let d = q - s.origin;
-            let l = DVec2::new(d.dot(s.along), d.dot(s.inward));
-            let top = c.base + plan.height();
-            l.x > core.min.x
-                && l.x < core.max.x
-                && l.y > core.min.y
-                && l.y < core.max.y
-                && p.y >= c.base - 0.1
-                && p.y < top
-        })
-    }
-
     /// Height of the open ground at `p`: the water surface over rivers and
     /// the sea (bridges excepted).
     pub fn ground_at(&self, p: DVec2) -> f64 {
@@ -1643,19 +1607,16 @@ pub(crate) fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
         } else {
             y + f.height
         };
-        // The slab under this floor covers the floor below (its terrace too),
-        // with a hole for the lift shaft.
+        // The slab under this floor covers the floor below (its terrace too).
+        // (No hole for a lift: nothing floats a body up a shaft. The floors
+        // of these old-style buildings are sealed like a house's; every
+        // building people can go up in is one of halls, with real stairs.)
         if k > 0 {
-            let below = plan.floors[k - 1].outline;
-            for r in minus(below, plan.core) {
-                push(r, y - SLAB, y);
-            }
+            push(plan.floors[k - 1].outline, y - SLAB, y);
         } else {
             // The ground floor stands on its own slab at the building's
             // base, as drawn, not on the ground under it.
-            for r in minus(f.outline, plan.core) {
-                push(r, y - SLAB, y);
-            }
+            push(f.outline, y - SLAB, y);
         }
         // Walls: every room edge, minus the doors on it. Shared edges come
         // twice; that is harmless for collision.
@@ -1797,22 +1758,6 @@ fn door_solids(plan: &BuildingPlan, base: f64) -> Vec<DoorSolids> {
             })
         })
         .collect()
-}
-
-/// A rectangle minus an optional hole, as up to four rectangles.
-fn minus(r: Rect, hole: Option<Rect>) -> Vec<Rect> {
-    let Some(h) = hole else { return vec![r] };
-    if h.min.x >= r.max.x || h.max.x <= r.min.x || h.min.y >= r.max.y || h.max.y <= r.min.y {
-        return vec![r];
-    }
-    let (hx0, hx1) = (h.min.x.max(r.min.x), h.max.x.min(r.max.x));
-    let (hz0, hz1) = (h.min.y.max(r.min.y), h.max.y.min(r.max.y));
-    vec![
-        Rect::from_xz(r.min.x, r.min.y, r.max.x, hz0),
-        Rect::from_xz(r.min.x, hz1, r.max.x, r.max.y),
-        Rect::from_xz(r.min.x, hz0, hx0, hz1),
-        Rect::from_xz(hx1, hz0, r.max.x, hz1),
-    ]
 }
 
 #[cfg(test)]

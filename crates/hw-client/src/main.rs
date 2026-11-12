@@ -54,10 +54,10 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; by default
 //! the city picked in the title's city window; joining players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `comet`, `cometlobby`, `cometgallery`, `cometstairs`, `comethall`, `cometlift` (a Comet building with its game-scale interior; `HW_COMET=0|1|2` picks the atrium, grand hall or split-level one), `hospital`, `ward`, `pods`, `hospitaldoor` (the nearest hospital: across its plaza, in its Recovery Hall, at its pods, at its door), `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the first call on the police visor, with `HW_INCIDENT`; `HW_VISOR=1` keeps the visor down, `HW_VISOR=0.4` freezes it part way in), `far` (a main road across town, where people and traffic must follow) or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift` (a stair pavilion), `stairs` (part way down its spiral), `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `comet`, `cometlobby`, `cometgallery`, `cometstairs`, `comethall`, `cometlift` (a Comet building with its game-scale interior; `HW_COMET=0|1|2` picks the atrium, grand hall or split-level one), `hospital`, `ward`, `pods`, `hospitaldoor` (the nearest hospital: across its plaza, in its Recovery Hall, at its pods, at its door), `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the first call on the police visor, with `HW_INCIDENT`; `HW_VISOR=1` keeps the visor down, `HW_VISOR=0.4` freezes it part way in), `far` (a main road across town, where people and traffic must follow) or
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `weather` (the weather tower and its shower; `weathertop`, `weatherfoot`, `weatherstreet` close up; `HW_WEATHER=brew|rain|clear|bow|fair` picks the moment), `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift`, `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `far` (a main road across town, where people and traffic must follow) or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `weather` (the weather tower and its shower; `weathertop`, `weatherfoot`, `weatherstreet` close up; `HW_WEATHER=brew|rain|clear|bow|fair` picks the moment), `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift` (a stair pavilion), `stairs` (part way down its spiral), `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `far` (a main road across town, where people and traffic must follow) or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -1538,9 +1538,10 @@ fn main() -> EngineResult<()> {
             let yaw = d.x.atan2(d.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, c.floor as f32 + 8.0, p.y as f32), yaw, -26.0)
         }
-        "lift" | "tunnel" | "molehaven" => {
-            // The underground: a lift pavilion on the street, a utility
-            // tunnel from inside, or Molehaven's great hall.
+        "lift" | "stairs" | "tunnel" | "molehaven" => {
+            // The underground: a stair pavilion on the street (`stairs`:
+            // part way down the spiral), a utility tunnel from inside, or
+            // Molehaven's great hall.
             let u = generated.world.underground();
             let lift = u
                 .entrances
@@ -1558,6 +1559,15 @@ fn main() -> EngineResult<()> {
                         .total_cmp(&b.origin.distance(spawn))
                 });
             match (view.as_str(), lift, tunnel, &u.cavern) {
+                ("stairs", Some(e), _, _) => {
+                    // A few steps down, looking along the stair.
+                    let route = e.spiral.route();
+                    let k = 22.min(route.len() - 1);
+                    let (a, b) = (route[k], route[(k + 3).min(route.len() - 1)]);
+                    let d = b - a;
+                    let yaw = d.x.atan2(d.z).to_degrees() as f32;
+                    FlyCamera::new((a.x as f32, a.y as f32 + 1.7, a.z as f32), yaw, -12.0)
+                }
                 ("lift", Some(e), _, _) => {
                     let p = e.pos + e.door * 9.0 + e.door.perp() * 4.0;
                     let d = e.pos - p;
@@ -3790,8 +3800,7 @@ fn main() -> EngineResult<()> {
                     1.0
                 };
                 // Our own flight we know; others' is told from their motion.
-                let flying = (mine == Some(h.id))
-                    .then(|| hero_flies || solids.in_lift(glam::DVec3::from_array(h.pos)));
+                let flying = (mine == Some(h.id)).then_some(hero_flies);
                 let anim = anims.entry(h.id).or_default();
                 let mut d = anim.step(
                     vel,

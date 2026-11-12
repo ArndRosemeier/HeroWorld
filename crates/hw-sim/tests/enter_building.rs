@@ -1,12 +1,12 @@
-//! A hero walks in from the street, takes the lift and steps out on an
-//! upper floor, using only the movement code and the generated city.
+//! A hero walks in from the street, through the entrance, the lobby and the
+//! corridor, using only the movement code and the generated city.
 
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
 use hw_gen::building::{BuildingPlan, BuildingUse, RoomKind};
 use hw_net::InputState;
 use hw_sim::collision::{Body, Inside};
-use hw_sim::{step_hero, GeneratedCity, BUILDING_BASE, TICK_HZ};
+use hw_sim::{step_hero, GeneratedCity, TICK_HZ};
 
 struct Walk<'a> {
     city: &'a GeneratedCity,
@@ -82,7 +82,7 @@ impl Walk<'_> {
 
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
-fn walk_in_ride_the_lift_and_step_out_upstairs() {
+fn walk_in_through_the_lobby_to_the_corridor() {
     let city = GeneratedCity::generate(Seed(1));
     let (index, plan) = city
         .buildings
@@ -92,7 +92,6 @@ fn walk_in_ride_the_lift_and_step_out_upstairs() {
             p.site.usage == BuildingUse::Offices && p.floors.len() >= 4 && p.core.is_some()
         })
         .expect("an office tower");
-    let core = plan.core.unwrap();
     let ground = &plan.floors[0];
     let lobby = ground
         .rooms
@@ -145,50 +144,9 @@ fn walk_in_ride_the_lift_and_step_out_upstairs() {
     );
     w.open_door("the lobby's inner door");
     w.go(to_corridor.at.x, corridor_z, "the corridor");
-    w.go(core.center().x, corridor_z, "the corridor by the lift");
-    w.go(core.center().x, core.center().y, "the lift");
-    assert!(
-        city.obstacles.in_lift(w.body.pos),
-        "not in the lift at {}",
-        w.body.pos
-    );
-
-    // Ride up to the third floor (level 2) and hover there.
-    let level2 = BUILDING_BASE + plan.floors[2].elevation;
-    for _ in 0..TICK_HZ * 10 {
-        if w.body.pos.y >= level2 + 0.2 {
-            break;
-        }
-        w.tick(InputState {
-            jump: true,
-            ..Default::default()
-        });
-    }
-    assert!(
-        w.body.pos.y >= level2 + 0.2,
-        "lift stuck at {}",
-        w.body.pos.y
-    );
-    w.tick(InputState::default());
-
-    // Step out into the corridor upstairs.
-    w.go(core.center().x, corridor_z, "the upstairs corridor");
-    for _ in 0..TICK_HZ {
-        w.tick(InputState::default());
-    }
-    assert!(w.body.grounded);
-    assert!(
-        (w.body.pos.y - level2).abs() < 1e-6,
-        "standing at {} not {level2}",
-        w.body.pos.y
-    );
-    assert_eq!(
-        city.obstacles.inside(w.body.pos),
-        Some(Inside {
-            building: hw_sim::collision::FIXED | index as u64,
-            level: 2
-        })
-    );
+    // There is no lift to float up in: the way upstairs is a stair, and
+    // this old-style building has none (its upper floors are sealed).
+    assert!(w.body.grounded || w.body.pos.y < 1.0);
 }
 
 #[test]

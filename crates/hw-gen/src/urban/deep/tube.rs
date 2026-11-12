@@ -10,6 +10,7 @@ use super::{
     name, overlaps, room, run, tile_of, DeepEntrance, DeepLamp, EntranceKind, Fixture, FixtureKind,
     Plan, StationHall, TileKey,
 };
+use crate::urban::spiral::Spiral;
 use crate::urban::underground::{Underground, Void, VoidKind, SHAFT_HALF};
 use crate::urban::world::{TownWorld, DECK};
 use crate::water::segment_distance;
@@ -729,7 +730,7 @@ fn station(plan: &mut Plan, si: usize) {
             look: si as u32,
         });
     }
-    // The lift up to the street, beside the road on the hall's side.
+    // The stair up to the street, beside the road on the hall's side.
     let off = line.verge + SHAFT_HALF + 1.6;
     let mut entrance = None;
     // Nearest first: along the hall, then further out along the road and
@@ -773,25 +774,19 @@ fn station(plan: &mut Plan, si: usize) {
                 _ => continue,
             }
         };
-        let shaft = Void {
-            kind: VoidKind::Shaft,
-            origin: c - DVec2::splat(SHAFT_HALF),
-            along: DVec2::X,
-            min: DVec2::ZERO,
-            max: DVec2::splat(SHAFT_HALF * 2.0),
-            floor: [st.floor, st.floor],
-            height: 0.0,
-            open: true,
+        let Some(spiral) = Spiral::fit(c, -side, w.ground(c), st.floor, passage.as_ref()) else {
+            continue;
         };
+        let shaft = spiral.shaft(None);
         if !plan.clear_of_shallow(&shaft, 0.8) {
             continue;
         }
         plan.t.voids.push(shaft);
         plan.t.voids.extend(passage);
-        entrance = Some(c);
+        entrance = Some((c, spiral));
         break;
     }
-    if let Some(c) = entrance {
+    if let Some((c, spiral)) = entrance {
         plan.t.entrances.push(DeepEntrance {
             kind: EntranceKind::Tube,
             name: st.name.clone(),
@@ -799,6 +794,7 @@ fn station(plan: &mut Plan, si: usize) {
             door: -side,
             top: w.ground(c),
             bottom: st.floor,
+            spiral,
         });
     }
     if st.deep_lift {
@@ -809,7 +805,7 @@ fn station(plan: &mut Plan, si: usize) {
     for k in 0..6 {
         let x = -20.0 + k as f64 * 8.0;
         let p = hall.world(DVec2::new(x, st.side * back));
-        if entrance.is_some_and(|c| c.distance(p) < SHAFT_HALF + 2.5)
+        if entrance.is_some_and(|(c, _)| c.distance(p) < SHAFT_HALF + 2.5)
             || (st.deep_lift && st.deep_lift_pos().distance(p) < SHAFT_HALF + 2.5)
         {
             continue;

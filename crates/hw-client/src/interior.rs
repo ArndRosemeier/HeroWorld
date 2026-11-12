@@ -14,7 +14,7 @@
 pub mod pieces;
 
 use crate::buildingmesh::Detail;
-use crate::citymesh::{MeshBuilder, Spot, Surf};
+use crate::citymesh::{MeshBuilder, Spot};
 use crate::daylight::{channel, Tone, HABITS};
 use crate::skins::{Base, Paper, Skin, Tex, Wear};
 use engine::prelude::*;
@@ -22,7 +22,7 @@ use glam::{DVec2, DVec3};
 use hw_gen::building::{BuildingPlan, Door, Floor, Room, RoomKind};
 use hw_gen::geom::Rect;
 use hw_gen::style::Style;
-use pieces::{chrome, Cover, Maker, Mat, Rng};
+use pieces::{Cover, Maker, Mat, Rng};
 
 /// Half the thickness of the cut floor's walls (see `citymesh`).
 const WALL_HALF: f64 = 0.125;
@@ -641,7 +641,7 @@ pub fn furnish(b: &mut MeshBuilder, plan: &BuildingPlan, level: usize, top: f64,
             RoomKind::Storage => storage(&mut fu, &area, seed),
             RoomKind::Gallery | RoomKind::Hall => gallery(&mut fu, &area, seed),
             RoomKind::Lab => lab(&mut fu, &area, seed),
-            RoomKind::Core => core(&mut fu, room, f),
+            RoomKind::Core => {}
             RoomKind::Corridor => corridor(&mut fu, &area, seed),
         }
         dress_walls(&mut fu, room, k, f, seed);
@@ -2587,38 +2587,6 @@ fn lab(fu: &mut Furnisher, area: &Rect, _seed: u64) {
 fn corridor(fu: &mut Furnisher, area: &Rect, seed: u64) {
     // A bench and a plant or two along the way.
     plants(fu, area, seed, 2);
-}
-
-/// The stair and lift core: golden lift doors framed in Aether light.
-fn core(fu: &mut Furnisher, room: &Room, f: &Floor) {
-    // The lift faces the nearest doorway out of the core.
-    let c = room.rect.center();
-    let Some(d) = f
-        .doors
-        .iter()
-        .filter(|d| room.rect.on_boundary(d.at, 0.05))
-        .map(|d| d.at)
-        .min_by(|a, b| a.distance(c).total_cmp(&b.distance(c)))
-    else {
-        return;
-    };
-    let toward = (d - c).normalize_or(DVec2::Y);
-    // A glowing ring on the floor where the Aether lift rises.
-    let r = (room.rect.size().min_element() * 0.3).clamp(0.5, 1.2);
-    let at = c - toward * 0.2;
-    let mut m = fu.maker(at, 0.0, toward);
-    m.lathe(
-        Mat::Glow(rgb(120, 230, 255)),
-        DVec3::ZERO,
-        &[(r, 0.0), (r, 0.03), (r * 0.9, 0.03), (0.0, 0.03)],
-    );
-    m.lathe(
-        Mat::Brass,
-        DVec3::new(0.0, 0.03, 0.0),
-        &[(r * 0.85, 0.0), (r * 0.85, 0.015), (0.0, 0.015)],
-    );
-    let _ = chrome;
-    let _ = Surf::Plain;
 }
 
 #[cfg(test)]

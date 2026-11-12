@@ -8,7 +8,7 @@ use super::{
     deep_floor, room, run, tile_centre, DeepLamp, DeepSpot, Fixture, FixtureKind, Grotto,
     GrottoKind, Plan, SpotKind, TileKey, TILE,
 };
-use crate::urban::underground::VoidKind;
+use crate::urban::underground::{VoidKind, SHAFT_HALF};
 use crate::urban::world::TownWorld;
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
@@ -206,6 +206,16 @@ pub(super) fn plan_tile(plan: &mut Plan) {
             }
         }
     }
+    // The stair at a lift's foot stands where a camp's group would: no spot
+    // within reach of it (a spot needs 3 m of clear floor round it).
+    let lifts = plan.t.lifts.clone();
+    plan.t.spots.retain(|sp| {
+        let q = DVec2::new(sp.at.x, sp.at.z);
+        lifts.iter().all(|l| {
+            (l.bottom - sp.at.y).abs() > 1.0
+                || l.pos.distance(q) > 3.5 + SHAFT_HALF * std::f64::consts::SQRT_2
+        })
+    });
 }
 
 /// Fills a grotto: its kind's growths round the walls, a clear middle, and

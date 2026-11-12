@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.244 (2026-11-12)
+
+- **No more floating lifts.** Every way down into the underground is now a real stair you walk: a spiral of stone steps round a pillar, with the way in on one side and a rail round the hole on the other three. It goes down from the Googie pavilions to the utility tunnels, into Molehaven, down the tube stations' stairs, through the news kiosk into the Doctor's lab, up out of the tube exits and between the deep layers. The deepest ones are a proper walk.
+- Space no longer carries you up a shaft, and the glowing rings are gone. Fly out of a stairwell if you are in a hurry.
+- The few old-style narrow apartment houses that had a hidden Aether lift now have sealed upper floors, like a family house; every building you can go up in has real stairs or a timetable lift.
+
 ## 0.243 (2026-11-12)
 
 - The camera no longer pokes through walls and ceilings inside the big halls: it stays in the room with you and only pulls in close when something is behind you.

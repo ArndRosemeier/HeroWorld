@@ -1,15 +1,16 @@
 //! The town below the town: utility tunnels under the main roads of the
-//! centre, Aether lifts down to them from the pavements, and Molehaven, the
+//! centre, spiral stairs down to them from the pavements, and Molehaven, the
 //! mole people's cavern, deeper under the old quarters, reached by a long
-//! ramp from the tunnels and by its own lift.
+//! ramp from the tunnels and by its own stair.
 //!
 //! Everything below ground is a set of [`Void`]s: boxes in plan (a
 //! rectangle turned any way) with a floor that may slope along their
-//! length and a ceiling some way above it, or open to the sky (a lift
+//! length and a ceiling some way above it, or open to the sky (a stair
 //! shaft). Collision, the carved ground and the drawn linings all come from
 //! the same voids.
 
 use super::roadgrid::{key, keys_around, Key, RoadGrid};
+use super::spiral::Spiral;
 use super::world::{TownWorld, WorldBuilding, WorldRoad, DECK, WATER_LEVEL};
 use glam::{DVec2, DVec3};
 use std::collections::BTreeMap;
@@ -18,10 +19,10 @@ use std::collections::BTreeMap;
 pub const TUNNEL_DEPTH: f64 = 7.5;
 pub const TUNNEL_HEIGHT: f64 = 4.2;
 pub const TUNNEL_HALF: f64 = 2.4;
-/// Side passages from a lift to a tunnel.
+/// Side passages from a stair to a tunnel.
 const PASSAGE_HALF: f64 = 1.5;
 const PASSAGE_HEIGHT: f64 = 3.2;
-/// Half the side of a lift shaft.
+/// Half the side of a stair shaft.
 pub const SHAFT_HALF: f64 = 1.7;
 /// Molehaven's floor below the lowest ground over it.
 pub const CAVERN_DEPTH: f64 = 27.0;
@@ -31,9 +32,9 @@ pub const CAVERN_DEPTH: f64 = 27.0;
 pub enum VoidKind {
     /// A utility tunnel under a main road.
     Tunnel,
-    /// A side passage (lift to tunnel, tunnel to cavern).
+    /// A side passage (stair to tunnel, tunnel to cavern).
     Passage,
-    /// An Aether lift shaft, open to the sky.
+    /// A stair shaft (a spiral stair round a pillar), open to the sky.
     Shaft,
     /// A chamber of the mole people's cavern.
     Cavern,
@@ -129,7 +130,7 @@ impl Void {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Entrance {
     pub name: String,
-    /// Centre of the lift shaft.
+    /// Centre of the stair shaft.
     pub pos: DVec2,
     /// The way the pavilion's door faces (towards the road).
     pub door: DVec2,
@@ -138,6 +139,8 @@ pub struct Entrance {
     pub bottom: f64,
     /// Down to Molehaven (true) or to the utility tunnels.
     pub molehaven: bool,
+    /// The spiral stair down the shaft.
+    pub spiral: Spiral,
 }
 
 /// The mole people's cavern.
@@ -202,7 +205,7 @@ impl Underground {
     }
 
     /// The lowest ceiling above `y` at `p`, among voids `y` is in (none in
-    /// a lift shaft: it is open to the sky).
+    /// a stair shaft: it is open to the sky).
     pub fn ceiling_for(&self, p: DVec2, y: f64) -> Option<f64> {
         if self.at(p).any(|(_, v)| v.open && y >= v.floor_at(p) - 1.0) {
             return None;
@@ -212,14 +215,6 @@ impl Underground {
             .filter_map(|(_, v)| v.ceiling_at(p))
             .filter(|c| *c >= y)
             .reduce(f64::min)
-    }
-
-    /// Is `p` (3D) inside an Aether lift shaft?
-    pub fn in_shaft(&self, p: DVec3, ground: f64) -> bool {
-        let q = DVec2::new(p.x, p.z);
-        self.at(q).any(|(_, v)| {
-            v.kind == VoidKind::Shaft && p.y >= v.floor_at(q) - 0.5 && p.y <= ground + 2.5
-        })
     }
 
     /// Is `p` (3D) in open space under the ground?
@@ -244,7 +239,7 @@ impl Underground {
     }
 }
 
-/// What stands on the ground, to find free spots for lift pavilions.
+/// What stands on the ground, to find free spots for stair pavilions.
 struct Ground<'a> {
     w: &'a TownWorld,
     roads: RoadGrid<'a>,
@@ -330,7 +325,7 @@ pub(crate) fn main_roads(w: &TownWorld) -> impl Iterator<Item = &super::world::W
 }
 
 /// Is a circle of radius `r` at `p` free of roads (and pavements),
-/// buildings, props, landmarks and water? (For lift pavilions planned
+/// buildings, props, landmarks and water? (For stair pavilions planned
 /// after the town.)
 pub(crate) fn spot_free(w: &TownWorld, p: DVec2, r: f64) -> bool {
     let around = DVec2::splat(r + 40.0);
@@ -437,7 +432,7 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
         }
         best.map(|b| (b.1, b.2))
     };
-    // Aether lifts down to the tunnels, beside the main roads, a few
+    // Stairs down to the tunnels, beside the main roads, a few
     // hundred metres apart.
     let mut lifts: Vec<DVec2> = Vec::new();
     for &ri in &tunnel_roads {
@@ -468,16 +463,18 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
                         continue;
                     };
                     let top = w.ground(c);
-                    if !add_lift(w, &mut u, c, q, floor) {
+                    let door = -dir.perp() * side;
+                    let Some(spiral) = add_lift(w, &mut u, c, q, top, floor, door) else {
                         continue;
-                    }
+                    };
                     u.entrances.push(Entrance {
                         name: "Utility tunnels".into(),
                         pos: c,
-                        door: -dir.perp() * side,
+                        door,
                         top,
                         bottom: floor,
                         molehaven: false,
+                        spiral,
                     });
                     lifts.push(c);
                     since = 0.0;
@@ -574,7 +571,7 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
                 }
             }
         }
-        // Its own lift from the street, over a corner of the hall.
+        // Its own stair from the street, over a corner of the hall.
         u.index();
         let mut lift = None;
         // Rings tried coarse first, then the gaps between them, so a hall
@@ -593,37 +590,36 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
                 }
             }
         }
-        let mut placed = false;
+        let mut spiral = None;
         if let Some(c) = lift {
-            u.voids.push(Void {
-                kind: VoidKind::Shaft,
-                origin: c - DVec2::splat(SHAFT_HALF),
-                along: DVec2::X,
-                min: DVec2::ZERO,
-                max: DVec2::splat(SHAFT_HALF * 2.0),
-                floor: [floor, floor],
-                height: 0.0,
-                open: true,
-            });
-            placed = true;
+            // The lift stands in the hall: the stair's foot opens into it
+            // all round.
+            let door = nearest_road_dir(&all, c);
+            let sp = Spiral::new(c, door, w.ground(c), floor);
+            u.voids.push(sp.shaft(None));
+            spiral = Some(sp);
         } else {
-            // A block built over the whole hall: the lift stands at the
+            // A block built over the whole hall: the stair stands at the
             // nearest free spot beside it, with a passage in.
             'near: for ring in [36.0, 44.0, 52.0, 60.0, 70.0] {
                 for k in 0..32 {
                     let a = std::f64::consts::TAU * k as f64 / 32.0;
                     let c = site + DVec2::new(hw_core::det::cos(a), hw_core::det::sin(a)) * ring;
-                    if ground.free(c, SHAFT_HALF + 1.2) && add_lift(w, &mut u, c, site, floor) {
+                    if !ground.free(c, SHAFT_HALF + 1.2) {
+                        continue;
+                    }
+                    let door = nearest_road_dir(&all, c);
+                    if let Some(sp) = add_lift(w, &mut u, c, site, w.ground(c), floor, door) {
                         lift = Some(c);
-                        placed = true;
+                        spiral = Some(sp);
                         break 'near;
                     }
                 }
             }
         }
-        if let (Some(c), true) = (lift, placed) {
+        if let (Some(c), Some(spiral)) = (lift, spiral) {
             let top = w.ground(c);
-            let door = nearest_road_dir(&all, c);
+            let door = spiral.dir;
             u.entrances.push(Entrance {
                 name: "Molehaven".into(),
                 pos: c,
@@ -631,6 +627,7 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
                 top,
                 bottom: floor,
                 molehaven: true,
+                spiral,
             });
         }
         u.cavern = Some(Cavern {
@@ -663,9 +660,18 @@ fn roofed(w: &TownWorld, v: &Void) -> bool {
     })
 }
 
-/// A lift at `c` (ground `top`) down to the tunnel at `q` (floor `floor`),
-/// with a passage between.
-fn add_lift(w: &TownWorld, u: &mut Underground, c: DVec2, q: DVec2, floor: f64) -> bool {
+/// A stair at `c` (ground `top`, door facing `door`) down to the tunnel at
+/// `q` (floor `floor`), with a passage between; `None` when the passage is
+/// not under enough ground or the stair's foot would be walled in.
+fn add_lift(
+    w: &TownWorld,
+    u: &mut Underground,
+    c: DVec2,
+    q: DVec2,
+    top: f64,
+    floor: f64,
+    door: DVec2,
+) -> Option<Spiral> {
     let len = c.distance(q);
     let passage = (len > 0.5).then(|| Void {
         kind: VoidKind::Passage,
@@ -678,20 +684,12 @@ fn add_lift(w: &TownWorld, u: &mut Underground, c: DVec2, q: DVec2, floor: f64) 
         open: false,
     });
     if passage.as_ref().is_some_and(|p| !roofed(w, p)) {
-        return false;
+        return None;
     }
-    u.voids.push(Void {
-        kind: VoidKind::Shaft,
-        origin: c - DVec2::splat(SHAFT_HALF),
-        along: DVec2::X,
-        min: DVec2::ZERO,
-        max: DVec2::splat(SHAFT_HALF * 2.0),
-        floor: [floor, floor],
-        height: 0.0,
-        open: true,
-    });
+    let spiral = Spiral::fit(c, door, top, floor, passage.as_ref())?;
+    u.voids.push(spiral.shaft(None));
     u.voids.extend(passage);
-    true
+    Some(spiral)
 }
 
 fn nearest_road_dir(roads: &[WorldRoad], p: DVec2) -> DVec2 {
@@ -751,7 +749,7 @@ pub(crate) fn dry_spots(
 
 /// Where the cavern goes: right under the mole folk's drill rig if the
 /// town has one (its bore comes down over the well), else a dry place
-/// with room for a lift on top. With the way its great hall runs.
+/// with room for a stair on top. With the way its great hall runs.
 fn cavern_site(w: &TownWorld, core: DVec2, reach: f64, ground: &Ground) -> Option<(DVec2, DVec2)> {
     let p = match w
         .landmarks
@@ -762,7 +760,7 @@ fn cavern_site(w: &TownWorld, core: DVec2, reach: f64, ground: &Ground) -> Optio
         None => {
             let mut best: Option<(f64, DVec2)> = None;
             for (score, p) in dry_spots(w, core, reach, 70.0, 24) {
-                // Prefer a free spot for the lift.
+                // Prefer a free spot for the stair.
                 let room = (0..8).any(|j| {
                     let b = std::f64::consts::TAU * j as f64 / 8.0;
                     ground.free(

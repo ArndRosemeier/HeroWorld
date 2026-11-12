@@ -136,11 +136,17 @@ pub fn pieces(plan: &BuildingPlan) -> Vec<Piece> {
         let y1 = f.elevation + f.height - SLAB;
         if k > 0 {
             // The slab under this floor covers the floor below (its terrace
-            // too), with a hole for the lift shaft.
+            // too).
             let below = plan.floors[k - 1].outline;
-            for r in minus(below, plan.core) {
-                tiles(&mut out, r, y0 - SLAB, y0, ElementKind::Slab, k as u16, m);
-            }
+            tiles(
+                &mut out,
+                below,
+                y0 - SLAB,
+                y0,
+                ElementKind::Slab,
+                k as u16,
+                m,
+            );
         }
         outer_walls(&mut out, plan, f, k as u16, y0, y1, m);
         inner_walls(&mut out, f, k as u16, y0, y1, m);
@@ -702,22 +708,6 @@ fn slab_like(k: ElementKind) -> bool {
     matches!(k, ElementKind::Slab | ElementKind::Roof)
 }
 
-/// A rectangle minus an optional hole, as up to four rectangles.
-fn minus(r: Rect, hole: Option<Rect>) -> Vec<Rect> {
-    let Some(h) = hole else { return vec![r] };
-    if h.min.x >= r.max.x || h.max.x <= r.min.x || h.min.y >= r.max.y || h.max.y <= r.min.y {
-        return vec![r];
-    }
-    let (hx0, hx1) = (h.min.x.max(r.min.x), h.max.x.min(r.max.x));
-    let (hz0, hz1) = (h.min.y.max(r.min.y), h.max.y.min(r.max.y));
-    vec![
-        Rect::from_xz(r.min.x, r.min.y, r.max.x, hz0),
-        Rect::from_xz(r.min.x, hz1, r.max.x, r.max.y),
-        Rect::from_xz(r.min.x, hz0, hx0, hz1),
-        Rect::from_xz(hx1, hz0, r.max.x, hz1),
-    ]
-}
-
 /// Building space and Engine's building space. Engine places a building
 /// with a turn about +y, which keeps handedness; a site whose inward
 /// direction is mirrored gets its z flipped.
@@ -1010,7 +1000,7 @@ impl Damage {
     pub fn repair(&mut self, solids: &Obstacles, i: u64) {
         self.plans.remove(&i);
         if self.buildings.remove(&i).is_some() {
-            solids.set_damage(i, None, true);
+            solids.set_damage(i, None);
             self.news.push(ToClient::Repaired { building: i });
         }
     }
@@ -1119,8 +1109,7 @@ impl Damage {
                 );
             }
         }
-        let lift = d.state.collapse().is_none();
-        solids.set_damage(i, Some(out), lift);
+        solids.set_damage(i, Some(out));
     }
 
     /// Adds news for clients (impacts).
@@ -1160,7 +1149,7 @@ impl Damage {
     /// Forgets all damage (before a save is restored).
     pub fn clear(&mut self, solids: &Obstacles) {
         for i in std::mem::take(&mut self.buildings).into_keys() {
-            solids.set_damage(i, None, true);
+            solids.set_damage(i, None);
         }
         self.plans.clear();
         self.news.clear();

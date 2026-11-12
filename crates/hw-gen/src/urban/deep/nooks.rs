@@ -13,6 +13,7 @@
 
 use super::tube::{TubeNet, TUBE_HALF, TUBE_HEIGHT};
 use super::{datum, room, run, DeepEntrance, DeepLamp, EntranceKind, Fixture, FixtureKind, Plan};
+use crate::urban::spiral::Spiral;
 use crate::urban::underground::{Void, VoidKind, SHAFT_HALF};
 use crate::urban::world::TownWorld;
 use crate::water::segment_distance;
@@ -1003,12 +1004,13 @@ fn burrow(plan: &mut Plan, c: &Ctx, centre: DVec2, r: &mut hw_core::seed::Rng) {
     }
 }
 
-/// A way up as planned: the passage from the walkway and the lift shaft.
+/// A way up as planned: the passage from the walkway and the stair shaft.
 struct ExitSite {
     ctx: Ctx,
     c: DVec2,
     passage: Void,
     shaft: Void,
+    spiral: Spiral,
 }
 
 /// Does slot `slot` of line `l` get a way up? Every [`EXIT_EVERY`]th slot
@@ -1079,16 +1081,11 @@ fn exit_site(w: &TownWorld, net: &TubeNet, l: usize, slot: usize) -> Option<Exit
         let Some(passage) = run(VoidKind::Passage, p, c, 1.5, floor, floor, 3.2) else {
             continue;
         };
-        let shaft = Void {
-            kind: VoidKind::Shaft,
-            origin: c - DVec2::splat(SHAFT_HALF),
-            along: DVec2::X,
-            min: DVec2::ZERO,
-            max: DVec2::splat(SHAFT_HALF * 2.0),
-            floor: [floor, floor],
-            height: 0.0,
-            open: true,
+        // The door faces the road, away from the walkway.
+        let Some(spiral) = Spiral::fit(c, -ctx.out, w.ground(c), floor, Some(&passage)) else {
+            continue;
         };
+        let shaft = spiral.shaft(None);
         if !fits(w, net, &ctx, std::slice::from_ref(&passage))
             || !fits(w, net, &ctx, std::slice::from_ref(&shaft))
         {
@@ -1099,12 +1096,13 @@ fn exit_site(w: &TownWorld, net: &TubeNet, l: usize, slot: usize) -> Option<Exit
             c,
             passage,
             shaft,
+            spiral,
         });
     }
     None
 }
 
-/// A way up: a short passage off the walkway to a lift up to a little
+/// A way up: a short passage off the walkway to a stair up to a little
 /// green pavilion on the pavement, its sign glowing in the tube.
 fn place_exit(plan: &mut Plan, site: ExitSite) {
     let w = plan.w;
@@ -1113,6 +1111,7 @@ fn place_exit(plan: &mut Plan, site: ExitSite) {
         c,
         passage,
         shaft,
+        spiral,
     } = site;
     let (mouth, floor, dir, out) = (ctx.p, ctx.floor, ctx.dir, ctx.out);
     let room = plan.t.voids.len();
@@ -1125,6 +1124,7 @@ fn place_exit(plan: &mut Plan, site: ExitSite) {
         door: -out,
         top: w.ground(c),
         bottom: floor,
+        spiral,
     });
     plan.t.nooks.push(Nook {
         kind: NookKind::Exit,

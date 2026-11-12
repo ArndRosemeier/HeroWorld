@@ -197,7 +197,7 @@ pub const CONTROLS: &[(&str, &str)] = &[
     ),
     ("W A S D", "Run"),
     ("R", "Autorun (the mouse steers; S or R stops)"),
-    ("Space", "Jump; climb when flying or in a lift"),
+    ("Space", "Jump; climb when flying"),
     ("V", "Fly (once you have Flight); V again drops you"),
     ("Ctrl / Shift", "Sink / faster when flying"),
     (

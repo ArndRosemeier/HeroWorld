@@ -1,5 +1,5 @@
-//! Going below: down an Aether lift beside a main road, along the passage
-//! into the utility tunnel, back up; and down Molehaven's lift into the
+//! Going below: down a spiral stair beside a main road, along the passage
+//! into the utility tunnel, back up; and down Molehaven's stair into the
 //! cavern. The hero must stay on the floors down there, be kept in by the
 //! rock, and come back up to the street.
 
@@ -28,6 +28,40 @@ fn run(sim: &mut Sim, me: PlayerId, input: InputState, secs: f64) {
     }
 }
 
+/// Walks the hero over `route` (feet points), steering at each in turn.
+fn follow(sim: &mut Sim, me: PlayerId, hero: hw_core::NetId, route: &[DVec3]) {
+    for (k, t) in route.iter().enumerate() {
+        let mut tries = 0;
+        loop {
+            let p = sim.position(hero).unwrap();
+            let d = DVec2::new(t.x - p.x, t.z - p.z);
+            if d.length() < 0.35 {
+                break;
+            }
+            tries += 1;
+            assert!(
+                tries < 3000,
+                "stuck on the way to point {k} {t:?}: at {p:?}"
+            );
+            // Slowly: a bot that cuts corners at a run falls off the stair.
+            run(sim, me, walk(d.normalize() * 0.4), 1.0 / TICK_HZ as f64);
+        }
+    }
+}
+
+/// The floor-level points of a stair's foot route, at `y`.
+fn foot(
+    sp: &hw_gen::urban::spiral::Spiral,
+    passage: Option<&hw_gen::urban::underground::Void>,
+    y: f64,
+) -> Vec<DVec3> {
+    sp.foot_route(passage)
+        .expect("a way out of the foot")
+        .into_iter()
+        .map(|q| DVec3::new(q.x, y, q.y))
+        .collect()
+}
+
 fn walk(dir: DVec2) -> InputState {
     InputState {
         move_x: dir.x as f32,
@@ -38,14 +72,18 @@ fn walk(dir: DVec2) -> InputState {
 
 #[test]
 #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
-fn down_the_lift_through_the_tunnels_and_up_again() {
+fn down_the_stairs_through_the_tunnels_and_up_again() {
     let town = GeneratedTown::generate(Seed(1), 40_000.0);
     let mut sim = Sim::for_town(Seed(1), &town);
     let me = PlayerId(1);
     let hero = sim.spawn_hero(me, sim.spawn_point(1));
     let u = town.world.underground().clone();
-    let e = u.entrances.iter().find(|e| !e.molehaven).expect("a lift");
-    // Step in from the pavement side.
+    let e = u.entrances.iter().find(|e| !e.molehaven).expect("a stair");
+    let passage = u
+        .voids
+        .iter()
+        .find(|v| v.kind == VoidKind::Passage && v.origin.distance(e.pos) < 0.1);
+    // Step in from the pavement side, on to the top landing and down.
     let start = e.pos + e.door * (SHAFT_HALF + 1.5);
     put(
         &mut sim,
@@ -53,23 +91,18 @@ fn down_the_lift_through_the_tunnels_and_up_again() {
         DVec3::new(start.x, town.world.ground(start) + 0.3, start.y),
     );
     run(&mut sim, me, InputState::default(), 0.5);
-    run(&mut sim, me, walk(-e.door), 0.45);
-    run(&mut sim, me, InputState::default(), 0.5);
+    let route = e.spiral.route();
+    follow(&mut sim, me, hero, &route);
     let p = sim.position(hero).unwrap();
     assert!(
         DVec2::new(p.x, p.z).distance(e.pos) < SHAFT_HALF,
         "not in the shaft: {p:?}"
     );
-    // Sink to the bottom.
-    run(
-        &mut sim,
-        me,
-        InputState {
-            descend: true,
-            ..Default::default()
-        },
-        6.0,
-    );
+    assert!(p.y < e.top - 5.0, "still near the top: {p:?}");
+    // Out of the stair's foot, along the floor.
+    let way = foot(&e.spiral, passage, e.bottom);
+    follow(&mut sim, me, hero, &way);
+    run(&mut sim, me, InputState::default(), 0.5);
     let p = sim.position(hero).unwrap();
     assert!(
         (p.y - e.bottom).abs() < 0.3,
@@ -78,11 +111,7 @@ fn down_the_lift_through_the_tunnels_and_up_again() {
         e.bottom
     );
     // Along the passage into the tunnel and on along it.
-    let passage = u
-        .voids
-        .iter()
-        .find(|v| v.kind == VoidKind::Passage && v.origin.distance(e.pos) < 0.1)
-        .expect("passage");
+    let passage = passage.expect("passage");
     run(&mut sim, me, walk(passage.along), 3.0);
     let p = sim.position(hero).unwrap();
     let q = DVec2::new(p.x, p.z);
@@ -108,21 +137,18 @@ fn down_the_lift_through_the_tunnels_and_up_again() {
         .voids
         .iter()
         .any(|v| v.covers(DVec2::new(p3.x, p3.z), 0.5)));
-    // Back to the lift and up.
-    put(&mut sim, hero, DVec3::new(e.pos.x, e.bottom + 0.1, e.pos.y));
-    run(
-        &mut sim,
-        me,
-        InputState {
-            jump: true,
-            ..Default::default()
-        },
-        6.0,
-    );
+    // Back to the foot of the stair and up.
+    let mut up = way.clone();
+    up.reverse();
+    put(&mut sim, hero, DVec3::new(up[0].x, e.bottom + 0.1, up[0].z));
+    follow(&mut sim, me, hero, &up);
+    let mut climb = route.clone();
+    climb.reverse();
+    follow(&mut sim, me, hero, &climb);
     let p = sim.position(hero).unwrap();
     assert!(
         p.y > e.top - 0.5,
-        "lift stopped at {:.1} (top {:.1})",
+        "stair stopped at {:.1} (top {:.1})",
         p.y,
         e.top
     );
@@ -144,17 +170,19 @@ fn molehaven_has_a_floor_and_walls() {
     let hero = sim.spawn_hero(me, sim.spawn_point(1));
     let u = town.world.underground().clone();
     let c = u.cavern.clone().expect("Molehaven");
-    let e = u.entrances.iter().find(|e| e.molehaven).expect("its lift");
-    put(&mut sim, hero, DVec3::new(e.pos.x, e.top + 0.2, e.pos.y));
-    run(
-        &mut sim,
-        me,
-        InputState {
-            descend: true,
-            ..Default::default()
-        },
-        8.0,
-    );
+    let e = u.entrances.iter().find(|e| e.molehaven).expect("its stair");
+    let r0 = e.spiral.route()[0];
+    put(&mut sim, hero, DVec3::new(r0.x, r0.y + 0.2, r0.z));
+    follow(&mut sim, me, hero, &e.spiral.route());
+    // Off the last step: into the hall when the stair stands in it, else
+    // out along the passage.
+    let passage = u
+        .voids
+        .iter()
+        .find(|v| v.kind == VoidKind::Passage && v.origin.distance(e.pos) < 0.1);
+    follow(&mut sim, me, hero, &foot(&e.spiral, passage, c.floor));
+    run(&mut sim, me, walk(-e.spiral.dir), 0.6);
+    run(&mut sim, me, InputState::default(), 0.5);
     let p = sim.position(hero).unwrap();
     assert!(
         (p.y - c.floor).abs() < 0.3,
