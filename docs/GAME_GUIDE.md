@@ -138,7 +138,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | O | Free camera |
 | Enter or / | Chat: type a line, Enter says it (in a speech bubble over your head and in the chat window), Escape cancels |
 | K | Knock nearby townspeople over (a ragdoll test, still in the game) |
-| Escape | Menu: back, settings, controls, quit; frees a locked mouse first |
+| Escape | Menu: back, settings, controls, back to the title screen (asks first when hosting), quit; frees a locked mouse first |
 
 On foot the hero steps up and down ledges up to 0.45 m (`collision::STEP`) without
 leaving the ground, so slopes, kerbs and stairs never count as a fall; a bigger drop

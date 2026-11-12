@@ -2417,8 +2417,25 @@ fn main() -> EngineResult<()> {
                 chat_relock = false;
             }
             // Escape: the menu (settings, controls, quit).
-            if menu.show(&frame.ui, world) {
-                world.request_exit();
+            menu.hosting = open_at.is_some() || session.room_code().is_some();
+            match menu.show(&frame.ui, world) {
+                hw_client::settings::MenuExit::Stay => {}
+                hw_client::settings::MenuExit::Quit => world.request_exit(),
+                hw_client::settings::MenuExit::Title => {
+                    // Everything the hero owns goes to disk first. The
+                    // window then closes, which stops every worker and the
+                    // server (friends are told), and `main` starts the game
+                    // again from its title screen: a fresh process is the
+                    // one teardown that cannot leak or race.
+                    if sheet_dirty && !cheated {
+                        save_hero(hero_file.clone());
+                    }
+                    save_tray(&powers.tray);
+                    save_cabinet(&cases.filed);
+                    hw_client::hitch::event("back to the title screen");
+                    RESTART_AT_TITLE.store(true, std::sync::atomic::Ordering::SeqCst);
+                    world.request_exit();
+                }
             }
             hero_cam.look = menu.look;
             // Ctrl+Shift+F12: the debug menu (see `debugmenu.rs`).
@@ -5087,7 +5104,32 @@ fn main() -> EngineResult<()> {
     if let Err(e) = &run {
         hw_client::crash::engine_error(e);
     }
+    if run.is_ok() && RESTART_AT_TITLE.load(std::sync::atomic::Ordering::SeqCst) {
+        restart_at_title();
+    }
     run
+}
+
+/// Set by the Escape menu's "Back to the title screen".
+static RESTART_AT_TITLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Starts the game again, as if from the launcher, once this one has
+/// released its window, sound, server port and threads (`main` calls it after
+/// the engine loop returned). Debug switches that skip the title are dropped.
+fn restart_at_title() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args(std::env::args_os().skip(1));
+    for var in [
+        "HW_VIEW", "HW_JOIN", "HW_HOST", "HW_AT", "HW_BENCH", "HW_TITLE", "HW_STORY",
+    ] {
+        cmd.env_remove(var);
+    }
+    if let Err(e) = cmd.spawn() {
+        eprintln!("could not start the title screen again: {e}");
+    }
 }
 
 /// Tells the hitch log where the hero and the camera are, and how to

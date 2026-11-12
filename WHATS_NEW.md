@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.236 (2026-11-12)
+
+- The Escape menu has "Back to the title screen": your hero is saved, the game starts over on the title, and you can pick another hero, world or friend's room. If you are hosting, it asks first, because friends are sent home.
+
 ## 0.235 (2026-11-12)
 
 - Fewer hitches while the town appears around you: the shadows of buildings are no longer all drawn again each time a new piece of town arrives (Engine 0.066).

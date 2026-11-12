@@ -250,12 +250,27 @@ pub struct GameMenu {
     profile: Option<Profile>,
     /// Look speed and up-down sign in use (see [`look`]).
     pub look: (f32, f32),
+    /// Set every frame by the game: friends are playing in our world, so
+    /// leaving for the title screen asks first.
+    pub hosting: bool,
+}
+
+/// How the player left the menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MenuExit {
+    Stay,
+    /// Back to the title screen.
+    Title,
+    /// Close the game.
+    Quit,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum Page {
     #[default]
     Main,
+    /// Asks before closing a world that friends are in.
+    LeaveHost,
     Settings,
     Controls,
 }
@@ -274,13 +289,14 @@ impl GameMenu {
             page,
             profile: shown.is_some().then(|| p.clone()),
             look: look(p),
+            hosting: false,
         }
     }
 
     /// Opens on Escape (when the mouse is free: Escape first frees a locked
     /// mouse), draws the menu and applies what is changed. Call every frame
-    /// of play. Returns true when the player quits.
-    pub fn show(&mut self, ui: &engine::ui::UiFrame, world: &mut World) -> bool {
+    /// of play. Returns what the player chose to leave by, if anything.
+    pub fn show(&mut self, ui: &engine::ui::UiFrame, world: &mut World) -> MenuExit {
         let escape = ui.ctx().input(|i| i.key_pressed(egui::Key::Escape));
         if escape && !self.open && !world.pointer_lock() {
             self.open = true;
@@ -288,9 +304,11 @@ impl GameMenu {
             self.profile = Some(Profile::load());
         }
         let Some(p) = self.profile.as_mut() else {
-            return false;
+            return MenuExit::Stay;
         };
         let mut quit = false;
+        let mut to_title = false;
+        let hosting = self.hosting;
         let mut picture = false;
         let mut open = self.open;
         let page = &mut self.page;
@@ -309,8 +327,27 @@ impl GameMenu {
                             *page = Page::Controls;
                         }
                         ui.add_space(8.0);
+                        if ui.button("Back to the title screen").clicked() {
+                            if hosting {
+                                *page = Page::LeaveHost;
+                            } else {
+                                to_title = true;
+                            }
+                        }
                         if ui.button("Quit HeroWorld").clicked() {
                             quit = true;
+                        }
+                    });
+                }
+                Page::LeaveHost => {
+                    ui.vertical_centered_justified(|ui| {
+                        ui.label("You are hosting. Going back to the title screen closes your world: friends playing with you are told and sent home.");
+                        ui.add_space(8.0);
+                        if ui.button("Close the world and go back").clicked() {
+                            to_title = true;
+                        }
+                        if ui.button("Stay in the game").clicked() {
+                            *page = Page::Main;
                         }
                     });
                 }
@@ -334,7 +371,7 @@ impl GameMenu {
         if picture {
             apply(world, p);
         }
-        if !self.open || quit {
+        if !self.open || quit || to_title {
             // Keep what was set, over the latest file (the hero file may
             // have been saved while the menu was open).
             let mut latest = Profile::load();
@@ -350,6 +387,12 @@ impl GameMenu {
             latest.save();
             self.profile = None;
         }
-        quit
+        if to_title {
+            MenuExit::Title
+        } else if quit {
+            MenuExit::Quit
+        } else {
+            MenuExit::Stay
+        }
     }
 }
