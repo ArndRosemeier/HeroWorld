@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.227 (2026-11-12)
+
+- A good deal faster in town (on an RTX 5070 at 4K the street went from about 68 to 86 frames a second): buildings and streets beside or behind you were still being drawn, and no longer are (Engine 0.063).
+
 ## 0.226 (2026-11-12)
 
 - Family houses are roomy now: a wide house with the hall and stair at one end, a big living room, a kitchen and a store on the ground floor, and an upper hall with two large bedrooms above.
