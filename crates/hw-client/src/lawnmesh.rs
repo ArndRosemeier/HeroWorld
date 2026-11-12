@@ -23,6 +23,9 @@ use hw_gen::urban::world::TownWorld;
 pub const LIFT: f64 = 0.035;
 /// The skin reaches this far under a pavement (m).
 const UNDER_KERB: f64 = 0.45;
+/// The skin reaches this far under a wall or a plinth (m), so what is left
+/// of the clipped edge's wobble stays hidden.
+const UNDER_WALL: f64 = 0.08;
 /// Side of the squares in which the kind of grass is looked up (m).
 const SWARD_CELL: f64 = 8.0;
 
@@ -105,7 +108,7 @@ enum Cut {
     Edge(DVec2),
 }
 
-/// The part of triangle `t` (grid corner indices) where the field is
+/// The part of triangle `t` (indices into `corners`) where the field is
 /// positive: convex, 0 to 4 corners, interpolated along the edges.
 fn clip(t: [usize; 3], corners: &[Corner]) -> Vec<Cut> {
     let mut out = Vec::with_capacity(4);
@@ -122,6 +125,13 @@ fn clip(t: [usize; 3], corners: &[Corner]) -> Vec<Cut> {
     }
     out
 }
+
+/// Each grid square the lawn's edge crosses is cut into this many by this
+/// many smaller ones. The field (the distance to a wall) is only straight
+/// close to a wall, so over a 2 m square the clipped edge strayed up to half
+/// a metre from it near corners and neighbouring walls: bare ground showed
+/// as a sawtooth between the grass and the house.
+const EDGE_SPLIT: usize = 4;
 
 /// The lawn and meadow skin over the square `lo`..`hi`, with grid squares of
 /// `step` metres: one mesh per texture.
@@ -141,15 +151,23 @@ pub fn lawn(w: &TownWorld, g: &Greenery, lo: DVec2, hi: DVec2, step: f64) -> Vec
         })
         .collect();
     let idx = |i: usize, j: usize| j * (n + 1) + i;
-    // Per texture: its mesh and the grid corners already in it.
+    // The finer corners of squares that are cut, by their place on the
+    // fine grid (the coarse corners are on it too).
+    let fine_step = step / EDGE_SPLIT as f64;
+    let fine_w = n * EDGE_SPLIT + 1;
+    let mut fine: std::collections::HashMap<usize, Corner> = std::collections::HashMap::new();
+    // Per texture: its mesh and the fine-grid corners already in it.
     let mut parts: Vec<(Layer, Mesh, std::collections::HashMap<usize, PointId>)> = Vec::new();
     let noise = hw_core::Noise::new(w.seed.child("lawn-tint"));
     for j in 0..n {
         for i in 0..n {
             let q = [idx(i, j), idx(i + 1, j), idx(i + 1, j + 1), idx(i, j + 1)];
-            if q.iter().all(|&k| corners[k].f <= 0.0) {
+            // (The field changes by at most 1 per metre: a square whose
+            // corners are all deeper than half its diagonal is all wall.)
+            if q.iter().all(|&k| corners[k].f < -step * 0.75) {
                 continue;
             }
+            let cut = q.iter().any(|&k| corners[k].f <= 0.0);
             let sward = swards.at((corners[q[0]].p + corners[q[2]].p) * 0.5);
             let layer = texture(sward);
             let slot = match parts.iter().position(|(l, _, _)| *l == layer) {
@@ -180,28 +198,56 @@ pub fn lawn(w: &TownWorld, g: &Greenery, lo: DVec2, hi: DVec2, step: f64) -> Vec
                 mesh.set_point_color(id, col).expect("point");
                 id
             };
-            for tri in [[q[0], q[1], q[2]], [q[0], q[2], q[3]]] {
-                let poly = clip(tri, &corners);
-                if poly.len() < 3 {
-                    continue;
-                }
-                let ids: Vec<PointId> = poly
-                    .iter()
-                    .map(|c| match *c {
-                        Cut::Grid(k) => match shared.get(&k) {
-                            Some(&id) => id,
-                            None => {
-                                let id = add(mesh, corners[k].p);
-                                shared.insert(k, id);
-                                id
-                            }
-                        },
-                        Cut::Edge(p) => add(mesh, p),
-                    })
-                    .collect();
-                // The clipped polygon is convex: a fan, facing up.
-                for k in 1..ids.len() - 1 {
-                    mesh.add_triangle(ids[0], ids[k + 1], ids[k]).expect("tri");
+            // The squares to draw: the whole one, or its finer pieces. Each is
+            // four corners (key on the fine grid, corner).
+            let k = if cut { EDGE_SPLIT } else { 1 };
+            for sj in 0..k {
+                for si in 0..k {
+                    let at = [(si, sj), (si + 1, sj), (si + 1, sj + 1), (si, sj + 1)];
+                    let mut keys = [0usize; 4];
+                    let mut cs = [corners[0]; 4];
+                    for (m, &(a, b)) in at.iter().enumerate() {
+                        let (fi, fj) = (
+                            i * EDGE_SPLIT + a * (EDGE_SPLIT / k),
+                            j * EDGE_SPLIT + b * (EDGE_SPLIT / k),
+                        );
+                        keys[m] = fj * fine_w + fi;
+                        cs[m] = if fi % EDGE_SPLIT == 0 && fj % EDGE_SPLIT == 0 {
+                            corners[idx(fi / EDGE_SPLIT, fj / EDGE_SPLIT)]
+                        } else {
+                            *fine.entry(keys[m]).or_insert_with(|| {
+                                let p = lo + DVec2::new(fi as f64, fj as f64) * fine_step;
+                                Corner {
+                                    p,
+                                    f: field(w, g, p),
+                                }
+                            })
+                        };
+                    }
+                    for tri in [[0, 1, 2], [0, 2, 3]] {
+                        let poly = clip(tri, &cs);
+                        if poly.len() < 3 {
+                            continue;
+                        }
+                        let ids: Vec<PointId> = poly
+                            .iter()
+                            .map(|c| match *c {
+                                Cut::Grid(m) => match shared.get(&keys[m]) {
+                                    Some(&id) => id,
+                                    None => {
+                                        let id = add(mesh, cs[m].p);
+                                        shared.insert(keys[m], id);
+                                        id
+                                    }
+                                },
+                                Cut::Edge(p) => add(mesh, p),
+                            })
+                            .collect();
+                        // The clipped polygon is convex: a fan, facing up.
+                        for m in 1..ids.len() - 1 {
+                            mesh.add_triangle(ids[0], ids[m + 1], ids[m]).expect("tri");
+                        }
+                    }
                 }
             }
         }
@@ -227,7 +273,7 @@ pub fn lawn(w: &TownWorld, g: &Greenery, lo: DVec2, hi: DVec2, step: f64) -> Vec
 /// pavements (they stand higher), but not into walls or the sand.
 fn field(w: &TownWorld, g: &Greenery, p: DVec2) -> f64 {
     let (road, other) = g.clearances(w, p);
-    (road + UNDER_KERB).min(other)
+    (road + UNDER_KERB).min(other + UNDER_WALL)
 }
 
 /// The ground's normal at `p`.
@@ -236,4 +282,121 @@ pub fn ground_normal(w: &TownWorld, p: DVec2) -> DVec3 {
     let gx = w.ground(p + DVec2::X * e) - w.ground(p - DVec2::X * e);
     let gz = w.ground(p + DVec2::Y * e) - w.ground(p - DVec2::Y * e);
     DVec3::new(-gx, 2.0 * e, -gz).normalize()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Is `p` inside the lawn skin drawn with grid squares of `step`?
+    fn covered(w: &TownWorld, g: &Greenery, lo: DVec2, step: f64, p: DVec2) -> bool {
+        let at = |step: f64, p: DVec2| {
+            let q = (p - lo) / step;
+            let (i, j) = (q.x.floor() as i64, q.y.floor() as i64);
+            let c = |i: i64, j: i64| {
+                let p = lo + DVec2::new(i as f64, j as f64) * step;
+                Corner {
+                    p,
+                    f: field(w, g, p),
+                }
+            };
+            [c(i, j), c(i + 1, j), c(i + 1, j + 1), c(i, j + 1)]
+        };
+        let mut corners = at(step, p);
+        let cut = corners.iter().any(|c| c.f <= 0.0);
+        if corners.iter().all(|c| c.f < -step * 0.75) {
+            return false;
+        }
+        if cut {
+            corners = at(step / EDGE_SPLIT as f64, p);
+        }
+        for tri in [[0, 1, 2], [0, 2, 3]] {
+            let poly: Vec<DVec2> = clip(tri, &corners)
+                .iter()
+                .map(|k| match *k {
+                    Cut::Grid(k) => corners[k].p,
+                    Cut::Edge(p) => p,
+                })
+                .collect();
+            if poly.len() < 3 {
+                continue;
+            }
+            let side = |a: DVec2, b: DVec2| (b - a).perp_dot(p - a);
+            let n = poly.len();
+            let all_in = (0..n).all(|k| side(poly[k], poly[(k + 1) % n]) >= -1e-9);
+            let all_in_rev = (0..n).all(|k| side(poly[k], poly[(k + 1) % n]) <= 1e-9);
+            if all_in || all_in_rev {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// The lawn reaches right up to a house wall (Arnd saw pale triangles of
+    /// bare ground between the grass and the wall in 0.242): points just
+    /// outside walls, away from the street, are on the skin.
+    #[test]
+    fn the_lawn_meets_house_walls() {
+        let town = hw_sim::GeneratedTown::generate(hw_core::Seed(1), 300.0);
+        let w = &town.world;
+        let g = Greenery::new(w);
+        let lo = DVec2::splat(-400.0);
+        let (mut gaps, mut total) = (0, 0);
+        for q in w.quarters_in(lo, -lo) {
+            for b in &q.buildings {
+                let c = b.site.corners();
+                for k in 0..4 {
+                    let (a, e) = (c[k], c[(k + 1) % 4]);
+                    let out = (e - a).perp().normalize();
+                    for t in [0.3, 0.5, 0.7] {
+                        for off in [0.1, 0.3] {
+                            for sgn in [1.0, -1.0] {
+                                let p = a.lerp(e, t) + out * sgn * off;
+                                let f = field(w, &g, p);
+                                if g.clearances(w, p).0 < 0.5 || !(0.05..=0.5).contains(&f) {
+                                    continue;
+                                }
+                                total += 1;
+                                gaps += usize::from(!covered(w, &g, lo, 2.0, p));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(total > 1000, "only {total} spots by walls");
+        // A few spots by corners where a street meets a wall may stay bare.
+        assert!(
+            gaps * 200 <= total,
+            "{gaps} of {total} spots by walls are bare"
+        );
+    }
+
+    /// The lawn also reaches right up to the pavements, at bends, junction
+    /// plates and road ends: ground a hand's width outside a pavement, clear
+    /// of walls, is on the skin.
+    #[test]
+    fn the_lawn_meets_pavements() {
+        let town = hw_sim::GeneratedTown::generate(hw_core::Seed(1), 300.0);
+        let w = &town.world;
+        let g = Greenery::new(w);
+        let lo = DVec2::splat(-300.0);
+        let (mut gaps, mut total) = (0, 0);
+        for j in 0..800 {
+            for i in 0..800 {
+                let p = lo + DVec2::new(i as f64 + 0.37, j as f64 + 0.61) * 0.75;
+                let (road, other) = g.clearances(w, p);
+                if !(0.05..0.3).contains(&road) || other < 1.0 {
+                    continue;
+                }
+                total += 1;
+                gaps += usize::from(!covered(w, &g, lo, 2.0, p));
+            }
+        }
+        assert!(total > 1000, "only {total} spots by pavements");
+        assert!(
+            gaps * 200 <= total,
+            "{gaps} of {total} spots by pavements are bare"
+        );
+    }
 }

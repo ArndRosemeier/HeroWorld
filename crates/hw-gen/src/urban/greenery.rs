@@ -79,14 +79,23 @@ fn edge_distance(r: &WorldRoad, si: usize, p: DVec2) -> f64 {
     let (a, b) = (r.pts[si], r.pts[si + 1]);
     let mut d = segment_distance(p, a, b) - total;
     let m = r.pts.len();
-    // Past either end of the road (within the end's own width) the strip
-    // has stopped, whichever leg's round reach `p` lies in.
-    for (end, next) in [(r.pts[0], r.pts[1]), (r.pts[m - 1], r.pts[m - 2])] {
-        let dir = (end - next).normalize_or_zero();
-        let over = (p - end).dot(dir);
-        let side = (p - end).dot(dir.perp()).abs();
-        if over > 0.0 && over < total * 2.0 + 2.0 && side < total + 2.0 {
-            d = d.max(over);
+    // The end segments stop square at the end, as drawn. A true distance to
+    // that strip, not the round one: the round field is deep inside right up
+    // to the end and positive just past it, so a lawn clipped along the
+    // field's zero strayed half a metre from the road's end.
+    for (end, next, mine) in [
+        (r.pts[0], r.pts[1], si == 0),
+        (r.pts[m - 1], r.pts[m - 2], si == m - 2),
+    ] {
+        if !mine {
+            continue;
+        }
+        let out = (end - next).normalize_or_zero();
+        let over = (p - end).dot(out);
+        // Not yet past the segment's inner end.
+        if -over <= (end - next).length() {
+            let side = (p - end).dot(out.perp()).abs();
+            d = (side - total).max(over);
         }
     }
     d
