@@ -419,6 +419,15 @@ impl Session {
         }
     }
 
+    /// Ticks' parts that overran their budget since the last [`Self::sync`]
+    /// (single player), in words.
+    pub fn server_overruns(&self) -> &[String] {
+        match self {
+            Session::Local { host, .. } => &host.view().overruns,
+            Session::Remote { .. } => &[],
+        }
+    }
+
     /// Everything to draw this frame. Our own hero comes first if present.
     /// `frac` is how far into the next tick the frame is
     /// ([`hw_sim::hostthread::TickClock::frac`]): in single player

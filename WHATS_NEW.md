@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.248 (2026-11-12)
+
+- Many villains no longer make the game crawl: each one used to search for a way round the walls every single moment when it could not reach you, which cost tens of milliseconds per tick with a crowd around. Now only a few searches happen per tick, and a villain waiting for its turn just walks straight at you.
+- Behind the scenes: a part of the server that takes too long in one tick is now written to the log by name, with how many villains there were.
+
 ## 0.247 (2026-11-12)
 - The thing you retrieve in a hideout now reads as the real object (strongbox, painting, plates...): it is bigger and only small glints play on it, no more glowing bubble.
 

@@ -1196,6 +1196,11 @@ pub struct Path {
 #[derive(Resource, Clone, Debug)]
 pub struct Fights {
     pub spots: Vec<Spot>,
+    /// Path searches villains made in the last tick (at most [`PATH_BUDGET`]).
+    pub path_searches: u32,
+    /// Microseconds the parts of the last combat step took (the server's
+    /// tick-budget report; [`crate::Sim::take_step_times`]).
+    pub laps: Vec<(&'static str, u64)>,
     /// What happened in the last tick (cleared each tick).
     pub events: Vec<Fx>,
     /// What the server did with heroes' power keys in the last tick, in
@@ -1299,6 +1304,8 @@ impl Default for Fights {
     fn default() -> Self {
         Self {
             spots: Vec::new(),
+            path_searches: 0,
+            laps: Vec::new(),
             events: Vec::new(),
             power_log: Vec::new(),
             seed: 0,
@@ -1760,6 +1767,12 @@ pub struct Rescue {
 
 /// One tick of every fight in `world` (after heroes moved).
 pub(crate) fn step(world: &mut World, tick: u64) {
+    let mut lap_t = std::time::Instant::now();
+    let mut laps: Vec<(&'static str, u64)> = Vec::new();
+    let mut lap = |name: &'static str| {
+        laps.push((name, lap_t.elapsed().as_micros() as u64));
+        lap_t = std::time::Instant::now();
+    };
     world.resource_mut::<Fights>().events.clear();
     world.resource_mut::<Fights>().rewards.clear();
     world.resource_mut::<Fights>().deeds.clear();
@@ -1818,6 +1831,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     let mut sky = std::mem::take(&mut world.resource_mut::<Fights>().sky);
     let mut bombs = std::mem::take(&mut world.resource_mut::<Fights>().bombs);
 
+    lap("combat gather");
     rally(&mut actors);
     let rescue_points = std::mem::take(&mut world.resource_mut::<Fights>().rescue_points);
     let home = world.resource::<Fights>().home;
@@ -1843,6 +1857,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
         &mut out,
     );
     world.resource_mut::<Fights>().gates = gates;
+    lap("combat heroes");
     leaps(&mut actors, &solids, tick, &mut out);
     world.resource_mut::<Fights>().rescue_points = rescue_points;
     npc_heroes_act(&mut actors, &solids, tick, &mut out);
@@ -1851,8 +1866,9 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     throws.append(&mut out.throws);
     land_sky(&mut actors, &mut sky, &solids, tick, &mut out);
     sky.append(&mut out.sky);
+    lap("combat npc+throws+sky");
     let floors = world.resource::<Fights>().floors.clone();
-    enemies_act(
+    let searches = enemies_act(
         &mut actors,
         &solids,
         floors.as_deref(),
@@ -1861,6 +1877,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
         &mut paths,
         &mut bombs,
     );
+    lap("combat enemies");
     land_bombs(&mut actors, &mut bombs, &solids, tick, &mut out);
     let mut city = std::mem::take(&mut out.city);
     let streets = world.resource::<Fights>().streets.clone();
@@ -1876,6 +1893,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     );
     routes.retain(|id, _| actors.iter().any(|a| a.id == *id && a.colossus.is_some()));
     world.resource_mut::<Fights>().routes = routes;
+    lap("combat bombs+robots");
     burns(&mut actors, tick, &mut out);
     statuses(&mut actors, &drones, tick, &mut out, &mut spawn_drones);
     // Ice broken by a blow this tick.
@@ -2431,7 +2449,10 @@ pub(crate) fn step(world: &mut World, tick: u64) {
         crate::sidekick::spawn(world, sm, tick);
     }
     robots::tidy(world, tick);
+    lap("combat rest");
     let mut f = world.resource_mut::<Fights>();
+    f.laps = laps;
+    f.path_searches = searches;
     f.events = fx;
     f.power_log = out.log;
     f.rewards = out.rewards;
@@ -4403,14 +4424,44 @@ const LOOK_AHEAD: f64 = 40.0;
 /// Which way a villain at `here` walks to reach `goal`: straight when the
 /// way is clear, else along a path round the walls (found again now and
 /// then, as the goal moves).
+/// Searches for a way (`find_path`, `Floors::way`) a villain may start per tick,
+/// all villains together: a search is about a millisecond, and a crowd of
+/// them whose goals move (a hero in the air) would otherwise search every
+/// tick. Those who miss out walk straight (or on their old path) and are
+/// served within a few ticks: one served does not search again for
+/// [`RETHINK`] seconds, so the turns go round by id.
+pub const PATH_BUDGET: u32 = 1;
+/// Fewest seconds between two searches of one villain, whatever its goal does.
+const RETHINK: f64 = 0.5;
+
+/// Does `id` need a new path to `goal` now, and may it search (the shared
+/// `budget` of searches this tick)? Spends one turn when it says yes.
+fn path_is_stale(
+    paths: &BTreeMap<NetId, Path>,
+    budget: &mut u32,
+    id: NetId,
+    tick: u64,
+    goal: DVec3,
+) -> bool {
+    let due = paths.get(&id).is_none_or(|p| {
+        tick >= p.made + ticks(1.5)
+            || (p.goal.distance(goal) > 3.0 && tick >= p.made + ticks(RETHINK))
+    });
+    if due && *budget > 0 {
+        *budget -= 1;
+        return true;
+    }
+    false
+}
+
 fn heading(
     paths: &mut BTreeMap<NetId, Path>,
     solids: &Obstacles,
     floors: Option<&crate::floornav::Floors>,
+    budget: &mut u32,
     id: NetId,
     tick: u64,
-    here: DVec3,
-    goal: DVec3,
+    (here, goal): (DVec3, DVec3),
 ) -> DVec2 {
     let flat = |a: DVec3, b: DVec3| DVec2::new(b.x - a.x, b.z - a.z);
     let direct = flat(here, goal).normalize_or_zero();
@@ -4419,28 +4470,18 @@ fn heading(
     if let Some(fl) =
         floors.filter(|f| f.building_at(here).is_some() || f.building_at(goal).is_some())
     {
-        let stale = paths
-            .get(&id)
-            .is_none_or(|p| tick >= p.made + ticks(1.5) || p.goal.distance(goal) > 3.0);
-        if stale {
-            match fl.way(solids, here, goal) {
-                Some(points) if !points.is_empty() => {
-                    paths.insert(
-                        id,
-                        Path {
-                            made: tick,
-                            goal,
-                            points,
-                        },
-                    );
-                }
-                _ => {
-                    paths.remove(&id);
-                    return direct;
-                }
-            }
+        if path_is_stale(paths, budget, id, tick, goal) {
+            let points = fl.way(solids, here, goal).unwrap_or_default();
+            paths.insert(
+                id,
+                Path {
+                    made: tick,
+                    goal,
+                    points,
+                },
+            );
         }
-        let Some(p) = paths.get_mut(&id) else {
+        let Some(p) = paths.get_mut(&id).filter(|p| !p.points.is_empty()) else {
             return direct;
         };
         while p.points.len() > 1 && flat(here, p.points[0]).length() < 0.8 {
@@ -4461,28 +4502,20 @@ fn heading(
         paths.remove(&id);
         return direct;
     }
-    let stale = paths
-        .get(&id)
-        .is_none_or(|p| tick >= p.made + ticks(1.5) || p.goal.distance(goal) > 3.0);
-    if stale {
-        match nav::find_path(solids, here, goal) {
-            Some(points) => {
-                paths.insert(
-                    id,
-                    Path {
-                        made: tick,
-                        goal,
-                        points,
-                    },
-                );
-            }
-            None => {
-                paths.remove(&id);
-                return direct;
-            }
-        }
+    if path_is_stale(paths, budget, id, tick, goal) {
+        // No way found is remembered too (empty points), so a walker who
+        // cannot get there does not search again every tick.
+        let points = nav::find_path(solids, here, goal).unwrap_or_default();
+        paths.insert(
+            id,
+            Path {
+                made: tick,
+                goal,
+                points,
+            },
+        );
     }
-    let Some(p) = paths.get_mut(&id) else {
+    let Some(p) = paths.get_mut(&id).filter(|p| !p.points.is_empty()) else {
         return direct;
     };
     while p.points.len() > 1 && flat(here, p.points[0]).length() < 0.8 {
@@ -4499,7 +4532,8 @@ fn enemies_act(
     fx: &mut Vec<Fx>,
     paths: &mut BTreeMap<NetId, Path>,
     bombs: &mut Vec<Bomb>,
-) {
+) -> u32 {
+    let mut budget = PATH_BUDGET;
     let heroes: Vec<usize> = (0..actors.len())
         .filter(|&i| actors[i].hero.is_some())
         .collect();
@@ -4664,7 +4698,15 @@ fn enemies_act(
                     } else if flat.length() > if strolls { STROLL_RADIUS + 0.5 } else { 1.0 } {
                         // Walking back to its corner; making off at a jog.
                         let pace = if en.leaving { 0.62 } else { 0.3 };
-                        let d = heading(paths, solids, floors, id, tick, here, en.home) * pace;
+                        let d = heading(
+                            paths,
+                            solids,
+                            floors,
+                            &mut budget,
+                            id,
+                            tick,
+                            (here, en.home),
+                        ) * pace;
                         input.move_x = d.x as f32;
                         input.move_z = d.y as f32;
                     } else {
@@ -4773,7 +4815,15 @@ fn enemies_act(
                                 }
                             }
                         } else if dist > far || !seen {
-                            go = heading(paths, solids, floors, id, tick, here, there) * spec.speed;
+                            go = heading(
+                                paths,
+                                solids,
+                                floors,
+                                &mut budget,
+                                id,
+                                tick,
+                                (here, there),
+                            ) * spec.speed;
                         } else if dist < near {
                             go = -dir * spec.speed * 0.8;
                         }
@@ -4868,6 +4918,7 @@ fn enemies_act(
             actors[i].body = body;
         }
     }
+    PATH_BUDGET - budget
 }
 
 /// Does the blow on `t` from `from` (a position) hit its shield? Only a

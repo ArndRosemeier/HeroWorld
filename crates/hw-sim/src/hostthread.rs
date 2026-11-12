@@ -67,6 +67,9 @@ pub struct HostView {
     /// Where the server's time went since the last view, in microseconds:
     /// the parts of the step, the host around it and the snapshot.
     pub parts: Vec<(&'static str, u64)>,
+    /// Parts of a tick that overran their budget, in words (the hitch log
+    /// prints them: a future stall names its cause).
+    pub overruns: Vec<String>,
 }
 
 /// What a view adds to the game's queues (news, fight events, our sheet).
@@ -489,6 +492,7 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
                     busy: busy_s,
                     ticks: std::mem::take(&mut ticks),
                     parts,
+                    overruns: host.sim.take_overruns(),
                 };
                 let p = Published {
                     view,

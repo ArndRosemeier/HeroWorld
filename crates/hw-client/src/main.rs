@@ -3303,6 +3303,9 @@ fn main() -> EngineResult<()> {
                         hw_client::hitch::count(name, us);
                     }
                 }
+                for line in session.server_overruns() {
+                    hw_client::hitch::event(line.clone());
+                }
             }
             hw_client::hitch::mark("news");
             // Damage: broken buildings, repairs, impacts.

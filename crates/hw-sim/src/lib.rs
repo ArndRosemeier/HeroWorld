@@ -69,6 +69,9 @@ use std::sync::Arc;
 
 /// Simulation ticks per second.
 pub const TICK_HZ: u32 = 30;
+/// What one part of the server's step may take in one tick (µs): a quarter
+/// of the tick. More is logged as an overrun naming the part.
+pub const PART_BUDGET_US: u64 = 8_000;
 /// Seconds per tick.
 pub const DT: f64 = 1.0 / TICK_HZ as f64;
 
@@ -616,6 +619,8 @@ pub struct Sim {
     /// Microseconds each part of [`Sim::step`] took since the last
     /// [`Sim::take_step_times`] (the hitch log names what makes the server slow).
     step_times: Vec<(&'static str, u64)>,
+    /// Parts of a step that overran their budget (see [`Sim::note_part`]).
+    overruns: Vec<String>,
     /// Engine physics for loose bodies.
     pub physics: Physics,
     /// The simulated areas around the players.
@@ -1002,6 +1007,7 @@ impl Sim {
             schedule,
             track,
             step_times: Vec::new(),
+            overruns: Vec::new(),
             physics: Physics::new(solids),
             bubbles: Bubbles::default(),
             damage: Damage::default(),
@@ -1181,10 +1187,36 @@ impl Sim {
     fn lap(&mut self, name: &'static str, t: &mut std::time::Instant) {
         let us = t.elapsed().as_micros() as u64;
         *t = std::time::Instant::now();
+        self.note_part(name, us);
+    }
+
+    /// Books `us` microseconds of one tick on the part `name`; a part that
+    /// takes more than [`PART_BUDGET_US`] in one tick is an overrun, and is
+    /// written down with how much there was to do (the hitch log prints it).
+    fn note_part(&mut self, name: &'static str, us: u64) {
         match self.step_times.iter_mut().find(|(k, _)| *k == name) {
             Some(e) => e.1 += us,
             None => self.step_times.push((name, us)),
         }
+        if us > PART_BUDGET_US && self.overruns.len() < 8 {
+            let villains = self
+                .world
+                .query::<&combat::Enemy>()
+                .iter(&self.world)
+                .count();
+            let searches = self.world.resource::<combat::Fights>().path_searches;
+            self.overruns.push(format!(
+                "server tick {}: '{name}' took {:.1} ms (budget {:.0} ms) with {villains} villains, {searches} path searches",
+                self.tick,
+                us as f64 / 1000.0,
+                PART_BUDGET_US as f64 / 1000.0,
+            ));
+        }
+    }
+
+    /// Overruns of the step's parts since the last call (see [`Self::note_part`]).
+    pub fn take_overruns(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.overruns)
     }
 
     /// The step's parts and their microseconds since the last call.
@@ -1197,6 +1229,9 @@ impl Sim {
         self.schedule.run(&mut self.world);
         self.lap("srv schedule us", &mut t);
         combat::step(&mut self.world, self.tick);
+        for (k, us) in std::mem::take(&mut self.world.resource_mut::<combat::Fights>().laps) {
+            self.note_part(k, us);
+        }
         self.lap("srv combat us", &mut t);
         sidekick::step(&mut self.world, self.tick);
         self.lap("srv sidekick us", &mut t);
