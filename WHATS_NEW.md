@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.235 (2026-11-12)
+
+- Fewer hitches while the town appears around you: the shadows of buildings are no longer all drawn again each time a new piece of town arrives (Engine 0.066).
+
 ## 0.234 (2026-11-12)
 
 - The night club is a club inside now, in the new roomy buildings too: a stage with a red curtain and footlights for the band, a long bar with stools and bottles behind it, booths along the walls, tables, a jukebox, and in the big ones a dance floor.
