@@ -37,6 +37,7 @@ pub mod googie;
 pub mod grassview;
 pub mod gravemesh;
 pub mod hallfurniture;
+pub mod hallsinside;
 pub mod heroview;
 pub mod hitch;
 pub mod hospitalmesh;

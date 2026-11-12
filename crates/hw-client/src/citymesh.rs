@@ -1150,13 +1150,26 @@ pub(crate) fn halls_frame(site: &hw_gen::building::BuildingSite) -> (DVec3, DVec
     )
 }
 
-/// Adds one building to `b`.
+/// Adds one building to `b`; up close a building of halls with its inside.
 pub fn add_building(
+    b: &mut MeshBuilder,
+    plan: &BuildingPlan,
+    kind: DistrictKind,
+    look: Look,
+    detail: crate::buildingmesh::Detail,
+) {
+    add_building_with(b, plan, kind, look, detail, true);
+}
+
+/// [`add_building`]; `inside: false` leaves out the inside of a building
+/// of halls (the town draws those round the eye only, see `hallsinside`).
+pub fn add_building_with(
     b: &mut MeshBuilder,
     plan: &BuildingPlan,
     _kind: DistrictKind,
     look: Look,
     detail: crate::buildingmesh::Detail,
+    inside: bool,
 ) {
     let site = &plan.site;
     let facade = rgb(plan.look.wall[0], plan.look.wall[1], plan.look.wall[2]);
@@ -1172,7 +1185,7 @@ pub fn add_building(
         // enough for the camera, and all of it is there up close.
         let n = plan.floors.len();
         crate::buildingmesh::exterior(b, plan, n, true, detail);
-        if detail == crate::buildingmesh::Detail::Near {
+        if inside && detail == crate::buildingmesh::Detail::Near {
             b.frame = Some(halls_frame(site));
             crate::cometmesh::halls(b, plan);
             b.frame = None;

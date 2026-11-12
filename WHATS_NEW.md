@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.222 (2026-11-12)
+
+- Apartment blocks: where a plot is big enough, a block of flats now has a pillared lobby on the street, a wide stair with two lifts at the back, and on every storey above a landing with two big flats (a living room at the street, a kitchen to eat in, one or two bedrooms).
+- The game needs less memory in town: the rooms inside a building are drawn only while you are near it (within about 90 m), and are made in the background as you come up.
+- Towns are built anew for this version.
+
 ## 0.221 (2026-11-12)
 
 - Fixed the last way the picture could go dark while walking the streets: a character seen through a car's glass could store a colour too bright for the picture, which the street reflections then spread. Every lit surface now stores colours the picture can hold (Engine 0.060)

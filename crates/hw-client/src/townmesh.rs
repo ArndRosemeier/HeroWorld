@@ -3,7 +3,7 @@
 //! around the camera built, in square cells, full detail close by.
 
 use crate::buildingmesh::Detail;
-use crate::citymesh::{add_building, Look, MeshBuilder, BLOCK_TOP};
+use crate::citymesh::{add_building_with, Look, MeshBuilder, BLOCK_TOP};
 use engine::prelude::*;
 use engine::stream::WorldGenerator;
 use engine::texgen::GroundLayer;
@@ -476,7 +476,8 @@ fn make_cell(job: CellJob) -> CellMeshes {
         };
         if !cb.hidden {
             let mut one = MeshBuilder::new();
-            add_building(&mut one, &plan, wb.site.district, cb.look, detail);
+            // (Insides of buildings of halls: `hallsinside`, round the eye.)
+            add_building_with(&mut one, &plan, wb.site.district, cb.look, detail, false);
             let lift = Vec3::new(0.0, (wb.base - BLOCK_TOP) as f32, 0.0);
             if let Look::Cut { level } = cb.look {
                 let mut list = std::mem::take(&mut one.spots);
@@ -519,7 +520,14 @@ fn make_cell(job: CellJob) -> CellMeshes {
                 let [near, far] = &mut blocks[block_of(centre(wb))];
                 near.append(one, lift);
                 let mut two = MeshBuilder::new();
-                add_building(&mut two, &plan, wb.site.district, cb.look, Detail::Far);
+                add_building_with(
+                    &mut two,
+                    &plan,
+                    wb.site.district,
+                    cb.look,
+                    Detail::Far,
+                    false,
+                );
                 far.append(two, lift);
             } else {
                 b.append(one, lift);
@@ -858,6 +866,11 @@ impl TownView {
     /// The cell that draws building `i` (none for a landmark).
     pub fn cell_of_building(&self, i: u64) -> Option<CellKey> {
         self.centre_of(i).map(cell_of)
+    }
+
+    /// Is building `i` left out of its cell (drawn broken instead)?
+    pub fn is_hidden(&self, i: u64) -> bool {
+        self.hidden.contains(&i)
     }
 
     /// Leaves building `i` out of its cell (`true`) or draws it again, and

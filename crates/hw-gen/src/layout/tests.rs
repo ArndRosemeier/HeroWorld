@@ -229,3 +229,44 @@ fn houses_of_flats_are_sound() {
     }
     assert!(second > 10, "{second} second bedrooms");
 }
+
+/// Apartment blocks: sound on every plot from the smallest, two flats of
+/// few large rooms on every storey above the lobby, lifts to all floors.
+#[test]
+fn apartment_blocks_are_sound() {
+    use super::office::{plan_flats, MIN_BLOCK};
+    let mut second = 0;
+    for k in 0..160u64 {
+        let size = DVec2::new(
+            MIN_BLOCK.x + (k % 11) as f64 * 1.5,
+            MIN_BLOCK.y + (k % 7) as f64,
+        );
+        let storeys = 2 + (k % 9) as u32;
+        let l = plan_flats(Seed(900 + k), size, storeys);
+        assert_eq!(l.scheme, Scheme::Block, "{k} {size:?}");
+        assert!(l.problems().is_empty(), "{k} {size:?}: {:?}", l.problems());
+        let levels = l.levels();
+        assert_eq!(levels.len() as u32, storeys, "{k}");
+        assert_eq!(l.lifts.len(), 2);
+        assert!(l.lifts.iter().all(|x| x.stops.len() as u32 == storeys));
+        for y in &levels[1..] {
+            let on = |kind: SpaceKind| {
+                l.spaces
+                    .iter()
+                    .filter(|s| s.kind == kind && (s.y - y).abs() < 1e-6)
+                    .count()
+            };
+            assert_eq!((on(SpaceKind::Living), on(SpaceKind::Kitchen)), (2, 2));
+            assert!((2..=4).contains(&on(SpaceKind::Bedroom)), "{k}");
+            second += on(SpaceKind::Bedroom) - 2;
+        }
+        for s in l.spaces.iter().filter(|s| s.kind == SpaceKind::Living) {
+            let size = s.rect.size();
+            assert!(
+                size.x >= 9.0 && size.y >= 10.0,
+                "{k}: a living room of {size:?}"
+            );
+        }
+    }
+    assert!(second > 40, "{second} second bedrooms");
+}

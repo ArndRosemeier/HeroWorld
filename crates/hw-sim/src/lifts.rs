@@ -303,8 +303,11 @@ mod tests {
                 (0.0..s.size.x).contains(&x) && (0.0..s.size.y).contains(&z)
             };
             // As in the game, the town round a hero is planned ahead.
-            let (c, m) = (DVec2::new(mid.x, mid.z), DVec2::splat(80.0));
-            w.prefetch(&[c], 80.0);
+            // (As far as `town_runs` looks: the reach asked for and its
+            // margin.)
+            let far = 45.0 + AHEAD + STEP + 10.0;
+            let (c, m) = (DVec2::new(mid.x, mid.z), DVec2::splat(far));
+            w.prefetch(&[c], far);
             for _ in 0..3000 {
                 if w.quarters_ready(c - m, c + m) {
                     break;

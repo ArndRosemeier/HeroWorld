@@ -11,7 +11,7 @@
 //! bump into.
 
 use super::solid::{pieces, Part};
-use super::{Flight, Layout, LinkKind, Scheme, Space, SpaceKind};
+use super::{Flight, Layout, LinkKind, Space, SpaceKind};
 use crate::geom::Rect;
 use crate::urban::footprint::Footprint;
 use glam::DVec2;
@@ -733,7 +733,7 @@ pub fn items(l: &Layout) -> Vec<Item> {
                 s.kind,
                 SpaceKind::Shaft | SpaceKind::StairHall | SpaceKind::Canyon
             )
-            || (s.kind == SpaceKind::Vestibule && l.scheme != Scheme::Flats)
+            || (s.kind == SpaceKind::Vestibule && !l.scheme.homes())
         {
             continue;
         }
@@ -790,7 +790,7 @@ pub fn items(l: &Layout) -> Vec<Item> {
             }
             if k.kind.passable() {
                 // (Homes are closer set than halls.)
-                let clear = if l.scheme == Scheme::Flats { 0.4 } else { 1.2 };
+                let clear = if l.scheme.homes() { 0.4 } else { 1.2 };
                 blocked.push(k.apron().inset(-clear));
             }
             if k.kind == LinkKind::Entrance {
@@ -885,6 +885,7 @@ pub fn items(l: &Layout) -> Vec<Item> {
 mod tests {
     use super::*;
     use crate::layout::office::plan_scheme;
+    use crate::layout::Scheme;
 
     fn plans() -> Vec<Layout> {
         let mut out = Vec::new();
@@ -907,6 +908,11 @@ mod tests {
             for scheme in [Scheme::ShopHouse, Scheme::Flats] {
                 out.push(plan_scheme(Seed(40 + seed), size, 3, scheme).expect("it fits"));
             }
+            let size = DVec2::new(
+                30.0 + (seed % 4) as f64 * 3.0,
+                28.0 + (seed % 5) as f64 * 1.5,
+            );
+            out.push(plan_scheme(Seed(60 + seed), size, 5, Scheme::Block).expect("it fits"));
         }
         out
     }
@@ -919,6 +925,7 @@ mod tests {
             let its = items(&l);
             let least = match l.scheme {
                 Scheme::ShopHouse | Scheme::Flats => 20,
+                Scheme::Block => 100,
                 _ => 150,
             };
             assert!(

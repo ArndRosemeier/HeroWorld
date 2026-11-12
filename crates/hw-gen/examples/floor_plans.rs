@@ -31,6 +31,7 @@ fn main() {
                 "split" => Some(Scheme::SplitLevel),
                 "house" => Some(Scheme::ShopHouse),
                 "flats" => Some(Scheme::Flats),
+                "block" => Some(Scheme::Block),
                 _ => None,
             });
             jobs.push((seed as u64, w, d, st as u32, scheme));
@@ -119,6 +120,7 @@ fn scheme_name(s: Scheme) -> &'static str {
         Scheme::SplitLevel => "Split level",
         Scheme::ShopHouse => "Shop house",
         Scheme::Flats => "Flats",
+        Scheme::Block => "Block",
     }
 }
 

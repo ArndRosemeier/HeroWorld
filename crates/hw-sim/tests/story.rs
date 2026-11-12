@@ -44,17 +44,37 @@ fn steps(sim: &mut Sim, seconds: f64) {
     }
 }
 
+/// The hero whole again and on its feet.
+fn mend(sim: &mut Sim, hero: NetId) {
+    let mut f = sim.fighter(hero).unwrap();
+    f.health = f.max_health;
+    f.energy = f.max_energy;
+    f.status = hw_net::Status::Standing;
+    sim.set_fighter(hero, f);
+}
+
+/// Is the chapter's colossus up? (Not one that rampages elsewhere in
+/// town: the bot flies only against its own.)
+fn colossus_here(sim: &mut Sim, goal: DVec3) -> bool {
+    sim.enemies()
+        .iter()
+        .any(|e| e.1 == EnemyKind::Colossus && e.2.distance(goal) < 150.0)
+}
+
 /// Fights whatever stands at the chapter's place until the stage moves
 /// on. Kept on its feet (healed every second): the chain is the test.
 fn fight(sim: &mut Sim, hero: NetId, k: usize, goal: DVec3) {
     let mut seconds = 0.0;
     let mut last_at = DVec3::ZERO;
     let mut still = 0;
+    // (On its feet from the first tick: a hero knocked down on the way in
+    // would call the medical drone and be carried off.)
+    mend(sim, hero);
     while sim.story.stage == FIGHT {
         for _ in 0..TICK_HZ {
             let tick = sim.tick;
             let mut input = bot_input(sim, hero, tick, Some(goal));
-            input.fly = sim.enemies().iter().any(|e| e.1 == EnemyKind::Colossus);
+            input.fly = colossus_here(sim, goal);
             sim.set_input(PlayerId(1), input);
             sim.step();
         }
@@ -87,16 +107,12 @@ fn fight(sim: &mut Sim, hero: NetId, k: usize, goal: DVec3) {
         } else {
             still += 1;
         }
-        let colossus = sim.enemies().iter().any(|e| e.1 == EnemyKind::Colossus);
+        let colossus = colossus_here(sim, goal);
         if let Some(p) = next.filter(|_| still >= 5 && !colossus) {
             put(sim, hero, p);
             still = 0;
         }
-        let mut f = sim.fighter(hero).unwrap();
-        f.health = f.max_health;
-        f.energy = f.max_energy;
-        f.status = hw_net::Status::Standing;
-        sim.set_fighter(hero, f);
+        mend(sim, hero);
         seconds += 1.0;
         assert!(
             seconds < 900.0,

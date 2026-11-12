@@ -1009,6 +1009,14 @@ fn main() -> EngineResult<()> {
                 .iter()
                 .flat_map(|q| q.buildings.clone())
                 .filter(|b| b.site.halls.is_some())
+                // (`HW_HALLS_SCHEME=Block`: only buildings of that scheme.)
+                .filter(|b| {
+                    std::env::var("HW_HALLS_SCHEME").map_or(true, |want| {
+                        b.site
+                            .layout()
+                            .is_some_and(|l| format!("{:?}", l.scheme) == want)
+                    })
+                })
                 .map(|b| (b.site.origin.distance(spawn), b))
                 .collect();
             near.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -2664,6 +2672,9 @@ fn main() -> EngineResult<()> {
             {
                 let eye = world.camera().eye();
                 extras.hall_furniture.update(world, &town.world, eye)?;
+                extras
+                    .hall_insides
+                    .update(world, &town.world, eye, &|i| town.is_hidden(i));
             }
             if let Some(lifts) = extras.lifts.as_mut() {
                 let now = session.time(tick_clock.frac());

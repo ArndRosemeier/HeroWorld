@@ -53,9 +53,32 @@ fn shop_house(prog: &Programme, usage: BuildingUse) -> bool {
     ) && prog.lanes
 }
 
-/// Is this use planned as halls here (an office building or a shop house)?
+/// An apartment block's plot (width, depth): two large flats to a storey
+/// either side of the stairs and lifts (`office::MIN_BLOCK`).
+const BLOCK: ((f64, f64), (f64, f64)) = ((30.0, 40.0), (28.0, 34.0));
+
+/// Is this an apartment block? Homes outside the old town's lanes.
+fn flat_block(prog: &Programme, usage: BuildingUse) -> bool {
+    usage == BuildingUse::Apartments && !prog.lanes
+}
+
+/// Is this use planned as halls here (an office building, an apartment
+/// block or an old-town house)?
 fn of_halls(prog: &Programme, usage: BuildingUse) -> bool {
-    grand(prog, usage) || shop_house(prog, usage)
+    grand(prog, usage) || flat_block(prog, usage) || shop_house(prog, usage)
+}
+
+/// The kind of plot a building stands on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Plot {
+    /// The quarter's own narrow plots: a building of the old kind.
+    Plain,
+    /// An old-town house of halls ([`HOUSE`]).
+    House,
+    /// An apartment block ([`BLOCK`]).
+    Block,
+    /// An office building ([`GRAND`]).
+    Grand,
 }
 
 /// How a kind of quarter builds.
@@ -531,23 +554,41 @@ fn fill_block(
             let use_w: Vec<f64> = prog.uses.iter().map(|u| u.1).collect();
             let wanted = prog.uses[rng.weighted(&use_w)].0;
             let mut placed = false;
-            // An office building needs a plot its halls fit on; where the
-            // block has no such room, the quarter's other use goes there.
-            // (In the old town's lanes that is a narrow house of flats of
-            // the old kind: they fill what the wide houses leave.)
+            // A building of halls needs a plot its halls fit on. Where the
+            // block has no such room a smaller kind goes there: a house of
+            // flats instead of an apartment block, then the quarter's other
+            // use or a narrow house of flats of the old kind (they fill
+            // what the wide houses leave).
+            let class = |u: BuildingUse| {
+                if shop_house(prog, u) {
+                    Plot::House
+                } else if flat_block(prog, u) {
+                    Plot::Block
+                } else if grand(prog, u) {
+                    Plot::Grand
+                } else {
+                    Plot::Plain
+                }
+            };
+            let homes = prog.lanes || prog.uses.iter().any(|u| flat_block(prog, u.0));
             let other = prog
                 .uses
                 .iter()
                 .map(|u| u.0)
                 .find(|u| !of_halls(prog, *u))
-                .or(prog.lanes.then_some(BuildingUse::Apartments));
+                .or(homes.then_some(BuildingUse::Apartments));
+            let best = class(wanted);
             let tries = [
-                Some((wanted, true)),
-                other.filter(|_| of_halls(prog, wanted)).map(|u| (u, false)),
+                Some((wanted, best)),
+                (best == Plot::Block).then_some((wanted, Plot::House)),
+                other
+                    .filter(|_| best != Plot::Plain)
+                    .map(|u| (u, Plot::Plain)),
             ];
-            for (usage, halls) in tries.into_iter().flatten() {
-                let house = halls && shop_house(prog, usage);
-                let big = halls && of_halls(prog, usage);
+            for (usage, plot) in tries.into_iter().flatten() {
+                let house = plot == Plot::House;
+                let flats = plot == Plot::Block;
+                let big = plot != Plot::Plain;
                 let (wr, dr) = if house {
                     let least = if usage == BuildingUse::Apartments {
                         office::MIN_FLATS.y
@@ -555,6 +596,8 @@ fn fill_block(
                         HOUSE.1 .0
                     };
                     (HOUSE.0, (least, HOUSE.1 .1))
+                } else if flats {
+                    BLOCK
                 } else if big {
                     (
                         (prog.width.0.max(GRAND.0 .0), prog.width.1.max(GRAND.0 .1)),
@@ -567,6 +610,8 @@ fn fill_block(
                     (office::MIN_FLATS.x, office::MIN_FLATS.y)
                 } else if house {
                     (office::MIN_HOUSE.x, office::MIN_HOUSE.y)
+                } else if flats {
+                    (office::MIN_BLOCK.x, office::MIN_BLOCK.y)
                 } else if big {
                     (office::MIN_SIZE.x, office::MIN_SIZE.y)
                 } else {
@@ -627,6 +672,10 @@ fn fill_block(
                             // A shop house's storeys are some 5 m.
                             let storeys = (site.height() / 4.8).round() as u32;
                             site.into_halls(storeys.clamp(2, 4))
+                        } else if flats {
+                            // A flat's storey is some 4.5 m.
+                            let storeys = (site.height() / 4.6).round() as u32;
+                            site.into_halls(storeys.clamp(3, 12))
                         } else if big {
                             let storeys = (site.height() / 6.3).round() as u32;
                             site.into_halls(storeys.clamp(2, 16))

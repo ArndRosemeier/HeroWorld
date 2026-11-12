@@ -409,8 +409,10 @@ fn the_freeze_ray_douses_a_fire() {
     assert_eq!((inc.kind, inc.left), (IncidentKind::Fire, 3));
     // In the street in front, facing the burning front.
     let f = DVec3::new(inc.facing.x, 0.0, inc.facing.y).normalize_or(DVec3::X);
+    // (On the ground there: the street may climb a hill.)
     let stand = inc.at + f * 10.0;
-    let stand = DVec3::new(stand.x, inc.at.y, stand.z);
+    let ground = sim.solids().ground_at(glam::DVec2::new(stand.x, stand.z));
+    let stand = DVec3::new(stand.x, ground, stand.z);
     let place = |sim: &mut Sim| {
         sim.set_body(
             hero,

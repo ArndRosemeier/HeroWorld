@@ -396,6 +396,17 @@ pub enum Scheme {
     /// a few large rooms (living room at the street, a kitchen to eat in,
     /// bedrooms), over a house hall, with a stair at the back.
     Flats,
+    /// An apartment block: a lobby on the ground floor, and on every
+    /// storey above two large flats either side of a landing, with the
+    /// stairs and two lifts behind it.
+    Block,
+}
+
+impl Scheme {
+    /// Is this a house people live in (flats, not halls of desks)?
+    pub fn homes(self) -> bool {
+        matches!(self, Self::Flats | Self::Block)
+    }
 }
 
 /// A building's interior.

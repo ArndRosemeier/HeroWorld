@@ -20,6 +20,10 @@ pub const MIN_SIZE: DVec2 = DVec2::new(32.0, 38.0);
 pub const MIN_HOUSE: DVec2 = DVec2::new(12.0, 22.0);
 /// The least plot a house of flats fits on (m).
 pub const MIN_FLATS: DVec2 = DVec2::new(12.0, 24.0);
+/// The smallest plot an apartment block fits on.
+pub const MIN_BLOCK: DVec2 = DVec2::new(30.0, 28.0);
+/// How deep the landing between a block's two flats is.
+const LANDING: f64 = 6.0;
 const GALLERY: f64 = 5.0;
 /// Column spacing in open-plan halls (m).
 const COLUMNS: f64 = 9.0;
@@ -51,9 +55,14 @@ pub fn plan_town(seed: Seed, size: DVec2, storeys: u32) -> Layout {
         .expect("a grand hall fits every plot of at least MIN_SIZE")
 }
 
-/// Plans a house of flats for an old-town plot of at least
-/// [`MIN_FLATS`].
+/// Plans a house of flats: an apartment block on a plot of at least
+/// [`MIN_BLOCK`], else an old-town house of at least [`MIN_FLATS`].
 pub fn plan_flats(seed: Seed, size: DVec2, storeys: u32) -> Layout {
+    if size.x >= MIN_BLOCK.x && size.y >= MIN_BLOCK.y {
+        if let Some(l) = apartment_block(seed, size, storeys.max(2)) {
+            return l;
+        }
+    }
     flats(seed, size.max(MIN_FLATS), storeys.max(2))
         .expect("flats fit every plot of at least MIN_FLATS")
 }
@@ -63,6 +72,7 @@ pub fn plan_scheme(seed: Seed, size: DVec2, storeys: u32, scheme: Scheme) -> Opt
     let least = match scheme {
         Scheme::ShopHouse => MIN_HOUSE,
         Scheme::Flats => MIN_FLATS,
+        Scheme::Block => MIN_BLOCK,
         _ => MIN_SIZE,
     };
     if size.x < least.x || size.y < least.y || storeys < 2 {
@@ -74,6 +84,7 @@ pub fn plan_scheme(seed: Seed, size: DVec2, storeys: u32, scheme: Scheme) -> Opt
         Scheme::SplitLevel => split_level(seed, size, storeys),
         Scheme::ShopHouse => shop_house(seed, size, storeys),
         Scheme::Flats => flats(seed, size, storeys),
+        Scheme::Block => apartment_block(seed, size, storeys),
     }
 }
 
@@ -961,6 +972,94 @@ fn flats(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
         }
     }
     Some(b.finish(Scheme::Flats, size))
+}
+
+/// An apartment block: the stairs and two lifts at the middle of the back,
+/// a landing in front of them on every storey and a flat either side of
+/// it. Each flat has its living room at the street, a kitchen to eat in
+/// beside the landing and a bedroom in the back corner; now and then a
+/// second bedroom off the living room. The ground floor is the lobby.
+fn apartment_block(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
+    let (w, d) = (size.x, size.y);
+    let n = n as usize;
+    if w < MIN_BLOCK.x || n < 2 {
+        return None;
+    }
+    let mut rng = seed.child("block").rng();
+    let hs: Vec<f64> = (0..n)
+        .map(|i| match i {
+            0 => *rng.pick(&[5.0, 5.5, 6.0]),
+            _ => *rng.pick(&[4.0, 4.5, 4.5, 5.0]),
+        })
+        .collect();
+    let ys = levels(&hs);
+    let top = ys[n];
+    let floors = &ys[..n];
+    let bd = dog_leg_depth(floors);
+    let fz = d - bd;
+    let kz = fz - LANDING;
+    if kz < 10.0 {
+        return None;
+    }
+    let core = DOG_LEG_WIDTH + LIFT_BANK;
+    let cx = snap(w * 0.5);
+    let (x0, x1) = (cx - core * 0.5, cx + core * 0.5);
+    let mut b = Builder::default();
+    let kind = *rng.pick(&[LiftKind::Streamline, LiftKind::Cage]);
+    let hall = dog_leg_hall(&mut b, rect(x0, fz, x1, d), floors, top, Some(kind));
+    for i in 0..n {
+        let (y, h) = (ys[i], hs[i]);
+        if i == 0 {
+            // The lobby across the whole front, rooms in the back corners.
+            let lobby = b.space(SpaceKind::Lobby, rect(0.0, 0.0, w, fz), y, h);
+            b.entrance(lobby, cx, ENTRANCE);
+            b.door(lobby, hall, LinkKind::Double, y, DOUBLE);
+            b.columns(lobby, COLUMNS);
+            for r in [rect(0.0, fz, x0, d), rect(x1, fz, w, d)] {
+                let room = b.space(SpaceKind::Service, r, y, h);
+                b.door(lobby, room, LinkKind::Door, y, DOOR);
+            }
+            continue;
+        }
+        let landing = b.space(SpaceKind::Concourse, rect(x0, kz, x1, fz), y, h);
+        b.door(landing, hall, LinkKind::Double, y, DOUBLE);
+        // The two flats: the left one, and its mirror image.
+        for left in [true, false] {
+            // (x measured from the flat's outside wall inwards.)
+            let fx = |t: f64| if left { t } else { w - t };
+            let across =
+                |a: f64, c: f64, z0: f64, z1: f64| rect(fx(a).min(fx(c)), z0, fx(a).max(fx(c)), z1);
+            let (side, mid) = (
+                if left { x0 } else { w - x1 },
+                if left { cx } else { w - cx },
+            );
+            let kitchen = b.space(SpaceKind::Kitchen, across(0.0, side, kz, fz), y, h);
+            let bedroom = b.space(SpaceKind::Bedroom, across(0.0, side, fz, d), y, h);
+            b.door(kitchen, bedroom, LinkKind::Door, y, DOOR);
+            let second = mid >= 16.0 && rng.chance(0.5);
+            let bw = if second { *rng.pick(&[5.0, 6.0]) } else { 0.0 };
+            let living = b.space(SpaceKind::Living, across(bw, mid, 0.0, kz), y, h);
+            if second {
+                let room = b.space(SpaceKind::Bedroom, across(0.0, bw, 0.0, kz), y, h);
+                b.door(living, room, LinkKind::Door, y, DOOR);
+            }
+            b.door(
+                living,
+                kitchen,
+                LinkKind::Double,
+                y,
+                DOUBLE.min(side - bw - 1.0),
+            );
+            // The flat's front door: off the landing into the kitchen, or
+            // into the living room.
+            if rng.chance(0.5) {
+                b.door(landing, kitchen, LinkKind::Door, y, DOOR);
+            } else {
+                b.door(landing, living, LinkKind::Door, y, DOOR);
+            }
+        }
+    }
+    Some(b.finish(Scheme::Block, size))
 }
 
 /// Front and back blocks half a storey apart. Between them a canyon as

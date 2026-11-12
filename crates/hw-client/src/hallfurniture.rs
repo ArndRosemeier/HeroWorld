@@ -45,6 +45,7 @@ fn scheme_key(s: Scheme) -> u8 {
         Scheme::SplitLevel => 2,
         Scheme::ShopHouse => 3,
         Scheme::Flats => 4,
+        Scheme::Block => 5,
     }
 }
 
