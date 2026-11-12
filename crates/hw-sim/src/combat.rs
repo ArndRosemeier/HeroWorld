@@ -1198,6 +1198,8 @@ pub struct Fights {
     pub spots: Vec<Spot>,
     /// Path searches villains made in the last tick (at most [`PATH_BUDGET`]).
     pub path_searches: u32,
+    /// Villains that acted in the last tick (at most about [`THINK_CAP`]).
+    pub villains_acted: u32,
     /// Microseconds the parts of the last combat step took (the server's
     /// tick-budget report; [`crate::Sim::take_step_times`]).
     pub laps: Vec<(&'static str, u64)>,
@@ -1305,6 +1307,7 @@ impl Default for Fights {
         Self {
             spots: Vec::new(),
             path_searches: 0,
+            villains_acted: 0,
             laps: Vec::new(),
             events: Vec::new(),
             power_log: Vec::new(),
@@ -1868,7 +1871,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     sky.append(&mut out.sky);
     lap("combat npc+throws+sky");
     let floors = world.resource::<Fights>().floors.clone();
-    let searches = enemies_act(
+    let (searches, acted) = enemies_act(
         &mut actors,
         &solids,
         floors.as_deref(),
@@ -2453,6 +2456,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     let mut f = world.resource_mut::<Fights>();
     f.laps = laps;
     f.path_searches = searches;
+    f.villains_acted = acted;
     f.events = fx;
     f.power_log = out.log;
     f.rewards = out.rewards;
@@ -4535,8 +4539,9 @@ fn enemies_act(
     fx: &mut Vec<Fx>,
     paths: &mut BTreeMap<NetId, Path>,
     bombs: &mut Vec<Bomb>,
-) -> u32 {
+) -> (u32, u32) {
     let mut budget = PATH_BUDGET;
+    let mut acted = 0u32;
     // Who stands where, so a villain looks only at its crew and at those
     // within a step or two (not at everyone): its crew by spot, everyone
     // fighting by 1.3 m cell, both in id order. Built once per tick, so
@@ -4570,6 +4575,7 @@ fn enemies_act(
         if stride > 1 && !(i as u64 + tick).is_multiple_of(stride) {
             continue;
         }
+        acted += 1;
         // Machines that are not people-sized move in `robots`.
         if matches!(en.kind, EnemyKind::Colossus | EnemyKind::WeakPoint) {
             continue;
@@ -4951,7 +4957,7 @@ fn enemies_act(
             actors[i].body = body;
         }
     }
-    PATH_BUDGET - budget
+    (PATH_BUDGET - budget, acted)
 }
 
 /// Does the blow on `t` from `from` (a position) hit its shield? Only a

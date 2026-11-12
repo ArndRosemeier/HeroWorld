@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.253 (2026-11-12)
+
+- Behind the scenes: the crowd stress tests now count work (searches and acting villains per tick) instead of timing it, so they no longer fail by chance.
+
 ## 0.252 (2026-11-12)
 
 - Villains knocked down by a blast no longer leave an invisible attacker: when one gets back up and its tumbled body ended up somewhere else (behind a wall, say), it now stands where it really is.
