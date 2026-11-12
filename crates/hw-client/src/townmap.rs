@@ -160,13 +160,14 @@ impl TownMap {
         if level < 2 {
             want.extend(keys_in(2, lo, hi));
         }
-        // Nearest the middle last, so the workers take it first; the
-        // backdrop before the detail at equal distance.
+        // The workers take from the end: the coarse backdrop (cheap, and it
+        // covers the whole view) goes first, then the detail nearest the
+        // middle.
         want.retain(|k| !self.tiles.contains_key(k));
         want.sort_by(|a, b| {
-            dist(b, mid)
-                .total_cmp(&dist(a, mid))
-                .then(a.level.cmp(&b.level))
+            (a.level == 2 && level < 2)
+                .cmp(&(b.level == 2 && level < 2))
+                .then(dist(b, mid).total_cmp(&dist(a, mid)))
         });
         {
             let (lock, ready) = &*self.queue;
@@ -546,7 +547,7 @@ fn level_for(m_per_px: f64) -> u8 {
     let lvl1 = LEVEL_SPAN[1] / TILE_PX as f64;
     if m_per_px <= lvl1 * 0.25 {
         0
-    } else if m_per_px <= lvl1 * 1.0 {
+    } else if m_per_px <= lvl1 * 1.5 {
         1
     } else {
         2
