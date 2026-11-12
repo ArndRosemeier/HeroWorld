@@ -20,6 +20,9 @@ fn main() {
         for b in &q.buildings {
             match b.site.layout() {
                 Some(l) => {
+                    if !l.problems().is_empty() {
+                        println!("PROBLEM {:?} {}: {:?}", l.scheme, b.site.size, l.problems());
+                    }
                     let d = b.site.origin.distance(spawn);
                     let e = count.entry(format!("{:?}", l.scheme)).or_insert((
                         0,

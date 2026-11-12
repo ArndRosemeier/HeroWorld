@@ -94,7 +94,19 @@ fn fight(sim: &mut Sim, hero: NetId, k: usize, goal: DVec3) {
                 .min_by(|a, b| a.distance(me).total_cmp(&b.distance(me)))
         });
         if let Some(p) = next.filter(|p| p.distance(me) > 25.0) {
-            put(sim, hero, p + DVec3::new(6.0, 1.0, 0.0));
+            // (Beside it in the open, where it can be seen: not in the
+            // house next door.)
+            let solids = sim.solids();
+            let chest = DVec3::Y * 1.3;
+            let beside = [(6.0, 0.0), (-6.0, 0.0), (0.0, 6.0), (0.0, -6.0)]
+                .into_iter()
+                .map(|(x, z)| p + DVec3::new(x, 1.0, z))
+                .find(|q| {
+                    solids.inside(*q).is_none()
+                        && hw_sim::combat::in_sight(&solids, *q + chest, p + chest)
+                })
+                .unwrap_or(p + DVec3::Y);
+            put(sim, hero, beside);
             last_at = p;
         }
         // A bot that has not moved for 5 s is stuck (on furniture, in a

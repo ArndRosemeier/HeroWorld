@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.228 (2026-11-12)
+
+- Fewer cramped houses: where an office building does not fit, a roomy house of flats goes there now instead of a small old one, and the houses along the two streets of a block share its depth, so both rows get room. About a third fewer homes of the old, small kind.
+- Towns are built anew for this version.
+
 ## 0.227 (2026-11-12)
 
 - A good deal faster in town (on an RTX 5070 at 4K the street went from about 68 to 86 frames a second): buildings and streets beside or behind you were still being drawn, and no longer are (Engine 0.063).

@@ -594,15 +594,35 @@ fn fill_block(
             } else {
                 other
             };
+            // Where the wanted building does not fit, homes do: an
+            // apartment block (not in the lanes), a deep house of flats,
+            // a wide one.
+            let flat = BuildingUse::Apartments;
+            let home = |p: Plot| {
+                (homes && best != Plot::Plain && (wanted, best) != (flat, p)).then_some((flat, p))
+            };
             let tries = [
                 Some((wanted, best)),
-                (best == Plot::Block).then_some((wanted, Plot::House)),
-                (wanted == BuildingUse::Apartments && matches!(best, Plot::Block | Plot::House))
-                    .then_some((wanted, Plot::Row)),
+                home(Plot::Block).filter(|_| !prog.lanes),
+                home(Plot::House),
+                home(Plot::Row),
                 last.filter(|_| best != Plot::Plain)
                     .map(|u| (u, Plot::Plain)),
             ];
-            for (usage, plot) in tries.into_iter().flatten() {
+            // Roomy plots first, and so that the row along the block's
+            // other street gets its half of the depth (a perimeter block
+            // with yards in the middle). Where the block is too thin for
+            // two rows of a kind, one row takes its whole depth. The old
+            // narrow plots last.
+            let tries: Vec<(BuildingUse, Plot)> = tries.into_iter().flatten().collect();
+            let roomy = |p: &&(BuildingUse, Plot)| p.1 != Plot::Plain;
+            // (The wanted building before the homes that stand in for it.)
+            let order = (tries.iter().take(1).filter(roomy))
+                .flat_map(|t| [(*t, false), (*t, true)])
+                .chain(tries.iter().skip(1).filter(roomy).map(|t| (*t, false)))
+                .chain(tries.iter().skip(1).filter(roomy).map(|t| (*t, true)))
+                .chain(tries.iter().filter(|p| !roomy(p)).map(|t| (*t, false)));
+            for ((usage, plot), whole) in order {
                 let house = plot == Plot::House;
                 let flats = plot == Plot::Block;
                 let row = plot == Plot::Row;
@@ -643,6 +663,51 @@ fn fill_block(
                 let snap = |v: f64| if big { (v * 2.0).floor() * 0.5 } else { v };
                 let mut width = snap(rng.range(wr.0, wr.1).max(least_w));
                 let mut depth = snap(rng.range(dr.0, dr.1));
+                if big {
+                    // How deep the block is here, from this street's
+                    // building line to the far street's.
+                    let corners = |depth: f64| {
+                        let p0 = point_at(&line, t);
+                        let along = (point_at(&line, t + width) - p0).normalize_or_zero();
+                        let inward = along.perp();
+                        let origin = p0 + inward * (reach + setback);
+                        [
+                            origin,
+                            origin + along * width,
+                            origin + along * width + inward * depth,
+                            origin + inward * depth,
+                        ]
+                    };
+                    let stands = |depth: f64| {
+                        let c = corners(depth);
+                        fits(&ring, &sides, &front, &c) && clear_of_streets(room.streets, &c)
+                    };
+                    let (mut lo, mut hi) = (0.0, 90.0);
+                    if stands(least_d) {
+                        lo = least_d;
+                        for _ in 0..8 {
+                            let mid = (lo + hi) * 0.5;
+                            if stands(mid) {
+                                lo = mid;
+                            } else {
+                                hi = mid;
+                            }
+                        }
+                    }
+                    let (all, half) = (lo, (lo - BUILDING_GAP) * 0.5);
+                    if whole {
+                        // (Two rows fit: that was tried.)
+                        if all < least_d || half >= least_d {
+                            continue;
+                        }
+                        depth = snap(all.min(depth.max(least_d * 1.5)).min(dr.1 + 6.0));
+                    } else {
+                        if half < least_d {
+                            continue;
+                        }
+                        depth = depth.min(snap(half));
+                    }
+                }
                 // Shrink a building that does not fit before giving up the spot.
                 for _ in 0..3 {
                     let p0 = point_at(&line, t);

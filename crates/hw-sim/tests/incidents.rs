@@ -409,10 +409,27 @@ fn the_freeze_ray_douses_a_fire() {
     assert_eq!((inc.kind, inc.left), (IncidentKind::Fire, 3));
     // In the street in front, facing the burning front.
     let f = DVec3::new(inc.facing.x, 0.0, inc.facing.y).normalize_or(DVec3::X);
-    // (On the ground there: the street may climb a hill.)
-    let stand = inc.at + f * 10.0;
-    let ground = sim.solids().ground_at(glam::DVec2::new(stand.x, stand.z));
-    let stand = DVec3::new(stand.x, ground, stand.z);
+    // (On the ground there: the street may climb a hill. And with
+    // nothing between the hero and the burning front: this side of a
+    // front garden's hedge, not behind it.)
+    let solids = sim.solids();
+    let front = inc.at - f * 3.0 + DVec3::Y * 2.0;
+    let stand = [10.0, 6.0, 3.0, 0.0]
+        .into_iter()
+        .map(|d| {
+            let p = inc.at + f * d;
+            DVec3::new(p.x, solids.ground_at(glam::DVec2::new(p.x, p.z)), p.z)
+        })
+        .find(|p| {
+            // (The cone leaves at chest height: a hedge stops it.)
+            [0.9, 1.1, 1.3].into_iter().all(|up| {
+                let from = *p + DVec3::Y * up;
+                let (dir, len) = ((front - from).normalize(), from.distance(front));
+                (1..((len - 1.0) / 0.5) as usize)
+                    .all(|k| !solids.solid_at(from + dir * (k as f64 * 0.5)))
+            })
+        })
+        .expect("somewhere in front of the fire");
     let place = |sim: &mut Sim| {
         sim.set_body(
             hero,
@@ -435,7 +452,7 @@ fn the_freeze_ray_douses_a_fire() {
         me,
         InputState {
             power: PowerId(16).0,
-            aim: aim_at(inc.at + DVec3::Y * 2.0),
+            aim: aim_at(front),
             ..Default::default()
         },
     );

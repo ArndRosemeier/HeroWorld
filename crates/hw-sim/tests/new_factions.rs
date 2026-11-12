@@ -162,8 +162,19 @@ fn sky_pirates_raid_a_shop_and_leave_a_passer_by_alone() {
     }
     assert!(sim.enemies().iter().all(|e| e.3.target.is_none()));
     // ...stepping in is.
+    // (In the open and in their sight: not behind a kiosk or a hedge.)
+    let solids = sim.solids();
+    let chest = DVec3::Y * 1.3;
+    let near = [6.0, 4.5, 3.0, 1.5]
+        .into_iter()
+        .map(|d| inc.at + face * d)
+        .find(|p| {
+            solids.inside(*p + DVec3::Y * 0.3).is_none()
+                && hw_sim::combat::in_sight(&solids, *p + chest, inc.at + chest)
+        })
+        .unwrap_or(inc.at);
     for _ in 0..TICK_HZ {
-        stand(&mut sim, hero, inc.at + face * 6.0);
+        stand(&mut sim, hero, near);
         sim.step();
     }
     assert!(sim.enemies().iter().any(|e| e.3.target == Some(hero)));
