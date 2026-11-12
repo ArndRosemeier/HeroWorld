@@ -622,7 +622,8 @@ impl StreetLife {
     /// The way along road `ri`'s pavement (at its walking line, on side
     /// `side`), from distance `s` in direction `dir` (+1/-1), as far as it
     /// is clear, at most [`WAY`] and never past the street's end. `None`
-    /// if there is not [`WAY_MIN`] of it.
+    /// if there is not [`WAY_MIN`] of it, or it ends less than three
+    /// quarters of that from where it starts.
     fn way(&self, ri: u32, side: f64, s: f64, dir: f64) -> Option<Arc<Vec<DVec2>>> {
         let road = &self.area.roads[ri as usize];
         let line = &self.index().lines[ri as usize];
@@ -642,7 +643,13 @@ impl StreetLife {
             pts.push(p);
             d += 1.0;
         }
-        (pts.len() as f64 > WAY_MIN).then(|| Arc::new(pts))
+        // (Round a sharp bend the way's far end can lie close by: people
+        // must come from a way off, not from round the corner.)
+        let far = match (pts.first(), pts.last()) {
+            (Some(a), Some(b)) => a.distance(*b) >= WAY_MIN * 0.75,
+            _ => false,
+        };
+        (pts.len() as f64 > WAY_MIN && far).then(|| Arc::new(pts))
     }
 
     /// The crime places in patch `key`.

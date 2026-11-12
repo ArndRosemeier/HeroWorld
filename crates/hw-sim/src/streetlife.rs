@@ -421,8 +421,8 @@ pub fn is_club(s: &hw_gen::building::BuildingSite) -> bool {
         && s.seed.child("night club").rng().chance(0.2)
 }
 
-/// A night club's room and door: the biggest shop room on the ground
-/// floor with a door in the front, and that door's middle (building-local
+/// A night club's room and door: the biggest shop room (in a building of
+/// halls, shop or lobby) on the ground floor with a door in the front, and that door's middle (building-local
 /// x along the front, z inwards). `None` for a building that is not a
 /// club, or has no shop front to be one.
 pub fn club_room(plan: &BuildingPlan) -> Option<(usize, DVec2)> {
@@ -441,8 +441,12 @@ pub fn club_room(plan: &BuildingPlan) -> Option<(usize, DVec2)> {
         .filter_map(|o| {
             let door = DVec2::new(o.along, front);
             let inside = door + DVec2::Y * 0.3;
+            // (In a building of halls the club is the hall behind the way
+            // in: a shop house's shop, or an office building's lobby.)
+            use hw_gen::building::RoomKind;
             let k = floor.rooms.iter().position(|r| {
-                r.kind == hw_gen::building::RoomKind::Shop && r.rect.contains_point(inside)
+                (r.kind == RoomKind::Shop || (plan.layout.is_some() && r.kind == RoomKind::Lobby))
+                    && r.rect.contains_point(inside)
             })?;
             Some((k, door))
         })
@@ -834,7 +838,9 @@ impl StreetLife {
                 continue;
             };
             let road = &self.area.roads[ri as usize];
-            if road.pavement < 2.0 || kerb > road.pavement + 0.8 {
+            // (An old-town lane's pavement is 1.3 to 1.5 m: `club` itself
+            // keeps the queue clear of the people walking there.)
+            if road.pavement < 1.3 || kerb > road.pavement + 0.8 {
                 continue;
             }
             let doors = self.doors_near(mid, 14.0);

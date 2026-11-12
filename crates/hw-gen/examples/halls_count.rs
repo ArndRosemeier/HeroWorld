@@ -35,14 +35,26 @@ fn main() {
                         (e.1, e.2, e.3) = (d, b.site.size, b.site.floors);
                     }
                 }
-                None => *plain.entry(format!("{:?}", b.site.usage)).or_default() += 1,
+                None => {
+                    // By use, and by size in steps of 4 m (width x depth).
+                    let k = format!(
+                        "{:?} {:>2}x{:>2}",
+                        b.site.usage,
+                        (b.site.size.x / 4.0).floor() * 4.0,
+                        (b.site.size.y / 4.0).floor() * 4.0
+                    );
+                    *plain.entry(k).or_default() += 1
+                }
             }
         }
     }
     for (k, (n, d, size, floors)) in count {
         println!("{k}: {n}, nearest {d:.0} m away, {size} x{floors}");
     }
-    println!("not of halls: {plain:?}");
+    println!("not of halls:");
+    for (k, n) in plain {
+        println!("  {k}: {n}");
+    }
     if let Some(site) = probe {
         let t = std::time::Instant::now();
         let plan = hw_gen::building::BuildingPlan::generate(&site);

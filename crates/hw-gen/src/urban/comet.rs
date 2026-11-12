@@ -54,9 +54,12 @@ pub fn name(l: &Landmark) -> &'static str {
     match SCHEMES[l.variant as usize % SCHEMES.len()] {
         Scheme::Atrium => "Daily Comet building",
         Scheme::GrandHall => "Atlas Assurance hall",
-        Scheme::SplitLevel | Scheme::ShopHouse | Scheme::Flats | Scheme::Block => {
-            "Zenith Radio house"
-        }
+        Scheme::SplitLevel
+        | Scheme::ShopHouse
+        | Scheme::Flats
+        | Scheme::Block
+        | Scheme::Terrace
+        | Scheme::Villa => "Zenith Radio house",
     }
 }
 

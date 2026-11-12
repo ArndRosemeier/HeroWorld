@@ -400,12 +400,23 @@ pub enum Scheme {
     /// storey above two large flats either side of a landing, with the
     /// stairs and two lifts behind it.
     Block,
+    /// A wide, shallow house of flats (a plot too shallow for the other
+    /// two): the stair at one end with a landing at the street, and on
+    /// every storey, the ground floor too, one flat beside it.
+    Terrace,
+    /// A family's house, wide and shallow: the hall and stair at one end,
+    /// the living room and kitchen on the ground floor, an upper hall and
+    /// the bedrooms above.
+    Villa,
 }
 
 impl Scheme {
     /// Is this a house people live in (flats, not halls of desks)?
     pub fn homes(self) -> bool {
-        matches!(self, Self::Flats | Self::Block)
+        matches!(
+            self,
+            Self::Flats | Self::Block | Self::Terrace | Self::Villa
+        )
     }
 }
 

@@ -6,7 +6,7 @@ use super::stairs::{
 };
 use super::{
     Builder, Flight, Landing, Layout, Lift, LiftKind, LinkKind, Scheme, SpaceKind, Stair,
-    StairKind, ARCH, DOOR, DOUBLE, ENTRANCE, MIN_HALL,
+    StairKind, ARCH, DOOR, DOUBLE, ENTRANCE, MIN_HALL, MIN_WAY,
 };
 use crate::geom::Rect;
 use glam::{DVec2, DVec3};
@@ -22,6 +22,9 @@ pub const MIN_HOUSE: DVec2 = DVec2::new(12.0, 22.0);
 pub const MIN_FLATS: DVec2 = DVec2::new(12.0, 24.0);
 /// The smallest plot an apartment block fits on.
 pub const MIN_BLOCK: DVec2 = DVec2::new(30.0, 28.0);
+/// The least plot of a wide, shallow house (flats or a family's house):
+/// the stair (8.5 m) at one end, a living room and a column of rooms.
+pub const MIN_ROW: DVec2 = DVec2::new(23.0, 16.0);
 /// How deep the landing between a block's two flats is.
 const LANDING: f64 = 6.0;
 const GALLERY: f64 = 5.0;
@@ -63,8 +66,17 @@ pub fn plan_flats(seed: Seed, size: DVec2, storeys: u32) -> Layout {
             return l;
         }
     }
+    if size.y < MIN_FLATS.y {
+        return row(seed, size.max(MIN_ROW), storeys.max(2), false)
+            .expect("a terrace fits every plot of at least MIN_ROW");
+    }
     flats(seed, size.max(MIN_FLATS), storeys.max(2))
         .expect("flats fit every plot of at least MIN_FLATS")
+}
+
+/// Plans a family's house (two storeys) on a plot of at least [`MIN_ROW`].
+pub fn plan_villa(seed: Seed, size: DVec2) -> Layout {
+    row(seed, size.max(MIN_ROW), 2, true).expect("a villa fits every plot of at least MIN_ROW")
 }
 
 /// Plans an office building in one scheme, if it fits.
@@ -73,6 +85,7 @@ pub fn plan_scheme(seed: Seed, size: DVec2, storeys: u32, scheme: Scheme) -> Opt
         Scheme::ShopHouse => MIN_HOUSE,
         Scheme::Flats => MIN_FLATS,
         Scheme::Block => MIN_BLOCK,
+        Scheme::Terrace | Scheme::Villa => MIN_ROW,
         _ => MIN_SIZE,
     };
     if size.x < least.x || size.y < least.y || storeys < 2 {
@@ -85,6 +98,8 @@ pub fn plan_scheme(seed: Seed, size: DVec2, storeys: u32, scheme: Scheme) -> Opt
         Scheme::ShopHouse => shop_house(seed, size, storeys),
         Scheme::Flats => flats(seed, size, storeys),
         Scheme::Block => apartment_block(seed, size, storeys),
+        Scheme::Terrace => row(seed, size, storeys, false),
+        Scheme::Villa => row(seed, size, 2, true),
     }
 }
 
@@ -1060,6 +1075,108 @@ fn apartment_block(seed: Seed, size: DVec2, n: u32) -> Option<Layout> {
         }
     }
     Some(b.finish(Scheme::Block, size))
+}
+
+/// A wide, shallow house. The stair stands at one end of the back with a
+/// landing in front of it at the street (the way in on the ground floor);
+/// beside them the rooms take the whole depth: a big living room next to
+/// the landing, and at the far end a kitchen and a bedroom, one at the
+/// street and one at the back.
+///
+/// As flats ([`Scheme::Terrace`]) every storey is one such flat behind its
+/// own door. As a family's house ([`Scheme::Villa`], two storeys) the
+/// ground floor is the living room, the kitchen and a store, and upstairs
+/// an upper hall runs back from the landing past two bedrooms.
+fn row(seed: Seed, size: DVec2, n: u32, family: bool) -> Option<Layout> {
+    let (w, d) = (size.x, size.y);
+    let n = n as usize;
+    if w < MIN_ROW.x || n < 2 {
+        return None;
+    }
+    let mut rng = seed.child("row").rng();
+    let hs: Vec<f64> = (0..n)
+        .map(|i| match i {
+            0 => *rng.pick(&[4.5, 5.0]),
+            _ => *rng.pick(&[4.0, 4.5, 4.5, 5.0]),
+        })
+        .collect();
+    let ys = levels(&hs);
+    let top = ys[n];
+    let floors = &ys[..n];
+    let bd = dog_leg_depth(floors);
+    let fz = d - bd;
+    if fz < MIN_WAY {
+        return None;
+    }
+    let mut b = Builder::default();
+    let left = rng.chance(0.5);
+    // (x measured from the stair's end of the house.)
+    let fx = |t: f64| if left { t } else { w - t };
+    let across =
+        |a: f64, c: f64, z0: f64, z1: f64| rect(fx(a).min(fx(c)), z0, fx(a).max(fx(c)), z1);
+    let sw = DOG_LEG_WIDTH;
+    let hall = dog_leg_hall(&mut b, across(0.0, sw, fz, d), floors, top, None);
+    for i in 0..n {
+        let (y, h) = (ys[i], hs[i]);
+        let kind = if i == 0 {
+            SpaceKind::Vestibule
+        } else {
+            SpaceKind::Concourse
+        };
+        let landing = b.space(kind, across(0.0, sw, 0.0, fz), y, h);
+        if i == 0 {
+            b.entrance(landing, snap(fx(sw * 0.5)), DOUBLE);
+        }
+        b.door(landing, hall, LinkKind::Double, y, DOUBLE);
+        if family && i > 0 {
+            // Upstairs: the upper hall, and the bedrooms off it.
+            let ux = sw + MIN_WAY;
+            let upper = b.space(SpaceKind::Gallery, across(sw, ux, 0.0, d), y, h);
+            b.edge(landing, upper, LinkKind::Open, y);
+            let mz = snap(d * *rng.pick(&[0.45, 0.5, 0.55]));
+            for (z0, z1) in [(0.0, mz), (mz, d)] {
+                let room = b.space(SpaceKind::Bedroom, across(ux, w, z0, z1), y, h);
+                b.door(upper, room, LinkKind::Door, y, DOOR);
+            }
+            continue;
+        }
+        // The column of two rooms at the far end.
+        let cw = if w - sw >= 16.5 {
+            *rng.pick(&[5.5, 6.0, 6.5])
+        } else {
+            5.5
+        };
+        let mz = snap(d * *rng.pick(&[0.42, 0.5]));
+        let living = b.space(SpaceKind::Living, across(sw, w - cw, 0.0, d), y, h);
+        // The kitchen at the street or at the back.
+        let front = rng.chance(0.5);
+        let (kz, oz) = if front {
+            ((0.0, mz), (mz, d))
+        } else {
+            ((mz, d), (0.0, mz))
+        };
+        let kitchen = b.space(SpaceKind::Kitchen, across(w - cw, w, kz.0, kz.1), y, h);
+        let other = if family {
+            SpaceKind::Service
+        } else {
+            SpaceKind::Bedroom
+        };
+        let room = b.space(other, across(w - cw, w, oz.0, oz.1), y, h);
+        b.door(living, kitchen, LinkKind::Double, y, DOUBLE);
+        b.door(living, room, LinkKind::Door, y, DOOR);
+        if family {
+            // The family's own hall: a wide way through.
+            b.door(landing, living, LinkKind::Double, y, DOUBLE);
+        } else {
+            b.door(landing, living, LinkKind::Door, y, DOOR);
+        }
+    }
+    let scheme = if family {
+        Scheme::Villa
+    } else {
+        Scheme::Terrace
+    };
+    Some(b.finish(scheme, size))
 }
 
 /// Front and back blocks half a storey apart. Between them a canyon as

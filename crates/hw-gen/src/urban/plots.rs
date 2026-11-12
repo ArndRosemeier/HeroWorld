@@ -62,6 +62,11 @@ fn flat_block(prog: &Programme, usage: BuildingUse) -> bool {
     usage == BuildingUse::Apartments && !prog.lanes
 }
 
+/// The plot of a wide, shallow house (width, depth): a house of flats
+/// where a block is too shallow for the other two, or a family's house
+/// (`office::MIN_ROW`).
+const ROW: ((f64, f64), (f64, f64)) = ((23.0, 30.0), (16.0, 19.0));
+
 /// Is this use planned as halls here (an office building, an apartment
 /// block or an old-town house)?
 fn of_halls(prog: &Programme, usage: BuildingUse) -> bool {
@@ -77,6 +82,8 @@ enum Plot {
     House,
     /// An apartment block ([`BLOCK`]).
     Block,
+    /// A wide, shallow house of flats or a family's house ([`ROW`]).
+    Row,
     /// An office building ([`GRAND`]).
     Grand,
 }
@@ -566,6 +573,8 @@ fn fill_block(
                     Plot::Block
                 } else if grand(prog, u) {
                     Plot::Grand
+                } else if u == BuildingUse::House {
+                    Plot::Row
                 } else {
                     Plot::Plain
                 }
@@ -578,16 +587,25 @@ fn fill_block(
                 .find(|u| !of_halls(prog, *u))
                 .or(homes.then_some(BuildingUse::Apartments));
             let best = class(wanted);
+            // (A family's house that does not fit stays a small house of
+            // the old kind.)
+            let last = if wanted == BuildingUse::House {
+                Some(wanted)
+            } else {
+                other
+            };
             let tries = [
                 Some((wanted, best)),
                 (best == Plot::Block).then_some((wanted, Plot::House)),
-                other
-                    .filter(|_| best != Plot::Plain)
+                (wanted == BuildingUse::Apartments && matches!(best, Plot::Block | Plot::House))
+                    .then_some((wanted, Plot::Row)),
+                last.filter(|_| best != Plot::Plain)
                     .map(|u| (u, Plot::Plain)),
             ];
             for (usage, plot) in tries.into_iter().flatten() {
                 let house = plot == Plot::House;
                 let flats = plot == Plot::Block;
+                let row = plot == Plot::Row;
                 let big = plot != Plot::Plain;
                 let (wr, dr) = if house {
                     let least = if usage == BuildingUse::Apartments {
@@ -598,6 +616,8 @@ fn fill_block(
                     (HOUSE.0, (least, HOUSE.1 .1))
                 } else if flats {
                     BLOCK
+                } else if row {
+                    ROW
                 } else if big {
                     (
                         (prog.width.0.max(GRAND.0 .0), prog.width.1.max(GRAND.0 .1)),
@@ -612,6 +632,8 @@ fn fill_block(
                     (office::MIN_HOUSE.x, office::MIN_HOUSE.y)
                 } else if flats {
                     (office::MIN_BLOCK.x, office::MIN_BLOCK.y)
+                } else if row {
+                    (office::MIN_ROW.x, office::MIN_ROW.y)
                 } else if big {
                     (office::MIN_SIZE.x, office::MIN_SIZE.y)
                 } else {
@@ -676,6 +698,12 @@ fn fill_block(
                             // A flat's storey is some 4.5 m.
                             let storeys = (site.height() / 4.6).round() as u32;
                             site.into_halls(storeys.clamp(3, 12))
+                        } else if row {
+                            // A family's house has two storeys; flats as
+                            // many as the old house was high.
+                            let storeys = (site.height() / 4.6).round() as u32;
+                            let most = if usage == BuildingUse::House { 2 } else { 5 };
+                            site.into_halls(storeys.clamp(2, most))
                         } else if big {
                             let storeys = (site.height() / 6.3).round() as u32;
                             site.into_halls(storeys.clamp(2, 16))

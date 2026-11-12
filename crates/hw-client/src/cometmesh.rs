@@ -47,6 +47,8 @@ fn livery(s: Scheme) -> (Color, Color, Color) {
         Scheme::ShopHouse => (rgb(232, 222, 200), rgb(92, 112, 74), rgb(206, 150, 84)),
         Scheme::Flats => (rgb(236, 226, 208), rgb(132, 84, 70), rgb(120, 150, 160)),
         Scheme::Block => (rgb(232, 228, 214), rgb(70, 110, 120), rgb(200, 150, 80)),
+        Scheme::Terrace => (rgb(234, 224, 204), rgb(110, 96, 70), rgb(150, 160, 120)),
+        Scheme::Villa => (rgb(240, 232, 214), rgb(150, 100, 70), rgb(110, 150, 150)),
     }
 }
 

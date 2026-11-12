@@ -270,3 +270,46 @@ fn apartment_blocks_are_sound() {
     }
     assert!(second > 40, "{second} second bedrooms");
 }
+
+/// Wide, shallow houses: a flat on every storey, or a family's house.
+#[test]
+fn terraces_and_villas_are_sound() {
+    use super::office::{plan_flats, plan_villa, MIN_ROW};
+    for k in 0..160u64 {
+        let size = DVec2::new(
+            MIN_ROW.x + (k % 15) as f64 * 0.5,
+            MIN_ROW.y + (k % 7) as f64 * 0.5,
+        );
+        let storeys = 2 + (k % 4) as u32;
+        let on = |l: &Layout, kind: SpaceKind, y: f64| {
+            l.spaces
+                .iter()
+                .filter(|s| s.kind == kind && (s.y - y).abs() < 1e-6)
+                .count()
+        };
+        let l = plan_flats(Seed(1200 + k), size, storeys);
+        assert_eq!(l.scheme, Scheme::Terrace, "{k} {size:?}");
+        assert!(l.problems().is_empty(), "{k} {size:?}: {:?}", l.problems());
+        let levels = l.levels();
+        assert_eq!(levels.len() as u32, storeys, "{k}");
+        for &y in &levels {
+            // One whole flat on every storey, the ground floor too.
+            let rooms = [SpaceKind::Living, SpaceKind::Kitchen, SpaceKind::Bedroom];
+            assert_eq!(rooms.map(|r| on(&l, r, y)), [1, 1, 1], "{k}");
+        }
+        let v = plan_villa(Seed(1200 + k), size);
+        assert_eq!(v.scheme, Scheme::Villa, "{k} {size:?}");
+        assert!(v.problems().is_empty(), "{k} {size:?}: {:?}", v.problems());
+        let levels = v.levels();
+        assert_eq!(levels.len(), 2, "{k}");
+        assert_eq!(on(&v, SpaceKind::Living, 0.0), 1);
+        assert_eq!(on(&v, SpaceKind::Kitchen, 0.0), 1);
+        assert_eq!(on(&v, SpaceKind::Bedroom, levels[1]), 2);
+        for s in l.spaces.iter().chain(&v.spaces) {
+            let size = s.rect.size();
+            if s.kind == SpaceKind::Living {
+                assert!(size.x >= 9.0 && size.y >= 16.0, "{k}: living {size:?}");
+            }
+        }
+    }
+}

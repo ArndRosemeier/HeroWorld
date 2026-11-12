@@ -356,6 +356,8 @@ impl BuildingSite {
         let seed = self.seed.child("layout");
         if self.usage == BuildingUse::Apartments {
             office::plan_flats(seed, self.size, self.floors)
+        } else if self.usage == BuildingUse::House {
+            office::plan_villa(seed, self.size)
         } else {
             office::plan_town(seed, self.size, self.floors)
         }

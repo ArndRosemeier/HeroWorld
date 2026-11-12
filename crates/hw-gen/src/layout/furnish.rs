@@ -913,6 +913,10 @@ mod tests {
                 28.0 + (seed % 5) as f64 * 1.5,
             );
             out.push(plan_scheme(Seed(60 + seed), size, 5, Scheme::Block).expect("it fits"));
+            let size = DVec2::new(23.0 + seed as f64, 16.0 + (seed % 4) as f64);
+            for scheme in [Scheme::Terrace, Scheme::Villa] {
+                out.push(plan_scheme(Seed(80 + seed), size, 3, scheme).expect("it fits"));
+            }
         }
         out
     }
@@ -924,7 +928,7 @@ mod tests {
         for l in plans() {
             let its = items(&l);
             let least = match l.scheme {
-                Scheme::ShopHouse | Scheme::Flats => 20,
+                Scheme::ShopHouse | Scheme::Flats | Scheme::Terrace | Scheme::Villa => 20,
                 Scheme::Block => 100,
                 _ => 150,
             };

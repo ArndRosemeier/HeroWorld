@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.226 (2026-11-12)
+
+- Family houses are roomy now: a wide house with the hall and stair at one end, a big living room, a kitchen and a store on the ground floor, and an upper hall with two large bedrooms above.
+- More roomy flats: where a block is too shallow for the deep houses of flats, a wide house goes there instead, with one big flat on every storey (the ground floor too) beside the stair.
+- The Orbit Room night clubs open in the old town's lanes again (they had become rare), and a club can now be the hall of an office building too.
+- Towns are built anew for this version.
+
 ## 0.225 (2026-11-12)
 
 - Faster at high resolutions (about 1 ms per frame at 4K on an RTX 5070): people outside the view, or outside a shadow map, are no longer drawn there, and the sky is drawn only where it shows (Engine 0.062).
