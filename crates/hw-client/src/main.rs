@@ -1009,6 +1009,11 @@ fn main() -> EngineResult<()> {
                 .iter()
                 .flat_map(|q| q.buildings.clone())
                 .filter(|b| b.site.halls.is_some())
+                // (`HW_HALLS_USE=Lab`: only buildings of that use.)
+                .filter(|b| {
+                    std::env::var("HW_HALLS_USE")
+                        .map_or(true, |want| format!("{:?}", b.site.usage) == want)
+                })
                 // (`HW_HALLS_CLUB=1`: only night clubs.)
                 .filter(|b| std::env::var("HW_HALLS_CLUB").is_err() || b.site.is_club())
                 // (`HW_HALLS_SCHEME=Block`: only buildings of that scheme.)

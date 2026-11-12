@@ -358,11 +358,12 @@ impl BuildingSite {
     }
 
     /// The furniture of this site's floor plan `l` ([`Self::layout`]): a
-    /// night club's hall is furnished as the club.
+    /// night club's hall is furnished as the club, a lab's halls as
+    /// laboratories.
     pub fn furniture_of(&self, l: &Layout) -> Vec<crate::layout::furnish::Item> {
         use crate::layout::furnish;
         let club = self.is_club().then(|| furnish::club_space(l)).flatten();
-        furnish::items_for(l, club)
+        furnish::items_for(l, club, self.usage == BuildingUse::Lab)
     }
 
     /// Makes this an office building of halls with `storeys` tall storeys

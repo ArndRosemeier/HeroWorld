@@ -67,6 +67,10 @@ pub enum ItemKind {
     /// The band's stage, with its instruments.
     Stage,
     Jukebox,
+    /// A laboratory bench with its glowing flasks.
+    LabBench,
+    /// An Aether coil in its glass: the Doctor's apparatus.
+    AetherCoil,
 }
 
 impl ItemKind {
@@ -101,6 +105,8 @@ impl ItemKind {
             Self::Booth => (1.8, 1.1),
             Self::Stage => (STAGE_DEPTH, STAGE_HEIGHT),
             Self::Jukebox => (0.6, 1.5),
+            Self::LabBench => (0.7, 0.92),
+            Self::AetherCoil => (1.2, 2.2),
         }
     }
 
@@ -410,6 +416,77 @@ impl Room<'_> {
             }
         }
         self.along_walls(4.0, &[(ItemKind::Cabinet, 0.48), (ItemKind::Bookcase, 1.8)]);
+    }
+
+    /// A laboratory: benches in rows back to back, Aether coils in the
+    /// aisles between them, cabinets and more benches along the walls.
+    fn laboratory(&mut self) {
+        let area = self.inner.inset(WALK);
+        let s = area.size();
+        if s.min_element() < 3.0 {
+            return;
+        }
+        let long_x = s.x >= s.y;
+        let (u, v) = if long_x {
+            (DVec2::X, DVec2::Y)
+        } else {
+            (DVec2::Y, DVec2::X)
+        };
+        let (len, deep) = if long_x { (s.x, s.y) } else { (s.y, s.x) };
+        // Rows across the room, 5 m apart: a row of bench islands, then a
+        // row of coils, in turn.
+        let rows = (deep / 5.0).floor().max(1.0) as usize;
+        let (w, gap) = (3.0, 2.6);
+        let n = ((len + gap) / (w + gap)).floor().max(1.0) as usize;
+        let lead = (len - (n as f64 * w + (n - 1) as f64 * gap)) * 0.5;
+        for r in 0..rows {
+            let z = (r as f64 + 0.5) * deep / rows as f64;
+            for k in 0..n {
+                let c = area.min + u * (lead + k as f64 * (w + gap) + w * 0.5) + v * z;
+                if r % 2 == 1 {
+                    self.put(ItemKind::AetherCoil, c, v, 1.2, 0.9);
+                } else {
+                    // Two benches back to back.
+                    self.put(ItemKind::LabBench, c - v * 0.36, -v, w, 0.0);
+                    self.put(ItemKind::LabBench, c + v * 0.36, v, w, 0.0);
+                }
+            }
+        }
+        self.along_walls(
+            4.5,
+            &[
+                (ItemKind::LabBench, 2.4),
+                (ItemKind::Cabinet, 0.48),
+                (ItemKind::Bookcase, 1.8),
+            ],
+        );
+    }
+
+    /// A few Aether coils where the floor is free: a laboratory's lobby.
+    fn coils(&mut self) {
+        let r = self.inner.inset(WALK);
+        let s = r.size();
+        let (nx, nz) = (
+            (s.x / 7.0).floor().max(1.0) as usize,
+            (s.y / 7.0).floor().max(1.0) as usize,
+        );
+        let mut placed = 0;
+        for j in 0..nz {
+            for i in 0..nx {
+                // (Every other place, like a chessboard's.)
+                if (i + j) % 2 == 1 || placed >= 6 {
+                    continue;
+                }
+                let c = r.min
+                    + DVec2::new(
+                        (i as f64 + 0.5) * s.x / nx as f64,
+                        (j as f64 + 0.5) * s.y / nz as f64,
+                    );
+                if self.put(ItemKind::AetherCoil, c, DVec2::Y, 1.2, 1.5) {
+                    placed += 1;
+                }
+            }
+        }
     }
 
     /// Long tables with chairs: the canteen, the meeting hall.
@@ -878,7 +955,7 @@ impl Room<'_> {
 
 /// Every piece of furniture in the building.
 pub fn items(l: &Layout) -> Vec<Item> {
-    items_for(l, None)
+    items_for(l, None, false)
 }
 
 /// The space a night club takes in a building that is one: the biggest
@@ -901,8 +978,8 @@ pub fn club_space(l: &Layout) -> Option<usize> {
 }
 
 /// Every piece of furniture in the building; space `club`, if any, is
-/// furnished as a night club.
-pub fn items_for(l: &Layout, club: Option<usize>) -> Vec<Item> {
+/// furnished as a night club, and the halls of a `lab` as laboratories.
+pub fn items_for(l: &Layout, club: Option<usize>, lab: bool) -> Vec<Item> {
     let solid = pieces(l);
     let seed = Seed(l.size.x.to_bits())
         .child(l.size.y.to_bits())
@@ -1042,6 +1119,15 @@ pub fn items_for(l: &Layout, club: Option<usize>) -> Vec<Item> {
         };
         match s.kind {
             _ if club == Some(i) => room.club(),
+            SpaceKind::Hall | SpaceKind::Boardroom | SpaceKind::Shop | SpaceKind::Service
+                if lab =>
+            {
+                room.laboratory()
+            }
+            SpaceKind::Lobby | SpaceKind::Atrium if lab => {
+                room.lobby(entrance.filter(|_| s.kind == SpaceKind::Lobby));
+                room.coils();
+            }
             SpaceKind::Lobby => room.lobby(entrance),
             SpaceKind::Atrium => room.lobby(None),
             SpaceKind::Hall => match room.rng.index(4) {
@@ -1112,7 +1198,7 @@ mod tests {
     fn a_club_gets_a_stage_a_bar_and_booths() {
         for l in plans() {
             let Some(club) = club_space(&l) else { continue };
-            let its: Vec<Item> = items_for(&l, Some(club))
+            let its: Vec<Item> = items_for(&l, Some(club), false)
                 .into_iter()
                 .filter(|i| i.space == club)
                 .collect();
@@ -1126,6 +1212,25 @@ mod tests {
                 "{what}: seats"
             );
             assert_eq!(n(ItemKind::Counter) + n(ItemKind::Shelves), 0, "{what}");
+        }
+    }
+
+    /// A laboratory's halls hold benches and coils, not desks.
+    #[test]
+    fn a_lab_gets_benches_and_coils() {
+        for l in plans() {
+            // (A lab is never a house of flats.)
+            if l.scheme.homes() {
+                continue;
+            }
+            let its = items_for(&l, None, true);
+            let n = |k: ItemKind| its.iter().filter(|i| i.kind == k).count();
+            let what = format!("{:?} {}", l.scheme, l.size);
+            assert!(n(ItemKind::LabBench) >= 4, "{what}: benches");
+            assert_eq!(n(ItemKind::Desk) + n(ItemKind::Shelves), 0, "{what}");
+            if l.size.x >= 30.0 {
+                assert!(n(ItemKind::AetherCoil) >= 1, "{what}: coils");
+            }
         }
     }
 

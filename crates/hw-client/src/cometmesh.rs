@@ -218,6 +218,8 @@ fn piece(m: &mut crate::interior::pieces::Maker, scheme: Scheme, (kind, w, c): L
         K::Booth => pc::booth(m, rgb(120, 26, 52), rgb(70, 40, 28)),
         K::Stage => pc::stage(m, w),
         K::Jukebox => pc::jukebox(m),
+        K::LabBench => pc::lab_bench(m, w),
+        K::AetherCoil => pc::aether_coil(m),
     }
 }
 

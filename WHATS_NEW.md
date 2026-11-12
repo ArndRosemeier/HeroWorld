@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.240 (2026-11-12)
+
+- The Doctor's laboratories look like laboratories again: islands of benches with glowing flasks in the work halls and along the walls, and humming Aether coils under glass in the halls and lobbies.
+- Towns are built anew for this version.
+
 ## 0.239 (2026-11-12)
 
 - Fixed a crash when you change the city size on the title screen (for example from Metropolis to a normal city).

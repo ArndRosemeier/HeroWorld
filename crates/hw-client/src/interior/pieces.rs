@@ -2291,6 +2291,173 @@ pub fn bandstand(m: &mut Maker) {
     );
 }
 
+/// A laboratory bench, `w` long: a white enamelled cabinet with a black
+/// slate top, a chrome rail of taps along the back, and flasks glowing
+/// with Aether in green and blue.
+pub fn lab_bench(m: &mut Maker, w: f64) {
+    let hw = w * 0.5;
+    m.block(
+        Mat::Paint(rgb(236, 236, 236)),
+        DVec3::new(-hw, 0.1, -0.33),
+        DVec3::new(hw, 0.88, 0.33),
+    );
+    m.block(
+        Mat::Plain(rgb(40, 40, 44)),
+        DVec3::new(-hw + 0.04, 0.0, -0.29),
+        DVec3::new(hw - 0.04, 0.1, 0.29),
+    );
+    m.block(
+        Mat::Plain(rgb(30, 30, 34)),
+        DVec3::new(-hw - 0.01, 0.88, -0.35),
+        DVec3::new(hw + 0.01, 0.92, 0.35),
+    );
+    // Door seams and chrome pulls.
+    let doors = (w / 0.6).round().max(1.0) as usize;
+    for k in 0..doors {
+        let x = -hw + (k as f64 + 0.5) * w / doors as f64;
+        m.tube(
+            Mat::Chrome,
+            &[
+                DVec3::new(x - 0.08, 0.7, 0.345),
+                DVec3::new(x + 0.08, 0.7, 0.345),
+            ],
+            0.012,
+        );
+        if k > 0 {
+            let xs = -hw + k as f64 * w / doors as f64;
+            m.block(
+                Mat::Plain(rgb(150, 150, 150)),
+                DVec3::new(xs - 0.004, 0.14, 0.33),
+                DVec3::new(xs + 0.004, 0.84, 0.334),
+            );
+        }
+    }
+    // The rail of taps at the back.
+    m.tube(
+        Mat::Chrome,
+        &[
+            DVec3::new(-hw + 0.1, 1.22, -0.27),
+            DVec3::new(hw - 0.1, 1.22, -0.27),
+        ],
+        0.016,
+    );
+    for x in [-hw + 0.1, hw - 0.1] {
+        m.tube(
+            Mat::Chrome,
+            &[DVec3::new(x, 0.92, -0.27), DVec3::new(x, 1.22, -0.27)],
+            0.016,
+        );
+    }
+    // Flasks: round-bottomed, a neck, the Aether glowing inside.
+    let n = ((w * 2.0) as usize).clamp(2, 10);
+    for k in 0..n {
+        let x = -hw + 0.3 + k as f64 * (w - 0.6) / (n - 1) as f64;
+        let z = if k % 3 == 1 { 0.12 } else { -0.05 };
+        let col = if k % 2 == 0 {
+            rgb(120, 255, 140)
+        } else {
+            rgb(120, 230, 255)
+        };
+        let big = 1.0 + (k % 3) as f64 * 0.25;
+        m.lathe(
+            Mat::Glow(col),
+            DVec3::new(x, 0.925, z),
+            &[
+                (0.02 * big, 0.0),
+                (0.07 * big, 0.04 * big),
+                (0.075 * big, 0.08 * big),
+                (0.05 * big, 0.13 * big),
+                (0.0, 0.14 * big),
+            ],
+        );
+        m.lathe(
+            Mat::Glass(rgb(210, 230, 230)),
+            DVec3::new(x, 0.92, z),
+            &[
+                (0.03 * big, 0.0),
+                (0.085 * big, 0.05 * big),
+                (0.085 * big, 0.1 * big),
+                (0.028 * big, 0.2 * big),
+                (0.028 * big, 0.3 * big),
+                (0.034 * big, 0.31 * big),
+            ],
+        );
+    }
+}
+
+/// An Aether coil: a chrome foot, a tall glass bell with the coil's
+/// glowing rings round a brass core inside, a chrome cap with a ball on
+/// top, and a dial on the foot.
+pub fn aether_coil(m: &mut Maker) {
+    m.lathe(
+        Mat::Chrome,
+        DVec3::ZERO,
+        &[
+            (0.56, 0.0),
+            (0.56, 0.1),
+            (0.5, 0.16),
+            (0.46, 0.34),
+            (0.4, 0.38),
+            (0.0, 0.38),
+        ],
+    );
+    m.lathe(
+        Mat::Brass,
+        DVec3::new(0.0, 0.38, 0.0),
+        &[(0.09, 0.0), (0.09, 1.3), (0.0, 1.3)],
+    );
+    for k in 0..7 {
+        let y = 0.5 + k as f64 * 0.16;
+        m.lathe(
+            Mat::Glow(rgb(120, 230, 255)),
+            DVec3::new(0.0, y, 0.0),
+            &[
+                (0.1, 0.0),
+                (0.26, 0.0),
+                (0.29, 0.035),
+                (0.26, 0.07),
+                (0.1, 0.07),
+            ],
+        );
+    }
+    m.lathe(
+        Mat::Glass(rgb(200, 235, 240)),
+        DVec3::new(0.0, 0.38, 0.0),
+        &[
+            (0.4, 0.0),
+            (0.4, 1.15),
+            (0.36, 1.32),
+            (0.24, 1.44),
+            (0.12, 1.48),
+        ],
+    );
+    m.lathe(
+        Mat::Chrome,
+        DVec3::new(0.0, 1.84, 0.0),
+        &[
+            (0.14, 0.0),
+            (0.14, 0.06),
+            (0.04, 0.1),
+            (0.04, 0.2),
+            (0.0, 0.2),
+        ],
+    );
+    m.blob(
+        Mat::Chrome,
+        DVec3::new(0.0, 2.1, 0.0),
+        DVec3::splat(0.1),
+        0.0,
+        (1.0, 1.0),
+    );
+    // The dial on the foot, towards the front.
+    m.lathe_along(
+        Mat::Glow(rgb(255, 214, 150)),
+        DVec3::new(0.0, 0.24, 0.47),
+        DVec3::Z,
+        &[(0.0, 0.0), (0.07, 0.0), (0.07, 0.02), (0.0, 0.025)],
+    );
+}
+
 /// A night club's stage, `w` wide, its back to the wall: a platform with a
 /// bowed front, a chrome band and footlights, a pleated curtain behind,
 /// and the band's stand on it (`hw_gen::layout::furnish::STAGE_DEPTH`
