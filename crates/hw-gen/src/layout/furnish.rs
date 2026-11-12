@@ -71,6 +71,35 @@ pub enum ItemKind {
     LabBench,
     /// An Aether coil in its glass: the Doctor's apparatus.
     AetherCoil,
+    /// A stamping press: a works' biggest machine.
+    Press,
+    /// A lathe on its long bed.
+    Lathe,
+    /// An Aether dynamo: a drum in a housing, humming.
+    Dynamo,
+    /// A workbench with a vice and tools.
+    Workbench,
+    /// A stack of crates.
+    Crates,
+    /// A model rocket on a plinth: an exhibit.
+    RocketModel,
+    /// A great model of the atom on a plinth.
+    AtomModel,
+    /// A globe of the world with its moons on a plinth.
+    Orrery,
+}
+
+/// How a building of halls is furnished.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fit {
+    /// Offices, shops and homes, by the kind of each room.
+    Plain,
+    /// The Doctor's laboratories.
+    Lab,
+    /// A works: machines on the floor of every hall.
+    Works,
+    /// A fair pavilion: exhibits.
+    Expo,
 }
 
 impl ItemKind {
@@ -107,6 +136,14 @@ impl ItemKind {
             Self::Jukebox => (0.6, 1.5),
             Self::LabBench => (0.7, 0.92),
             Self::AetherCoil => (1.2, 2.2),
+            Self::Press => (1.7, 2.9),
+            Self::Lathe => (1.1, 1.5),
+            Self::Dynamo => (2.0, 2.3),
+            Self::Workbench => (0.8, 0.9),
+            Self::Crates => (1.2, 1.5),
+            Self::RocketModel => (1.6, 3.0),
+            Self::AtomModel => (1.6, 2.5),
+            Self::Orrery => (1.6, 2.3),
         }
     }
 
@@ -114,6 +151,13 @@ impl ItemKind {
         self != Self::Rug
     }
 }
+
+/// What a pavilion shows, with each piece's width (m).
+const EXHIBITS: &[(ItemKind, f64)] = &[
+    (ItemKind::RocketModel, 1.6),
+    (ItemKind::AtomModel, 1.6),
+    (ItemKind::Orrery, 1.6),
+];
 
 /// A bar from the wall to the front of its counter (m): the back bar,
 /// the barman's walk, the counter.
@@ -462,19 +506,23 @@ impl Room<'_> {
         );
     }
 
-    /// A few Aether coils where the floor is free: a laboratory's lobby.
-    fn coils(&mut self) {
+    /// Big pieces `(kind, width)` on the free floor, one to every `step`
+    /// metres each way and at most `most`; `sparse` leaves every other
+    /// place free, like a chessboard's.
+    fn grid(&mut self, kinds: &[(ItemKind, f64)], step: f64, sparse: bool, most: usize) {
         let r = self.inner.inset(WALK);
         let s = r.size();
+        if s.min_element() < 2.0 {
+            return;
+        }
         let (nx, nz) = (
-            (s.x / 7.0).floor().max(1.0) as usize,
-            (s.y / 7.0).floor().max(1.0) as usize,
+            (s.x / step).floor().max(1.0) as usize,
+            (s.y / step).floor().max(1.0) as usize,
         );
         let mut placed = 0;
         for j in 0..nz {
             for i in 0..nx {
-                // (Every other place, like a chessboard's.)
-                if (i + j) % 2 == 1 || placed >= 6 {
+                if (sparse && (i + j) % 2 == 1) || placed >= most {
                     continue;
                 }
                 let c = r.min
@@ -482,11 +530,73 @@ impl Room<'_> {
                         (i as f64 + 0.5) * s.x / nx as f64,
                         (j as f64 + 0.5) * s.y / nz as f64,
                     );
-                if self.put(ItemKind::AetherCoil, c, DVec2::Y, 1.2, 1.5) {
-                    placed += 1;
+                // (One after another, from a start of the room's own, so
+                // neighbours differ and no two rooms begin alike.)
+                let first = (self.i + i + j * 2) % kinds.len();
+                for t in 0..kinds.len() {
+                    let (kind, w) = kinds[(first + t) % kinds.len()];
+                    // (What is too tall for this room stays out of it.)
+                    if kind.depth_height().1 + 0.3 > self.s.h {
+                        continue;
+                    }
+                    // Its front towards the nearer long wall's walk.
+                    let face = if s.x >= s.y {
+                        if j * 2 < nz {
+                            -DVec2::Y
+                        } else {
+                            DVec2::Y
+                        }
+                    } else if i * 2 < nx {
+                        -DVec2::X
+                    } else {
+                        DVec2::X
+                    };
+                    if self.put(kind, c, face, w, 1.5) {
+                        placed += 1;
+                        break;
+                    }
                 }
             }
         }
+    }
+
+    /// A works' hall: machines in rows, benches and crates along the walls.
+    fn works(&mut self) {
+        self.grid(
+            &[
+                (ItemKind::Press, 2.2),
+                (ItemKind::Lathe, 3.0),
+                (ItemKind::Dynamo, 2.0),
+                (ItemKind::Lathe, 3.0),
+            ],
+            6.0,
+            false,
+            24,
+        );
+        self.along_walls(
+            4.5,
+            &[
+                (ItemKind::Workbench, 2.4),
+                (ItemKind::Crates, 1.6),
+                (ItemKind::Workbench, 2.4),
+                (ItemKind::Cabinet, 0.48),
+            ],
+        );
+    }
+
+    /// A pavilion's hall: exhibits on the floor, cases and seats along
+    /// the walls.
+    fn expo(&mut self) {
+        self.grid(EXHIBITS, 7.0, false, 12);
+        self.along_walls(
+            5.0,
+            &[
+                (ItemKind::Case, 1.6),
+                (ItemKind::Sofa, 2.0),
+                (ItemKind::Plant, 0.5),
+                (ItemKind::Case, 1.6),
+            ],
+        );
     }
 
     /// Long tables with chairs: the canteen, the meeting hall.
@@ -955,7 +1065,7 @@ impl Room<'_> {
 
 /// Every piece of furniture in the building.
 pub fn items(l: &Layout) -> Vec<Item> {
-    items_for(l, None, false)
+    items_for(l, None, Fit::Plain)
 }
 
 /// The space a night club takes in a building that is one: the biggest
@@ -979,7 +1089,7 @@ pub fn club_space(l: &Layout) -> Option<usize> {
 
 /// Every piece of furniture in the building; space `club`, if any, is
 /// furnished as a night club, and the halls of a `lab` as laboratories.
-pub fn items_for(l: &Layout, club: Option<usize>, lab: bool) -> Vec<Item> {
+pub fn items_for(l: &Layout, club: Option<usize>, fit: Fit) -> Vec<Item> {
     let solid = pieces(l);
     let seed = Seed(l.size.x.to_bits())
         .child(l.size.y.to_bits())
@@ -1120,13 +1230,30 @@ pub fn items_for(l: &Layout, club: Option<usize>, lab: bool) -> Vec<Item> {
         match s.kind {
             _ if club == Some(i) => room.club(),
             SpaceKind::Hall | SpaceKind::Boardroom | SpaceKind::Shop | SpaceKind::Service
-                if lab =>
+                if fit != Fit::Plain =>
             {
-                room.laboratory()
+                match fit {
+                    Fit::Lab => room.laboratory(),
+                    Fit::Works => room.works(),
+                    _ => room.expo(),
+                }
             }
-            SpaceKind::Lobby | SpaceKind::Atrium if lab => {
+            SpaceKind::Lobby | SpaceKind::Atrium if fit != Fit::Plain => {
                 room.lobby(entrance.filter(|_| s.kind == SpaceKind::Lobby));
-                room.coils();
+                match fit {
+                    Fit::Lab => room.grid(&[(ItemKind::AetherCoil, 1.2)], 7.0, true, 6),
+                    Fit::Works => room.grid(
+                        &[
+                            (ItemKind::Dynamo, 2.0),
+                            (ItemKind::Press, 2.2),
+                            (ItemKind::Lathe, 3.0),
+                        ],
+                        7.0,
+                        false,
+                        10,
+                    ),
+                    _ => room.grid(EXHIBITS, 7.0, false, 10),
+                }
             }
             SpaceKind::Lobby => room.lobby(entrance),
             SpaceKind::Atrium => room.lobby(None),
@@ -1198,7 +1325,7 @@ mod tests {
     fn a_club_gets_a_stage_a_bar_and_booths() {
         for l in plans() {
             let Some(club) = club_space(&l) else { continue };
-            let its: Vec<Item> = items_for(&l, Some(club), false)
+            let its: Vec<Item> = items_for(&l, Some(club), Fit::Plain)
                 .into_iter()
                 .filter(|i| i.space == club)
                 .collect();
@@ -1223,13 +1350,46 @@ mod tests {
             if l.scheme.homes() {
                 continue;
             }
-            let its = items_for(&l, None, true);
+            let its = items_for(&l, None, Fit::Lab);
             let n = |k: ItemKind| its.iter().filter(|i| i.kind == k).count();
             let what = format!("{:?} {}", l.scheme, l.size);
             assert!(n(ItemKind::LabBench) >= 4, "{what}: benches");
             assert_eq!(n(ItemKind::Desk) + n(ItemKind::Shelves), 0, "{what}");
             if l.size.x >= 30.0 {
                 assert!(n(ItemKind::AetherCoil) >= 1, "{what}: coils");
+            }
+        }
+    }
+
+    /// A works holds machines and a pavilion exhibits, not desks.
+    #[test]
+    fn works_get_machines_and_pavilions_exhibits() {
+        use ItemKind as K;
+        for l in plans() {
+            if l.scheme.homes() {
+                continue;
+            }
+            let what = format!("{:?} {}", l.scheme, l.size);
+            for (fit, kinds, least) in [
+                (Fit::Works, [K::Press, K::Lathe, K::Dynamo], 3),
+                (Fit::Expo, [K::RocketModel, K::AtomModel, K::Orrery], 2),
+            ] {
+                let its = items_for(&l, None, fit);
+                let n = |k: K| its.iter().filter(|i| i.kind == k).count();
+                let all: usize = kinds.iter().map(|k| n(*k)).sum();
+                // (A small works is a workshop with rooms above.)
+                let least = if l.scheme == Scheme::ShopHouse {
+                    2
+                } else {
+                    least * 2
+                };
+                assert!(all >= least, "{what} {fit:?}: only {all} big pieces");
+                assert_eq!(n(K::Desk) + n(K::Shelves), 0, "{what} {fit:?}");
+                // Nothing stands taller than its room.
+                for it in &its {
+                    let h = l.spaces[it.space].h;
+                    assert!(it.kind.depth_height().1 < h, "{what}: {:?} in {h}", it.kind);
+                }
             }
         }
     }

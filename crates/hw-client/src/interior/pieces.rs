@@ -2328,7 +2328,7 @@ pub fn lab_bench(m: &mut Maker, w: f64) {
             m.block(
                 Mat::Plain(rgb(150, 150, 150)),
                 DVec3::new(xs - 0.004, 0.14, 0.33),
-                DVec3::new(xs + 0.004, 0.84, 0.334),
+                DVec3::new(xs + 0.004, 0.84, 0.342),
             );
         }
     }
@@ -2456,6 +2456,777 @@ pub fn aether_coil(m: &mut Maker) {
         DVec3::Z,
         &[(0.0, 0.0), (0.07, 0.0), (0.07, 0.02), (0.0, 0.025)],
     );
+}
+
+/// A box with soft edges from `lo` to `hi`: a machine's cast housing.
+fn casing(m: &mut Maker, mat: Mat, lo: DVec3, hi: DVec3) {
+    m.blob(mat, (lo + hi) * 0.5, (hi - lo) * 0.5, 0.0, (0.16, 0.16));
+}
+
+/// A round dial facing the front at `at`: a brass rim, a lit face.
+fn dial(m: &mut Maker, at: DVec3, r: f64, lit: Color) {
+    m.lathe_along(
+        Mat::Brass,
+        at,
+        DVec3::Z,
+        &[(r * 1.25, 0.0), (r * 1.25, 0.02), (r, 0.03), (r, 0.0)],
+    );
+    m.lathe_along(
+        Mat::Glow(lit),
+        at,
+        DVec3::Z,
+        &[(0.0, 0.0), (r, 0.0), (r, 0.016), (0.0, 0.02)],
+    );
+}
+
+/// The enamel of the works' machines.
+fn works_green() -> Mat {
+    Mat::Paint(rgb(86, 128, 112))
+}
+
+fn cast_iron() -> Mat {
+    Mat::Plain(rgb(52, 54, 58))
+}
+
+/// A stamping press (2.2 wide, 1.7 deep, 2.9 high): a bed between four
+/// chrome columns, the ram under a heavy crown, a flywheel at its side
+/// and the control box at the front.
+pub fn press(m: &mut Maker) {
+    let green = works_green();
+    m.slab(cast_iron(), &rrect(1.9, 1.6, 0.12, 4), 0.0, 0.14);
+    casing(
+        m,
+        green,
+        DVec3::new(-0.8, 0.1, -0.62),
+        DVec3::new(0.8, 0.98, 0.62),
+    );
+    // The bolster: a steel plate with a slot, the die on it.
+    m.slab(
+        Mat::Plain(rgb(120, 124, 130)),
+        &rrect(1.36, 1.0, 0.04, 3),
+        0.97,
+        1.05,
+    );
+    m.slab(Mat::Chrome, &rrect(0.7, 0.5, 0.03, 3), 1.05, 1.13);
+    for (x, z) in [(-0.68, -0.46), (0.68, -0.46), (-0.68, 0.46), (0.68, 0.46)] {
+        m.lathe(
+            Mat::Chrome,
+            DVec3::new(x, 0.97, z),
+            &[(0.1, 0.0), (0.1, 0.06), (0.07, 0.08), (0.07, 1.2)],
+        );
+    }
+    // The ram and its punch, part way down.
+    casing(
+        m,
+        cast_iron(),
+        DVec3::new(-0.52, 1.5, -0.36),
+        DVec3::new(0.52, 2.2, 0.36),
+    );
+    m.slab(Mat::Chrome, &rrect(0.6, 0.42, 0.03, 3), 1.4, 1.52);
+    // The crown.
+    casing(
+        m,
+        green,
+        DVec3::new(-0.85, 2.12, -0.64),
+        DVec3::new(0.85, 2.82, 0.64),
+    );
+    m.slab(cast_iron(), &rrect(1.3, 0.9, 0.1, 4), 2.8, 2.88);
+    // The flywheel on its shaft, with a brass hub.
+    m.lathe_along(
+        cast_iron(),
+        DVec3::new(0.86, 2.42, 0.0),
+        DVec3::X,
+        &[
+            (0.1, 0.0),
+            (0.1, 0.05),
+            (0.4, 0.05),
+            (0.44, 0.08),
+            (0.44, 0.17),
+            (0.4, 0.2),
+            (0.0, 0.2),
+        ],
+    );
+    m.lathe_along(
+        Mat::Brass,
+        DVec3::new(1.06, 2.42, 0.0),
+        DVec3::X,
+        &[(0.12, 0.0), (0.1, 0.035), (0.0, 0.04)],
+    );
+    // The maker's plate and a pressure dial on the crown.
+    m.blob(
+        Mat::Brass,
+        DVec3::new(-0.3, 2.47, 0.64),
+        DVec3::new(0.3, 0.1, 0.012),
+        0.0,
+        (0.3, 0.3),
+    );
+    dial(m, DVec3::new(0.42, 2.47, 0.642), 0.11, rgb(255, 226, 170));
+    // The control box on a stalk at the front left: two buttons and a lamp.
+    m.tube(
+        Mat::Chrome,
+        &[DVec3::new(-0.98, 0.14, 0.7), DVec3::new(-0.98, 1.2, 0.7)],
+        0.03,
+    );
+    casing(
+        m,
+        cast_iron(),
+        DVec3::new(-1.1, 1.15, 0.62),
+        DVec3::new(-0.86, 1.5, 0.78),
+    );
+    for (y, col) in [
+        (1.42, rgb(255, 70, 50)),
+        (1.32, rgb(90, 255, 120)),
+        (1.22, rgb(255, 214, 150)),
+    ] {
+        m.lathe_along(
+            Mat::Glow(col),
+            DVec3::new(-0.98, y, 0.78),
+            DVec3::Z,
+            &[(0.0, 0.0), (0.032, 0.0), (0.032, 0.012), (0.0, 0.02)],
+        );
+    }
+}
+
+/// A lathe (3 m long, 1.1 deep, 1.5 high): a bed on two pedestals, the
+/// headstock with its chuck and a brass bar in it, the carriage with its
+/// handwheel, the tailstock.
+pub fn lathe_machine(m: &mut Maker) {
+    let green = works_green();
+    for x in [-1.08, 1.0] {
+        let mut f = m.sub(DVec3::new(x, 0.0, 0.0), 0.0);
+        f.slab(cast_iron(), &rrect(0.72, 0.62, 0.06, 3), 0.0, 0.08);
+        casing(
+            &mut f,
+            green,
+            DVec3::new(-0.32, 0.06, -0.27),
+            DVec3::new(0.32, 0.78, 0.27),
+        );
+    }
+    // The chip tray and the bed with its two ways.
+    m.slab(
+        Mat::Plain(rgb(96, 100, 104)),
+        &rrect(2.5, 0.72, 0.05, 3),
+        0.56,
+        0.6,
+    );
+    casing(
+        m,
+        cast_iron(),
+        DVec3::new(-1.44, 0.76, -0.2),
+        DVec3::new(1.44, 0.93, 0.2),
+    );
+    for z in [-0.13, 0.13] {
+        m.tube(
+            Mat::Chrome,
+            &[DVec3::new(-0.7, 0.935, z), DVec3::new(1.42, 0.935, z)],
+            0.022,
+        );
+    }
+    // The headstock, its chuck and the work.
+    casing(
+        m,
+        green,
+        DVec3::new(-1.46, 0.9, -0.3),
+        DVec3::new(-0.72, 1.46, 0.3),
+    );
+    m.lathe_along(
+        Mat::Chrome,
+        DVec3::new(-0.72, 1.2, 0.0),
+        DVec3::X,
+        &[
+            (0.09, 0.0),
+            (0.09, 0.04),
+            (0.2, 0.04),
+            (0.2, 0.17),
+            (0.06, 0.19),
+            (0.0, 0.19),
+        ],
+    );
+    m.lathe_along(
+        Mat::Brass,
+        DVec3::new(-0.54, 1.2, 0.0),
+        DVec3::X,
+        &[(0.05, 0.0), (0.05, 0.9), (0.035, 0.92), (0.035, 1.3)],
+    );
+    dial(m, DVec3::new(-1.26, 1.3, 0.302), 0.07, rgb(255, 226, 170));
+    for (x, lean) in [(-1.02, 0.07), (-0.88, -0.05)] {
+        m.tube(
+            Mat::Chrome,
+            &[DVec3::new(x, 1.12, 0.3), DVec3::new(x + lean, 1.2, 0.42)],
+            0.012,
+        );
+        m.blob(
+            Mat::Plain(rgb(24, 24, 26)),
+            DVec3::new(x + lean, 1.2, 0.42),
+            DVec3::splat(0.03),
+            0.0,
+            (1.0, 1.0),
+        );
+    }
+    // The carriage: a saddle over the bed, the tool post, an apron down
+    // the front with the handwheel.
+    casing(
+        m,
+        Mat::Plain(rgb(96, 100, 104)),
+        DVec3::new(0.0, 0.93, -0.26),
+        DVec3::new(0.4, 1.03, 0.3),
+    );
+    casing(
+        m,
+        cast_iron(),
+        DVec3::new(0.12, 1.02, -0.08),
+        DVec3::new(0.28, 1.16, 0.08),
+    );
+    casing(
+        m,
+        green,
+        DVec3::new(0.02, 0.62, 0.2),
+        DVec3::new(0.38, 0.95, 0.3),
+    );
+    m.lathe_along(
+        Mat::Chrome,
+        DVec3::new(0.2, 0.78, 0.3),
+        DVec3::Z,
+        &[
+            (0.02, 0.0),
+            (0.02, 0.07),
+            (0.11, 0.07),
+            (0.125, 0.085),
+            (0.11, 0.1),
+            (0.0, 0.1),
+        ],
+    );
+    // The tailstock and its centre.
+    casing(
+        m,
+        green,
+        DVec3::new(1.0, 0.92, -0.16),
+        DVec3::new(1.36, 1.32, 0.16),
+    );
+    m.lathe_along(
+        Mat::Chrome,
+        DVec3::new(1.0, 1.2, 0.0),
+        -DVec3::X,
+        &[(0.045, 0.0), (0.045, 0.14), (0.0, 0.24)],
+    );
+    m.lathe_along(
+        Mat::Chrome,
+        DVec3::new(1.36, 1.2, 0.0),
+        DVec3::X,
+        &[
+            (0.02, 0.0),
+            (0.02, 0.04),
+            (0.09, 0.04),
+            (0.09, 0.06),
+            (0.0, 0.06),
+        ],
+    );
+}
+
+/// An Aether dynamo (2 m square, 2.3 high): a finned drum in its cradle,
+/// a band of light round it, a terminal on top, dials at the front.
+pub fn dynamo(m: &mut Maker) {
+    let teal = Mat::Paint(rgb(60, 120, 130));
+    m.slab(cast_iron(), &rrect(1.9, 1.5, 0.1, 4), 0.0, 0.16);
+    for x in [-0.5, 0.5] {
+        casing(
+            m,
+            cast_iron(),
+            DVec3::new(x - 0.12, 0.12, -0.6),
+            DVec3::new(x + 0.12, 0.62, 0.6),
+        );
+    }
+    m.lathe_along(
+        teal,
+        DVec3::new(-0.8, 1.1, 0.0),
+        DVec3::X,
+        &[
+            (0.0, 0.0),
+            (0.42, 0.0),
+            (0.62, 0.08),
+            (0.72, 0.2),
+            (0.72, 1.4),
+            (0.62, 1.52),
+            (0.42, 1.6),
+            (0.0, 1.6),
+        ],
+    );
+    // Cooling fins either side of the lit band.
+    for k in 0..8 {
+        let t = if k < 4 {
+            0.26 + k as f64 * 0.1
+        } else {
+            1.0 + (k - 4) as f64 * 0.1
+        };
+        m.lathe_along(
+            Mat::Chrome,
+            DVec3::new(-0.8 + t, 1.1, 0.0),
+            DVec3::X,
+            &[(0.7, 0.0), (0.78, 0.008), (0.78, 0.032), (0.7, 0.04)],
+        );
+    }
+    m.lathe_along(
+        Mat::Glow(rgb(120, 230, 255)),
+        DVec3::new(-0.11, 1.1, 0.0),
+        DVec3::X,
+        &[(0.7, 0.0), (0.735, 0.01), (0.735, 0.21), (0.7, 0.22)],
+    );
+    // The shaft's brass caps.
+    for (x, d) in [(-0.8, -1.0), (0.8, 1.0)] {
+        m.lathe_along(
+            Mat::Brass,
+            DVec3::new(x, 1.1, 0.0),
+            DVec3::X * d,
+            &[(0.16, 0.0), (0.16, 0.06), (0.08, 0.1), (0.0, 0.1)],
+        );
+    }
+    // The terminal: ribbed insulators, a glowing ball.
+    m.lathe(
+        Mat::Paint(rgb(236, 232, 220)),
+        DVec3::new(0.0, 1.78, 0.0),
+        &[
+            (0.16, 0.0),
+            (0.16, 0.06),
+            (0.09, 0.09),
+            (0.14, 0.14),
+            (0.09, 0.19),
+            (0.13, 0.24),
+            (0.08, 0.29),
+            (0.05, 0.34),
+            (0.0, 0.34),
+        ],
+    );
+    m.blob(
+        Mat::Glow(rgb(150, 240, 255)),
+        DVec3::new(0.0, 2.2, 0.0),
+        DVec3::splat(0.1),
+        0.0,
+        (1.0, 1.0),
+    );
+    // The switchboard at the front.
+    casing(
+        m,
+        cast_iron(),
+        DVec3::new(-0.45, 0.14, 0.76),
+        DVec3::new(0.45, 1.0, 0.96),
+    );
+    for (x, col) in [
+        (-0.26, rgb(255, 226, 170)),
+        (0.0, rgb(120, 230, 255)),
+        (0.26, rgb(255, 226, 170)),
+    ] {
+        dial(m, DVec3::new(x, 0.78, 0.962), 0.085, col);
+    }
+    m.tube(
+        Mat::Chrome,
+        &[
+            DVec3::new(-0.3, 0.44, 0.97),
+            DVec3::new(-0.3, 0.5, 1.0),
+            DVec3::new(0.3, 0.5, 1.0),
+            DVec3::new(0.3, 0.44, 0.97),
+        ],
+        0.014,
+    );
+}
+
+/// A workbench, `w` long: a thick beech top on a steel frame, drawers at
+/// one end, a vice at the other, a tool box and an oil can on it.
+pub fn workbench(m: &mut Maker, w: f64) {
+    let hw = w * 0.5;
+    let steel = Mat::Paint(rgb(92, 104, 110));
+    m.block(
+        Mat::Wood(rgb(196, 150, 100)),
+        DVec3::new(-hw, 0.82, -0.4),
+        DVec3::new(hw, 0.9, 0.4),
+    );
+    for x in [-hw + 0.06, hw - 0.06] {
+        for z in [-0.33, 0.33] {
+            m.block(
+                steel,
+                DVec3::new(x - 0.03, 0.0, z - 0.03),
+                DVec3::new(x + 0.03, 0.82, z + 0.03),
+            );
+        }
+    }
+    m.block(
+        steel,
+        DVec3::new(-hw + 0.04, 0.16, -0.34),
+        DVec3::new(hw - 0.04, 0.19, 0.34),
+    );
+    // Drawers at the left, with chrome pulls.
+    m.block(
+        steel,
+        DVec3::new(-hw + 0.1, 0.3, -0.34),
+        DVec3::new(-hw + 0.7, 0.81, 0.36),
+    );
+    for k in 0..3 {
+        let y = 0.4 + k as f64 * 0.16;
+        m.tube(
+            Mat::Chrome,
+            &[
+                DVec3::new(-hw + 0.3, y, 0.375),
+                DVec3::new(-hw + 0.5, y, 0.375),
+            ],
+            0.012,
+        );
+    }
+    // The vice at the right front corner.
+    let mut v = m.sub(DVec3::new(hw - 0.4, 0.9, 0.24), 0.0);
+    casing(
+        &mut v,
+        cast_iron(),
+        DVec3::new(-0.09, 0.0, -0.16),
+        DVec3::new(0.09, 0.1, 0.1),
+    );
+    for z in [-0.02, 0.12] {
+        casing(
+            &mut v,
+            cast_iron(),
+            DVec3::new(-0.08, 0.08, z - 0.03),
+            DVec3::new(0.08, 0.22, z + 0.03),
+        );
+    }
+    v.tube(
+        Mat::Chrome,
+        &[DVec3::new(0.0, 0.12, 0.12), DVec3::new(0.0, 0.12, 0.26)],
+        0.016,
+    );
+    v.tube(
+        Mat::Chrome,
+        &[DVec3::new(-0.11, 0.12, 0.25), DVec3::new(0.11, 0.12, 0.25)],
+        0.009,
+    );
+    // A red tool box with a chrome handle, and an oil can.
+    let mut t = m.sub(DVec3::new(-0.1, 0.9, -0.12), 0.12);
+    casing(
+        &mut t,
+        Mat::Paint(rgb(190, 50, 40)),
+        DVec3::new(-0.26, 0.0, -0.12),
+        DVec3::new(0.26, 0.2, 0.12),
+    );
+    t.tube(
+        Mat::Chrome,
+        &[
+            DVec3::new(-0.12, 0.2, 0.0),
+            DVec3::new(-0.1, 0.25, 0.0),
+            DVec3::new(0.1, 0.25, 0.0),
+            DVec3::new(0.12, 0.2, 0.0),
+        ],
+        0.01,
+    );
+    m.lathe(
+        Mat::Brass,
+        DVec3::new(0.42, 0.9, -0.18),
+        &[
+            (0.055, 0.0),
+            (0.055, 0.07),
+            (0.02, 0.11),
+            (0.008, 0.2),
+            (0.0, 0.2),
+        ],
+    );
+}
+
+/// One crate from `lo` to `hi`: boards, a batten round each end, steel
+/// corners and a stencilled mark on the front.
+fn crate_box(m: &mut Maker, lo: DVec3, hi: DVec3, wood: Color) {
+    m.block(Mat::Paint(wood), lo, hi);
+    let dark = Mat::Paint(scale(wood, 0.78));
+    let t = 0.018;
+    for y in [lo.y + 0.03, hi.y - 0.11] {
+        m.block(
+            dark,
+            DVec3::new(lo.x - t, y, lo.z - t),
+            DVec3::new(hi.x + t, y + 0.08, hi.z + t),
+        );
+    }
+    for x in [lo.x - t, hi.x - 0.07 + t] {
+        m.block(
+            dark,
+            DVec3::new(x, lo.y + 0.11, lo.z - t),
+            DVec3::new(x + 0.07, hi.y - 0.11, hi.z + t),
+        );
+    }
+    let c = (lo + hi) * 0.5;
+    m.lathe_along(
+        Mat::Plain(rgb(150, 40, 34)),
+        DVec3::new(c.x, c.y, hi.z),
+        DVec3::Z,
+        &[(0.0, 0.0), (0.11, 0.0), (0.11, 0.006), (0.0, 0.008)],
+    );
+}
+
+/// A stack of crates (1.6 wide, 1.2 deep, 1.5 high): two below, one
+/// askew on top.
+pub fn crates(m: &mut Maker) {
+    let pine = rgb(200, 164, 112);
+    crate_box(
+        m,
+        DVec3::new(-0.76, 0.0, -0.52),
+        DVec3::new(-0.04, 0.72, 0.5),
+        pine,
+    );
+    crate_box(
+        m,
+        DVec3::new(0.04, 0.0, -0.5),
+        DVec3::new(0.76, 0.8, 0.46),
+        scale(pine, 0.92),
+    );
+    let mut top = m.sub(DVec3::new(-0.18, 0.72, -0.02), 0.2);
+    crate_box(
+        &mut top,
+        DVec3::new(-0.3, 0.0, -0.36),
+        DVec3::new(0.3, 0.62, 0.36),
+        scale(pine, 1.06),
+    );
+}
+
+/// An exhibit's round plinth (0.56 high) with a brass band and a lit
+/// label at the front.
+fn plinth(m: &mut Maker) {
+    m.lathe(
+        Mat::Paint(rgb(238, 230, 212)),
+        DVec3::ZERO,
+        &[
+            (0.78, 0.0),
+            (0.78, 0.07),
+            (0.7, 0.11),
+            (0.7, 0.48),
+            (0.74, 0.52),
+            (0.74, 0.56),
+            (0.0, 0.56),
+        ],
+    );
+    m.lathe(
+        Mat::Brass,
+        DVec3::new(0.0, 0.38, 0.0),
+        &[(0.7, 0.0), (0.712, 0.005), (0.712, 0.045), (0.7, 0.05)],
+    );
+    m.blob(
+        Mat::Glow(rgb(255, 226, 170)),
+        DVec3::new(0.0, 0.24, 0.7),
+        DVec3::new(0.2, 0.07, 0.012),
+        0.0,
+        (0.3, 0.3),
+    );
+}
+
+/// A model rocket on a plinth (3 m high): a chrome hull on three red
+/// fins, a red nose, a lit porthole, a glow in the nozzle.
+pub fn rocket_model(m: &mut Maker) {
+    plinth(m);
+    let red = Mat::Paint(rgb(206, 52, 40));
+    m.lathe(
+        Mat::Chrome,
+        DVec3::new(0.0, 0.92, 0.0),
+        &[
+            (0.1, 0.0),
+            (0.17, 0.12),
+            (0.23, 0.4),
+            (0.25, 0.75),
+            (0.23, 1.15),
+            (0.17, 1.5),
+        ],
+    );
+    m.lathe(
+        red,
+        DVec3::new(0.0, 2.42, 0.0),
+        &[
+            (0.17, 0.0),
+            (0.12, 0.2),
+            (0.06, 0.4),
+            (0.015, 0.54),
+            (0.0, 0.56),
+        ],
+    );
+    m.lathe(
+        Mat::Brass,
+        DVec3::new(0.0, 2.4, 0.0),
+        &[(0.172, 0.0), (0.178, 0.01), (0.178, 0.03), (0.17, 0.04)],
+    );
+    // The nozzle and its glow.
+    m.lathe(
+        cast_iron(),
+        DVec3::new(0.0, 0.78, 0.0),
+        &[(0.13, 0.0), (0.09, 0.08), (0.1, 0.16)],
+    );
+    m.lathe(
+        Mat::Glow(rgb(255, 170, 70)),
+        DVec3::new(0.0, 0.8, 0.0),
+        &[(0.0, 0.0), (0.11, 0.0), (0.07, 0.07), (0.0, 0.1)],
+    );
+    // Three swept fins it stands on.
+    for k in 0..3 {
+        let mut f = m.sub(DVec3::ZERO, TAU * k as f64 / 3.0);
+        let lean = 0.32f64;
+        let (sl, cl) = lean.sin_cos();
+        f.blob_axes(
+            red,
+            DVec3::new(0.0, 1.0, 0.36),
+            [DVec3::X, DVec3::new(0.0, cl, -sl), DVec3::new(0.0, sl, cl)],
+            DVec3::new(0.022, 0.46, 0.17),
+            (1.0, 0.7),
+        );
+        f.blob(
+            Mat::Chrome,
+            DVec3::new(0.0, 0.6, 0.5),
+            DVec3::new(0.035, 0.05, 0.035),
+            0.0,
+            (1.0, 1.0),
+        );
+    }
+    // Portholes up the front.
+    for (y, z) in [(1.66, 0.246), (2.02, 0.232)] {
+        m.lathe_along(
+            Mat::Brass,
+            DVec3::new(0.0, y, z - 0.012),
+            DVec3::Z,
+            &[(0.062, 0.0), (0.062, 0.018), (0.045, 0.024), (0.045, 0.0)],
+        );
+        m.lathe_along(
+            Mat::Glow(rgb(150, 230, 255)),
+            DVec3::new(0.0, y, z - 0.012),
+            DVec3::Z,
+            &[(0.0, 0.0), (0.045, 0.0), (0.045, 0.014), (0.0, 0.02)],
+        );
+    }
+}
+
+/// A ring of radius `r` about `c` in the plane of the unit axes `u`, `v`.
+fn ring(c: DVec3, u: DVec3, v: DVec3, r: f64, n: usize) -> Vec<DVec3> {
+    (0..=n)
+        .map(|k| {
+            let (s, co) = (TAU * k as f64 / n as f64).sin_cos();
+            c + (u * co + v * s) * r
+        })
+        .collect()
+}
+
+/// A great model of the atom on a plinth (2.4 m high): a nucleus of red
+/// and cream balls, three chrome orbits with glowing electrons.
+pub fn atom_model(m: &mut Maker) {
+    plinth(m);
+    let c = DVec3::new(0.0, 1.68, 0.0);
+    m.lathe(
+        Mat::Chrome,
+        DVec3::new(0.0, 0.56, 0.0),
+        &[(0.12, 0.0), (0.1, 0.04), (0.03, 0.1), (0.03, 0.96)],
+    );
+    let balls = [
+        (0.0, 0.0, 0.0),
+        (0.1, 0.05, 0.03),
+        (-0.09, 0.06, -0.04),
+        (0.02, -0.09, 0.08),
+        (-0.03, 0.1, 0.09),
+        (0.04, -0.04, -0.11),
+        (-0.08, -0.07, 0.02),
+    ];
+    for (k, (x, y, z)) in balls.into_iter().enumerate() {
+        let mat = if k % 2 == 0 {
+            Mat::Paint(rgb(206, 52, 40))
+        } else {
+            Mat::Paint(rgb(238, 230, 212))
+        };
+        m.blob(
+            mat,
+            c + DVec3::new(x, y, z),
+            DVec3::splat(0.09),
+            0.0,
+            (1.0, 1.0),
+        );
+    }
+    for k in 0..3 {
+        let a = TAU * k as f64 / 3.0;
+        let (s, co) = a.sin_cos();
+        // Each orbit leans 60 degrees, turned a third round from the last.
+        let u = DVec3::new(co, 0.0, s);
+        let v = DVec3::new(-s * 0.5, 0.866, co * 0.5);
+        m.tube(Mat::Chrome, &ring(c, u, v, 0.62, 40), 0.012);
+        let (es, ec) = (1.1 + k as f64 * 1.9).sin_cos();
+        m.blob(
+            Mat::Glow(rgb(120, 230, 255)),
+            c + (u * ec + v * es) * 0.62,
+            DVec3::splat(0.055),
+            0.0,
+            (1.0, 1.0),
+        );
+    }
+}
+
+/// The world as a globe on a plinth (2.2 m high): blue seas and green
+/// lands on a leaning brass axis in a meridian ring, two moons on arms.
+pub fn orrery(m: &mut Maker) {
+    plinth(m);
+    let c = DVec3::new(0.0, 1.5, 0.0);
+    let tilt = 0.41f64;
+    let (st, ct) = tilt.sin_cos();
+    let axis = DVec3::new(st, ct, 0.0);
+    m.lathe(
+        Mat::Brass,
+        DVec3::new(0.0, 0.56, 0.0),
+        &[(0.16, 0.0), (0.12, 0.05), (0.035, 0.12), (0.035, 0.42)],
+    );
+    m.blob(
+        Mat::Paint(rgb(52, 110, 170)),
+        c,
+        DVec3::splat(0.42),
+        0.0,
+        (1.0, 1.0),
+    );
+    // Lands: low caps that stand a little proud of the sea.
+    let lands = [
+        (0.5, 0.6, 0.2, 0.2),
+        (2.1, 0.2, 0.17, 0.24),
+        (3.6, -0.3, 0.22, 0.16),
+        (4.9, 0.5, 0.14, 0.14),
+        (1.2, -0.6, 0.16, 0.12),
+        (5.6, -0.5, 0.12, 0.18),
+    ];
+    for (lon, lat, a, b) in lands {
+        let (sl, cl): (f64, f64) = f64::sin_cos(lon);
+        let (sp, cp): (f64, f64) = f64::sin_cos(lat);
+        let n = DVec3::new(cp * cl, sp, cp * sl);
+        let e = DVec3::new(-sl, 0.0, cl);
+        let up = n.cross(e);
+        m.blob_axes(
+            Mat::Paint(rgb(96, 150, 84)),
+            c + n * 0.385,
+            [e, n, up],
+            DVec3::new(a, 0.045, b),
+            (1.0, 1.0),
+        );
+    }
+    // The axis with its finials, and the meridian ring it turns in.
+    m.tube(Mat::Brass, &[c - axis * 0.56, c + axis * 0.56], 0.014);
+    for d in [-1.0, 1.0] {
+        m.blob(
+            Mat::Brass,
+            c + axis * 0.56 * d,
+            DVec3::splat(0.035),
+            0.0,
+            (1.0, 1.0),
+        );
+    }
+    m.tube(
+        Mat::Brass,
+        &ring(c, axis, DVec3::new(-ct, st, 0.0), 0.52, 40),
+        0.016,
+    );
+    // Two moons on chrome arms from the foot of the axis.
+    for (a, r, y, size, col) in [
+        (0.9f64, 0.64, 0.28, 0.07, rgb(236, 230, 214)),
+        (3.7f64, 0.7, -0.1, 0.05, rgb(214, 120, 90)),
+    ] {
+        let (s, co) = a.sin_cos();
+        let at = c + DVec3::new(co * r, y, s * r);
+        let foot = DVec3::new(0.0, 0.94, 0.0);
+        m.tube(
+            Mat::Chrome,
+            &[foot, DVec3::new(co * r, 0.94, s * r), at],
+            0.008,
+        );
+        m.blob(Mat::Paint(col), at, DVec3::splat(size), 0.0, (1.0, 1.0));
+    }
 }
 
 /// A night club's stage, `w` wide, its back to the wall: a platform with a

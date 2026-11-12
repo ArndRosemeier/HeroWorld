@@ -220,6 +220,14 @@ fn piece(m: &mut crate::interior::pieces::Maker, scheme: Scheme, (kind, w, c): L
         K::Jukebox => pc::jukebox(m),
         K::LabBench => pc::lab_bench(m, w),
         K::AetherCoil => pc::aether_coil(m),
+        K::Press => pc::press(m),
+        K::Lathe => pc::lathe_machine(m),
+        K::Dynamo => pc::dynamo(m),
+        K::Workbench => pc::workbench(m, w),
+        K::Crates => pc::crates(m),
+        K::RocketModel => pc::rocket_model(m),
+        K::AtomModel => pc::atom_model(m),
+        K::Orrery => pc::orrery(m),
     }
 }
 
@@ -1480,6 +1488,16 @@ mod tests {
             (K::Plant, 50),
             (K::WaterCooler, 40),
             (K::Rug, 460),
+            (K::LabBench, 300),
+            (K::AetherCoil, 120),
+            (K::Press, 220),
+            (K::Lathe, 300),
+            (K::Dynamo, 200),
+            (K::Workbench, 240),
+            (K::Crates, 160),
+            (K::RocketModel, 160),
+            (K::AtomModel, 160),
+            (K::Orrery, 160),
         ] {
             for seg in FURNITURE_SEGS {
                 let mesh = piece_mesh(Scheme::Atrium, (kind, w, 1), seg);

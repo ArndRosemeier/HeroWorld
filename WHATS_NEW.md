@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.241 (2026-11-12)
+
+- The works and the fair's pavilions are roomy buildings of halls now, like the offices: a works holds stamping presses, lathes, humming Aether dynamos, workbenches and stacks of crates; a pavilion shows model rockets, great atoms and globes of the world on plinths, with show cases and seats along the walls.
+- Towns are built anew for this version.
+
 ## 0.240 (2026-11-12)
 
 - The Doctor's laboratories look like laboratories again: islands of benches with glowing flasks in the work halls and along the walls, and humming Aether coils under glass in the halls and lobbies.

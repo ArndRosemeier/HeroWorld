@@ -37,10 +37,15 @@ const GRAND: ((f64, f64), (f64, f64)) = ((34.0, 50.0), (40.0, 52.0));
 /// Does this use get an office building's big plot here? Not in the old
 /// town's lanes, where a shop is a narrow house with rooms above.
 fn grand(prog: &Programme, usage: BuildingUse) -> bool {
-    // (The Doctor's labs too: halls of apparatus.)
+    // (The Doctor's labs too: halls of apparatus. And the works and the
+    // fair's pavilions: halls of machines and of exhibits.)
     matches!(
         usage,
-        BuildingUse::Offices | BuildingUse::ShopsAndOffices | BuildingUse::Lab
+        BuildingUse::Offices
+            | BuildingUse::ShopsAndOffices
+            | BuildingUse::Lab
+            | BuildingUse::Works
+            | BuildingUse::Pavilion
     ) && !prog.lanes
 }
 
@@ -617,11 +622,16 @@ fn fill_block(
             let home = |p: Plot| {
                 (homes && best != Plot::Plain && (wanted, best) != (flat, p)).then_some((flat, p))
             };
+            // (So is a small works, and a small pavilion.)
+            let small_hall = matches!(
+                wanted,
+                BuildingUse::Lab | BuildingUse::Works | BuildingUse::Pavilion
+            ) && best != Plot::Plain;
             let tries = [
                 Some((wanted, best)),
                 // (A lab that has no room for its great halls is a small
                 // one: a hall on the street with rooms above.)
-                (wanted == BuildingUse::Lab).then_some((wanted, Plot::House)),
+                small_hall.then_some((wanted, Plot::House)),
                 // (A family's house on a small plot is a loft house.)
                 (wanted == BuildingUse::House).then_some((wanted, Plot::Loft)),
                 home(Plot::Block).filter(|_| !prog.lanes),
@@ -639,7 +649,7 @@ fn fill_block(
             let tries: Vec<(BuildingUse, Plot)> = tries.into_iter().flatten().collect();
             let roomy = |p: &&(BuildingUse, Plot)| p.1 != Plot::Plain;
             // (The wanted building before the homes that stand in for it.)
-            let lead = if matches!(wanted, BuildingUse::Lab | BuildingUse::House) {
+            let lead = if small_hall || wanted == BuildingUse::House {
                 2
             } else {
                 1
