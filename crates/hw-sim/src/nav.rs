@@ -19,6 +19,9 @@ const MAX_SPAN: i32 = 120;
 const SHOULDER: f64 = crate::collision::BODY_RADIUS * 0.85;
 /// Highest step up or down between neighbouring cells (m).
 const MAX_STEP: f64 = 0.6;
+/// A search gives up after looking at this many cells (about 5 ms: each cell costs 18 probes of the solids): a walker
+/// with no way is not worth more, and one tick must stay cheap.
+const MAX_EXPANDED: i32 = 600;
 
 /// Can a person stand at `p` (x, z) on ground about `near_y` high? Returns
 /// the height of the floor there.
@@ -110,7 +113,7 @@ pub fn find_path(solids: &Obstacles, from: DVec3, to: DVec3) -> Option<Vec<DVec3
             break;
         }
         expanded += 1;
-        if expanded > 6000 {
+        if expanded > MAX_EXPANDED {
             break;
         }
         for (dx, dz) in [

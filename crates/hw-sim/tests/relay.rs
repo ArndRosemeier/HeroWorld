@@ -283,9 +283,11 @@ fn friends_join_by_room_code_and_play_through_the_relay() {
             .filter(|e| matches!(e, HostEvent::Joined { .. }))
             .count();
         joined == 2
-            && cs
-                .iter()
-                .all(|c| matches!(c.state, ConnState::Connected { .. }))
+            && cs.iter().all(|c| {
+                matches!(c.state, ConnState::Connected { .. })
+                    && c.hero().is_some()
+                    && c.world().is_some()
+            })
     });
     let joined: Vec<&str> = events
         .iter()
@@ -301,7 +303,13 @@ fn friends_join_by_room_code_and_play_through_the_relay() {
     ));
     let start = host.sim.position(a.hero().unwrap()).unwrap();
     run(&mut host, &mut [&mut a, &mut b], east, 60);
-    let end = host.sim.position(a.hero().unwrap()).unwrap();
+    let ha = a.hero();
+    let end = host.sim.position(ha.unwrap()).unwrap_or_else(|| {
+        panic!(
+            "hero {ha:?} not in sim; sim has {:?}",
+            host.sim.snapshot().iter().map(|e| e.id).collect::<Vec<_>>()
+        )
+    });
     assert!(end.x - start.x > 4.0, "Alice ran east: {start} -> {end}");
     for c in [&a, &b] {
         let (_, _, entities) = c.world().expect("updates arrive");
@@ -361,7 +369,13 @@ fn when_the_host_leaves_a_friend_takes_the_world_over() {
         move_x: 1.0,
         ..Default::default()
     };
-    run(&mut host, &mut [&mut a, &mut b], InputState::default(), 30);
+    run_until(
+        &mut host,
+        &mut [&mut a, &mut b],
+        InputState::default(),
+        1000,
+        |_, cs| cs.iter().all(|c| c.hero().is_some() && c.world().is_some()),
+    );
     for _ in 0..40 {
         a.update(InputState::default());
         b.update(east);
@@ -400,7 +414,10 @@ fn when_the_host_leaves_a_friend_takes_the_world_over() {
             h.tick();
         }
         std::thread::sleep(Duration::from_millis(8));
-        if b.handovers == 1 && matches!(b.state, ConnState::Connected { .. }) && b.world().is_some()
+        if b.handovers == 1
+            && matches!(b.state, ConnState::Connected { .. })
+            && b.world().is_some()
+            && b.hero().is_some()
         {
             break;
         }

@@ -30,7 +30,8 @@
 
 use crate::collision::{Body, Obstacles, BODY_HEIGHT};
 use crate::combat::{
-    enemy_spec, event, hit, level_scale, spawn_enemy, ticks, Actor, Enemy, EnemyKind, Fights,
+    enemy_spec, event, hit, index_of, level_scale, spawn_enemy, ticks, Actor, Enemy, EnemyKind,
+    Fights,
 };
 use crate::streets::Streets;
 use crate::{Motion, Net, Orientation, Solids, DT, GROUND_Y};
@@ -490,7 +491,7 @@ pub(crate) fn act(
             let at = actors[i].chest();
             fx.push(event(tick, FxKind::PartBroken, m.on, actors[i].id, at));
         }
-        let Some(r) = actors.iter().position(|a| a.id == m.on) else {
+        let Some(r) = index_of(&*actors, m.on) else {
             continue;
         };
         let robot = &actors[r];

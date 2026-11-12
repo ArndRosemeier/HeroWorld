@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.250 (2026-11-12)
+
+- The game's server now keeps to a fixed time budget each tick: big crowds of villains no longer slow the game down (villains look for their way round walls in small steps, crowds spread out and look at each other faster, and a huge crowd of more than 400 acts a little slower rather than stalling). If a tick still runs long, the housekeeping that can wait is put off a few ticks.
+- Behind the scenes: new stress tests of many villains and many heroes, and the relay test no longer fails by chance.
+
 ## 0.249 (2026-11-12)
 
 - Lawns now meet house walls, pavements and street corners cleanly: the ragged saw-teeth and pale triangles of bare ground between the grass and a wall, a kerb or a junction are gone.

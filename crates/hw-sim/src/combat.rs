@@ -1933,7 +1933,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     };
     let mut patients = std::mem::take(&mut world.resource_mut::<Fights>().patients);
     for (de, did, body, d) in drones.iter_mut() {
-        let Some(i) = actors.iter().position(|a| a.id == d.carry) else {
+        let Some(i) = index_of(&actors, d.carry) else {
             gone.push((*de, *did));
             continue;
         };
@@ -2732,7 +2732,7 @@ fn npc_heroes_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut
         let Some(j) = actors[i]
             .f
             .target
-            .and_then(|t| actors.iter().position(|a| a.id == t))
+            .and_then(|t| index_of(&*actors, t))
             .filter(|&j| hittable(&actors[j]))
             .filter(|&j| actors[j].body.pos.distance(actors[i].body.pos) <= BOLT_RANGE)
             .filter(|&j| in_sight(solids, actors[i].chest(), actors[j].chest()))
@@ -2768,18 +2768,18 @@ fn sidekicks_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut 
         if !actors[i].f.standing() {
             continue;
         }
-        let owner = actors.iter().position(|a| a.id == sk.owner);
+        let owner = index_of(&*actors, sk.owner);
         let here = actors[i].body.pos;
         let valid = |a: &Actor| hittable(a) && a.body.pos.distance(here) < 40.0;
         let mut foe = actors[i]
             .f
             .target
-            .and_then(|t| actors.iter().position(|a| a.id == t))
+            .and_then(|t| index_of(&*actors, t))
             .filter(|&j| valid(&actors[j]));
         if foe.is_none() {
             foe = owner
                 .and_then(|o| actors[o].f.target)
-                .and_then(|t| actors.iter().position(|a| a.id == t))
+                .and_then(|t| index_of(&*actors, t))
                 .filter(|&j| valid(&actors[j]) && actors[j].f.target.is_some());
         }
         if foe.is_none() {
@@ -2821,6 +2821,12 @@ fn sidekicks_act(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut 
 }
 
 /// Is `a` (by index) a valid target for heroes?
+/// Where the actor with `id` is in `actors` (sorted by id when they are
+/// gathered): a binary search, not a scan of everyone.
+pub(crate) fn index_of(actors: &[Actor], id: NetId) -> Option<usize> {
+    actors.binary_search_by_key(&id, |a| a.id).ok()
+}
+
 fn hittable(a: &Actor) -> bool {
     a.enemy.is_some() && a.f.fighting() && a.f.charmed_by.is_none()
 }
@@ -3495,7 +3501,7 @@ fn heroes_act(
         let mut target = None;
         if aimed {
             target = match actors[i].f.target {
-                Some(t) => actors.iter().position(|a| a.id == t),
+                Some(t) => index_of(&*actors, t),
                 None if delivery == Delivery::Melee => {
                     nearest_seen_enemy(actors, solids, actors[i].chest(), range)
                 }
@@ -3631,7 +3637,7 @@ fn heroes_act(
                     let foe = actors[i]
                         .f
                         .target
-                        .and_then(|t| actors.iter().position(|a| a.id == t))
+                        .and_then(|t| index_of(&*actors, t))
                         .filter(|_| f.damage > 0.0)
                         .filter(|&t| actors[t].body.pos.distance(pos) <= f.range + 1.0)
                         .filter(|&t| in_sight(solids, actors[i].chest(), actors[t].chest()));
@@ -4012,12 +4018,7 @@ fn heroes_act(
                 // The villain to go for: the hero's target, else the
                 // nearest one near the hero.
                 let foe = target
-                    .or_else(|| {
-                        actors[i]
-                            .f
-                            .target
-                            .and_then(|t| actors.iter().position(|a| a.id == t))
-                    })
+                    .or_else(|| actors[i].f.target.and_then(|t| index_of(&*actors, t)))
                     .filter(|&t| hittable(&actors[t]))
                     .or_else(|| nearest_enemy(actors, pos, 20.0))
                     .map(|t| actors[t].id);
@@ -4298,7 +4299,7 @@ fn land_sky(
     let due: Vec<SkyStrike> = sky.iter().copied().filter(|m| m.land <= tick).collect();
     sky.retain(|m| m.land > tick);
     for m in due {
-        let Some(i) = actors.iter().position(|a| a.id == m.from) else {
+        let Some(i) = index_of(&*actors, m.from) else {
             continue;
         };
         let f = def_of(m.power).fields;
@@ -4334,8 +4335,8 @@ fn land_throws(actors: &mut [Actor], throws: &mut Vec<Throw>, tick: u64, out: &m
     let due: Vec<Throw> = throws.iter().copied().filter(|t| t.land <= tick).collect();
     throws.retain(|t| t.land > tick);
     for th in due {
-        let from = actors.iter().position(|a| a.id == th.from);
-        let to = actors.iter().position(|a| a.id == th.to);
+        let from = index_of(&*actors, th.from);
+        let to = index_of(&*actors, th.to);
         let (Some(i), Some(t)) = (from, to) else {
             continue;
         };
@@ -4359,7 +4360,7 @@ fn burns(actors: &mut [Actor], tick: u64, out: &mut Out) {
         }
         let damage = actors[t].f.burn * BURN_STEP as f32;
         let by = actors[t].f.burn_by;
-        let from = by.and_then(|b| actors.iter().position(|a| a.id == b));
+        let from = by.and_then(|b| index_of(&*actors, b));
         let (defeat, dealt) = match from {
             Some(i) => {
                 let (_, defeat, dealt) = strike(actors, i, t, damage, false, tick, false);
@@ -4431,6 +4432,8 @@ const LOOK_AHEAD: f64 = 40.0;
 /// served within a few ticks: one served does not search again for
 /// [`RETHINK`] seconds, so the turns go round by id.
 pub const PATH_BUDGET: u32 = 1;
+/// Most villains that act in one tick (see `enemies_act`).
+pub const THINK_CAP: u64 = 400;
 /// Fewest seconds between two searches of one villain, whatever its goal does.
 const RETHINK: f64 = 0.5;
 
@@ -4534,13 +4537,39 @@ fn enemies_act(
     bombs: &mut Vec<Bomb>,
 ) -> u32 {
     let mut budget = PATH_BUDGET;
+    // Who stands where, so a villain looks only at its crew and at those
+    // within a step or two (not at everyone): its crew by spot, everyone
+    // fighting by 1.3 m cell, both in id order. Built once per tick, so
+    // keeping apart is judged by where friends stood when the tick began.
+    let mut crew: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+    let mut crowd: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+    for (k, a) in actors.iter().enumerate() {
+        if let Some(e) = a.enemy {
+            crew.entry(e.spot).or_default().push(k);
+            if a.f.fighting() {
+                let p = a.body.pos;
+                crowd
+                    .entry(((p.x / 1.3).floor() as i64, (p.z / 1.3).floor() as i64))
+                    .or_default()
+                    .push(k);
+            }
+        }
+    }
     let heroes: Vec<usize> = (0..actors.len())
         .filter(|&i| actors[i].hero.is_some())
         .collect();
+    // With more than THINK_CAP villains, each acts every `stride`th tick
+    // (by place in the id order, so the turns go round): the step costs the
+    // same for a thousand as for four hundred, and a huge crowd moves slower
+    // rather than stalling the game.
+    let stride = (crew.values().map(Vec::len).sum::<usize>() as u64).div_ceil(THINK_CAP);
     for i in 0..actors.len() {
         let Some(mut en) = actors[i].enemy else {
             continue;
         };
+        if stride > 1 && !(i as u64 + tick).is_multiple_of(stride) {
+            continue;
+        }
         // Machines that are not people-sized move in `robots`.
         if matches!(en.kind, EnemyKind::Colossus | EnemyKind::WeakPoint) {
             continue;
@@ -4600,7 +4629,7 @@ fn enemies_act(
             let mut foe = actors[i]
                 .f
                 .target
-                .and_then(|t| actors.iter().position(|a| a.id == t))
+                .and_then(|t| index_of(&*actors, t))
                 .filter(|&j| {
                     foe_ok(&actors[j]) && (charmed || actors[j].body.pos.distance(en.home) < leash)
                 });
@@ -4658,8 +4687,8 @@ fn enemies_act(
                     // One shout for the whole group.
                     let (spot, hero_id) = (en.spot, actors[j].id);
                     en.warned = Some((hero_id, tick));
-                    for a in actors.iter_mut() {
-                        if let Some(e) = a.enemy.as_mut().filter(|e| e.spot == spot) {
+                    for &k in crew.get(&spot).into_iter().flatten() {
+                        if let Some(e) = actors[k].enemy.as_mut() {
                             e.warned = Some((hero_id, tick));
                         }
                     }
@@ -4668,11 +4697,9 @@ fn enemies_act(
                 if let Some(j) = foe.filter(|&j| !charmed && !actors[j].f.charmed(tick)) {
                     // Friends close by come along.
                     let (spot, foe_id) = (en.spot, actors[j].id);
-                    for a in actors.iter_mut() {
-                        if a.enemy.is_some_and(|e| e.spot == spot)
-                            && a.f.target.is_none()
-                            && a.f.standing()
-                        {
+                    for &k in crew.get(&spot).into_iter().flatten() {
+                        let a = &mut actors[k];
+                        if a.f.target.is_none() && a.f.standing() {
                             a.f.target = Some(foe_id);
                         }
                     }
@@ -4750,7 +4777,7 @@ fn enemies_act(
                         // The blow lands now, if the foe is still there.
                         if tick >= at {
                             en.windup = None;
-                            let target = actors.iter().position(|a| a.id == who);
+                            let target = index_of(&*actors, who);
                             if let Some(t) = target {
                                 let d = actors[t].body.pos.distance(actors[i].body.pos);
                                 // A foe who stepped behind a wall during
@@ -4879,7 +4906,13 @@ fn enemies_act(
             }
             // Keep a little apart from friends, so a group spreads out.
             let mut apart = DVec2::ZERO;
-            for (k, a) in actors.iter().enumerate() {
+            let cell = |p: DVec3| ((p.x / 1.3).floor() as i64, (p.z / 1.3).floor() as i64);
+            let (cx, cz) = cell(here);
+            for k in (cx - 1..=cx + 1)
+                .flat_map(|x| (cz - 1..=cz + 1).map(move |z| (x, z)))
+                .flat_map(|c| crowd.get(&c).into_iter().flatten().copied())
+            {
+                let a = &actors[k];
                 if k == i || a.enemy.is_none() || !a.f.fighting() {
                     continue;
                 }
@@ -4957,7 +4990,7 @@ fn land_bombs(
     for b in due {
         out.fx.push(event(tick, FxKind::Bomb, b.from, b.from, b.at));
         // A thrower already beaten and gone: the bomb still bursts, harmless.
-        let Some(i) = actors.iter().position(|a| a.id == b.from) else {
+        let Some(i) = index_of(&*actors, b.from) else {
             continue;
         };
         let centre = b.at + DVec3::Y * 0.5;
