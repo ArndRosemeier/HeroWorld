@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.220 (2026-11-12)
+
+- Homes in the old town are roomy now: houses of flats with a house hall on the ground floor and, on every floor above, a big living room, a kitchen to eat in and one or two bedrooms.
+- Flats are furnished: sofas and a television, a kitchen with stove and fridge, a table with chairs, beds, nightstands and wardrobes.
+- Shops in shop houses have a counter, rows of shelves and display cases.
+- Towns from older versions are built anew.
+
 ## 0.219 (2026-11-12)
 
 - Office buildings no longer go up right next to the rocket pad: the ground round a launch stays clear. Towns from older versions are built anew.

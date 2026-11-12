@@ -87,6 +87,12 @@ pub enum SpaceKind {
     Canyon,
     /// Storage and plant rooms in leftover corners.
     Service,
+    /// A flat's living room, across the house.
+    Living,
+    /// A flat's kitchen, big enough to eat in: the way in from the stair.
+    Kitchen,
+    /// A flat's bedroom.
+    Bedroom,
 }
 
 /// A box of room: everything at one height on one rectangle.
@@ -386,6 +392,10 @@ pub enum Scheme {
     /// every storey (the shop at the street), now and then two storeys
     /// high with a gallery, and a stair at the back.
     ShopHouse,
+    /// A house of flats on an old-town plot: on every storey one flat of
+    /// a few large rooms (living room at the street, a kitchen to eat in,
+    /// bedrooms), over a house hall, with a stair at the back.
+    Flats,
 }
 
 /// A building's interior.

@@ -346,16 +346,25 @@ impl BuildingSite {
     /// (its plot must be at least [`office::MIN_SIZE`]).
     pub fn into_halls(mut self, storeys: u32) -> Self {
         self.floors = storeys.max(2);
-        self.halls =
-            Some(office::plan_town(self.seed.child("layout"), self.size, self.floors).height());
+        self.halls = Some(self.plan_halls().height());
         self
+    }
+
+    /// The floor plan this site gets as a building of halls: flats for
+    /// homes, else an office building or (on a narrow plot) a shop house.
+    fn plan_halls(&self) -> Layout {
+        let seed = self.seed.child("layout");
+        if self.usage == BuildingUse::Apartments {
+            office::plan_flats(seed, self.size, self.floors)
+        } else {
+            office::plan_town(seed, self.size, self.floors)
+        }
     }
 
     /// The floor plan of a building of halls ([`Self::halls`]), in building
     /// (x, z): the same for everyone who asks.
     pub fn layout(&self) -> Option<Layout> {
-        self.halls
-            .map(|_| office::plan_town(self.seed.child("layout"), self.size, self.floors))
+        self.halls.map(|_| self.plan_halls())
     }
 
     /// The building's mass as tiers of floors, upper ones stepped back as
@@ -563,6 +572,9 @@ impl<'a> Planner<'a> {
                         K::Shop => RoomKind::Shop,
                         K::StairHall | K::Shaft => RoomKind::Core,
                         K::Service => RoomKind::Storage,
+                        K::Living => RoomKind::Living,
+                        K::Kitchen => RoomKind::Kitchen,
+                        K::Bedroom => RoomKind::Bedroom,
                     };
                     index[i] = Some(rooms.len());
                     rooms.push(room(seed, rooms.len() as u32, kind, sp.rect));

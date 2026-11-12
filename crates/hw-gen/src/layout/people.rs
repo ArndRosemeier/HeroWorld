@@ -33,6 +33,7 @@ fn area_each(kind: SpaceKind) -> Option<f64> {
     match kind {
         SpaceKind::Hall | SpaceKind::Boardroom => Some(22.0),
         SpaceKind::Shop => Some(16.0),
+        SpaceKind::Living | SpaceKind::Kitchen => Some(28.0),
         SpaceKind::Lobby | SpaceKind::Atrium | SpaceKind::Vestibule => Some(30.0),
         SpaceKind::Gallery | SpaceKind::Arcade | SpaceKind::Concourse => Some(40.0),
         SpaceKind::Bridge
@@ -40,6 +41,7 @@ fn area_each(kind: SpaceKind) -> Option<f64> {
         | SpaceKind::StairHall
         | SpaceKind::Shaft
         | SpaceKind::Canyon
+        | SpaceKind::Bedroom
         | SpaceKind::Service => None,
     }
 }

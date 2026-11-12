@@ -133,15 +133,24 @@ fn a_bot_plays_the_doctors_story_end_to_end() {
             "chapter {}: not sent to the hall",
             k + 1
         );
-        // The briefing at the hall.
+        // The briefing at the hall (standing there, not still flying on from
+        // the last fight).
+        sim.set_input(PlayerId(1), InputState::default());
         put(&mut sim, hero, hall);
         steps(&mut sim, 1.5);
         assert_eq!(sim.story.stage, GO, "chapter {}: no briefing", k + 1);
         assert!(sim.sheet(PlayerId(1)).unwrap().briefed);
         // Off to where it plays: the group takes its place.
         let (at, facing) = sim.story.place(k).unwrap();
-        let start = at + DVec3::new(facing.x, 0.0, facing.y) * 12.0;
-        put(&mut sim, hero, DVec3::new(start.x, at.y, start.z));
+        // (In front of it, in the open: not in a house across the street.)
+        let solids = sim.solids();
+        let start = [12.0, 8.0, 4.0, 0.0]
+            .into_iter()
+            .map(|d| at + DVec3::new(facing.x, 0.0, facing.y) * d)
+            .map(|p| DVec3::new(p.x, at.y, p.z))
+            .find(|p| solids.inside(*p + DVec3::Y * 0.3).is_none())
+            .unwrap_or(at);
+        put(&mut sim, hero, start);
         steps(&mut sim, 1.5);
         assert_eq!(sim.story.stage, FIGHT, "chapter {}: nobody there", k + 1);
         let lead = c.group.lead.or(c.group.only);

@@ -30,6 +30,7 @@ fn main() {
                 "atrium" => Some(Scheme::Atrium),
                 "split" => Some(Scheme::SplitLevel),
                 "house" => Some(Scheme::ShopHouse),
+                "flats" => Some(Scheme::Flats),
                 _ => None,
             });
             jobs.push((seed as u64, w, d, st as u32, scheme));
@@ -82,6 +83,9 @@ fn colour(k: SpaceKind) -> &'static str {
         SpaceKind::Shaft => "#8a8a8a",
         SpaceKind::Canyon => "#a7c7e7",
         SpaceKind::Service => "#cfcfcf",
+        SpaceKind::Living => "#f0c9a0",
+        SpaceKind::Kitchen => "#bfe0d4",
+        SpaceKind::Bedroom => "#d6c6e6",
     }
 }
 
@@ -102,6 +106,9 @@ fn name(k: SpaceKind) -> &'static str {
         SpaceKind::Shaft => "Lift",
         SpaceKind::Canyon => "Canyon",
         SpaceKind::Service => "Service",
+        SpaceKind::Living => "Living room",
+        SpaceKind::Kitchen => "Kitchen",
+        SpaceKind::Bedroom => "Bedroom",
     }
 }
 
@@ -111,6 +118,7 @@ fn scheme_name(s: Scheme) -> &'static str {
         Scheme::Atrium => "Atrium",
         Scheme::SplitLevel => "Split level",
         Scheme::ShopHouse => "Shop house",
+        Scheme::Flats => "Flats",
     }
 }
 

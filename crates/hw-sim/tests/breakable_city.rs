@@ -100,7 +100,10 @@ fn small_building(t: &GeneratedTown) -> u64 {
                 .world
                 .building(hw_gen::urban::quarter::DetailId(i))
                 .expect("a building");
-            plan.floors.len() <= 3
+            // (A house of the old narrow kind: houses of halls break their own
+            // way, see buildings_of_halls_break_along_what_stands_in_them.)
+            plan.layout.is_none()
+                && plan.floors.len() <= 3
                 && destruction::material_factor(&plan) <= 1.1
                 && b.base - b.low < 0.3
         })

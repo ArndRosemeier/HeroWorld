@@ -11,7 +11,7 @@
 //! bump into.
 
 use super::solid::{pieces, Part};
-use super::{Flight, Layout, LinkKind, Space, SpaceKind};
+use super::{Flight, Layout, LinkKind, Scheme, Space, SpaceKind};
 use crate::geom::Rect;
 use crate::urban::footprint::Footprint;
 use glam::DVec2;
@@ -47,6 +47,17 @@ pub enum ItemKind {
     WaterCooler,
     /// A round rug: lies flat, stops nobody.
     Rug,
+    /// A double bed, its head to the wall.
+    Bed,
+    Wardrobe,
+    Nightstand,
+    /// A run of kitchen counter with its sink.
+    KitchenRun,
+    Fridge,
+    Stove,
+    Sideboard,
+    /// A television set in its cabinet.
+    Television,
 }
 
 impl ItemKind {
@@ -68,6 +79,14 @@ impl ItemKind {
             Self::Plant => (0.5, 1.4),
             Self::WaterCooler => (0.4, 1.2),
             Self::Rug => (0.0, 0.0),
+            Self::Bed => (2.1, 0.6),
+            Self::Wardrobe => (0.62, 2.0),
+            Self::Nightstand => (0.42, 0.55),
+            Self::KitchenRun => (0.62, 0.92),
+            Self::Fridge => (0.7, 1.6),
+            Self::Stove => (0.66, 0.92),
+            Self::Sideboard => (0.5, 0.85),
+            Self::Television => (0.5, 1.0),
         }
     }
 
@@ -240,6 +259,29 @@ impl Room<'_> {
             self.put(ItemKind::Plant, c + u * (s * 2.2) - v * 1.5, v, 0.5, 0.1);
         }
         true
+    }
+
+    /// A seating group at `c`, or as near it as there is room.
+    fn seats_near(&mut self, c: DVec2, along_x: bool) -> bool {
+        for step in 0..5 {
+            let d = step as f64 * 0.6;
+            for off in [
+                DVec2::ZERO,
+                DVec2::X * d,
+                DVec2::X * -d,
+                DVec2::Y * d,
+                DVec2::Y * -d,
+                DVec2::new(d, d),
+                DVec2::new(-d, d),
+                DVec2::new(d, -d),
+                DVec2::new(-d, -d),
+            ] {
+                if (step > 0 || off == DVec2::ZERO) && self.seats(c + off, along_x) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Plants and the odd cabinet along the real walls, every `step`.
@@ -443,6 +485,226 @@ impl Room<'_> {
         );
     }
 
+    /// A shop: the counter at the back facing the door, shelves in rows
+    /// across the floor, display cases along the walls.
+    fn shop(&mut self) {
+        let r = self.inner;
+        let s = r.size();
+        let w = (s.x * 0.3).clamp(2.4, 4.0);
+        let mid = r.center().x;
+        self.put(
+            ItemKind::Counter,
+            DVec2::new(mid, r.max.y - 2.2),
+            -DVec2::Y,
+            w,
+            1.0,
+        );
+        // Rows of shelves either side of the way in, from 4 m inside.
+        let rows = ((s.y - 9.0) / 3.2).floor().max(0.0) as usize;
+        for j in 0..rows {
+            let z = r.min.y + 4.5 + j as f64 * 3.2;
+            for side in [-1.0, 1.0] {
+                let len = ((s.x * 0.5 - 3.4) * 0.5).floor() * 2.0;
+                if len >= 2.0 {
+                    let x = mid + side * (1.7 + len * 0.5);
+                    self.put(ItemKind::Shelves, DVec2::new(x, z), DVec2::Y, len, 0.9);
+                }
+            }
+        }
+        self.along_walls(4.5, &[(ItemKind::Case, 1.6), (ItemKind::Plant, 0.5)]);
+    }
+
+    /// A living room: sofas round a low table, the television and a
+    /// sideboard at the walls, books, plants.
+    fn living(&mut self) {
+        let r = self.inner;
+        let s = r.size();
+        let along_x = s.x >= s.y;
+        let c = r.center();
+        // Two groups in a long room, else one.
+        let step = if along_x { DVec2::X } else { DVec2::Y } * (s.max_element() * 0.25);
+        let spots = if s.max_element() >= 12.0 {
+            vec![c - step, c + step]
+        } else {
+            vec![c]
+        };
+        let mut seated = false;
+        for (k, p) in spots.into_iter().enumerate() {
+            if k == 1 && seated && self.rng.chance(0.5) {
+                // A dining table instead of the second group.
+                if self.put(ItemKind::Table, p, DVec2::Y, 2.4, 0.8) {
+                    for x in [-0.8, 0.0, 0.8] {
+                        for side in [-1.0, 1.0] {
+                            let at = p + DVec2::new(x, side * 0.8);
+                            self.put(ItemKind::Chair, at, DVec2::Y * -side, 0.5, 0.0);
+                        }
+                    }
+                }
+                continue;
+            }
+            seated |= self.seats_near(p, !along_x);
+        }
+        // One television, in the middle of a wall.
+        let first = self.rng.index(4);
+        for k in (0..4).map(|k| (k + first) % 4) {
+            let len = self.wall(k).3;
+            if self.against(k, len * 0.5, ItemKind::Television, 1.0, 0.4) {
+                break;
+            }
+        }
+        self.along_walls(
+            3.6,
+            &[
+                (ItemKind::Sideboard, 1.8),
+                (ItemKind::Bookcase, 1.6),
+                (ItemKind::Plant, 0.5),
+                (ItemKind::Armchair, 0.9),
+            ],
+        );
+    }
+
+    /// Fridge, counter, stove and more counter in a row at wall `k`, past
+    /// its doorways: how many of the four found room.
+    fn kitchen_run(&mut self, k: usize) -> usize {
+        let len = self.wall(k).3;
+        let mut t = 0.1;
+        let mut n = 0;
+        for (kind, w) in [
+            (ItemKind::Fridge, 0.7),
+            (ItemKind::KitchenRun, 2.4),
+            (ItemKind::Stove, 0.7),
+            (ItemKind::KitchenRun, 1.8),
+        ] {
+            while t + w <= len - 0.1 {
+                if self.against(k, t + w * 0.5, kind, w, 0.0) {
+                    n += 1;
+                    t += w + 0.02;
+                    break;
+                }
+                t += 0.3;
+            }
+        }
+        n
+    }
+
+    /// The hall of a house of flats: somewhere to sit and wait, things
+    /// along the walls, the way from the door to the stairs clear.
+    fn house_hall(&mut self, entrance: Option<DVec2>) {
+        let r = self.inner;
+        let s = r.size();
+        let ex = entrance.map_or(r.center().x, |e| e.x);
+        for side in [-1.0, 1.0] {
+            let c = DVec2::new(ex + side * (s.x * 0.25).max(4.4), r.min.y + s.y * 0.5);
+            self.seats_near(c, false);
+        }
+        self.along_walls(
+            4.0,
+            &[
+                (ItemKind::Sideboard, 1.8),
+                (ItemKind::Plant, 0.5),
+                (ItemKind::Sofa, 2.0),
+                (ItemKind::Case, 1.6),
+            ],
+        );
+    }
+
+    /// A kitchen to eat in: a run of counter, stove and fridge at one
+    /// wall, the table in the middle.
+    fn kitchen(&mut self) {
+        // The run goes to the wall that takes all of it: the longest
+        // first, past its doorways.
+        let mut order: Vec<usize> = (0..4).filter(|k| self.walls[*k]).collect();
+        order.sort_by(|a, b| self.wall(*b).3.total_cmp(&self.wall(*a).3));
+        let mut best = (0, None);
+        for k in order.iter().copied() {
+            let from = self.out.len();
+            let n = self.kitchen_run(k);
+            self.out.truncate(from);
+            if n > best.0 {
+                best = (n, Some(k));
+            }
+            if n == 4 {
+                break;
+            }
+        }
+        if let Some(k) = best.1 {
+            self.kitchen_run(k);
+        }
+        // The table as near the middle as it finds room, either way round.
+        let c = self.inner.center();
+        let s = self.inner.size();
+        let (u, v) = if s.x >= s.y {
+            (DVec2::X, DVec2::Y)
+        } else {
+            (DVec2::Y, DVec2::X)
+        };
+        let reach = (s.max_element() * 0.5).floor() as i32;
+        // Chairs along both sides; in a narrow kitchen at the two ends.
+        'table: for sides in [true, false] {
+            for step in 0..=reach {
+                for side in [1.0, -1.0] {
+                    for (a, b) in [(u, v), (v, u)] {
+                        let p = c + u * (step as f64 * side);
+                        // (Chairs need their room too.)
+                        let need = if sides {
+                            a.abs() * 1.25 + b.abs() * 1.05
+                        } else {
+                            a.abs() * 1.75 + b.abs() * 0.55
+                        };
+                        if !self.fits(p, need, 0.1) || !self.put(ItemKind::Table, p, b, 2.4, 0.1) {
+                            continue;
+                        }
+                        if sides {
+                            for x in [-0.8, 0.0, 0.8] {
+                                for side in [-1.0, 1.0] {
+                                    let at = p + a * x + b * (side * 0.8);
+                                    self.put(ItemKind::Chair, at, b * -side, 0.5, 0.0);
+                                }
+                            }
+                        } else {
+                            for end in [-1.0, 1.0] {
+                                self.put(ItemKind::Chair, p + a * (end * 1.5), a * -end, 0.5, 0.0);
+                            }
+                        }
+                        break 'table;
+                    }
+                }
+            }
+        }
+        self.along_walls(5.0, &[(ItemKind::Sideboard, 1.8), (ItemKind::Plant, 0.5)]);
+    }
+
+    /// A bedroom: the bed's head to a wall with a nightstand each side,
+    /// wardrobes at another, an armchair.
+    fn bedroom(&mut self) {
+        let mut bed = None;
+        // The wall furthest from the doors first: try each in turn.
+        for k in [1, 3, 2, 0] {
+            let len = self.wall(k).3;
+            for t in [len * 0.5, len * 0.35, len * 0.65] {
+                if self.against(k, t, ItemKind::Bed, 1.7, 0.6) {
+                    for side in [-1.15, 1.15] {
+                        self.against(k, t + side, ItemKind::Nightstand, 0.5, 0.0);
+                    }
+                    bed = Some(k);
+                    break;
+                }
+            }
+            if bed.is_some() {
+                break;
+            }
+        }
+        self.along_walls(
+            2.6,
+            &[
+                (ItemKind::Wardrobe, 1.8),
+                (ItemKind::Wardrobe, 1.2),
+                (ItemKind::Armchair, 0.9),
+                (ItemKind::Plant, 0.5),
+            ],
+        );
+    }
+
     /// A walkway: benches and plants along its real walls.
     fn walkway(&mut self) {
         self.along_walls(
@@ -469,8 +731,9 @@ pub fn items(l: &Layout) -> Vec<Item> {
         if s.within.is_some()
             || matches!(
                 s.kind,
-                SpaceKind::Shaft | SpaceKind::StairHall | SpaceKind::Canyon | SpaceKind::Vestibule
+                SpaceKind::Shaft | SpaceKind::StairHall | SpaceKind::Canyon
             )
+            || (s.kind == SpaceKind::Vestibule && l.scheme != Scheme::Flats)
         {
             continue;
         }
@@ -526,7 +789,9 @@ pub fn items(l: &Layout) -> Vec<Item> {
                 _ => {}
             }
             if k.kind.passable() {
-                blocked.push(k.apron().inset(-1.2));
+                // (Homes are closer set than halls.)
+                let clear = if l.scheme == Scheme::Flats { 0.4 } else { 1.2 };
+                blocked.push(k.apron().inset(-clear));
             }
             if k.kind == LinkKind::Entrance {
                 entrance = Some(k.at);
@@ -601,7 +866,12 @@ pub fn items(l: &Layout) -> Vec<Item> {
                 1 => room.tables(),
                 _ => room.offices(),
             },
-            SpaceKind::Boardroom | SpaceKind::Shop => room.tables(),
+            SpaceKind::Boardroom => room.tables(),
+            SpaceKind::Shop => room.shop(),
+            SpaceKind::Living => room.living(),
+            SpaceKind::Kitchen => room.kitchen(),
+            SpaceKind::Bedroom => room.bedroom(),
+            SpaceKind::Vestibule => room.house_hall(entrance),
             SpaceKind::Service => room.archive(),
             SpaceKind::Gallery | SpaceKind::Arcade | SpaceKind::Concourse => room.walkway(),
             _ => {}
@@ -615,7 +885,6 @@ pub fn items(l: &Layout) -> Vec<Item> {
 mod tests {
     use super::*;
     use crate::layout::office::plan_scheme;
-    use crate::layout::Scheme;
 
     fn plans() -> Vec<Layout> {
         let mut out = Vec::new();
@@ -632,6 +901,13 @@ mod tests {
             }
         }
         assert!(out.len() >= 9);
+        // Old-town houses: shop houses and flats.
+        for seed in 0..8u64 {
+            let size = DVec2::new(12.0 + (seed % 4) as f64, 24.0 + (seed % 5) as f64);
+            for scheme in [Scheme::ShopHouse, Scheme::Flats] {
+                out.push(plan_scheme(Seed(40 + seed), size, 3, scheme).expect("it fits"));
+            }
+        }
         out
     }
 
@@ -641,7 +917,16 @@ mod tests {
     fn furniture_stands_clear_of_everything() {
         for l in plans() {
             let its = items(&l);
-            assert!(its.len() > 150, "{:?}: only {} pieces", l.scheme, its.len());
+            let least = match l.scheme {
+                Scheme::ShopHouse | Scheme::Flats => 20,
+                _ => 150,
+            };
+            assert!(
+                its.len() > least,
+                "{:?}: only {} pieces",
+                l.scheme,
+                its.len()
+            );
             assert_eq!(its, items(&l), "the same every time");
             let solids: Vec<(Part, Rect, (f64, f64))> = pieces(&l)
                 .iter()

@@ -44,10 +44,13 @@ fn grand(prog: &Programme, usage: BuildingUse) -> bool {
 /// than the homes beside it, so its shop is a room to move in.
 const HOUSE: ((f64, f64), (f64, f64)) = ((12.0, 15.0), (22.0, 28.0));
 
-/// Is this a shop house of halls (`office::MIN_HOUSE`, a shop with rooms
-/// above on an old-town plot)?
+/// Is this an old-town house of halls: a shop house (`office::MIN_HOUSE`,
+/// a shop with rooms above) or a house of flats (`office::MIN_FLATS`)?
 fn shop_house(prog: &Programme, usage: BuildingUse) -> bool {
-    usage == BuildingUse::ShopsAndOffices && prog.lanes
+    matches!(
+        usage,
+        BuildingUse::ShopsAndOffices | BuildingUse::Apartments
+    ) && prog.lanes
 }
 
 /// Is this use planned as halls here (an office building or a shop house)?
@@ -530,13 +533,28 @@ fn fill_block(
             let mut placed = false;
             // An office building needs a plot its halls fit on; where the
             // block has no such room, the quarter's other use goes there.
-            let other = prog.uses.iter().map(|u| u.0).find(|u| !of_halls(prog, *u));
-            let tries = [Some(wanted), other.filter(|_| of_halls(prog, wanted))];
-            for usage in tries.into_iter().flatten() {
-                let house = shop_house(prog, usage);
-                let big = of_halls(prog, usage);
+            // (In the old town's lanes that is a narrow house of flats of
+            // the old kind: they fill what the wide houses leave.)
+            let other = prog
+                .uses
+                .iter()
+                .map(|u| u.0)
+                .find(|u| !of_halls(prog, *u))
+                .or(prog.lanes.then_some(BuildingUse::Apartments));
+            let tries = [
+                Some((wanted, true)),
+                other.filter(|_| of_halls(prog, wanted)).map(|u| (u, false)),
+            ];
+            for (usage, halls) in tries.into_iter().flatten() {
+                let house = halls && shop_house(prog, usage);
+                let big = halls && of_halls(prog, usage);
                 let (wr, dr) = if house {
-                    HOUSE
+                    let least = if usage == BuildingUse::Apartments {
+                        office::MIN_FLATS.y
+                    } else {
+                        HOUSE.1 .0
+                    };
+                    (HOUSE.0, (least, HOUSE.1 .1))
                 } else if big {
                     (
                         (prog.width.0.max(GRAND.0 .0), prog.width.1.max(GRAND.0 .1)),
@@ -545,7 +563,9 @@ fn fill_block(
                 } else {
                     (prog.width, prog.depth)
                 };
-                let (least_w, least_d) = if house {
+                let (least_w, least_d) = if house && usage == BuildingUse::Apartments {
+                    (office::MIN_FLATS.x, office::MIN_FLATS.y)
+                } else if house {
                     (office::MIN_HOUSE.x, office::MIN_HOUSE.y)
                 } else if big {
                     (office::MIN_SIZE.x, office::MIN_SIZE.y)
@@ -605,7 +625,7 @@ fn fill_block(
                         // fewer storeys than it had floors.
                         out.push(if house {
                             // A shop house's storeys are some 5 m.
-                            let storeys = (site.height() / 5.0).round() as u32;
+                            let storeys = (site.height() / 4.8).round() as u32;
                             site.into_halls(storeys.clamp(2, 4))
                         } else if big {
                             let storeys = (site.height() / 6.3).round() as u32;

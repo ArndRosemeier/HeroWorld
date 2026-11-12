@@ -45,6 +45,7 @@ fn livery(s: Scheme) -> (Color, Color, Color) {
         Scheme::GrandHall => (rgb(226, 214, 196), rgb(150, 62, 48), rgb(214, 170, 90)),
         Scheme::SplitLevel => (rgb(214, 226, 226), rgb(46, 84, 150), rgb(236, 120, 60)),
         Scheme::ShopHouse => (rgb(232, 222, 200), rgb(92, 112, 74), rgb(206, 150, 84)),
+        Scheme::Flats => (rgb(236, 226, 208), rgb(132, 84, 70), rgb(120, 150, 160)),
     }
 }
 
@@ -113,6 +114,8 @@ fn finish(kind: SpaceKind, accent: Color) -> (Base, Color) {
         SpaceKind::Lobby | SpaceKind::Atrium => (Base::Terrazzo, rgb(236, 226, 204)),
         SpaceKind::Hall => (Base::Parquet, rgb(176, 124, 76)),
         SpaceKind::Service => (Base::Lino, rgb(206, 214, 204)),
+        SpaceKind::Living | SpaceKind::Bedroom => (Base::Parquet, rgb(190, 140, 92)),
+        SpaceKind::Kitchen => (Base::Lino, rgb(214, 206, 180)),
         SpaceKind::StairHall | SpaceKind::Concourse => (Base::Terrazzo, rgb(214, 208, 198)),
         // Galleries, arcades, the vestibule: a quiet shade of the house accent.
         _ => (Base::Terrazzo, rgb(232, 224, 208).lerp(accent, 0.3)),
@@ -191,6 +194,14 @@ fn piece(m: &mut crate::interior::pieces::Maker, scheme: Scheme, (kind, w, c): L
             let pts = pc::oval(w, w, 40);
             pc::rug(m, &pts, accent, band, 0.35);
         }
+        K::Bed => pc::bed(m, w, &cover),
+        K::Wardrobe => pc::wardrobe(m, w, walnut),
+        K::Nightstand => pc::nightstand(m, blond, 0, cloth[c]),
+        K::KitchenRun => pc::counter(m, w, rgb(226, 232, 220), Some(0.0)),
+        K::Fridge => pc::fridge(m, rgb(236, 238, 232)),
+        K::Stove => pc::stove(m, rgb(236, 238, 232)),
+        K::Sideboard => pc::sideboard(m, w, walnut, accent),
+        K::Television => pc::television(m, walnut, 0),
     }
 }
 

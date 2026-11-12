@@ -189,3 +189,43 @@ fn shop_houses_are_sound_on_narrow_plots() {
         "{tall} of {all} have a tall room"
     );
 }
+
+/// Every old-town plot big enough gets a sound house of flats: a house
+/// hall at the street, and on every storey above a flat of a few large
+/// rooms, each with a way to the stair.
+#[test]
+fn houses_of_flats_are_sound() {
+    use super::office::{plan_flats, MIN_FLATS};
+    let mut second = 0;
+    for k in 0..120u64 {
+        let size = DVec2::new(
+            MIN_FLATS.x + (k % 7) as f64 * 0.5,
+            MIN_FLATS.y + (k % 9) as f64 * 0.5,
+        );
+        let storeys = 2 + (k % 3) as u32;
+        let l = plan_flats(Seed(800 + k), size, storeys);
+        assert!(l.problems().is_empty(), "{k} {size:?}: {:?}", l.problems());
+        let levels = l.levels();
+        assert_eq!(levels.len() as u32, storeys, "{k}");
+        for y in &levels[1..] {
+            let on = |kind: SpaceKind| {
+                l.spaces
+                    .iter()
+                    .filter(|s| s.kind == kind && (s.y - y).abs() < 1e-6)
+                    .count()
+            };
+            assert_eq!((on(SpaceKind::Living), on(SpaceKind::Kitchen)), (1, 1));
+            assert!((1..=2).contains(&on(SpaceKind::Bedroom)), "{k}");
+            second += on(SpaceKind::Bedroom) - 1;
+        }
+        // Few rooms, and large ones.
+        for s in l.spaces.iter().filter(|s| s.kind == SpaceKind::Living) {
+            let size = s.rect.size();
+            assert!(
+                size.x >= 7.0 && size.y >= 6.0,
+                "{k}: a living room of {size:?}"
+            );
+        }
+    }
+    assert!(second > 10, "{second} second bedrooms");
+}
