@@ -281,6 +281,7 @@ impl GeneratedTown {
             cancel,
         )?);
         cancel.check()?;
+        cancel.stage("Finding the way in", 0.2, 0.2);
         let w = world.clone();
         // Open ground is what is drawn there: roads stand a few
         // centimetres above the terrain.
@@ -295,6 +296,7 @@ impl GeneratedTown {
             cancel,
         )?);
         cancel.check()?;
+        cancel.stage("Placing the solid things", 0.97, 1.0);
         let obstacles = Arc::new(Obstacles::from_town(&world, terrain));
         cancel.check()?;
         Ok(Self {

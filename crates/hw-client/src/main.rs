@@ -2207,22 +2207,40 @@ fn main() -> EngineResult<()> {
                 }
                 let (built, wanted) = town.progress(eye);
                 let building = builds.coming();
-                let what = match building {
-                    Some(c) => format!(
+                // While a plan runs, the bar is the plan's own progress and
+                // its stage; the town's cells count once it is there.
+                let planning = builds.progress();
+                let what = match (building, planning) {
+                    (Some(c), Some((_, stage))) if !stage.is_empty() => format!(
+                        "Building the {}: {}...",
+                        hw_client::citybuild::size_of(c.people).name.to_lowercase(),
+                        stage.to_lowercase()
+                    ),
+                    (Some(c), _) => format!(
                         "Building the {}...",
                         hw_client::citybuild::size_of(c.people).name.to_lowercase()
                     ),
-                    None if wanted == 0 => String::new(),
-                    None => "Building the city...".into(),
+                    (None, _) if wanted == 0 => String::new(),
+                    (None, _) => "Building the city...".into(),
                 };
-                let done = if builds.busy() {
-                    0.0
-                } else if wanted == 0 {
+                // Planning the city is the first PLAN_SHARE of the bar and
+                // drawing its cells the rest, so it never jumps back.
+                const PLAN_SHARE: f32 = 0.8;
+                let cells = if wanted == 0 {
                     1.0
                 } else {
                     built as f32 / wanted as f32
                 };
-                t.set_world_ready(extras_loaded && !builds.busy(), done);
+                let done = if builds.busy() {
+                    // Waiting to start (an older plan still stopping) shows
+                    // nothing yet.
+                    planning.map_or(0.0, |(f, _)| f * PLAN_SHARE)
+                } else if wanted == 0 {
+                    1.0
+                } else {
+                    PLAN_SHARE + (1.0 - PLAN_SHARE) * cells
+                };
+                t.set_world_ready(extras_loaded && !builds.busy(), cells);
                 hw_client::hitch::mark("title screen");
                 let mut choice = t.frame(world, frame, &generated.world, &solids, (done, &what))?;
                 // A joined world (or a new hero's) waits for its town.

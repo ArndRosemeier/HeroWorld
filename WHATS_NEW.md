@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.237 (2026-11-12)
+
+- The "Building the city" bar on the title screen now moves from the very start and names what is going on (shaping the land, planning the roads, choosing the landmarks, digging the underground, planning the streets...), instead of sitting at 0% for ten seconds. Planning the main streets of a big city also uses every core now.
+
 ## 0.236 (2026-11-12)
 
 - The Escape menu has "Back to the title screen": your hero is saved, the game starts over on the title, and you can pick another hero, world or friend's room. If you are hosting, it asks first, because friends are sent home.

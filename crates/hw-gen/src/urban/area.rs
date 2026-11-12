@@ -63,6 +63,7 @@ impl Area {
         let lo = centre - DVec2::splat(half);
         let hi = centre + DVec2::splat(half);
         let units = world.units_in(lo, hi);
+        cancel.stage("Planning the streets", 0.4, 0.97);
         let quarters = plan_all_or_stop(&world, &units, cancel)?;
         let mut out = Area {
             roads: Vec::new(),
@@ -148,6 +149,8 @@ pub fn plan_all_or_stop(
         .map_or(2, |n| n.get())
         .clamp(1, 8);
     let chunk = units.len().div_ceil(threads).max(1);
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    let done = &done;
     std::thread::scope(|s| {
         let jobs: Vec<_> = units
             .chunks(chunk)
@@ -156,7 +159,11 @@ pub fn plan_all_or_stop(
                     part.iter()
                         .map(|u| {
                             cancel.check()?;
-                            Ok(world.quarter(*u))
+                            let q = world.quarter(*u);
+                            // The stage's bar: units finished of all.
+                            let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                            cancel.set_fraction(n as f32 / units.len() as f32);
+                            Ok(q)
                         })
                         .collect::<Result<Vec<_>, Cancelled>>()
                 })

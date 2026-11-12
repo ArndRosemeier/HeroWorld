@@ -146,6 +146,13 @@ impl CityBuilds {
         })
     }
 
+    /// How far the running plan has got (0..1) and the name of its stage,
+    /// while one runs that is still wanted.
+    pub fn progress(&self) -> Option<(f32, &'static str)> {
+        let job = self.running.as_ref().filter(|j| !j.cancel.is_cancelled())?;
+        Some(job.cancel.progress())
+    }
+
     /// The wanted city, once it is planned. Call it every frame.
     pub fn poll(&mut self) -> Option<(City, GeneratedTown)> {
         let job = self.running.as_ref()?;

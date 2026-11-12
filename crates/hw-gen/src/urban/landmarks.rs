@@ -15,6 +15,7 @@ use super::roadgrid::RoadGrid;
 use super::world::{TownWorld, WATER_LEVEL};
 use crate::building::BuildingSite;
 use glam::DVec2;
+use hw_core::{Cancel, Cancelled};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LandmarkKind {
@@ -426,7 +427,7 @@ pub(super) fn plan_stairs(w: &TownWorld, roads: &RoadGrid, l: &Landmark) -> Vec<
 }
 
 /// Picks the landmarks' places (buildings are cleared off them afterwards).
-pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
+pub fn plan_landmarks(w: &TownWorld, cancel: &Cancel) -> Result<Vec<Landmark>, Cancelled> {
     let core = w
         .town
         .growth
@@ -453,6 +454,8 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
     // The weather tower's ring round the core.
     lo = lo.min(core - DVec2::splat(super::weather_tower::WX_REACH + 20.0));
     hi = hi.max(core + DVec2::splat(super::weather_tower::WX_REACH + 20.0));
+    cancel.stage("Choosing the landmarks", 0.05, 0.25);
+    w.warm_roads(lo, hi, cancel)?;
     let all = w.roads_in(lo, hi);
     let roads = RoadGrid::new(&all, 0.0);
     let mut out = Vec::new();
@@ -616,7 +619,7 @@ pub fn plan_landmarks(w: &TownWorld) -> Vec<Landmark> {
         l.stairs = plan_stairs(w, &roads, l);
     }
     out.extend(comets);
-    out
+    Ok(out)
 }
 
 /// The robot works: in the villain quarter (or just outside it where its

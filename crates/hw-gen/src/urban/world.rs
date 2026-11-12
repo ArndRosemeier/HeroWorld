@@ -244,6 +244,7 @@ impl TownWorld {
             pending: Mutex::new(Default::default()),
         };
         cancel.check()?;
+        cancel.stage("Laying the main roads", 0.08, 0.09);
         let mut mains = Vec::new();
         for (i, r) in out.town.network.roads.iter().enumerate() {
             out.main_runs(&r.pts, r.class, i, &mut mains);
@@ -266,11 +267,13 @@ impl TownWorld {
             }
         }
         cancel.check()?;
+        cancel.stage("Crossing the main roads", 0.09, 0.095);
         super::surface::assign_layers(&[], &mut mains);
+        cancel.stage("Building the bridges", 0.095, 0.1);
         out.main_bridges = out.bridges_of(&mains);
         out.main_roads = mains;
         cancel.check()?;
-        out.landmarks = plan_landmarks(&out);
+        out.landmarks = plan_landmarks(&out, cancel)?;
         Ok(out)
     }
 
@@ -603,6 +606,72 @@ impl TownWorld {
         out
     }
 
+    /// Plans, on every core, the district cuts and side streets that
+    /// [`Self::roads_in`] over the box will ask for one by one, so that it
+    /// finds them cached (a big city's box takes seconds on one thread).
+    pub(super) fn warm_roads(
+        &self,
+        lo: DVec2,
+        hi: DVec2,
+        cancel: &Cancel,
+    ) -> Result<(), Cancelled> {
+        let pieces = self.pieces_in(lo, hi);
+        // First every piece's cut into districts, then every district's
+        // streets: a big city has few pieces but many districts, so the
+        // second step is what spreads over the cores.
+        self.in_parallel(pieces.len(), cancel, |k| {
+            self.split(pieces[k]);
+        })?;
+        let mut units = Vec::new();
+        for &p in &pieces {
+            for (d, b) in self.split(p).boxes.iter().enumerate() {
+                if overlap(*b, (lo, hi), NEAR_ROADS) {
+                    units.push(Unit::district(p, d));
+                }
+            }
+        }
+        self.in_parallel(units.len(), cancel, |k| {
+            self.streets(units[k]);
+        })
+    }
+
+    /// Runs `job(0..n)` on every core, stopping early once cancelled, and
+    /// reports the share done as the stage's progress.
+    fn in_parallel(
+        &self,
+        n: usize,
+        cancel: &Cancel,
+        job: impl Fn(usize) + Sync,
+    ) -> Result<(), Cancelled> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let next = AtomicUsize::new(0);
+        let threads = std::thread::available_parallelism()
+            .map_or(2, |n| n.get())
+            .clamp(1, 8);
+        std::thread::scope(|s| {
+            let jobs: Vec<_> = (0..threads)
+                .map(|_| {
+                    s.spawn(|| -> Result<(), Cancelled> {
+                        loop {
+                            let k = next.fetch_add(1, Ordering::Relaxed);
+                            if k >= n {
+                                return Ok(());
+                            }
+                            cancel.check()?;
+                            job(k);
+                            cancel.set_fraction((k + 1) as f32 / n as f32);
+                        }
+                    })
+                })
+                .collect();
+            let mut out = Ok(());
+            for j in jobs {
+                out = out.and(j.join().expect("planning in parallel"));
+            }
+            out
+        })
+    }
+
     /// Every bridge deck in the box.
     pub fn bridges_in(&self, lo: DVec2, hi: DVec2) -> Vec<Bridge> {
         let near = |b: &&Bridge| overlap((b.a.min(b.b), b.a.max(b.b)), (lo, hi), b.half);
@@ -807,6 +876,7 @@ impl TownWorld {
         }
         let (lo, hi) = underground_box(self);
         let units = self.units_in(lo, hi);
+        cancel.stage("Digging the underground", 0.2, 0.4);
         plan_all_or_stop(self, &units, cancel)?;
         cancel.check()?;
         Ok(self.underground())

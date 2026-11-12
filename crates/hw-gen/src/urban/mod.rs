@@ -114,12 +114,16 @@ impl Town {
         cancel: &Cancel,
     ) -> Result<Town, Cancelled> {
         cancel.check()?;
+        cancel.stage("Shaping the land", 0.0, 0.01);
         let land = Land::generate(seed, &params);
         cancel.check()?;
+        cancel.stage("Growing the districts", 0.01, 0.04);
         let growth = Growth::generate(seed, &params, &land);
         cancel.check()?;
+        cancel.stage("Planning the roads", 0.04, 0.07);
         let network = Network::generate(seed, &params, &land, &growth);
         cancel.check()?;
+        cancel.stage("Joining the roads", 0.07, 0.08);
         let g = &growth.time;
         // The outline: the edge of built land, villages and shores included.
         let mut mask = land::Grid::new(g.half(), g.cell, 1.0f32);

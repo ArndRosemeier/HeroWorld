@@ -11,7 +11,19 @@ fn main() {
         .and_then(|a| a.parse().ok())
         .unwrap_or(1e6);
     let t = Instant::now();
-    let _ = GeneratedTown::generate(Seed(1), pop);
+    let probe = Cancel::new();
+    let p = probe.clone();
+    let job = std::thread::spawn(move || GeneratedTown::generate_or_stop(Seed(1), pop, &p));
+    let mut last = "";
+    while !job.is_finished() {
+        let (f, label) = probe.progress();
+        if label != last {
+            println!("{:>7.2?}  {:>5.1}%  {label}", t.elapsed(), f * 100.0);
+            last = label;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let _ = job.join();
     let full = t.elapsed();
     println!("{pop} people: whole plan {full:.2?}");
     let mut worst = Duration::ZERO;
