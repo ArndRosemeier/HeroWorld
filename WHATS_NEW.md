@@ -1,10 +1,10 @@
 # What's new in HeroWorld
 
-## 0.247 (2026-11-12)
-- The thing you retrieve in a hideout now reads as the real object (strongbox, painting, plates...): it is bigger and only small glints play on it, no more glowing bubble.
-
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
+
+## 0.247 (2026-11-12)
+- The thing you retrieve in a hideout now reads as the real object (strongbox, painting, plates...): it is bigger and only small glints play on it, no more glowing bubble.
 
 ## 0.246 (2026-11-12)
 
