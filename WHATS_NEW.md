@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.234 (2026-11-12)
+
+- The night club is a club inside now, in the new roomy buildings too: a stage with a red curtain and footlights for the band, a long bar with stools and bottles behind it, booths along the walls, tables, a jukebox, and in the big ones a dance floor.
+- Towns are built anew for this version.
+
 ## 0.233 (2026-11-12)
 
 - Loft houses: on the small plots where no bigger home fits, a house with a living room two storeys high now stands, with steps along its back wall up to a bedroom gallery over the kitchen. Almost no cramped homes of the old kind are left (about 45 in a town of 20,000, from 1,150).

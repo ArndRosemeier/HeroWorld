@@ -65,7 +65,7 @@ fn list(town: &TownWorld, c: DVec2, known: &BTreeSet<Key>) -> Listed {
                 continue;
             }
             let Some(plan) = s.layout() else { continue };
-            for it in hw_gen::layout::furnish::items(&plan) {
+            for it in s.furniture_of(&plan) {
                 let lk = look(&it);
                 let p = s.to_city(DVec3::new(it.at.x, b.base + it.y, it.at.y));
                 let f = s.along * it.face.x + s.inward * it.face.y;

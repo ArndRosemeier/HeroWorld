@@ -2291,6 +2291,86 @@ pub fn bandstand(m: &mut Maker) {
     );
 }
 
+/// A night club's stage, `w` wide, its back to the wall: a platform with a
+/// bowed front, a chrome band and footlights, a pleated curtain behind,
+/// and the band's stand on it (`hw_gen::layout::furnish::STAGE_DEPTH`
+/// deep and `STAGE_HEIGHT` high).
+pub fn stage(m: &mut Maker, w: f64) {
+    use hw_gen::layout::furnish::{STAGE_DEPTH, STAGE_HEIGHT};
+    let (hw, hd, h) = (w * 0.5, STAGE_DEPTH * 0.5, STAGE_HEIGHT);
+    // The platform: straight at the back, bowed out at the front.
+    let n = 24;
+    let bow = 0.5;
+    let mut pts = vec![DVec2::new(hw, -hd), DVec2::new(-hw, -hd)];
+    pts.extend((0..=n).map(|k| {
+        let t = k as f64 / n as f64;
+        let x = -hw + w * t;
+        DVec2::new(x, hd - bow + bow * (PI * t).sin())
+    }));
+    m.slab(Mat::Wood(rgb(70, 40, 26)), &pts, 0.0, h - 0.04);
+    let top: Vec<DVec2> = pts.iter().map(|p| *p * 0.985).collect();
+    m.slab(Mat::Wood(rgb(150, 100, 60)), &top, h - 0.04, h);
+    // Footlights along the bow.
+    let lights = (w / 0.9).floor().max(2.0) as usize;
+    for k in 0..lights {
+        let t = (k as f64 + 0.5) / lights as f64;
+        let x = -hw + w * t;
+        let z = hd - bow + bow * (PI * t).sin() - 0.18;
+        m.lathe(
+            Mat::Chrome,
+            DVec3::new(x, h, z),
+            &[(0.09, 0.0), (0.1, 0.05), (0.07, 0.11), (0.0, 0.12)],
+        );
+        m.lathe(
+            Mat::Glow(rgb(255, 214, 150)),
+            DVec3::new(x, h + 0.1, z),
+            &[(0.05, 0.0), (0.04, 0.03), (0.0, 0.04)],
+        );
+    }
+    // The curtain: pleats of deep red velvet along the back, a gold pelmet.
+    let pleats = (w / 0.32).round().max(4.0) as usize;
+    let top_y = 3.3;
+    for k in 0..pleats {
+        let x = -hw + (k as f64 + 0.5) * w / pleats as f64;
+        let r = w / pleats as f64 * 0.52;
+        m.lathe(
+            Mat::Cloth(rgb(120, 22, 40)),
+            DVec3::new(x, h, -hd + 0.16),
+            &[(r, 0.0), (r * 0.9, top_y - h), (0.0, top_y - h)],
+        );
+    }
+    m.block(
+        Mat::Paint(rgb(196, 160, 70)),
+        DVec3::new(-hw, top_y - 0.1, -hd + 0.02),
+        DVec3::new(hw, top_y + 0.25, -hd + 0.36),
+    );
+    // The band's stand in the middle, a second microphone to one side.
+    let mut band = m.sub(DVec3::new(0.0, h, -0.3), 0.0);
+    bandstand(&mut band);
+    if w >= 6.0 {
+        for s in [-1.0, 1.0] {
+            m.lathe(
+                Mat::Chrome,
+                DVec3::new(s * (hw - 1.2), h, 0.3),
+                &[
+                    (0.12, 0.0),
+                    (0.1, 0.02),
+                    (0.012, 0.03),
+                    (0.012, 1.45),
+                    (0.0, 1.45),
+                ],
+            );
+            m.blob(
+                Mat::Chrome,
+                DVec3::new(s * (hw - 1.2), 1.52 + h, 0.3),
+                DVec3::new(0.05, 0.07, 0.04),
+                0.0,
+                (0.6, 0.6),
+            );
+        }
+    }
+}
+
 /// A diner booth: two padded benches facing each other across a table,
 /// `w` long (across the booth).
 pub fn booth(m: &mut Maker, cover: Color, top: Color) {

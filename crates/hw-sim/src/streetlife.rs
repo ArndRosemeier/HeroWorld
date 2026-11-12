@@ -28,7 +28,7 @@ use crate::citizens::{Citizens, Escape, LOOKS};
 use crate::clock::SECONDS_PER_HOUR;
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
-use hw_gen::building::{BuildingPlan, BuildingUse, OpeningKind, Side};
+use hw_gen::building::{BuildingPlan, OpeningKind, Side};
 use hw_gen::city::DistrictKind;
 use hw_gen::geom::Polyline;
 use hw_gen::urban::area::Area;
@@ -414,11 +414,7 @@ struct Index {
 /// life puts its sign, doorman and queue at its door where the pavement
 /// has room.
 pub fn is_club(s: &hw_gen::building::BuildingSite) -> bool {
-    s.usage == BuildingUse::ShopsAndOffices
-        && s.floors >= 3
-        && s.size.x >= 10.0
-        && matches!(s.district, DistrictKind::Commercial | DistrictKind::Civic)
-        && s.seed.child("night club").rng().chance(0.2)
+    s.is_club()
 }
 
 /// A night club's room and door: the biggest shop room (in a building of

@@ -342,6 +342,29 @@ pub struct Tier {
 }
 
 impl BuildingSite {
+    /// Whether the building is a night club: a big shop building of the
+    /// business or civic district, one in five, picked by its own seed (so
+    /// the same building whatever square of town is loaded). Its shop floor
+    /// (in a building of halls, its lobby or shop) is furnished as the club.
+    pub fn is_club(&self) -> bool {
+        self.usage == BuildingUse::ShopsAndOffices
+            && self.floors >= 3
+            && self.size.x >= 10.0
+            && matches!(
+                self.district,
+                DistrictKind::Commercial | DistrictKind::Civic
+            )
+            && self.seed.child("night club").rng().chance(0.2)
+    }
+
+    /// The furniture of this site's floor plan `l` ([`Self::layout`]): a
+    /// night club's hall is furnished as the club.
+    pub fn furniture_of(&self, l: &Layout) -> Vec<crate::layout::furnish::Item> {
+        use crate::layout::furnish;
+        let club = self.is_club().then(|| furnish::club_space(l)).flatten();
+        furnish::items_for(l, club)
+    }
+
     /// Makes this an office building of halls with `storeys` tall storeys
     /// (its plot must be at least [`office::MIN_SIZE`]).
     pub fn into_halls(mut self, storeys: u32) -> Self {
@@ -479,7 +502,7 @@ impl BuildingPlan {
     pub fn furniture(&self) -> Vec<crate::layout::furnish::Item> {
         self.layout
             .as_ref()
-            .map(crate::layout::furnish::items)
+            .map(|l| self.site.furniture_of(l))
             .unwrap_or_default()
     }
 

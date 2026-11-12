@@ -58,6 +58,15 @@ pub enum ItemKind {
     Sideboard,
     /// A television set in its cabinet.
     Television,
+    /// A night club's bar: the counter, and the mirrored back bar at the
+    /// wall behind it.
+    Bar,
+    BarStool,
+    /// Two padded benches across a table, end on to the wall.
+    Booth,
+    /// The band's stage, with its instruments.
+    Stage,
+    Jukebox,
 }
 
 impl ItemKind {
@@ -87,6 +96,11 @@ impl ItemKind {
             Self::Stove => (0.66, 0.92),
             Self::Sideboard => (0.5, 0.85),
             Self::Television => (0.5, 1.0),
+            Self::Bar => (BAR_DEPTH, 1.1),
+            Self::BarStool => (0.4, 0.78),
+            Self::Booth => (1.8, 1.1),
+            Self::Stage => (STAGE_DEPTH, STAGE_HEIGHT),
+            Self::Jukebox => (0.6, 1.5),
         }
     }
 
@@ -94,6 +108,13 @@ impl ItemKind {
         self != Self::Rug
     }
 }
+
+/// A bar from the wall to the front of its counter (m): the back bar,
+/// the barman's walk, the counter.
+pub const BAR_DEPTH: f64 = 1.9;
+/// A band's stage: how deep, how high (m).
+pub const STAGE_DEPTH: f64 = 3.2;
+pub const STAGE_HEIGHT: f64 = 0.45;
 
 /// One piece of furniture, in the layout's frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -485,6 +506,142 @@ impl Room<'_> {
         );
     }
 
+    /// A night club: the band's stage at the far wall, a long bar with
+    /// stools down one side, a dance floor in the middle with tables for
+    /// four round it, booths along the walls that are left, a jukebox.
+    fn club(&mut self) {
+        let r = self.inner;
+        let s = r.size();
+        // The stage, as near the middle of the far wall as there is room
+        // (a grand stair may stand there), else on a side wall.
+        let sw = (s.x * 0.35).clamp(4.0, 9.0).min(s.min_element() - 2.0);
+        let spots = [0.5, 0.3, 0.7, 0.2, 0.8];
+        let mut stage = None;
+        let widths = [sw, sw.min(6.0), sw.min(4.0)];
+        'stage: for w in widths {
+            for k in [1, 2, 3, 0] {
+                let len = self.wall(k).3;
+                for t in spots {
+                    if self.against(k, len * t, ItemKind::Stage, w, 1.2) {
+                        stage = Some(k);
+                        break 'stage;
+                    }
+                }
+            }
+            // No wall has room (stairs, arcades, doors): out on the floor,
+            // its back to the nearest side.
+            for (fx, fz) in [(0.5, 0.8), (0.5, 0.2), (0.2, 0.5), (0.8, 0.5), (0.5, 0.65)] {
+                let at = r.min + DVec2::new(s.x * fx, s.y * fz);
+                let face = if fx != 0.5 {
+                    DVec2::X * if fx < 0.5 { 1.0 } else { -1.0 }
+                } else {
+                    DVec2::Y * if fz < 0.5 { 1.0 } else { -1.0 }
+                };
+                if self.put(ItemKind::Stage, at, face, w, 1.2) {
+                    break 'stage;
+                }
+            }
+        }
+        // The bar down a side wall (not the stage's).
+        let mut bar = None;
+        'bar: for k in [2, 3, 1] {
+            if Some(k) == stage {
+                continue;
+            }
+            let len = self.wall(k).3;
+            let mut w = (len * 0.5).clamp(4.0, 10.0).min(len - 1.0);
+            while w >= 3.0 {
+                for t in spots {
+                    if self.against(k, len * t, ItemKind::Bar, w, 1.2) {
+                        bar = Some((k, len * t, w));
+                        break 'bar;
+                    }
+                }
+                w -= 1.0;
+            }
+        }
+        if let Some((k, t, w)) = bar {
+            let (o, along, n, _) = self.wall(k);
+            let stools = ((w - 0.6) / 0.8).floor() as usize;
+            for j in 0..stools {
+                let x = t - w * 0.5 + 0.7 + j as f64 * 0.8;
+                self.put(
+                    ItemKind::BarStool,
+                    o + along * x + n * (BAR_DEPTH + 0.45),
+                    -n,
+                    0.4,
+                    0.0,
+                );
+            }
+        }
+        // Booths along what wall is left, a jukebox by the way in.
+        let len = self.wall(0).3;
+        for t in [0.12, 0.88, 0.25, 0.75] {
+            if self.against(0, len * t, ItemKind::Jukebox, 0.8, 0.8) {
+                break;
+            }
+        }
+        for k in 0..4 {
+            let len = self.wall(k).3;
+            let n = (len / 2.3).floor() as usize;
+            for j in 0..n {
+                let t = (j as f64 + 0.5) * len / n as f64;
+                self.against(k, t, ItemKind::Booth, 1.25, 0.35);
+            }
+        }
+        // The dance floor, and tables for four round it.
+        let c = r.center();
+        let d = (s.min_element() * 0.34).clamp(3.5, 8.0);
+        // (Only where there is room to dance.)
+        let floor = s.min_element() >= 15.0 && self.rug(c, d);
+        let ring = d * 0.5 + 2.4;
+        let tables = ((ring * std::f64::consts::TAU) / 4.2)
+            .floor()
+            .clamp(4.0, 10.0) as usize;
+        let mut spots: Vec<DVec2> = (0..tables)
+            .map(|j| {
+                let a = (j as f64 + 0.5) / tables as f64 * std::f64::consts::TAU;
+                c + hw_core::det::dir2(a) * ring
+            })
+            .collect();
+        // (A small club has no room for the ring: tables wherever the
+        // floor is free, a few.)
+        let (nx, nz) = ((s.x / 2.8).floor() as usize, (s.y / 2.8).floor() as usize);
+        for iz in 0..nz {
+            for ix in 0..nx {
+                spots.push(
+                    r.min
+                        + DVec2::new(
+                            (ix as f64 + 0.5) * s.x / nx as f64,
+                            (iz as f64 + 0.5) * s.y / nz as f64,
+                        ),
+                );
+            }
+        }
+        let mut placed = 0;
+        for (j, at) in spots.into_iter().enumerate() {
+            if j >= tables && placed >= 3 {
+                break;
+            }
+            // (Round the dance floor, not on it.)
+            if floor && at.distance(c) < d * 0.5 + 1.2 {
+                continue;
+            }
+            if !self.put(ItemKind::Table, at, DVec2::Y, 1.2, 0.7) {
+                continue;
+            }
+            placed += 1;
+            for (off, face) in [
+                (DVec2::new(0.0, -0.85), DVec2::Y),
+                (DVec2::new(0.0, 0.85), -DVec2::Y),
+                (DVec2::new(-0.95, 0.0), DVec2::X),
+                (DVec2::new(0.95, 0.0), -DVec2::X),
+            ] {
+                self.put(ItemKind::Chair, at + off, face, 0.5, 0.0);
+            }
+        }
+    }
+
     /// A shop: the counter at the back facing the door, shelves in rows
     /// across the floor, display cases along the walls.
     fn shop(&mut self) {
@@ -721,6 +878,31 @@ impl Room<'_> {
 
 /// Every piece of furniture in the building.
 pub fn items(l: &Layout) -> Vec<Item> {
+    items_for(l, None)
+}
+
+/// The space a night club takes in a building that is one: the biggest
+/// shop or lobby with a way in from the street (the leftmost of equals).
+pub fn club_space(l: &Layout) -> Option<usize> {
+    let area = |i: usize| {
+        let s = l.spaces[i].rect.size();
+        s.x * s.y
+    };
+    l.links
+        .iter()
+        .filter(|k| k.kind == LinkKind::Entrance)
+        .filter(|k| matches!(l.spaces[k.a].kind, SpaceKind::Shop | SpaceKind::Lobby))
+        .max_by(|a, b| {
+            area(a.a)
+                .total_cmp(&area(b.a))
+                .then(b.at.x.total_cmp(&a.at.x))
+        })
+        .map(|k| k.a)
+}
+
+/// Every piece of furniture in the building; space `club`, if any, is
+/// furnished as a night club.
+pub fn items_for(l: &Layout, club: Option<usize>) -> Vec<Item> {
     let solid = pieces(l);
     let seed = Seed(l.size.x.to_bits())
         .child(l.size.y.to_bits())
@@ -859,6 +1041,7 @@ pub fn items(l: &Layout) -> Vec<Item> {
             rng: seed.child(i as u64).rng(),
         };
         match s.kind {
+            _ if club == Some(i) => room.club(),
             SpaceKind::Lobby => room.lobby(entrance),
             SpaceKind::Atrium => room.lobby(None),
             SpaceKind::Hall => match room.rng.index(4) {
@@ -921,6 +1104,29 @@ mod tests {
             out.push(plan_scheme(Seed(90 + seed), size, 2, Scheme::Loft).expect("it fits"));
         }
         out
+    }
+
+    /// A night club has its stage, its bar with stools, booths and
+    /// tables, in a lobby and in a shop house's shop alike.
+    #[test]
+    fn a_club_gets_a_stage_a_bar_and_booths() {
+        for l in plans() {
+            let Some(club) = club_space(&l) else { continue };
+            let its: Vec<Item> = items_for(&l, Some(club))
+                .into_iter()
+                .filter(|i| i.space == club)
+                .collect();
+            let n = |k: ItemKind| its.iter().filter(|i| i.kind == k).count();
+            let what = format!("{:?} {}", l.scheme, l.size);
+            assert_eq!(n(ItemKind::Stage), 1, "{what}: the stage");
+            assert_eq!(n(ItemKind::Bar), 1, "{what}: the bar");
+            assert!(n(ItemKind::BarStool) >= 3, "{what}: stools");
+            assert!(
+                n(ItemKind::Booth) + n(ItemKind::Table) >= 3,
+                "{what}: seats"
+            );
+            assert_eq!(n(ItemKind::Counter) + n(ItemKind::Shelves), 0, "{what}");
+        }
     }
 
     /// Furniture stands in its room, on its floor, clear of every wall,

@@ -206,6 +206,18 @@ fn piece(m: &mut crate::interior::pieces::Maker, scheme: Scheme, (kind, w, c): L
         K::Stove => pc::stove(m, rgb(236, 238, 232)),
         K::Sideboard => pc::sideboard(m, w, walnut, accent),
         K::Television => pc::television(m, walnut, 0),
+        K::Bar => {
+            use hw_gen::layout::furnish::BAR_DEPTH;
+            let (dark, red) = (rgb(92, 54, 32), rgb(160, 30, 44));
+            let mut back = m.sub(DVec3::new(0.0, 0.0, -BAR_DEPTH * 0.5 + 0.22), 0.0);
+            pc::back_bar(&mut back, w, dark);
+            let mut front = m.sub(DVec3::new(0.0, 0.0, BAR_DEPTH * 0.5 - 0.36), 0.0);
+            pc::shop_counter(&mut front, w, dark, red);
+        }
+        K::BarStool => pc::stool(m, rgb(160, 30, 44)),
+        K::Booth => pc::booth(m, rgb(120, 26, 52), rgb(70, 40, 28)),
+        K::Stage => pc::stage(m, w),
+        K::Jukebox => pc::jukebox(m),
     }
 }
 
