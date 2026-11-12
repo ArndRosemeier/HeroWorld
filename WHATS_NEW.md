@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.231 (2026-11-12)
+
+- Far fewer long stutters while moving through town: new ground is now worked out in the background (it used to hold a frame for up to 40 ms), and the street reflections are renewed a bit at a time instead of all in one frame (Engine 0.064).
+
 ## 0.230 (2026-11-12)
 
 - The villain quarter got room indoors too: its tenements are houses of flats with big rooms now, and the Doctor's laboratories are buildings of tall halls under their domes and coils.
