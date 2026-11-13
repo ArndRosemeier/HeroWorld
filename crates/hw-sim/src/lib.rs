@@ -43,6 +43,7 @@ pub mod story;
 pub mod streetlife;
 pub mod streets;
 pub mod taxi;
+pub mod tiers;
 pub mod traffic;
 pub mod tube;
 pub mod wrecks;

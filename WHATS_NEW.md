@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.255 (2026-11-13)
+
+- Housekeeping only: the plan for keeping the busy world around heroes quick (`docs/SERVER_TIERS.md`), with its first building block.
+
 ## 0.254 (2026-11-12)
 
 - Rivers, canals and lakes are real water now: little waves, reflections of the sky and the buildings, light patterns on the river bed and a clear green-blue colour, instead of a flat shiny sheet. A hero standing in a river wades in it.
