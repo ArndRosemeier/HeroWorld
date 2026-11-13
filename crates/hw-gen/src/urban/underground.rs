@@ -15,6 +15,9 @@ use super::world::{TownWorld, WorldBuilding, WorldRoad, DECK, WATER_LEVEL};
 use glam::{DVec2, DVec3};
 use std::collections::BTreeMap;
 
+pub use super::molehaven::{molehaven_layout, MoleHouse, MolehavenLayout};
+use super::molehaven::{RampSign, Signpost, HALL_HEIGHT};
+
 /// Tunnel floor below the road, and the tunnel's height and half width.
 pub const TUNNEL_DEPTH: f64 = 7.5;
 pub const TUNNEL_HEIGHT: f64 = 4.2;
@@ -153,6 +156,10 @@ pub struct Cavern {
     pub floor: f64,
     /// Indices of its chambers in [`Underground::voids`].
     pub chambers: Vec<usize>,
+    /// The ramp up to the utility tunnels (index in the voids), and the
+    /// sign hung where it leaves the tunnel.
+    pub ramp: Option<usize>,
+    pub ramp_sign: Option<RampSign>,
 }
 
 /// Everything below the town.
@@ -163,6 +170,8 @@ pub struct Underground {
     pub cavern: Option<Cavern>,
     /// Lamps: on tunnel ceilings, and the cavern's glowing mushrooms.
     pub lamps: Vec<DVec3>,
+    /// Signposts on the streets round Molehaven's gate, pointing to it.
+    pub signs: Vec<Signpost>,
     grid: BTreeMap<(i64, i64), Vec<u32>>,
 }
 
@@ -198,6 +207,10 @@ impl Underground {
     pub fn floor_for(&self, p: DVec2, y: f64) -> Option<f64> {
         let mut best: Option<f64> = None;
         for (_, v) in self.at(p) {
+            // Molehaven's floor stops at the stair down to the Deeps.
+            if v.kind == VoidKind::Cavern && super::molehaven::over_deep_stair(self, p, 0.0) {
+                continue;
+            }
             let f = v.floor_at(p);
             let reach = v.ceiling_at(p).unwrap_or(f64::MAX);
             if y >= f - 1.0 && y <= reach + 0.45 && best.is_none_or(|b| f > b) {
@@ -506,7 +519,7 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
             min: -hall,
             max: hall,
             floor: [floor, floor],
-            height: 16.0,
+            height: HALL_HEIGHT,
             open: false,
         };
         chambers.push(u.voids.len());
@@ -548,6 +561,8 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
             u.lamps.push(DVec3::new(p.x, floor + 2.6, p.y));
         }
         // A ramp up to the nearest tunnel.
+        let mut ramp_at = None;
+        let mut ramp_sign = None;
         if let Some((q, tf)) = nearest_tunnel(&u, site) {
             let edge = {
                 // Leave the hall on the side facing the tunnel.
@@ -570,6 +585,21 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
                     open: false,
                 };
                 if roofed(w, &ramp) {
+                    ramp_at = Some(u.voids.len());
+                    // A sign hung from the tunnel's roof at the ramp's
+                    // mouth, its arrow pointing down it.
+                    // Its face looks along the tunnel, read from either way.
+                    let face = u
+                        .voids
+                        .iter()
+                        .find(|v| v.kind == VoidKind::Tunnel && v.covers(q, 0.5))
+                        .map_or(along.perp(), |v| v.along);
+                    ramp_sign = Some(RampSign {
+                        at: q,
+                        bottom: tf + TUNNEL_HEIGHT - 1.55,
+                        face,
+                        point: -along,
+                    });
                     u.voids.push(ramp);
                 }
             }
@@ -633,14 +663,69 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
                 spiral,
             });
         }
+        if let Some(gate) = u.entrances.iter().find(|e| e.molehaven) {
+            u.signs = signposts(w, &all, &ground, gate);
+        }
         u.cavern = Some(Cavern {
             centre: site,
             floor,
             chambers,
+            ramp: ramp_at,
+            ramp_sign,
         });
     }
     u.index();
     u
+}
+
+/// Signposts beside the streets round Molehaven's gate, each pointing to
+/// it: on free ground at the back of a pavement, the nearest first, well
+/// apart.
+fn signposts(
+    w: &TownWorld,
+    roads: &[WorldRoad],
+    ground: &Ground,
+    gate: &Entrance,
+) -> Vec<Signpost> {
+    let mut spots: Vec<(f64, DVec2)> = Vec::new();
+    for r in roads {
+        for s in r.pts.windows(2) {
+            let (a, b) = (s[0], s[1]);
+            let len = a.distance(b);
+            if len < 0.5 {
+                continue;
+            }
+            let dir = (b - a) / len;
+            let n = (len / 5.0).ceil() as usize;
+            for k in 0..n {
+                let p = a + dir * (len * (k as f64 + 0.5) / n as f64);
+                let d = p.distance(gate.pos);
+                if !(30.0..=280.0).contains(&d) {
+                    continue;
+                }
+                for side in [1.0, -1.0] {
+                    let c = p + dir.perp() * side * (r.half + r.pavement + 0.75);
+                    spots.push((c.distance(gate.pos), c));
+                }
+            }
+        }
+    }
+    spots.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.x.total_cmp(&b.1.x)));
+    let mut out: Vec<Signpost> = Vec::new();
+    for (_, c) in spots {
+        if out.len() >= 8 {
+            break;
+        }
+        if out.iter().any(|s| s.pos.distance(c) < 65.0) || !ground.free(c, 0.4) {
+            continue;
+        }
+        out.push(Signpost {
+            pos: c,
+            ground: w.ground(c),
+            point: (gate.pos - c).normalize_or(DVec2::X),
+        });
+    }
+    out
 }
 
 /// Does the ground cover the void with a roof at least 1.5 m thick?
@@ -845,86 +930,4 @@ mod tests {
             }
         }
     }
-}
-
-/// Where Molehaven's furniture stands, for drawing it and for its people
-/// to walk round it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct MolehavenLayout {
-    pub floor: f64,
-    /// The well in the hall's middle: centre and radius.
-    pub well: (DVec2, f64),
-    pub houses: Vec<MoleHouse>,
-    /// Market stalls round the well: centre, and the way the counter faces
-    /// (out from the well). The awning reaches 1.6 m to each side and from
-    /// -0.8 to +1.2 m along that way.
-    pub stalls: Vec<(DVec2, DVec2)>,
-}
-
-/// A mushroom house.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MoleHouse {
-    pub at: DVec2,
-    /// Stem radius and height, and the cap's radius.
-    pub stem: f64,
-    pub height: f64,
-    pub cap: f64,
-    /// The way its round door faces; none in the side chambers.
-    pub door: Option<DVec2>,
-}
-
-/// Molehaven's houses, stalls and well, if the town has the cavern.
-pub fn molehaven_layout(u: &Underground) -> Option<MolehavenLayout> {
-    use hw_core::det;
-    use std::f64::consts::TAU;
-    let c = u.cavern.as_ref()?;
-    let hall = &u.voids[*c.chambers.first()?];
-    let mut houses = Vec::new();
-    // Ten round the hall, doors to its middle.
-    for k in 0..10 {
-        let a = TAU * k as f64 / 10.0 + 0.3;
-        let l = DVec2::new(
-            det::cos(a) * (hall.max.x - 6.0),
-            det::sin(a) * (hall.max.y - 6.0),
-        );
-        let at = hall.world(l);
-        let stem = 2.0 + (k % 3) as f64 * 0.4;
-        houses.push(MoleHouse {
-            at,
-            stem,
-            height: 3.6 + (k % 2) as f64,
-            cap: stem * 2.1,
-            door: Some((c.centre - at).normalize_or(DVec2::X)),
-        });
-    }
-    // One in each side chamber.
-    for &i in &c.chambers[1..] {
-        let v = &u.voids[i];
-        houses.push(MoleHouse {
-            at: v.world((v.min + v.max) * 0.5),
-            stem: 2.4,
-            height: 4.4,
-            cap: 5.0,
-            door: None,
-        });
-    }
-    let stalls = (0..5)
-        .map(|k| {
-            let a = TAU * k as f64 / 5.0 + 0.6;
-            let d = DVec2::new(det::cos(a), det::sin(a));
-            (c.centre + d * 9.0, d)
-        })
-        // In a small hall a house may stand there: no stall in its way.
-        .filter(|&(at, _): &(DVec2, DVec2)| {
-            houses
-                .iter()
-                .all(|h| at.distance(h.at) > h.stem * 1.35 + 2.8)
-        })
-        .collect();
-    Some(MolehavenLayout {
-        floor: c.floor,
-        well: (c.centre, 2.34),
-        houses,
-        stalls,
-    })
 }

@@ -333,6 +333,12 @@ impl Minimap {
                 );
             }
         }
+        // Molehaven's gate, kept on the rim when it is off the map, so the
+        // way there always shows.
+        if let Some(g) = town.underground().entrances.iter().find(|e| e.molehaven) {
+            let (p, inside) = to_screen(g.pos);
+            crate::townmap::mole_icon(&painter, p, if inside { 7.0 } else { 5.5 });
+        }
         for c in radio.calls.values() {
             let (p, inside) = to_screen(DVec2::new(c.at.x as f64, c.at.z as f64));
             let r = if inside { 5.5 } else { 4.0 };

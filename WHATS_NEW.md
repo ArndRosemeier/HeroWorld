@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.268 (2026-11-13)
+
+- Molehaven has a proper front door: a stone and iron gate with the mole emblem beside the mole drill, over a stair down into the cavern. A ramp from the utility tunnels leads there too, under a lit sign.
+- Signposts with the mole's face on the streets point the way, the map and minimap mark the gate, and taxis stop at "Molehaven gate".
+- Molehaven itself is finished: mushroom houses with lit windows and doors, a market round a glowing well under the drill's bore, columns, stalactites, strings of lights, and a workshop, mushroom farm, shrine and cottages in the side caves. Everything there is solid.
+- The stair from Molehaven down to the Deeps works again: it was covered by the cavern floor.
+- Towns are generated a little differently again: everyone playing together needs this version.
+
 ## 0.267 (2026-11-13)
 
 - The thing a gang hides is now locked in a safe. Target the safe (Tab or click) and break it open with your powers; the door swings wide and the thing is inside. The noise brings the next crew.

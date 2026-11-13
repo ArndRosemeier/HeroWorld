@@ -189,11 +189,9 @@ pub(super) fn plan_tile(plan: &mut Plan) {
     // Molehaven's way down: a lift from a side chamber.
     if let Some(cav) = plan.under.cavern.as_ref() {
         if super::tile_of(cav.centre) == k {
-            if let Some(&ci) = cav.chambers.get(1) {
-                let ch = &plan.under.voids[ci];
-                let c = ch.world(ch.max - DVec2::splat(2.6));
+            if let Some((c, dir)) = crate::urban::molehaven::deep_stair(plan.under) {
                 let f = deep_floor(w, c);
-                plan.inner_lift(c, f, cav.floor);
+                plan.inner_lift(c, dir, f, cav.floor, true);
                 plan.t.voids.push(room(
                     VoidKind::Gallery,
                     c,

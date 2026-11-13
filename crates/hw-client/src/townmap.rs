@@ -349,6 +349,19 @@ impl TownMap {
                 egui::Color32::from_rgb(40, 40, 50),
             ));
         }
+        // Molehaven's gate: the mole's face, and the town's name.
+        if let Some(g) = town.underground().entrances.iter().find(|e| e.molehaven) {
+            let p = to_screen(g.pos);
+            if rect.expand(80.0).contains(p) {
+                mole_icon(&painter, p, 9.0);
+                names.push((
+                    p,
+                    10.0,
+                    "Molehaven".into(),
+                    egui::Color32::from_rgb(120, 60, 10),
+                ));
+            }
+        }
         // The villains' quarter's name, under its middle.
         if let Some(d) = &town.town.dystopia {
             let c = to_screen(d.centre + DVec2::new(0.0, d.radius * 0.3));
@@ -497,6 +510,37 @@ fn label(
         painter.text(at + d, align, text, font.clone(), halo);
     }
     painter.text(at, align, text, font, col);
+}
+
+/// Molehaven's mark on the maps: a mole's face in goggles on an amber
+/// disc, `r` points across.
+pub fn mole_icon(painter: &egui::Painter, p: egui::Pos2, r: f32) {
+    let ink = egui::Stroke::new(1.3_f32, egui::Color32::from_rgb(60, 36, 20));
+    painter.circle_filled(p, r, egui::Color32::from_rgb(255, 176, 84));
+    painter.circle_stroke(p, r, ink);
+    let fur = egui::Color32::from_rgb(110, 78, 56);
+    for ex in [-1.0f32, 1.0] {
+        painter.circle_filled(p + egui::vec2(ex * r * 0.42, -r * 0.42), r * 0.2, fur);
+    }
+    painter.add(egui::Shape::ellipse_filled(
+        p + egui::vec2(0.0, r * 0.05),
+        egui::vec2(r * 0.58, r * 0.5),
+        fur,
+    ));
+    for ex in [-1.0f32, 1.0] {
+        let e = p + egui::vec2(ex * r * 0.24, -r * 0.08);
+        painter.circle_filled(e, r * 0.15, egui::Color32::from_rgb(255, 214, 120));
+        painter.circle_stroke(
+            e,
+            r * 0.15,
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(200, 150, 60)),
+        );
+    }
+    painter.circle_filled(
+        p + egui::vec2(0.0, r * 0.28),
+        r * 0.12,
+        egui::Color32::from_rgb(236, 120, 140),
+    );
 }
 
 /// A landmark's name on the map.

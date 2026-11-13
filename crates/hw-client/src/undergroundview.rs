@@ -161,7 +161,11 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
         };
         match layer {
             Layer::Street => {
-                pavilion(&mut b, e.pos, e.door, e.top, e.molehaven);
+                if e.molehaven {
+                    crate::molehavenview::gate(&mut b, e, &mut out.glows);
+                } else {
+                    pavilion(&mut b, e.pos, e.door, e.top);
+                }
                 collar(&mut b, e.pos, e.door, town);
                 out.openings.push(e.pos);
             }
@@ -177,7 +181,20 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
             }
         }
     }
+    if layer == Layer::Street {
+        for sg in u.signs.iter().filter(|sg| chunk_of(sg.pos) == k) {
+            crate::molehavenview::signpost(&mut b, sg, &mut out.glows);
+        }
+    }
     if layer == Layer::Below {
+        if let Some(rs) = u
+            .cavern
+            .as_ref()
+            .and_then(|c| c.ramp_sign.as_ref())
+            .filter(|rs| chunk_of(rs.at) == k)
+        {
+            crate::molehavenview::ramp_sign(&mut b, rs, &mut out.glows);
+        }
         for i in u.near(chunk_centre(k), CHUNK) {
             let v = &u.voids[i];
             if chunk_of(v.world((v.min + v.max) * 0.5)) != k {
@@ -209,7 +226,9 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
             });
         }
         if u.cavern.as_ref().is_some_and(|c| chunk_of(c.centre) == k) {
-            molehaven(&mut b, u, &mut out.glows);
+            if let Some(l) = hw_gen::urban::underground::molehaven_layout(u) {
+                crate::molehavenview::cavern(&mut b, &l, &mut out.glows);
+            }
         }
     }
     out.meshes = b.finish_parts().into_iter().map(|m| m.prepare()).collect();
@@ -353,17 +372,28 @@ pub(crate) fn lining_of(
             let f = v.floor_at(mid);
             // One floor where voids overlap: the first one's, a shaft's
             // own square always its own.
+            // Molehaven's has a hole for the stair down to the Deeps (its
+            // collar, drawn with the stair, covers the cells' ragged edge).
+            let hole = cavern
+                && corners.iter().chain([&mid]).any(|&q| {
+                    hw_gen::urban::molehaven::over_deep_stair(town.underground(), q, 0.0)
+                });
             let owns = if v.kind == VoidKind::Shaft {
                 shaft_floor
             } else {
-                owns_floor(mid, f)
+                !hole && owns_floor(mid, f)
             };
             if owns {
-                b.tex = Some(if cavern {
-                    GroundLayer::Cobble.into()
-                } else {
-                    GroundLayer::Paving.into()
-                });
+                b.tex = Some(
+                    if cavern && v.height < hw_gen::urban::molehaven::HALL_HEIGHT - 0.5 {
+                        // The side chambers (lower than the great hall): beaten earth.
+                        GroundLayer::Dirt.into()
+                    } else if cavern {
+                        GroundLayer::Cobble.into()
+                    } else {
+                        GroundLayer::Paving.into()
+                    },
+                );
                 let mut pieces = vec![corners.to_vec()];
                 for o in shafts.iter().filter(|o| (o.floor_at(mid) - f).abs() < 0.6) {
                     pieces = pieces.iter().flat_map(|p| minus_rect(p, o)).collect();
@@ -570,12 +600,17 @@ fn tunnel_fittings(b: &mut MeshBuilder, u: &Underground, i: usize) {
 /// Paving round a lift's opening in the street, with a chrome rail on the
 /// three sides away from the door.
 pub(crate) fn collar(b: &mut MeshBuilder, c: DVec2, door: DVec2, town: &TownWorld) {
+    collar_on(b, c, door, |q| town.ground(q));
+}
+
+/// [`collar`] on any floor: `floor(q)` is its height at `q`.
+pub(crate) fn collar_on(b: &mut MeshBuilder, c: DVec2, door: DVec2, floor: impl Fn(DVec2) -> f64) {
     let inner = hw_gen::urban::underground::SHAFT_HALF;
     let outer = inner + hw_gen::urban::underground::APRON;
     let side = door.perp();
     let p = |x: f64, z: f64| {
         let q = c + side * x + door * z;
-        v3(q, town.ground(q) + 0.07)
+        v3(q, floor(q) + 0.07)
     };
     b.tex = Some(GroundLayer::Paving.into());
     let col = rgb(196, 192, 182);
@@ -1081,15 +1116,10 @@ fn balustrade(b: &mut MeshBuilder, sp: &Spiral, steps: &[Step]) {
 }
 
 /// A Googie pavilion over a stair: four tapered chrome posts, a thin swept
-/// canopy with a glowing front edge, and a glowing atomic sign on a mast
-/// (amber for Molehaven, Aether blue for the tunnels).
-fn pavilion(b: &mut MeshBuilder, c: DVec2, door: DVec2, top: f64, molehaven: bool) {
-    let (roof, glow) = if molehaven {
-        (rgb(206, 92, 58), rgb(255, 170, 90))
-    } else {
-        (rgb(46, 150, 156), rgb(130, 230, 255))
-    };
-    pavilion_in(b, c, door, top, roof, glow);
+/// canopy with a glowing front edge, and a glowing atomic sign on a mast,
+/// in Aether blue (Molehaven's stair has its own gate, `molehavenview`).
+fn pavilion(b: &mut MeshBuilder, c: DVec2, door: DVec2, top: f64) {
+    pavilion_in(b, c, door, top, rgb(46, 150, 156), rgb(130, 230, 255));
 }
 
 /// [`pavilion`] in any colours: the canopy's paint and the lit edge and sign.
@@ -1315,164 +1345,6 @@ pub(crate) fn mushroom(
                 |_| Some((Surf::Plain, rgb(244, 236, 216))),
             );
         }
-    }
-}
-
-/// Molehaven's dressing: mushroom houses round the great hall and in the
-/// side chambers, toadstool lamps, crystals, a well and a market.
-fn molehaven(b: &mut MeshBuilder, u: &Underground, glows: &mut Vec<Glow>) {
-    let Some(c) = &u.cavern else { return };
-    let hall = &u.voids[c.chambers[0]];
-    let f = c.floor;
-    let caps = [
-        rgb(196, 64, 48),
-        rgb(214, 132, 48),
-        rgb(150, 70, 160),
-        rgb(70, 130, 170),
-    ];
-    // Houses round the hall, doors to its middle.
-    for k in 0..10 {
-        let a = TAU * k as f64 / 10.0 + 0.3;
-        let l = DVec2::new(a.cos() * (hall.max.x - 6.0), a.sin() * (hall.max.y - 6.0));
-        let p = hall.world(l);
-        let cap = caps[k % caps.len()];
-        let r = 2.0 + (k % 3) as f64 * 0.4;
-        mushroom(
-            b,
-            p,
-            f,
-            r,
-            3.6 + (k % 2) as f64,
-            r * 2.1,
-            cap,
-            rgb(255, 200, 130),
-        );
-        // A round door and a lit window, facing the middle.
-        let to = (c.centre - p).normalize_or(DVec2::X);
-        let door = p + to * (r + 0.02);
-        disc(b, v3(door, f + 1.0), v3(to, 0.0), 0.75, rgb(70, 46, 30));
-        b.surf = Surf::Glow;
-        disc(
-            b,
-            v3(p + (to + to.perp() * 0.9).normalize() * (r + 0.02), f + 2.3),
-            v3((to + to.perp() * 0.9).normalize(), 0.0),
-            0.35,
-            rgb(255, 210, 120),
-        );
-        b.surf = Surf::Plain;
-        glows.push(Glow {
-            pos: v3(door + to * 1.5, f + 2.2),
-            color: rgb(255, 190, 120),
-            strength: 3.0,
-            range: 7.0,
-        });
-    }
-    // One house in each side chamber.
-    for &i in &c.chambers[1..] {
-        let v = &u.voids[i];
-        let p = v.world((v.min + v.max) * 0.5);
-        mushroom(
-            b,
-            p,
-            f,
-            2.4,
-            4.4,
-            5.0,
-            caps[i % caps.len()],
-            rgb(255, 200, 130),
-        );
-    }
-    // Toadstool lamps where the plan puts lamps.
-    for (k, l) in u.lamps.iter().filter(|l| (l.y - f).abs() < 4.0).enumerate() {
-        let p = DVec2::new(l.x, l.z);
-        let glow = if k % 2 == 0 {
-            rgb(120, 220, 255)
-        } else {
-            rgb(190, 130, 255)
-        };
-        mushroom(b, p, f, 0.15, 2.2, 0.8, glow, glow);
-    }
-    // Crystals near the hall's walls.
-    b.surf = Surf::Glow;
-    for k in 0..14 {
-        let a = TAU * k as f64 / 14.0 + 0.11;
-        let l = DVec2::new(a.cos() * (hall.max.x - 1.2), a.sin() * (hall.max.y - 1.2));
-        let p = hall.world(l);
-        let h = 1.4 + (k % 4) as f64 * 0.6;
-        let col = if k % 3 == 0 {
-            rgb(120, 255, 210)
-        } else {
-            rgb(170, 140, 255)
-        };
-        crystal(b, p, f, h, col);
-    }
-    b.surf = Surf::Plain;
-    // The well in the middle: a stone ring with a moulded lip round
-    // glowing water, an iron arch over it with a lantern.
-    let stone = rgb(120, 110, 96);
-    lathe(
-        b,
-        v3(c.centre, f),
-        DVec3::Y,
-        &[
-            (1.75, 0.75),
-            (1.8, 0.0),
-            (2.3, 0.0),
-            (2.25, 0.12),
-            (2.2, 0.7),
-            (2.32, 0.76),
-            (2.34, 0.9),
-            (2.2, 0.98),
-            (1.85, 0.98),
-            (1.75, 0.9),
-        ],
-        48,
-        |_| Some((Surf::Plain, stone)),
-    );
-    lathe(
-        b,
-        v3(c.centre, f + 0.75),
-        DVec3::Y,
-        &[(0.0, 0.0), (1.8, 0.0), (0.0, 0.001)],
-        48,
-        |_| Some((Surf::Glow, rgb(90, 220, 255))),
-    );
-    let arch: Vec<DVec3> = (0..=16)
-        .map(|k| {
-            let a = PI * k as f64 / 16.0;
-            v3(c.centre, f + 0.95) + DVec3::new(-2.05 * a.cos(), 2.4 * a.sin(), 0.0)
-        })
-        .collect();
-    crate::carmesh::tube(
-        b,
-        &arch,
-        (0.07, 0.07),
-        10,
-        Some((Surf::Metal, rgb(70, 66, 62))),
-    );
-    let lamp = v3(c.centre, f + 3.35);
-    tube(
-        b,
-        lamp + DVec3::Y * 0.2,
-        lamp - DVec3::Y * 0.4,
-        0.015,
-        rgb(70, 66, 62),
-    );
-    b.surf = Surf::Glow;
-    sphere(b, lamp - DVec3::Y * 0.55, 0.18, rgb(120, 230, 255));
-    b.surf = Surf::Plain;
-    glows.push(Glow {
-        pos: v3(c.centre, f + 2.0),
-        color: rgb(90, 220, 255),
-        strength: 8.0,
-        range: 14.0,
-    });
-    // Market stalls with striped, scalloped awnings round the well.
-    for k in 0..5 {
-        let a = TAU * k as f64 / 5.0 + 0.6;
-        let d = DVec2::new(a.cos(), a.sin());
-        let p = c.centre + d * 9.0;
-        stall(b, p, d, f, caps[k % caps.len()]);
     }
 }
 
