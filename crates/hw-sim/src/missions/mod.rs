@@ -63,6 +63,33 @@ pub const AWAY: f64 = 250.0;
 pub const AWAY_SECONDS: f64 = 30.0;
 /// Rooms the gang holds besides the boss's.
 pub const ROOMS: usize = 6;
+/// Rooms held (besides the boss's) in a small, a middling and a big
+/// hideout, and the share of the next level's karma each pays.
+pub const SIZE_ROOMS: [usize; 3] = [2, 4, ROOMS];
+pub const SIZE_SHARE: [f64; 3] = [0.15, 0.25, 0.4];
+/// Each level the gang stands over the team adds this share of the reward.
+pub const LEVEL_BONUS: f64 = 0.1;
+pub fn rooms_of(size: u8) -> usize {
+    SIZE_ROOMS[(size as usize).min(SIZE_ROOMS.len() - 1)]
+}
+/// The reward for a hideout of `size` whose gang stands `extra` levels
+/// over the team: a share of the karma the next level takes.
+pub fn share_of(size: u8, extra: u8) -> f64 {
+    SIZE_SHARE[(size as usize).min(SIZE_SHARE.len() - 1)] * (1.0 + LEVEL_BONUS * extra as f64)
+}
+/// Lookouts at a hideout's way in, and the crew that cuts off the way out
+/// once the thing is taken.
+pub const DOOR_SIZE: u32 = 2;
+pub const CUTOFF_SIZE: u32 = 2;
+/// A crew that has fought this long and still stands calls the next room.
+pub const ALARM_SECONDS: f64 = 6.0;
+/// A crew is in a fight while the hero it is after is this near (m).
+pub const FIGHT_REACH: f64 = 30.0;
+/// The boss breaks off below this share of its health, for this long.
+pub const BOSS_BREAKS: f32 = 0.4;
+pub const BOSS_RUN_SECONDS: f64 = 5.0;
+/// Out of the building by this much (m), the thing is safe.
+pub const OUT_MARGIN: f64 = 3.0;
 /// Things an evidence case hides: one, a real object.
 pub const CLUES: usize = 1;
 /// A hero this near a clue can search it (m), for this long (s).
@@ -279,6 +306,15 @@ impl Default for Missions {
     }
 }
 
+/// The rooms a gang can hold in each building of `floors`.
+fn room_counts(floors: &Floors) -> Vec<u8> {
+    floors
+        .buildings
+        .iter()
+        .map(|b| running::gang_rooms(b).len().min(255) as u8)
+        .collect()
+}
+
 /// Hero Hall's contact hero (the cases keep clear of her).
 fn hall_contact(world: &TownWorld) -> Option<DVec3> {
     world
@@ -324,6 +360,7 @@ impl Missions {
             places: Some(Arc::new(Places {
                 town: Some(world.clone()),
                 area: Some(area),
+                rooms: room_counts(&floors),
                 floors,
                 names,
                 hideouts,
@@ -339,6 +376,7 @@ impl Missions {
         let n = floors.buildings.len();
         Missions {
             places: Some(Arc::new(Places {
+                rooms: room_counts(&floors),
                 floors,
                 names: vec!["test hall".to_string(); n],
                 hideouts: (0..n).collect(),
@@ -463,6 +501,7 @@ impl Missions {
             steps,
             crime: Default::default(),
             extra: 0,
+            size: 2,
         };
         self.cases
             .push(Running::new(number, plan, 0, places.floors.clone()));
@@ -573,6 +612,7 @@ impl Missions {
                     job: c.job.code(),
                     gang: gang as u8,
                     level: team.saturating_add(c.extra),
+                    size: c.size,
                     at: site.at.as_vec3().to_array(),
                     name,
                     taken: case.is_some()
@@ -707,7 +747,7 @@ impl Missions {
             world,
             heroes,
             r.site().at,
-            REWARD_SHARE,
+            r.share(),
             r.site().building.is_some(),
         );
         r.leave(world);
@@ -737,6 +777,8 @@ impl Missions {
                 held: 0,
                 crime: 0,
                 level: 0,
+                size: 0,
+                alarms: 0,
             });
         }
     }

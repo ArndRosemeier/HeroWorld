@@ -852,6 +852,7 @@ at Atomic Annie (she keeps the hall's steps and no longer hands anything out):
   hotel on Juniper Street"), the **job** with an icon (**arrest the boss**: handcuffs, **find
   the thing**: magnifier), the **gang** (a coloured dot and its short name), the gangsters'
   **level** (the team's level plus 0-2; green when easy, gold on par, orange and red when tough)
+  the hideout's **size** (one, two or three little houses lit: DEN, HIDEOUT, FORTRESS)
   and the **distance** from the hero. **TAKE** opens the case (FULL when 3 are open, ON IT when
   taken). The radio's heading and compass then follow it.
 - **The board** (`missions/board.rs`): crime number *n* is a pure function of the world's seed
@@ -866,17 +867,30 @@ never two in one building. Cases are numbered with the crime's number and each i
 five gangs (the Doctor's sentries, Jackets or Syndicate, sky pirates, the Iron Legion, the
 Zorrak; the last two only from their levels on).
 
-**A hideout case is one step in one building**, one of two jobs:
-- **Arrest the boss** (takeover): the gang holds up to **6 rooms** (halls, boardrooms, lobbies,
-  shops, concourses, at least 8 m a side; a flat's living rooms, kitchens and bedrooms, 4.5 m),
-  spread over the floors, **3 villains a room** for one hero and one more for each friend. The
-  **boss** waits on the top floor with 3 guards, **1 level over the gang's**. Beating the boss
-  closes the case.
-- **Find the thing** (evidence): the same gang, plus **one real object** the crime is about
-  (a strongbox of cash, printing plates, a crate with a glowing canister, the prototype in its
-  case, a painting propped up, a ledger), lying in a far corner of a room on a high floor. It
-  has a small glint of its own (a lit seal, a glowing coil) and sparkles lightly; hold **E**
-  within 2.8 m for 3 s to take it. That closes the case.
+**A hideout case is one step in one building**, in three beats: the lookouts at the door, the
+rooms, and a finale that depends on the job.
+
+- **Size** (`board.rs`, `SIZE_ROOMS`): a **den** holds 2 rooms, a **hideout** 4, a **fortress** 6,
+  besides the boss's room (never more than the building has: rooms are halls, boardrooms,
+  lobbies, shops and concourses at least 8 m a side, and a flat's rooms and back rooms at least
+  3.8 m). **3 villains a room** for one hero and one more for each friend. In a town of seed 3:
+  40 dens, 41 hideouts, 11 fortresses.
+- **Lookouts**: **2** stand at the way in (`DOOR_SIZE`).
+- **The alarm** (`ALARM_SECONDS`): a crew that has fought a hero for **6 s** and still stands
+  shouts for help, and the **nearest crew that has heard nothing** comes along. One room, not a
+  chain: a crew that was called does not call on, and the boss's guard never leaves the boss. A
+  room taken down inside 6 s calls nobody.
+- **Arrest the boss** (takeover): the **boss** (named in the case file and on the radio) waits
+  on the top floor with 3 guards, **1 level over the gang's**. Below **40 %** health it **breaks
+  off once**: it runs from the hero for 5 s and calls the nearest crew still standing
+  (`BOSS_BREAKS`, `BOSS_RUN_SECONDS`), then turns to fight again. Beating the boss closes the case.
+- **Find the thing** (evidence): **one real object** the crime is about (a strongbox of cash,
+  printing plates, a crate with a glowing canister, the prototype in its case, a painting
+  propped up, a ledger), in a far corner of a room on a high floor, **guarded by that room's
+  crew**: it cannot be taken while they stand. Then hold **E** within 2.8 m for 3 s. Taking it
+  **raises the whole gang**: everyone still standing, the boss and its guard too, comes for the
+  hero, and a crew of **2** cuts off the way out at the door (`CUTOFF_SIZE`). The case closes
+  when the hero who took it is **3 m outside the building** (or nobody is left to stop them).
 - **Hideouts are furnished like hideouts** (`Fit::Hideout`): cots with rumpled blankets,
   card tables with chips and cards, safes, planning boards with a pinned map, photos and red
   string, oil drums and crates, besides the room's own furniture.
@@ -899,8 +913,9 @@ In a building:
   follow you through doors and up stairs by the building's route map (see Villain AI).
 - The gang moves in when a hero comes within **90 m** of the place (on the flat), and leaves if
   no hero is within **250 m** for **30 s** (the case stays; it comes back when you do).
-- **Reward**: every hero within 150 m gets **40 %** of the karma their next level takes when
-  the case closes.
+- **Reward**: every hero within 150 m gets a share of the karma their next level takes when
+  the case closes: **15 %** for a den, **25 %** for a hideout, **40 %** for a fortress, and a
+  tenth more of that for each level the gang stands over the team (`share_of`).
 
 **Adding to cases** (the hooks): a new crime is a `CrimeKind` value (its words, symbol in
 `police::crime_icon`, the thing in `pieces::evidence`); a new kind of place is a `Place` value, a

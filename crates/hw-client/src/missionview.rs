@@ -67,9 +67,22 @@ pub struct State {
     /// What the gang is up to, and the gangsters' level.
     pub crime: CrimeKind,
     pub level: u8,
+    /// How big the hideout is (0 small, 1 middling, 2 big) and the alarms
+    /// its gang has raised.
+    pub size: u8,
+    pub alarms: u8,
 }
 
 impl State {
+    /// The thing is taken and must be got out of the building.
+    pub fn carrying(&self) -> bool {
+        self.stage == INSIDE
+            && self.kind == CaseKind::Evidence
+            && self.in_building()
+            && !self.clues.is_empty()
+            && self.found() == self.clues.len()
+    }
+
     pub fn found(&self) -> usize {
         self.clues.iter().filter(|c| c.1 == DONE).count()
     }
@@ -98,6 +111,8 @@ pub struct CrimeView {
     pub job: CaseKind,
     pub gang: usize,
     pub level: u8,
+    /// 0 small, 1 middling, 2 big.
+    pub size: u8,
     pub at: Vec3,
     pub name: String,
     pub taken: bool,
@@ -210,6 +225,7 @@ impl MissionView {
                             job: CaseKind::from_code(c.job),
                             gang: (c.gang as usize).min(GANGS.len() - 1),
                             level: c.level,
+                            size: c.size,
                             at: Vec3::from_array(c.at),
                             name: c.name.clone(),
                             taken: c.taken,
@@ -234,6 +250,8 @@ impl MissionView {
                 held,
                 crime,
                 level,
+                size,
+                alarms,
             } => {
                 let steps: Vec<StepView> = steps
                     .iter()
@@ -263,6 +281,8 @@ impl MissionView {
                     held: *held as f32 / 255.0,
                     crime: CrimeKind::from_code(*crime),
                     level: *level,
+                    size: *size,
+                    alarms: *alarms,
                 };
                 let before = if matches!(next.stage, CLOSED | IDLE) {
                     self.cases.remove(number)
@@ -450,6 +470,10 @@ impl MissionView {
             .min_by(|a, b| hero.distance(a.1 .0).total_cmp(&hero.distance(b.1 .0)))
             .map(|(s, (_, state))| match (s.kind, *state) {
                 (CaseKind::Hostages, GUARDED) => ("Beat their guards first".to_string(), None),
+                (_, GUARDED) => (
+                    format!("Beat the crew guarding {} first", s.crime.thing()),
+                    None,
+                ),
                 (CaseKind::Hostages, _) => ("Hold E to untie them".to_string(), Some(s.held)),
                 _ => (format!("Hold E to take {}", s.crime.thing()), Some(s.held)),
             })
@@ -545,8 +569,15 @@ fn goal(s: &State) -> String {
         String::new()
     };
     match s.kind {
+        _ if s.carrying() => format!("Get out with {}!", s.crime.thing()),
+        CaseKind::Takeover if s.boss == 3 => {
+            format!("{} is making a run for it: after them!", boss_name(s.gang))
+        }
         CaseKind::Takeover if s.in_building() => {
-            format!("Arrest their boss on the top floor{groups}")
+            format!(
+                "Arrest {} on the top floor{groups}",
+                lower_the(boss_name(s.gang))
+            )
         }
         CaseKind::Takeover => format!("Beat their boss{groups}"),
         CaseKind::Crew => format!("Beat the crew: {} of {}", s.cleared, s.groups.max(1)),
@@ -563,6 +594,21 @@ fn goal(s: &State) -> String {
             s.found(),
             s.clues.len().max(HOSTAGES)
         ),
+    }
+}
+
+/// The gang's boss as the files name them, to start a sentence ("The
+/// Praetorian", "Cap'n Blackbarrel").
+fn boss_name(gang: usize) -> String {
+    let f = &crate::casefile::GANG_FLAVOUR[gang.min(crate::casefile::GANG_FLAVOUR.len() - 1)];
+    crate::casefile::capitalised(f.boss)
+}
+
+/// A name inside a sentence: "The Praetorian" reads "the Praetorian".
+fn lower_the(name: String) -> String {
+    match name.strip_prefix("The ") {
+        Some(rest) => format!("the {rest}"),
+        None => name,
     }
 }
 
@@ -696,7 +742,7 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
     }
     match (b.stage, now.stage) {
         (GO, INSIDE) if now.in_building() => out.push(say(format!(
-            "That's {place}. Each room has its own crew: take them one at a time."
+            "That's {place}. Lookouts at the door, a crew in each room: take a room down fast, or it calls the next."
         ))),
         (GO, INSIDE) if here.place.underground() => out.push(say(
             "You're down there. Watch yourself, sound carries in the dark.".to_string(),
@@ -706,6 +752,20 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
             "They've regrouped {} while you were away. Go back when you're ready.",
             here.at_place()
         ))),
+        (INSIDE, INSIDE) if now.carrying() && !b.carrying() => {
+            out.push(say(format!(
+                "You've got {}! They know: the whole gang is coming, and a crew is at the door. Get out!",
+                now.crime.thing()
+            )));
+        }
+        (INSIDE, INSIDE) if now.boss == 3 && b.boss != 3 => out.push(say(format!(
+            "{} is making a run for it and yelling for help! Don't let them get their breath back.",
+            boss_name(now.gang)
+        ))),
+        (INSIDE, INSIDE) if now.alarms != b.alarms => out.push(say(
+            "They've raised the alarm: the next room is coming. Finish them fast next time!"
+                .to_string(),
+        )),
         (INSIDE, INSIDE) if now.found() > b.found() => {
             let left = now.clues.len() - now.found();
             out.push(say(match (now.kind, left) {
@@ -757,6 +817,8 @@ mod tests {
                     )
                 })
                 .collect(),
+            size: 0,
+            alarms: 0,
             held: 0.0,
             crime: CrimeKind::Payroll,
             level: 5,
@@ -854,6 +916,8 @@ mod tests {
             held: 0,
             crime: 0,
             level: 3,
+            size: 0,
+            alarms: 0,
         }
     }
     #[test]

@@ -35,6 +35,14 @@ fn the_board_lists_hideouts_and_a_taken_crime_fills_the_building() {
         places.floors.buildings.len()
     );
     assert!(places.hideouts.len() >= 5, "the town has hideouts");
+    let mut sizes = [0usize; 3];
+    for c in 1..=places.hideouts.len() as u16 {
+        sizes[board::crime(&places, seed.0, c).unwrap().size as usize] += 1;
+    }
+    let mut spare: Vec<u8> = places.hideouts.iter().map(|&k| places.rooms[k]).collect();
+    spare.sort();
+    println!("sizes small/middling/big {sizes:?}, rooms per hideout {spare:?}");
+    assert!(sizes.iter().all(|&n| n > 0), "all three sizes turn up");
     let hero = sim.spawn_hero(PlayerId(1), DVec3::new(0.0, 1.0, 0.0));
     sim.step();
     let board_msg = sim
@@ -63,8 +71,8 @@ fn the_board_lists_hideouts_and_a_taken_crime_fills_the_building() {
         let at = r.site().at;
         let before = sim.enemies().len();
         println!(
-            "crime {c} {:?} {:?} at {:.0?} in {}",
-            crime.kind, crime.job, at, places.names[crime.building]
+            "crime {c} {:?} {:?} size {} at {:.0?} in {}",
+            crime.kind, crime.job, crime.size, at, places.names[crime.building]
         );
         // The hero at the way in: the gang stands.
         stand(&mut sim, hero, at + DVec3::new(0.0, 0.5, 0.0), 3.0);

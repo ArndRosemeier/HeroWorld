@@ -87,6 +87,9 @@ pub struct Crime {
     pub job: CaseKind,
     /// Levels the gangsters stand over the team (0 to 2).
     pub extra: u8,
+    /// How big the hideout is: 0 small, 1 middling, 2 big (never bigger
+    /// than its building has rooms for).
+    pub size: u8,
     /// The hideout, by index in the route maps ([`Places::floors`]).
     pub building: usize,
 }
@@ -104,12 +107,24 @@ pub fn crime(places: &Places, seed: u64, number: u16) -> Option<Crime> {
     } else {
         CaseKind::Evidence
     };
+    let extra = rng.index(3) as u8;
+    let building = places.hideouts[(number as usize - 1) % n];
+    // Besides the boss's room.
+    let spare = places
+        .rooms
+        .get(building)
+        .map_or(0, |r| r.saturating_sub(1)) as usize;
+    let fits = (0..3u8)
+        .rev()
+        .find(|&s| s == 0 || spare >= super::rooms_of(s) - 1)
+        .unwrap_or(0);
     Some(Crime {
         number,
         kind,
         job,
-        extra: rng.index(3) as u8,
-        building: places.hideouts[(number as usize - 1) % n],
+        extra,
+        size: (rng.index(3) as u8).min(fits),
+        building,
     })
 }
 

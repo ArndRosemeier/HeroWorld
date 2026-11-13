@@ -133,6 +133,8 @@ pub struct Places {
     pub names: Vec<String>,
     /// The hideouts' indices in `floors`, in the order crimes use them.
     pub hideouts: Vec<usize>,
+    /// How many rooms a gang can hold in each building, by index.
+    pub rooms: Vec<u8>,
     /// No case on the street this near these (Hero Hall, where heroes
     /// appear).
     pub keep_clear: Vec<DVec2>,

@@ -39,6 +39,8 @@ pub struct Plan {
     pub crime: super::board::CrimeKind,
     /// Levels the gangsters stand over the team.
     pub extra: u8,
+    /// How big the hideout is: 0 small, 1 middling, 2 big.
+    pub size: u8,
 }
 
 /// The case for crime `number` against `gang`: one step in its hideout.
@@ -53,6 +55,7 @@ pub fn crime_plan(places: &Places, seed: u64, number: u16, gang: usize) -> Optio
         }],
         crime: c.kind,
         extra: c.extra,
+        size: c.size,
     })
 }
 
@@ -92,6 +95,7 @@ pub fn plan(places: &Places, seed: u64, number: u16, gang: usize, variant: u8) -
         steps: out,
         crime: Default::default(),
         extra: 0,
+        size: 2,
     })
 }
 

@@ -1613,6 +1613,11 @@ pub enum ToClient {
         /// the level of the gang.
         crime: u8,
         level: u8,
+        /// How big the hideout is (0 small, 1 middling, 2 big) and how
+        /// many alarms its gang has raised so far. `boss` 3: the boss has
+        /// broken off and runs.
+        size: u8,
+        alarms: u8,
     },
     /// The police computer's list of crimes (Crime-o-Vision), newest
     /// first; sent when it changes.
@@ -1636,6 +1641,8 @@ pub struct BoardCrime {
     pub gang: u8,
     /// The gangsters' level.
     pub level: u8,
+    /// How big the hideout is: 0 small, 1 middling, 2 big.
+    pub size: u8,
     pub at: [f32; 3],
     pub name: String,
     /// A case is open on it already.
@@ -1749,14 +1756,14 @@ impl ToClient {
                     + 1
                     + 13 * clues.len().min(MAX_CLUES)
                     + 1
-                    + 2
+                    + 4
             }
             ToClient::CaseBoard { crimes, .. } => {
                 2 + 1
                     + crimes
                         .iter()
                         .take(MAX_BOARD)
-                        .map(|c| 2 + 3 + 1 + 12 + s(&place_name(&c.name)) + 1)
+                        .map(|c| 2 + 3 + 2 + 12 + s(&place_name(&c.name)) + 1)
                         .sum::<usize>()
             }
         }
@@ -1973,6 +1980,8 @@ impl ToClient {
                 held,
                 crime,
                 level,
+                size,
+                alarms,
             } => {
                 w.u8(24).u16(*number).u8(*stage).u8(*gang).u8(*step);
                 let n = steps.len().min(MAX_CASE_STEPS);
@@ -1996,7 +2005,7 @@ impl ToClient {
                     }
                     w.u8(*state);
                 }
-                w.u8(*held).u8(*crime).u8(*level);
+                w.u8(*held).u8(*crime).u8(*level).u8(*size).u8(*alarms);
             }
             ToClient::CaseBoard {
                 crimes,
@@ -2007,7 +2016,12 @@ impl ToClient {
                 let n = crimes.len().min(MAX_BOARD);
                 w.u8(n as u8);
                 for c in &crimes[..n] {
-                    w.u16(c.number).u8(c.crime).u8(c.job).u8(c.gang).u8(c.level);
+                    w.u16(c.number)
+                        .u8(c.crime)
+                        .u8(c.job)
+                        .u8(c.gang)
+                        .u8(c.level)
+                        .u8(c.size);
                     for v in c.at {
                         w.f32(v);
                     }
@@ -2252,6 +2266,8 @@ impl ToClient {
                     held: r.u8()?,
                     crime: r.u8()?,
                     level: r.u8()?,
+                    size: r.u8()?,
+                    alarms: r.u8()?,
                 }
             }
             25 => {
@@ -2269,6 +2285,7 @@ impl ToClient {
                         job: r.u8()?,
                         gang: r.u8()?,
                         level: r.u8()?,
+                        size: r.u8()?,
                         at: [r.f32()?, r.f32()?, r.f32()?],
                         name: r.str()?,
                         taken: r.bool()?,
@@ -2943,6 +2960,8 @@ mod tests {
                         held: 112,
                         crime: 4,
                         level: 7,
+                        size: 1,
+                        alarms: 3,
                     },
                 ),
                 (
@@ -2954,6 +2973,7 @@ mod tests {
                             job: 1,
                             gang: 3,
                             level: 6,
+                            size: 2,
                             at: [4.0, 0.5, -9.0],
                             name: "tenement on Juniper Street".into(),
                             taken: true,

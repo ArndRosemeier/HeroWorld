@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.265 (2026-11-13)
+
+- Busting a hideout has more to it. Lookouts stand at the door. A room you do not take down within a few seconds shouts for the next room.
+- Find the thing: its room's crew guards it. Once you take it the whole gang comes for you and a crew blocks the door: get out of the building with it.
+- Arrest the boss: badly hurt, the boss makes a run for it and calls for help before turning to fight again.
+- Hideouts come in three sizes (den, hideout, fortress), shown on Crime-o-Vision as little houses. Bigger ones and tougher gangs pay more karma; small ones pay less than before.
+- Everyone playing together needs this version.
+
 ## 0.264 (2026-11-13)
 
 - Stairs into the underground are open to the sky again: no more lawn or pavement drawn over the hole, so you can see down them from the street.
