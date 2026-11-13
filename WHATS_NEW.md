@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.269 (2026-11-13)
+
+- Molehaven's side caves no longer have a step of bare rock round their walls: the floor runs right up to the rock.
+- The sign over the ramp to Molehaven lights up, so the mole's face reads from the tunnel.
+
 ## 0.268 (2026-11-13)
 
 - Molehaven has a proper front door: a stone and iron gate with the mole emblem beside the mole drill, over a stair down into the cavern. A ramp from the utility tunnels leads there too, under a lit sign.

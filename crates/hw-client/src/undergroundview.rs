@@ -29,6 +29,10 @@ const STEP: f64 = 1.5;
 /// Group linings in squares this big, one mesh each.
 const CHUNK: f64 = 192.0;
 
+/// How far a cavern's lumpy walls are carved beyond its box at most (m):
+/// `carve`'s side for a cavern is 1.2 plus noise up to 1.6.
+const CAVERN_LUMPS: f64 = 2.9;
+
 /// How the rock is carved round a void: signed distance, negative in the
 /// open (Engine's density is solid where positive). Tunnels are carved a
 /// little beyond their linings; the cavern rougher and wider.
@@ -263,7 +267,14 @@ fn lining(b: &mut MeshBuilder, u: &Underground, i: usize, town: &TownWorld) {
         |mid, f| {
             !u.at(mid).any(|(j, o)| {
                 j < i && (o.floor_at(mid) - f).abs() < 0.6 && o.kind != VoidKind::Shaft
-            })
+            }) && !(v.kind == VoidKind::Cavern
+                && !v.covers(mid, 0.0)
+                && u.near(mid, CAVERN_LUMPS).into_iter().any(|j| {
+                    // Floors under the lumps of two caverns: the first one's.
+                    j < i
+                        && u.voids[j].kind == VoidKind::Cavern
+                        && u.voids[j].covers(mid, CAVERN_LUMPS)
+                }))
         },
         &near,
         |p| open_elsewhere(u, i, p),
@@ -350,13 +361,18 @@ pub(crate) fn lining_of(
             .collect()
     };
     let shaft_floor = v.kind != VoidKind::Shaft || !floor_inside(v, others);
-    let size = v.max - v.min;
+    let cavern = v.kind == VoidKind::Cavern;
+    // A cavern's rock is carved up to [`CAVERN_LUMPS`] beyond its box, a
+    // little below its floor (`carve`): its floor runs on under the lumps,
+    // or that strip shows as a step down round the walls.
+    let grow = if cavern { CAVERN_LUMPS } else { 0.0 };
+    let lo = v.min - DVec2::splat(grow);
+    let size = v.max - v.min + DVec2::splat(2.0 * grow);
     let (nx, ny) = (
         (size.x / STEP).ceil().max(1.0) as usize,
         (size.y / STEP).ceil().max(1.0) as usize,
     );
-    let at = |x: f64, y: f64| v.world(v.min + DVec2::new(size.x * x, size.y * y));
-    let cavern = v.kind == VoidKind::Cavern;
+    let at = |x: f64, y: f64| v.world(lo + DVec2::new(size.x * x, size.y * y));
     let (floor_col, wall_col) = match v.kind {
         VoidKind::Cavern => (rgb(120, 98, 72), rgb(110, 96, 80)),
         VoidKind::Shaft => (rgb(70, 74, 80), rgb(226, 218, 196)),
@@ -378,10 +394,12 @@ pub(crate) fn lining_of(
                 && corners.iter().chain([&mid]).any(|&q| {
                     hw_gen::urban::molehaven::over_deep_stair(town.underground(), q, 0.0)
                 });
+            // Under the lumps only where no other void has its floor.
+            let under_lumps = !v.covers(mid, 0.0);
             let owns = if v.kind == VoidKind::Shaft {
                 shaft_floor
             } else {
-                !hole && owns_floor(mid, f)
+                !hole && owns_floor(mid, f) && !(under_lumps && elsewhere(v3(mid, f + 1.0)))
             };
             if owns {
                 b.tex = Some(
