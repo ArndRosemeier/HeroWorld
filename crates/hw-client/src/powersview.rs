@@ -65,9 +65,9 @@ const HELPER: egui::Color32 = egui::Color32::from_rgb(120, 220, 140);
 
 /// A node of the tree on screen (px).
 const NODE_W: f32 = 132.0;
-const NODE_H: f32 = 46.0;
+const NODE_H: f32 = 60.0;
 const COL_STEP: f32 = 150.0;
-const ROW_STEP: f32 = 74.0;
+const ROW_STEP: f32 = 80.0;
 const COLUMNS: usize = 5;
 const ROWS: usize = 6;
 
@@ -232,6 +232,13 @@ impl PowersView {
             "Powers",
             Some(&mut open),
             |ui| {
+                // On a small screen the window scrolls instead of running
+                // off the bottom.
+                let room = (ui.ctx().screen_rect().height() - 190.0).max(300.0);
+                egui::ScrollArea::vertical()
+                    .max_height(room)
+                    .min_scrolled_height(room)
+                    .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(format!("Level {level}"))
@@ -320,7 +327,7 @@ impl PowersView {
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(COL_STEP * COLUMNS as f32);
-                        self.tree(ui, sheet, tree);
+                        self.tree(ui, sheet, tree, out);
                         ui.separator();
                         if let Some(d) = self.selected.and_then(powers::get) {
                             self.details(ui, sheet, d, out);
@@ -346,54 +353,28 @@ impl PowersView {
                     .color(egui::Color32::from_gray(170)),
                 );
                 ui.separator();
-                // Every hero's own, free: Strike, Super Jump, Sprint and the portal.
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        egui::RichText::new("Every hero's, free:")
-                            .size(13.0)
-                            .strong()
-                            .color(egui::Color32::from_gray(220)),
-                    );
-                    for p in PowerId::FREE {
-                        let d = def_of(p);
-                        // A click picks it, like a power of the tree: its
-                        // sockets show above. Lit when what is in hand fits.
-                        let lit = self.augments.fits_in_hand(ui.ctx(), sheet, d);
-                        let text = egui::RichText::new(d.name).size(13.0).color(if lit {
-                            egui::Color32::from_rgb(110, 240, 200)
-                        } else {
-                            power_ui_colour(p, sheet.element)
-                        });
-                        let resp = ui
-                            .selectable_label(self.selected == Some(p), text)
-                            .on_hover_text(what_it_does(d));
-                        if resp.clicked() {
-                            self.selected = Some(p);
-                            self.confirm = None;
-                        }
-                        let (dots, _) =
-                            ui.allocate_exact_size(egui::vec2(20.0, 10.0), egui::Sense::hover());
-                        augmentview::socket_dots(
-                            ui.painter(),
-                            dots.right_center() - egui::vec2(3.0, 0.0),
-                            sheet,
-                            d,
-                            2.5,
-                        );
-                        if tray::keyed(p) {
-                            self.tray_handle(ui, p);
-                        }
-                        ui.add_space(8.0);
-                    }
-                });
+                // Every hero's own, free: Strike, Super Jump, Sprint and the
+                // portal, as boxes like the tree's, so augments go into
+                // them the same way.
                 ui.label(
-                    egui::RichText::new(
-                        "The portal: Portal Home marks where it leads, Open Portal tears it open ahead of you. \
-                         Step in, come out at home; step back in to return.",
-                    )
-                    .size(12.0)
-                    .color(egui::Color32::from_gray(170)),
+                    egui::RichText::new("Every hero's, free:")
+                        .size(13.0)
+                        .strong()
+                        .color(egui::Color32::from_gray(220)),
                 );
+                let (row, _) = ui.allocate_exact_size(
+                    egui::vec2(COL_STEP * PowerId::FREE.len() as f32, NODE_H),
+                    egui::Sense::hover(),
+                );
+                let painter = ui.painter_at(row.expand(4.0));
+                for (k, p) in PowerId::FREE.into_iter().enumerate() {
+                    let r = egui::Rect::from_min_size(
+                        row.min + egui::vec2(k as f32 * COL_STEP + (COL_STEP - NODE_W) * 0.5, 0.0),
+                        egui::vec2(NODE_W, NODE_H),
+                    );
+                    self.node(ui, &painter, r, sheet, def_of(p), out);
+                }
+                });
             },
         );
         self.open = open;
@@ -401,7 +382,7 @@ impl PowersView {
 
     /// The tree as boxes and arrows: owned powers gold, ones to buy now
     /// lit, the rest dim. A click picks a power.
-    fn tree(&mut self, ui: &mut egui::Ui, sheet: &Sheet, tree: Tree) {
+    fn tree(&mut self, ui: &mut egui::Ui, sheet: &Sheet, tree: Tree, out: &mut Vec<PowerAction>) {
         let size = egui::vec2(
             COL_STEP * COLUMNS as f32,
             ROW_STEP * (ROWS as f32 - 1.0) + NODE_H + 8.0,
@@ -467,114 +448,122 @@ impl PowersView {
             }
         }
         for d in powers::tree(tree) {
-            let r = rect_of(d);
-            let id = ui.id().with(("power node", d.id.0));
-            let resp = ui.interact(r, id, egui::Sense::click());
-            let owned = sheet.has(d.id);
-            let state = can_buy(sheet, d.id);
-            let (fill, text, edge) = if owned {
-                (egui::Color32::from_rgb(70, 62, 30), GOLD, GOLD)
-            } else {
-                match state {
-                    Ok(_) => (
-                        egui::Color32::from_rgb(44, 56, 96),
-                        egui::Color32::WHITE,
-                        egui::Color32::from_rgb(150, 200, 255),
-                    ),
-                    Err(BuyError::TooDear(_)) => (
-                        egui::Color32::from_rgb(38, 42, 66),
-                        egui::Color32::from_gray(225),
-                        egui::Color32::from_gray(120),
-                    ),
-                    Err(BuyError::ForkTaken(_)) => (
-                        egui::Color32::from_rgb(40, 28, 30),
-                        egui::Color32::from_gray(110),
-                        egui::Color32::from_rgb(110, 60, 60),
-                    ),
-                    Err(_) => (
-                        egui::Color32::from_rgb(30, 31, 40),
-                        egui::Color32::from_gray(150),
-                        egui::Color32::from_gray(70),
-                    ),
-                }
+            self.node(ui, &painter, rect_of(d), sheet, d, out);
+        }
+    }
+
+    /// One power as a box in `r`: owned ones gold with their augments as
+    /// small chips inside, ones to buy now lit, the rest dim. A click
+    /// picks it; an augment from the bag let go on it is set into it.
+    fn node(
+        &mut self,
+        ui: &mut egui::Ui,
+        painter: &egui::Painter,
+        r: egui::Rect,
+        sheet: &Sheet,
+        d: &PowerDef,
+        out: &mut Vec<PowerAction>,
+    ) {
+        let id = ui.id().with(("power node", d.id.0));
+        let resp = ui.interact(r, id, egui::Sense::click());
+        let owned = sheet.has(d.id);
+        let state = can_buy(sheet, d.id);
+        let (fill, text, edge) = if owned {
+            (egui::Color32::from_rgb(70, 62, 30), GOLD, GOLD)
+        } else {
+            match state {
+                Ok(_) => (
+                    egui::Color32::from_rgb(44, 56, 96),
+                    egui::Color32::WHITE,
+                    egui::Color32::from_rgb(150, 200, 255),
+                ),
+                Err(BuyError::TooDear(_)) => (
+                    egui::Color32::from_rgb(38, 42, 66),
+                    egui::Color32::from_gray(225),
+                    egui::Color32::from_gray(120),
+                ),
+                Err(BuyError::ForkTaken(_)) => (
+                    egui::Color32::from_rgb(40, 28, 30),
+                    egui::Color32::from_gray(110),
+                    egui::Color32::from_rgb(110, 60, 60),
+                ),
+                Err(_) => (
+                    egui::Color32::from_rgb(30, 31, 40),
+                    egui::Color32::from_gray(150),
+                    egui::Color32::from_gray(70),
+                ),
+            }
+        };
+        let fill = if resp.hovered() {
+            fill.gamma_multiply(1.4)
+        } else {
+            fill
+        };
+        // Googie leaves, like the tray's slots.
+        let leaf = crate::googie::leaf(12);
+        painter.rect_filled(r, leaf, fill);
+        let edge = if d.helper && !owned { HELPER } else { edge };
+        let width: f32 = if self.selected == Some(d.id) {
+            3.0
+        } else {
+            1.5
+        };
+        painter.rect_stroke(
+            r,
+            leaf,
+            egui::Stroke::new(width, edge),
+            egui::StrokeKind::Inside,
+        );
+        let mark = if d.capstone { "★ " } else { "" };
+        painter.text(
+            r.center_top() + egui::vec2(0.0, 5.0),
+            egui::Align2::CENTER_TOP,
+            format!("{mark}{}", d.name),
+            egui::FontId::proportional(13.0),
+            text,
+        );
+        if !owned {
+            let sub = match state {
+                Ok(k) | Err(BuyError::TooDear(k)) => format!("{k} karma"),
+                Err(BuyError::ForkTaken(_)) => "not your path".to_string(),
+                Err(_) => "locked".to_string(),
             };
-            let fill = if resp.hovered() {
-                fill.gamma_multiply(1.4)
-            } else {
-                fill
-            };
-            // Googie leaves, like the tray's slots.
-            let leaf = crate::googie::leaf(12);
-            painter.rect_filled(r, leaf, fill);
-            let edge = if d.helper && !owned { HELPER } else { edge };
-            let width: f32 = if self.selected == Some(d.id) {
-                3.0
-            } else {
-                1.5
-            };
-            painter.rect_stroke(
-                r,
-                leaf,
-                egui::Stroke::new(width, edge),
-                egui::StrokeKind::Inside,
-            );
-            let mark = if d.capstone { "★ " } else { "" };
             painter.text(
-                r.center_top() + egui::vec2(0.0, 6.0),
-                egui::Align2::CENTER_TOP,
-                format!("{mark}{}", d.name),
-                egui::FontId::proportional(13.0),
-                text,
-            );
-            let sub = if owned {
-                "owned".to_string()
-            } else {
-                match state {
-                    Ok(k) | Err(BuyError::TooDear(k)) => format!("{k} karma"),
-                    Err(BuyError::ForkTaken(_)) => "not your path".into(),
-                    Err(_) => "locked".into(),
-                }
-            };
-            painter.text(
-                r.center_bottom() - egui::vec2(0.0, 6.0),
+                r.center_bottom() - egui::vec2(0.0, 10.0),
                 egui::Align2::CENTER_BOTTOM,
                 sub,
                 egui::FontId::proportional(11.0),
                 text.gamma_multiply(0.8),
             );
-            if owned {
-                augmentview::socket_dots(
-                    &painter,
-                    r.right_bottom() - egui::vec2(8.0, 8.0),
-                    sheet,
-                    d,
-                    2.5,
-                );
-                // What is in hand fits this power: it lights up.
-                if self.augments.fits_in_hand(ui.ctx(), sheet, d) {
-                    let pulse = 0.6 + 0.4 * (crate::uikit::now(ui.ctx()) * 5.0).sin();
-                    painter.rect_stroke(
-                        r.expand(2.0),
-                        leaf,
-                        egui::Stroke::new(
-                            2.5_f32,
-                            egui::Color32::from_rgb(110, 240, 200).gamma_multiply(pulse),
-                        ),
-                        egui::StrokeKind::Outside,
-                    );
-                }
-            }
-            // An augment let go over the power: the power is picked, its
-            // sockets show below.
-            let carried_here = resp.contains_pointer()
-                && self.augments.in_hand(ui.ctx(), sheet).is_some()
-                && ui.input(|i| i.pointer.any_down());
-            if resp.clicked() || (carried_here && self.selected != Some(d.id)) {
-                self.selected = Some(d.id);
-                self.confirm = None;
-            }
-            resp.on_hover_text(d.blurb);
         }
+        if owned {
+            // What is in hand fits this power: it lights up.
+            if self.augments.fits_in_hand(ui.ctx(), sheet, d) {
+                let pulse = 0.6 + 0.4 * (crate::uikit::now(ui.ctx()) * 5.0).sin();
+                painter.rect_stroke(
+                    r.expand(2.0),
+                    leaf,
+                    egui::Stroke::new(
+                        2.5_f32,
+                        egui::Color32::from_rgb(110, 240, 200).gamma_multiply(pulse),
+                    ),
+                    egui::StrokeKind::Outside,
+                );
+            }
+        }
+        // Its augments, inside the box: the place they are dropped too.
+        let chips = egui::Rect::from_min_max(
+            egui::pos2(r.left(), r.bottom() - augmentview::NODE_CHIP - 4.0),
+            egui::pos2(r.right(), r.bottom() - 4.0),
+        );
+        let mut asked = Vec::new();
+        let took = self.augments.node(ui, r, chips, sheet, d, &mut asked);
+        out.extend(asked.into_iter().map(PowerAction::Augment));
+        if resp.clicked() || took {
+            self.selected = Some(d.id);
+            self.confirm = None;
+        }
+        resp.on_hover_text(d.blurb);
     }
 
     /// The picked power: what it does, what it needs, buy or give up.
@@ -702,7 +691,7 @@ impl PowersView {
             );
         }
         let mut asked = Vec::new();
-        self.augments.sockets(ui, sheet, d, &mut asked);
+        self.augments.details(ui, sheet, d, &mut asked);
         out.extend(asked.into_iter().map(PowerAction::Augment));
     }
 

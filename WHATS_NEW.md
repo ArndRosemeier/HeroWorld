@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.274 (2026-11-13)
+
+- Augments go straight into the power tree: every power you own shows its three sockets inside its box, and you drag an augment from the bag right onto the power. Drop it on an augment already there to replace that one.
+- The free powers (Strike, Super Jump, Sprint) are boxes in the powers window too, with their sockets.
+- On a small screen the powers window scrolls instead of running off the bottom.
+
 ## 0.273 (2026-11-13)
 
 - Gang hideouts are no longer a stack of look-alike floors. Most are now dens: one great hall through the whole height of the house, with balconies at its ends at every storey and in between, open stairs that climb along the walls from one balcony across to the next, and bridges over the drop.

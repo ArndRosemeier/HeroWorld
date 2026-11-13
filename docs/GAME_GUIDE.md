@@ -388,10 +388,13 @@ Loot. An augment adds a share of **one effect** to **one power**, for good.
 - **Villains keep up** (`combat::villain_growth`): from level 5 on villains have more
   health than a tenth per level, up to 40% more at level 20, and hit harder by half of
   that, to match a hero's augments.
-- **On screen:** the powers window (B) shows the bag beside the tree and the picked
-  power's sockets under it, with what each augment does there in numbers. Drag one from
-  the bag onto a socket (or click it, then the socket); powers and sockets it fits light
-  up, and a green arrow marks one that would improve a power. The tray and the tree show
+- **On screen:** the powers window (B) shows the bag beside the tree, and every owned
+  power's sockets as small chips inside its box in the tree (the free powers are boxes
+  below it). Drag an augment from the bag onto the power: it goes into the first free
+  socket, or replaces a weaker one of the same effect; drop it on a chip to replace that
+  one (the window asks first). Or click it in the bag, then a socket. Powers and sockets
+  it fits light up, and a green arrow marks one that would improve a power. Under the
+  tree the picked power lists what each of its augments does in numbers. The tray shows
   a dot per socket. A drop flies from the villain to the hero and shows as a card.
 - **Saved** in the hero file (`augments`, `bag`; hero file version 3). Travel boosts are
   sent as whole percents (`CombatState::boosts`), so the client predicts them exactly.

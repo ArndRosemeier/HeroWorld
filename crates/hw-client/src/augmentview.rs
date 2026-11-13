@@ -6,13 +6,15 @@
 //! again, so this only asks.
 
 use engine::ui::egui::{self, pos2, vec2, Color32, Pos2, Rect, Shape, Stroke};
-use hw_net::{Augment, PowerId, Sheet, MAX_BAG, SOCKETS};
+use hw_net::{Augment, PowerId, Sheet, MAX_BAG};
 use hw_sim::augments::{self, Effect, Grade};
 use hw_sim::powers::{self, PowerDef};
 use hw_sim::progress::level_of;
 
 /// A chip in the bag and in a socket (px).
 pub const CHIP: f32 = 42.0;
+/// A chip inside a power's box in the tree.
+pub const NODE_CHIP: f32 = 28.0;
 /// The bag: chips in a row, the gap between them, and its width.
 const BAG_COLUMNS: usize = 5;
 const BAG_GAP: f32 = 5.0;
@@ -617,6 +619,8 @@ pub struct AugmentUi {
     replace: Option<(usize, PowerId, u8)>,
     /// A trade of something better than common, waiting for a yes.
     trade: Option<usize>,
+    /// Why the last drop on a power did nothing (the power, the words).
+    refused: Option<(PowerId, String)>,
     /// The bag as it was last frame: when it changes, places in it mean
     /// something else, so what was picked is dropped.
     seen: Vec<Augment>,
@@ -639,6 +643,7 @@ impl AugmentUi {
             self.picked = None;
             self.replace = None;
             self.trade = None;
+            self.refused = None;
         }
     }
 
@@ -649,9 +654,155 @@ impl AugmentUi {
             .is_some_and(|e| sheet.has(d.id) && augments::fits(e, d))
     }
 
-    /// Power `d`'s sockets: what is set, what it does there, and where
-    /// the augment in hand may go.
-    pub fn sockets(
+    /// Power `d`'s sockets as small chips in `row`, inside the power's box
+    /// in the tree, and the place augments are set: one dragged from the
+    /// bag and let go on the box (`body`) goes into the first socket it
+    /// may, one let go on a chip into that socket. A click with one picked
+    /// in the bag does the same. True if the box should become the picked
+    /// power (a chip was clicked, or a replacement waits for its yes).
+    pub fn node(
+        &mut self,
+        ui: &mut egui::Ui,
+        body: Rect,
+        row: Rect,
+        sheet: &Sheet,
+        d: &PowerDef,
+        out: &mut Vec<AugmentAction>,
+    ) -> bool {
+        let n = augments::sockets_of(d);
+        if n == 0 || !sheet.has(d.id) {
+            return false;
+        }
+        let level = level_of(sheet.lifetime);
+        let t = crate::uikit::now(ui.ctx());
+        let pulse = 0.65 + 0.35 * (t * 5.0).sin();
+        let hand = self.in_hand(ui.ctx(), sheet);
+        let set = sheet.sockets(d.id);
+        let (pointer, released) =
+            ui.input(|i| (i.pointer.interact_pos(), i.pointer.any_released()));
+        let dragged = egui::DragAndDrop::payload::<BagDrag>(ui.ctx()).map(|b| b.0);
+        let gap = 4.0;
+        let width = n as f32 * (NODE_CHIP + gap) - gap;
+        let left = row.center().x - width * 0.5;
+        let mut select = false;
+        // The socket asked for (a chip let go on or clicked), and the bag
+        // place it came from.
+        let mut asked: Option<(usize, Option<u8>)> = None;
+        for (slot, &a) in set.iter().enumerate().take(n) {
+            let r = Rect::from_min_size(
+                pos2(
+                    left + slot as f32 * (NODE_CHIP + gap),
+                    row.center().y - NODE_CHIP * 0.5,
+                ),
+                vec2(NODE_CHIP, NODE_CHIP),
+            );
+            let can = hand.is_some_and(|(_, h)| {
+                augments::can_set_augment(sheet, h, d.id, slot as u8).is_ok()
+            });
+            let id = ui.id().with(("node socket", d.id.0, slot));
+            let resp = ui.interact(r, id, egui::Sense::click());
+            let glow = if can { pulse } else { 0.0 };
+            if a.is_none() {
+                empty_socket(ui.painter(), r, glow);
+            } else {
+                chip(ui.painter(), r, a, t, glow);
+            }
+            let over = pointer.is_some_and(|p| r.contains(p));
+            if over && released {
+                if let Some(bag) = dragged {
+                    asked = Some((bag, Some(slot as u8)));
+                }
+            }
+            if resp.clicked() {
+                match self.picked {
+                    Some(bag) => asked = Some((bag, Some(slot as u8))),
+                    None => select = true,
+                }
+            }
+            // What it does here, or what the one in hand would.
+            if let (true, Some((_, h))) = (can && over, hand) {
+                let does = augments::describe(d, h, level).unwrap_or_default();
+                let lost = if a.is_none() {
+                    String::new()
+                } else {
+                    format!("\nReplaces {} (lost for good)", title(a))
+                };
+                egui::Tooltip::always_open(
+                    ui.ctx().clone(),
+                    ui.layer_id(),
+                    id.with("would"),
+                    egui::PopupAnchor::Pointer,
+                )
+                .show(|ui| {
+                    ui.label(egui::RichText::new(title(h)).strong().color(LIT));
+                    ui.label(format!("On {}: {does}{lost}", d.name));
+                });
+            } else if !a.is_none() {
+                resp.on_hover_ui(|ui| about(ui, a, Some(d), level));
+            } else {
+                resp.on_hover_text("An empty socket: drag an augment onto the power");
+            }
+        }
+        // Let go on the box itself, beside the chips. (A click on the box
+        // only picks the power: setting is for good, so it takes a drag,
+        // or a click on a socket.)
+        if asked.is_none() && released && pointer.is_some_and(|p| body.contains(p)) {
+            if let Some(bag) = dragged {
+                asked = Some((bag, None));
+            }
+        }
+        let Some((bag, slot)) = asked else {
+            return select;
+        };
+        let Some(&a) = sheet.bag.get(bag) else {
+            return select;
+        };
+        let can = |slot: u8| augments::can_set_augment(sheet, a, d.id, slot).is_ok();
+        // The socket named if it may go there; else the first free one it
+        // may go into; else the one that holds the same effect (a better
+        // one of the same kind replaces it).
+        let slot = slot.filter(|&s| can(s)).or_else(|| {
+            let slots = || (0..n as u8).filter(|&s| can(s));
+            slots()
+                .find(|&s| set[s as usize].is_none())
+                .or_else(|| slots().find(|&s| set[s as usize].effect == a.effect))
+        });
+        match slot {
+            Some(slot) if set[slot as usize].is_none() => {
+                out.push(AugmentAction::Set {
+                    bag: bag as u8,
+                    power: d.id,
+                    slot,
+                });
+                self.picked = None;
+                self.refused = None;
+            }
+            Some(slot) => {
+                // It would destroy one: asked once more, under the tree.
+                self.replace = Some((bag, d.id, slot));
+                self.refused = None;
+            }
+            None => {
+                // Full, or it does nothing here: say so under the tree.
+                let why = match Effect::of(a) {
+                    Some(e) if !augments::fits(e, d) => {
+                        format!("{} does nothing on {}.", e.name(), d.name)
+                    }
+                    _ => format!(
+                        "{}'s sockets are full: drop it on the augment it should replace.",
+                        d.name
+                    ),
+                };
+                self.refused = Some((d.id, why));
+            }
+        }
+        true
+    }
+
+    /// Under the tree, for the picked power `d`: what each augment set
+    /// into it does there, a replacement waiting for its yes, and the
+    /// effects that fit the power.
+    pub fn details(
         &mut self,
         ui: &mut egui::Ui,
         sheet: &Sheet,
@@ -662,91 +813,28 @@ impl AugmentUi {
         if n == 0 {
             return;
         }
-        let owned = sheet.has(d.id);
         let level = level_of(sheet.lifetime);
-        let t = crate::uikit::now(ui.ctx());
-        let pulse = 0.65 + 0.35 * (t * 5.0).sin();
-        let hand = self.in_hand(ui.ctx(), sheet);
         let set = sheet.sockets(d.id);
-        ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            for (slot, &a) in set.iter().enumerate().take(n) {
-                let can = owned
-                    && hand.is_some_and(|(_, h)| {
-                        augments::can_set_augment(sheet, h, d.id, slot as u8).is_ok()
-                    });
-                let (r, resp) = ui.allocate_exact_size(vec2(CHIP, CHIP), egui::Sense::click());
-                let glow = if can { pulse } else { 0.0 };
-                let painter = ui.painter();
-                if a.is_none() {
-                    empty_socket(painter, r, glow);
-                } else {
-                    chip(painter, r, a, t, glow);
+        for &a in set.iter().take(n).filter(|a| !a.is_none()) {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 5.0;
+                if let Some(e) = Effect::of(a) {
+                    let (r, _) = ui.allocate_exact_size(vec2(16.0, 16.0), egui::Sense::hover());
+                    glyph(ui.painter(), r.center(), 6.5, e, effect_colour(e));
                 }
-                if !owned {
-                    painter.rect_filled(r, r.width() * 0.2, Color32::from_black_alpha(110));
-                }
-                // Dropped here, or clicked with one picked.
-                let dropped = resp.dnd_release_payload::<BagDrag>().map(|b| b.0);
-                let asked = dropped.or(if resp.clicked() { self.picked } else { None });
-                if let (Some(bag), true) = (asked, can) {
-                    if a.is_none() {
-                        out.push(AugmentAction::Set {
-                            bag: bag as u8,
-                            power: d.id,
-                            slot: slot as u8,
-                        });
-                        self.picked = None;
-                    } else {
-                        self.replace = Some((bag, d.id, slot as u8));
-                    }
-                }
-                // What it does here, or would.
-                let words = if let (true, Some((_, h))) = (can, hand) {
-                    let does = augments::describe(d, h, level).unwrap_or_default();
-                    let lost = if a.is_none() {
-                        String::new()
-                    } else {
-                        format!("\nReplaces {} (lost for good)", title(a))
-                    };
-                    (title(h), format!("{does}{lost}"), LIT)
-                } else if a.is_none() {
-                    (
-                        "Empty socket".to_string(),
-                        if owned {
-                            "drag an augment here".to_string()
-                        } else {
-                            "yours once you own the power".to_string()
-                        },
-                        Color32::from_gray(150),
-                    )
-                } else {
-                    (
-                        title(a),
-                        augments::describe(d, a, level).unwrap_or_default(),
-                        grade_colour(Grade::of(a)),
-                    )
-                };
-                ui.vertical(|ui| {
-                    ui.set_width(182.0);
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.label(
-                        egui::RichText::new(words.0)
-                            .size(13.0)
-                            .strong()
-                            .color(words.2),
-                    );
-                    ui.label(
-                        egui::RichText::new(words.1)
-                            .size(11.5)
-                            .color(Color32::from_gray(205)),
-                    );
-                });
-                if !a.is_none() {
-                    resp.on_hover_ui(|ui| about(ui, a, Some(d), level));
-                }
-            }
-        });
+                ui.label(
+                    egui::RichText::new(title(a))
+                        .size(13.0)
+                        .strong()
+                        .color(grade_colour(Grade::of(a))),
+                );
+                ui.label(
+                    egui::RichText::new(augments::describe(d, a, level).unwrap_or_default())
+                        .size(12.5)
+                        .color(Color32::from_gray(210)),
+                );
+            });
+        }
         // A set that destroys one: asked once more.
         if let Some((bag, power, slot)) = self.replace.filter(|r| r.1 == d.id) {
             let old = set[slot as usize];
@@ -776,6 +864,13 @@ impl AugmentUi {
                     self.replace = None;
                 }
             });
+        }
+        if let Some((_, why)) = self.refused.as_ref().filter(|r| r.0 == d.id) {
+            ui.label(
+                egui::RichText::new(why)
+                    .size(13.0)
+                    .color(Color32::from_rgb(255, 190, 150)),
+            );
         }
         // Every effect that fits this power, as small icons.
         ui.horizontal(|ui| {
@@ -821,7 +916,7 @@ impl AugmentUi {
         });
         ui.label(
             egui::RichText::new(
-                "Villains drop them. Drag one onto a socket of a power it fits: it stays there for good.",
+                "Villains drop them. Drag one onto a power it fits: it stays there for good.",
             )
             .size(12.0)
             .color(Color32::from_gray(170)),
@@ -1002,9 +1097,6 @@ fn about(ui: &mut egui::Ui, a: Augment, on: Option<&PowerDef>, level: u8) {
         });
     });
 }
-
-/// How many sockets a chip row needs at most (for layouts).
-pub const MOST_SOCKETS: usize = SOCKETS;
 
 #[cfg(test)]
 mod tests {
