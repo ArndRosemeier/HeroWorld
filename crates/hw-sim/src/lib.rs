@@ -1960,6 +1960,12 @@ impl Sim {
     }
 
     /// The encounter spots and what happened in the last tick.
+    /// Villains act at most every `stride`th tick (tests of how a slow turn
+    /// rate affects what they do).
+    pub fn set_think_stride(&mut self, stride: u64) {
+        self.world.resource_mut::<Fights>().min_think_stride = stride.max(1);
+    }
+
     pub fn fights(&self) -> &Fights {
         self.world.resource::<Fights>()
     }

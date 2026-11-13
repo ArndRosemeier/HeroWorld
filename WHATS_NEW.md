@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.256 (2026-11-13)
+
+- Big crowds of villains no longer move in slow motion when the game has to ration their turns: they walk as fast as ever, whatever the crowd size.
+
 ## 0.255 (2026-11-13)
 
 - Housekeeping only: the plan for keeping the busy world around heroes quick (`docs/SERVER_TIERS.md`), with its first building block.

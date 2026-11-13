@@ -1011,6 +1011,10 @@ pub struct Enemy {
     /// Making off from a crime nobody stopped: it hurries to its `home`,
     /// far down the street, and is gone there (see [`crate::incidents`]).
     pub leaving: bool,
+    /// The tick it last acted. A villain that waits its turn (see
+    /// [`enemies_act`]) walks the ticks it missed in one go, so it moves at
+    /// the same speed however often it acts.
+    pub last_think: u64,
 }
 
 /// A perched villain notices and reaches this much farther.
@@ -1200,6 +1204,9 @@ pub struct Fights {
     pub path_searches: u32,
     /// Villains that acted in the last tick (at most about [`THINK_CAP`]).
     pub villains_acted: u32,
+    /// At least this many ticks between a villain's turns (1 normally; tests
+    /// raise it to check that speed does not depend on it).
+    pub min_think_stride: u64,
     /// Microseconds the parts of the last combat step took (the server's
     /// tick-budget report; [`crate::Sim::take_step_times`]).
     pub laps: Vec<(&'static str, u64)>,
@@ -1308,6 +1315,7 @@ impl Default for Fights {
             spots: Vec::new(),
             path_searches: 0,
             villains_acted: 0,
+            min_think_stride: 1,
             laps: Vec::new(),
             events: Vec::new(),
             power_log: Vec::new(),
@@ -1710,6 +1718,7 @@ pub(crate) fn spawn_enemy(
             warned: None,
             look: None,
             leaving: false,
+            last_think: tick.saturating_sub(1),
         },
         LastChange(tick),
     ));
@@ -1871,11 +1880,12 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     sky.append(&mut out.sky);
     lap("combat npc+throws+sky");
     let floors = world.resource::<Fights>().floors.clone();
+    let min_stride = world.resource::<Fights>().min_think_stride;
     let (searches, acted) = enemies_act(
         &mut actors,
         &solids,
         floors.as_deref(),
-        tick,
+        (tick, min_stride),
         &mut out.fx,
         &mut paths,
         &mut bombs,
@@ -4438,6 +4448,8 @@ const LOOK_AHEAD: f64 = 40.0;
 pub const PATH_BUDGET: u32 = 1;
 /// Most villains that act in one tick (see `enemies_act`).
 pub const THINK_CAP: u64 = 400;
+/// Most ticks a villain walks in one turn (a long wait must not teleport it).
+const MAX_OWED: u64 = 8;
 /// Fewest seconds between two searches of one villain, whatever its goal does.
 const RETHINK: f64 = 0.5;
 
@@ -4535,7 +4547,7 @@ fn enemies_act(
     actors: &mut [Actor],
     solids: &Obstacles,
     floors: Option<&crate::floornav::Floors>,
-    tick: u64,
+    (tick, min_stride): (u64, u64),
     fx: &mut Vec<Fx>,
     paths: &mut BTreeMap<NetId, Path>,
     bombs: &mut Vec<Bomb>,
@@ -4567,7 +4579,9 @@ fn enemies_act(
     // (by place in the id order, so the turns go round): the step costs the
     // same for a thousand as for four hundred, and a huge crowd moves slower
     // rather than stalling the game.
-    let stride = (crew.values().map(Vec::len).sum::<usize>() as u64).div_ceil(THINK_CAP);
+    let stride = (crew.values().map(Vec::len).sum::<usize>() as u64)
+        .div_ceil(THINK_CAP)
+        .max(min_stride);
     for i in 0..actors.len() {
         let Some(mut en) = actors[i].enemy else {
             continue;
@@ -4575,6 +4589,9 @@ fn enemies_act(
         if stride > 1 && !(i as u64 + tick).is_multiple_of(stride) {
             continue;
         }
+        // The ticks since its last turn: it walks them all now.
+        let owed = tick.saturating_sub(en.last_think).clamp(1, MAX_OWED);
+        en.last_think = tick;
         acted += 1;
         // Machines that are not people-sized move in `robots`.
         if matches!(en.kind, EnemyKind::Colossus | EnemyKind::WeakPoint) {
@@ -4953,7 +4970,9 @@ fn enemies_act(
                 body.vel.x *= 0.8;
                 body.vel.z *= 0.8;
             }
-            step_hero(&mut body, input, solids);
+            for _ in 0..owed {
+                step_hero(&mut body, input, solids);
+            }
             actors[i].body = body;
         }
     }
