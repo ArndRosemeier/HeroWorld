@@ -142,3 +142,7 @@ questions above, with Arnd.
   answered.
 - Replication: the 500 m interest radius stays inside the first ring; the 1 to 2 km ring gets no
   extra bandwidth.
+
+Pins in code (0.262): target or windup, carried (by a drone), colossus and weak points. Lifts and
+vehicles carry no villains today, and an incident a hero has answered makes its villains target
+that hero, so the target pin covers it; each gets its own pin when its system joins the plan.

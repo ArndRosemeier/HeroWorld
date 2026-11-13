@@ -1936,6 +1936,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
                 // points ride them: they always stay in the first ring.
                 pinned: e.windup.is_some()
                     || a.f.target.is_some()
+                    || a.f.status == Status::Carried
                     || matches!(e.kind, EnemyKind::Colossus | EnemyKind::WeakPoint),
             })
         })

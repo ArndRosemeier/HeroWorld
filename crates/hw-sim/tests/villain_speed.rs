@@ -87,3 +87,31 @@ fn a_far_colossus_stays_in_the_first_ring() {
     assert!(full >= 1, "{full} {reduced} {dormant}");
     assert_eq!(dormant, 0);
 }
+
+/// A villain a drone carries off stays in the first ring however far away.
+#[test]
+fn a_far_carried_villain_stays_in_the_first_ring() {
+    let mut sim = Sim::with_solids(Seed(4), Arc::new(Obstacles::flat(GROUND_Y)));
+    sim.set_spawn((DVec2::new(300.0, 300.0), DVec2::X));
+    sim.spawn_hero_with(
+        PlayerId(1),
+        DVec3::new(0.0, GROUND_Y, 0.0),
+        hero_sheet(10, &[PowerId::STRIKE]),
+    );
+    sim.step();
+    sim.add_fight_spot_of(
+        DVec3::new(5_000.0, GROUND_Y, 0.0),
+        DVec2::new(-1.0, 0.0),
+        EnemyKind::Brute,
+        2,
+    );
+    for _ in 0..3 {
+        sim.step();
+    }
+    assert_eq!(sim.fights().tier_counts[0], 0);
+    let (id, _, _, mut f) = sim.enemies().remove(0);
+    f.status = hw_net::Status::Carried;
+    sim.set_fighter(id, f);
+    sim.step();
+    assert_eq!(sim.fights().tier_counts[0], 1);
+}

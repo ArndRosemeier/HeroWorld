@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.262 (2026-11-13)
+
+- A villain being carried off by a drone is always simulated, however far away.
+
 ## 0.261 (2026-11-13)
 
 - Housekeeping only: design notes for the server.
