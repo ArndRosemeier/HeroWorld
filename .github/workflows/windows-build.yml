@@ -60,12 +60,12 @@ jobs:
           d=HeroWorld
           mkdir -p "$d/assets"
           cp target/release/heroworld.exe target/release/hw-headless.exe "$d/"
-          cp -r assets/packs assets/robots assets/music "$d/assets/"
+          cp -r assets/packs assets/robots assets/creatures assets/music "$d/assets/"
           cp WHATS_NEW.md "$d/"
           cp packaging/windows/*.txt packaging/windows/*.bat "$d/"
           7z a -tzip -mx=5 HeroWorld-windows.zip "$d" > /dev/null
           ls -l HeroWorld-windows.zip
-          # The launcher's update files: bundles (game, packs, robots, music)
+          # The launcher's update files: bundles (game, packs, robots, creatures, music)
           # and manifest.json, so a nightly update downloads only what changed.
           cp target/release/HeroWorldLauncher.exe .
           python scripts/release-bundles.py "$d" HeroWorldLauncher.exe bundles

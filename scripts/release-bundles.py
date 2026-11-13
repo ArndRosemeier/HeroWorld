@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 BUNDLES = [
     ("packs", "assets/packs/"),
     ("robots", "assets/robots/"),
+    ("creatures", "assets/creatures/"),
     ("music", "assets/music/"),
     ("game", ""),
 ]

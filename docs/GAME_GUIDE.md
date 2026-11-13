@@ -1611,6 +1611,40 @@ collapse or explosion people run, those further off stop and stare, and they tur
 when a gang shouts someone off its turf. Knocked down, they tumble as ragdolls and get up.
 Heroes cannot target townsfolk.
 
+### The town's animals (`hw-sim/src/citizens/critters.rs`, `hw-client/src/critterview.rs`)
+
+This is another planet, and its towns have their own animals. Like the people they are a
+pure function of seed and time, so every player sees the same ones, and they stream in round
+the camera: wibbets and drakelets within 150 m, driftbells within 420 m, at most 90 at once.
+
+- **Wibbets**: big-eyed climbers the size of a cat, not quite monkeys, with round ears, a
+  ringed tail and two feelers with glowing tips; teal, coral or lilac. They live in troops of
+  two to four along a stretch of pavement (about one troop per 260 m of pavement side, in the
+  bright town only, where the pavement is at least 1.3 m wide). Each wibbet does rounds of
+  38 s between the troop's stops: it trots there along the kerb side of the pavement, runs up
+  a lamp post or an advertising pillar and clings there, hops onto a bench, bin or hydrant and
+  sits, or sits up on the pavement. It comes down a post head first. Stops come from the
+  props' own shapes (`Prop::perch`), so a wibbet sits on what is drawn, and its way keeps
+  clear of every prop.
+- **They come close.** A wibbet sitting on the pavement within 7.5 m of a hero who stands
+  about (slower than 1.6 m/s) trots over, stops 1.25 m away and sits up to look at them for
+  up to 9 s, then goes back to its round (it waits 25 s before it comes again). It leaves at
+  once if the hero walks off or strides at it, and never comes while there is trouble near.
+  One a hero walks into hops out of the way. This happens on each player's screen only.
+- **Drakelets**: pet dragons the size of a small dog, with a collar and a brass tag; ember,
+  jade or azure. 1.4% of the people on foot have one. It flies on a 2.1 m lead, about 2 m up,
+  ahead of its owner and from side to side, and circles them when they stand; it keeps clear
+  of lamps, trees and signs. When its owner stops to stare or is knocked down, it stays with
+  them.
+- **Driftbells**: glowing bells with trailing arms, 1 to 1.6 m across, that float 14 to 19 m
+  over the wide streets (carriageway of 6.8 m or more, at least 140 m long, no bridge near)
+  in blooms of one to three, slowly up and down the street. Rose, aqua or amber.
+
+The models are AssetGenerator sculpts with their own skeletons and clips
+(`tools/creatures/make_specs.py`, built by `tools/creatures/build.py` into
+`assets/creatures/`), about 14 000 to 18 000 triangles close up, with two lighter levels.
+Animals cannot be targeted, hit or harmed.
+
 ### Street acts and night life (`hw-sim/src/streetlife.rs`, `hw-client/src/streetview.rs`)
 
 Odd folk and street performers turn up at pitches round town: open ground just off a pavement
@@ -1952,11 +1986,12 @@ run, or put them in a `.bat`.
 | `HW_POP=n` | Town population (default: the profile's city, 40 000 at first; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
 | `HW_SKYLINE=0` | No distant skyline past the built cells (to compare). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `menace`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `homes`, `tubemarket`, `workshop`, `shrine`, `burrow`, `exit` (a tube exit from inside), `exitstreet` (its pavilion), `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `act` (a street act: `HW_ACT=prophet|theremin|statue|juggler|spotter|newsboy|stargazer|dancers|club`, `HW_ACT_FAR=1` wider), `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `menace`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `homes`, `tubemarket`, `workshop`, `shrine`, `burrow`, `exit` (a tube exit from inside), `exitstreet` (its pavilion), `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `wibbet`, `drakelet`, `driftbell` (the nearest animal of that kind), `act` (a street act: `HW_ACT=prophet|theremin|statue|juggler|spotter|newsboy|stargazer|dancers|club`, `HW_ACT_FAR=1` wider), `powers`, `origin`, `title`. |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |
 | `HW_GRASS=0`, `HW_LAWN=0` | Turn grass blades / lawns off. |
+| `HW_CRITTERS=0` | No animals (to measure without them). |
 | `HW_LOOK=plain` | Turn off the lighting look and colour grade. |
 | `HW_PROP=...` | The prop shown by `HW_VIEW=props`. |
 

@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.281 (2026-11-14)
+
+- The town has animals of its own now. Wibbets, big-eyed climbers the size of a cat with glowing feelers, live in small troops on the pavements: they trot along the kerb, run up lamp posts and cling there, hop onto benches, bins and hydrants, and sit up to look around.
+- Stand still near a wibbet on the pavement and it may come over, sit up in front of you and have a good look before it goes back to its round. Walk into one and it hops out of your way.
+- A few citizens have a pet drakelet: a little dragon with a collar that flies on its lead, ahead of its owner and round them when they stop.
+- Driftbells, glowing bells with long trailing arms, float in twos and threes high over the wide streets.
+- All of them come in three colours, and every player sees the same animals in the same places.
 ## 0.280 (2026-11-14)
 
 - Team voice. When a friend is in your game, hold Z to talk: everyone on your team hears you, however far away they are, and a "so-and-so is talking" note shows at the left edge. Click the small Voice button in the chat window to turn voice off, pick another key, set the team volume, or mute a friend or turn them up or down. No microphone? The panel says so and the game carries on.

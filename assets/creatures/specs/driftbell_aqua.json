@@ -1,0 +1,970 @@
+{
+ "spec_version": 1,
+ "id": "driftbell_aqua",
+ "generator": "organic.sculpt",
+ "textures": {
+  "texels_per_metre": 768,
+  "max_size": 1024
+ },
+ "materials": {
+  "glowbell": {
+   "base_color": [
+    0.0612,
+    0.5149,
+    0.7157,
+    1
+   ],
+   "roughness": 0.22,
+   "metallic": 0.0,
+   "pattern": {
+    "layers": [
+     {
+      "gradient": {
+       "color": [
+        0.02754,
+        0.23170500000000002,
+        0.322065
+       ],
+       "axis": "z",
+       "from": 0.93,
+       "to": 1.2,
+       "amount": 0.6
+      }
+     },
+     {
+      "grain": {
+       "color": [
+        0.14792,
+        0.8738400000000002,
+        1.0
+       ],
+       "spacing": 0.05,
+       "axis": "radial",
+       "warp": 0.4,
+       "sharpness": 3,
+       "amount": 0.35
+      }
+     },
+     {
+      "inside": {
+       "shape": {
+        "ref": "spots"
+       },
+       "color": [
+        0.7157,
+        1.0,
+        0.956
+       ],
+       "soft": 0.012
+      }
+     },
+     {
+      "inside": {
+       "shape": {
+        "sphere": {
+         "centre": [
+          0,
+          0,
+          1.27
+         ],
+         "radius": 0.09
+        }
+       },
+       "color": [
+        0.7157,
+        1.0,
+        0.956
+       ],
+       "soft": 0.02
+      }
+     },
+     {
+      "inside": {
+       "shape": {
+        "ref": "rim"
+       },
+       "color": [
+        0.7157,
+        1.0,
+        0.956
+       ],
+       "soft": 0.01,
+       "grow": 0.004
+      }
+     }
+    ]
+   }
+  },
+  "glowheart": {
+   "base_color": [
+    0.305,
+    1.0,
+    0.7913,
+    1
+   ],
+   "roughness": 0.3,
+   "metallic": 0.0
+  },
+  "tentacle": {
+   "base_color": [
+    0.0452,
+    0.1878,
+    0.5776,
+    1
+   ],
+   "roughness": 0.35,
+   "metallic": 0.0,
+   "pattern": {
+    "layers": [
+     {
+      "gradient": {
+       "color": [
+        0.7157,
+        1.0,
+        0.956
+       ],
+       "axis": "z",
+       "from": 0.0,
+       "to": 0.35,
+       "amount": 0.8
+      }
+     },
+     {
+      "mottle": {
+       "color": [
+        0.02486,
+        0.10329,
+        0.31768
+       ],
+       "scale": 20,
+       "coverage": 0.4,
+       "amount": 0.5
+      }
+     }
+    ]
+   }
+  }
+ },
+ "params": {
+  "parts": {
+   "dome": {
+    "subtract": {
+     "from": {
+      "above": {
+       "height": 0.93,
+       "shape": {
+        "ellipsoid": {
+         "centre": [
+          0,
+          0,
+          1.0
+         ],
+         "radii": [
+          0.37,
+          0.37,
+          0.27
+         ]
+        }
+       }
+      }
+     },
+     "cut": [
+      {
+       "ellipsoid": {
+        "centre": [
+         0,
+         0,
+         0.9
+        ],
+        "radii": [
+         0.315,
+         0.315,
+         0.2
+        ]
+       }
+      }
+     ],
+     "k": 0.01
+    }
+   },
+   "rim": {
+    "torus": {
+     "centre": [
+      0,
+      0,
+      0.945
+     ],
+     "radius": 0.35,
+     "thickness": 0.03,
+     "axis": "z"
+    }
+   },
+   "heart": {
+    "ellipsoid": {
+     "centre": [
+      0,
+      0,
+      0.98
+     ],
+     "radii": [
+      0.15,
+      0.15,
+      0.11
+     ]
+    }
+   },
+   "spots": {
+    "repeat": {
+     "around": 7,
+     "shape": {
+      "sphere": {
+       "centre": [
+        0,
+        0.25,
+        1.21
+       ],
+       "radius": 0.055
+      }
+     }
+    }
+   },
+   "arm1": {
+    "capsule": {
+     "a": [
+      0.085,
+      0.0,
+      0.9
+     ],
+     "b": [
+      0.12,
+      0.03,
+      0.7
+     ],
+     "radius": 0.05,
+     "radius_b": 0.042
+    }
+   },
+   "arm2": {
+    "capsule": {
+     "a": [
+      0.12,
+      0.03,
+      0.7
+     ],
+     "b": [
+      0.09,
+      -0.03,
+      0.48
+     ],
+     "radius": 0.042,
+     "radius_b": 0.032
+    }
+   },
+   "arm3": {
+    "capsule": {
+     "a": [
+      0.09,
+      -0.03,
+      0.48
+     ],
+     "b": [
+      0.125,
+      0.01,
+      0.28
+     ],
+     "radius": 0.032,
+     "radius_b": 0.018
+    }
+   },
+   "a1": {
+    "capsule": {
+     "a": [
+      0.1749,
+      0.2799,
+      0.94
+     ],
+     "b": [
+      0.1961,
+      0.3138,
+      0.66
+     ],
+     "radius": 0.02,
+     "radius_b": 0.016
+    }
+   },
+   "a2": {
+    "capsule": {
+     "a": [
+      0.1961,
+      0.3138,
+      0.66
+     ],
+     "b": [
+      0.1749,
+      0.2799,
+      0.36
+     ],
+     "radius": 0.016,
+     "radius_b": 0.012
+    }
+   },
+   "a3": {
+    "capsule": {
+     "a": [
+      0.1749,
+      0.2799,
+      0.36
+     ],
+     "b": [
+      0.1908,
+      0.3053,
+      0.04
+     ],
+     "radius": 0.012,
+     "radius_b": 0.008
+    }
+   },
+   "b1": {
+    "capsule": {
+     "a": [
+      0.33,
+      0.0,
+      0.94
+     ],
+     "b": [
+      0.37,
+      0.0,
+      0.66
+     ],
+     "radius": 0.02,
+     "radius_b": 0.016
+    }
+   },
+   "b2": {
+    "capsule": {
+     "a": [
+      0.37,
+      0.0,
+      0.66
+     ],
+     "b": [
+      0.33,
+      0.0,
+      0.36
+     ],
+     "radius": 0.016,
+     "radius_b": 0.012
+    }
+   },
+   "b3": {
+    "capsule": {
+     "a": [
+      0.33,
+      0.0,
+      0.36
+     ],
+     "b": [
+      0.36,
+      0.0,
+      0.04
+     ],
+     "radius": 0.012,
+     "radius_b": 0.008
+    }
+   },
+   "c1": {
+    "capsule": {
+     "a": [
+      0.1749,
+      -0.2799,
+      0.94
+     ],
+     "b": [
+      0.1961,
+      -0.3138,
+      0.66
+     ],
+     "radius": 0.02,
+     "radius_b": 0.016
+    }
+   },
+   "c2": {
+    "capsule": {
+     "a": [
+      0.1961,
+      -0.3138,
+      0.66
+     ],
+     "b": [
+      0.1749,
+      -0.2799,
+      0.36
+     ],
+     "radius": 0.016,
+     "radius_b": 0.012
+    }
+   },
+   "c3": {
+    "capsule": {
+     "a": [
+      0.1749,
+      -0.2799,
+      0.36
+     ],
+     "b": [
+      0.1908,
+      -0.3053,
+      0.04
+     ],
+     "radius": 0.012,
+     "radius_b": 0.008
+    }
+   },
+   "trail": {
+    "mirror_x": {
+     "union": [
+      {
+       "ref": "arm1"
+      },
+      {
+       "ref": "arm2"
+      },
+      {
+       "ref": "arm3"
+      },
+      {
+       "ref": "a1"
+      },
+      {
+       "ref": "a2"
+      },
+      {
+       "ref": "a3"
+      },
+      {
+       "ref": "b1"
+      },
+      {
+       "ref": "b2"
+      },
+      {
+       "ref": "b3"
+      },
+      {
+       "ref": "c1"
+      },
+      {
+       "ref": "c2"
+      },
+      {
+       "ref": "c3"
+      }
+     ]
+    }
+   },
+   "bellparts": {
+    "union": [
+     {
+      "ref": "dome"
+     },
+     {
+      "ref": "rim"
+     },
+     {
+      "ref": "heart"
+     }
+    ]
+   }
+  },
+  "shape": {
+   "above": {
+    "height": 0.0,
+    "shape": {
+     "union": [
+      {
+       "displace": {
+        "amount": 0.008,
+        "scale": 9.0,
+        "seed": 5,
+        "shape": {
+         "smooth_union": {
+          "k": 0.02,
+          "shapes": [
+           {
+            "ref": "dome"
+           },
+           {
+            "ref": "rim"
+           }
+          ]
+         }
+        }
+       }
+      },
+      {
+       "ref": "heart"
+      },
+      {
+       "displace": {
+        "amount": 0.012,
+        "scale": 16.0,
+        "seed": 2,
+        "shape": {
+         "mirror_x": {
+          "smooth_union": {
+           "k": 0.012,
+           "shapes": [
+            {
+             "ref": "arm1"
+            },
+            {
+             "ref": "arm2"
+            },
+            {
+             "ref": "arm3"
+            }
+           ]
+          }
+         }
+        }
+       }
+      },
+      {
+       "mirror_x": {
+        "smooth_union": {
+         "k": 0.008,
+         "shapes": [
+          {
+           "ref": "a1"
+          },
+          {
+           "ref": "a2"
+          },
+          {
+           "ref": "a3"
+          }
+         ]
+        }
+       }
+      },
+      {
+       "mirror_x": {
+        "smooth_union": {
+         "k": 0.008,
+         "shapes": [
+          {
+           "ref": "b1"
+          },
+          {
+           "ref": "b2"
+          },
+          {
+           "ref": "b3"
+          }
+         ]
+        }
+       }
+      },
+      {
+       "mirror_x": {
+        "smooth_union": {
+         "k": 0.008,
+         "shapes": [
+          {
+           "ref": "c1"
+          },
+          {
+           "ref": "c2"
+          },
+          {
+           "ref": "c3"
+          }
+         ]
+        }
+       }
+      }
+     ]
+    }
+   }
+  },
+  "base_slot": "glowbell",
+  "paint": {
+   "glowheart": {
+    "ref": "heart"
+   },
+   "tentacle": {
+    "ref": "trail"
+   }
+  },
+  "paint_reach": 0.002,
+  "max_triangles": 18000,
+  "detail": 5,
+  "rig": {
+   "bones": {
+    "bell": {
+     "head": [
+      0,
+      0,
+      0.93
+     ],
+     "tail": [
+      0,
+      0,
+      1.27
+     ]
+    },
+    "arm1.L": {
+     "parent": "bell",
+     "from": "arm1"
+    },
+    "arm2.L": {
+     "parent": "arm1.L",
+     "from": "arm2"
+    },
+    "arm3.L": {
+     "parent": "arm2.L",
+     "from": "arm3"
+    },
+    "a1.L": {
+     "parent": "bell",
+     "from": "a1"
+    },
+    "a2.L": {
+     "parent": "a1.L",
+     "from": "a2"
+    },
+    "a3.L": {
+     "parent": "a2.L",
+     "from": "a3"
+    },
+    "b1.L": {
+     "parent": "bell",
+     "from": "b1"
+    },
+    "b2.L": {
+     "parent": "b1.L",
+     "from": "b2"
+    },
+    "b3.L": {
+     "parent": "b2.L",
+     "from": "b3"
+    },
+    "c1.L": {
+     "parent": "bell",
+     "from": "c1"
+    },
+    "c2.L": {
+     "parent": "c1.L",
+     "from": "c2"
+    },
+    "c3.L": {
+     "parent": "c2.L",
+     "from": "c3"
+    }
+   },
+   "carry": {
+    "bell": [
+     "bellparts"
+    ]
+   },
+   "softness": {
+    "default": 0.015
+   },
+   "clips": {
+    "Drift": {
+     "seconds": 4.0,
+     "loop": true,
+     "motions": [
+      {
+       "move": {
+        "z": 0.1,
+        "wave": "constant"
+       }
+      },
+      {
+       "move": {
+        "z": 0.05,
+        "cycles": 1
+       }
+      },
+      {
+       "turn": {
+        "bone": "bell",
+        "wave": "sine",
+        "cycles": 1,
+        "phase": 0.2,
+        "roll": 4
+       }
+      },
+      {
+       "turn": {
+        "bone": "bell",
+        "wave": "sine",
+        "cycles": 1,
+        "phase": 0.0,
+        "pitch": 3
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "arm1.L",
+         "arm2.L",
+         "arm3.L"
+        ],
+        "roll": 11.0,
+        "cycles": 1,
+        "lag": 0.14,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "arm1.R",
+         "arm2.R",
+         "arm3.R"
+        ],
+        "roll": -11.0,
+        "cycles": 1,
+        "lag": 0.14,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "a1.L",
+         "a2.L",
+         "a3.L"
+        ],
+        "roll": 11.0,
+        "cycles": 1,
+        "lag": 0.16,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "a1.R",
+         "a2.R",
+         "a3.R"
+        ],
+        "roll": -11.0,
+        "cycles": 1,
+        "lag": 0.16,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "b1.L",
+         "b2.L",
+         "b3.L"
+        ],
+        "roll": 11.0,
+        "cycles": 1,
+        "lag": 0.18000000000000002,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "b1.R",
+         "b2.R",
+         "b3.R"
+        ],
+        "roll": -11.0,
+        "cycles": 1,
+        "lag": 0.18000000000000002,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "c1.L",
+         "c2.L",
+         "c3.L"
+        ],
+        "roll": 11.0,
+        "cycles": 1,
+        "lag": 0.2,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "c1.R",
+         "c2.R",
+         "c3.R"
+        ],
+        "roll": -11.0,
+        "cycles": 1,
+        "lag": 0.2,
+        "grow": 1.35
+       }
+      }
+     ]
+    },
+    "Swim": {
+     "seconds": 2.0,
+     "loop": true,
+     "motions": [
+      {
+       "move": {
+        "z": 0.1,
+        "wave": "constant"
+       }
+      },
+      {
+       "move": {
+        "z": 0.06,
+        "cycles": 1
+       }
+      },
+      {
+       "turn": {
+        "bone": "bell",
+        "wave": "constant",
+        "pitch": 9
+       }
+      },
+      {
+       "turn": {
+        "bone": "bell",
+        "wave": "sine",
+        "cycles": 1,
+        "phase": 0.0,
+        "pitch": 4
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "arm1.L",
+         "arm2.L",
+         "arm3.L"
+        ],
+        "roll": 16.0,
+        "cycles": 1,
+        "lag": 0.14,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "arm1.R",
+         "arm2.R",
+         "arm3.R"
+        ],
+        "roll": -16.0,
+        "cycles": 1,
+        "lag": 0.14,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "a1.L",
+         "a2.L",
+         "a3.L"
+        ],
+        "roll": 16.0,
+        "cycles": 1,
+        "lag": 0.16,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "a1.R",
+         "a2.R",
+         "a3.R"
+        ],
+        "roll": -16.0,
+        "cycles": 1,
+        "lag": 0.16,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "b1.L",
+         "b2.L",
+         "b3.L"
+        ],
+        "roll": 16.0,
+        "cycles": 1,
+        "lag": 0.18000000000000002,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "b1.R",
+         "b2.R",
+         "b3.R"
+        ],
+        "roll": -16.0,
+        "cycles": 1,
+        "lag": 0.18000000000000002,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "c1.L",
+         "c2.L",
+         "c3.L"
+        ],
+        "roll": 16.0,
+        "cycles": 1,
+        "lag": 0.2,
+        "grow": 1.35
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "c1.R",
+         "c2.R",
+         "c3.R"
+        ],
+        "roll": -16.0,
+        "cycles": 1,
+        "lag": 0.2,
+        "grow": 1.35
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "lods": [
+  {
+   "max_triangles": 3000
+  },
+  {
+   "max_triangles": 700
+  }
+ ],
+ "qa": {
+  "max_triangles": 20000,
+  "require_uvs": true,
+  "require_manifold": true,
+  "require_origin_at_base": true,
+  "max_dimension_m": 2.0
+ }
+}

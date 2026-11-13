@@ -24,6 +24,8 @@ use hw_gen::urban::world::{WorldRoad, WALKER_HALF};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+pub mod critters;
+
 /// How many different looks citizens are drawn with (the client builds
 /// this many characters; a citizen's look is one of them).
 pub const LOOKS: u32 = 24;
@@ -283,6 +285,9 @@ pub struct Citizens {
     /// The hour of day (0 to 24): who is out (f64 bits, so the citizens
     /// can be shared with a worker thread and still follow the clock).
     hour: std::sync::atomic::AtomicU64,
+    /// Where the town's animals live (see [`critters`]), planned on first
+    /// ask.
+    critters: std::sync::OnceLock<critters::Plan>,
 }
 
 impl Citizens {
@@ -333,6 +338,7 @@ impl Citizens {
             world,
             moles,
             hour: std::sync::atomic::AtomicU64::new(DEFAULT_HOUR.to_bits()),
+            critters: std::sync::OnceLock::new(),
         }
     }
 
@@ -371,19 +377,7 @@ impl Citizens {
     /// time), nearest first, at most `max`.
     pub fn near(&self, around: DVec2, radius: f64, time: f64, max: usize) -> Vec<Citizen> {
         // Routes stay within a few streets of home: look a little further.
-        let reach = radius + 400.0;
-        let (c0, c1) = (
-            cell_of(around - DVec2::splat(reach)),
-            cell_of(around + DVec2::splat(reach)),
-        );
-        let mut homes = Vec::new();
-        for x in c0.0..=c1.0 {
-            for (_, list) in self.grid.range((x, c0.1)..=(x, c1.1)) {
-                homes.extend(list.iter().copied());
-            }
-        }
-        homes.sort();
-        homes.dedup();
+        let homes = self.roads_near(around, radius + 400.0);
         let mut out = Vec::new();
         // Molehaven's people, when the cavern is near.
         let (_, centre, ways) = &self.moles;
@@ -413,6 +407,23 @@ impl Citizens {
         });
         out.truncate(max);
         out
+    }
+
+    /// Every street that comes within `reach` of `around` (or nearly).
+    fn roads_near(&self, around: DVec2, reach: f64) -> Vec<u32> {
+        let (c0, c1) = (
+            cell_of(around - DVec2::splat(reach)),
+            cell_of(around + DVec2::splat(reach)),
+        );
+        let mut roads = Vec::new();
+        for x in c0.0..=c1.0 {
+            for (_, list) in self.grid.range((x, c0.1)..=(x, c1.1)) {
+                roads.extend(list.iter().copied());
+            }
+        }
+        roads.sort();
+        roads.dedup();
+        roads
     }
 
     /// Is citizen `id` one of the town's robot street sweepers? They keep

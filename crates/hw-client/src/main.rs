@@ -751,6 +751,9 @@ fn main() -> EngineResult<()> {
     let mut settle: BTreeMap<hw_core::NetId, (Vec3, bool)> = BTreeMap::new();
     let mut crowd = CrowdView::new();
     let mut sweepers = hw_client::sweeperview::SweeperView::new();
+    // The town's animals (`HW_CRITTERS=0` leaves them out, to measure without).
+    let mut critters = hw_client::critterview::CritterView::new();
+    let critters_on = std::env::var("HW_CRITTERS").map_or(true, |v| v != "0");
     let mut anims: BTreeMap<hw_core::NetId, HeroAnim> = BTreeMap::new();
     // Sidekicks' little tricks while their heroes stand about.
     let mut tricks: BTreeMap<hw_core::NetId, hw_client::tricks::Tricks> = BTreeMap::new();
@@ -799,7 +802,8 @@ fn main() -> EngineResult<()> {
         hero_cam_yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
     }
     let mut fly = match view.as_str() {
-        "street" | "citizen" | "alpha" | "riders" | "act" | "safe" => {
+        "street" | "citizen" | "alpha" | "riders" | "act" | "safe" | "wibbet" | "drakelet"
+        | "driftbell" => {
             let p = spawn - spawn_dir * 8.0;
             let yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, ground(p) as f32 + 6.0, p.y as f32), yaw, 8.0)
@@ -2307,6 +2311,7 @@ fn main() -> EngineResult<()> {
                     bus_folk.clear(world, &crowd);
                     crowd.clear(world);
                     sweepers.clear(world);
+                    critters.clear(world);
                     // The new town's extras come in like the first ones.
                     if let Some(l) = extras_load.take() {
                         l.abandon(world);
@@ -3477,6 +3482,7 @@ fn main() -> EngineResult<()> {
                         bus_folk.clear(world, &crowd);
                         crowd.clear(world);
                         sweepers.clear(world);
+                        critters.clear(world);
                         if let Some(s) = extras.signals.as_mut() {
                             s.clear(world);
                         }
@@ -4602,6 +4608,7 @@ fn main() -> EngineResult<()> {
             // while the game's own update runs and so start at once: a
             // thread started here each frame waited up to 31 ms for a core
             // while the town was being built on all of them.
+            let critter_hero = session.my_position(&heroes);
             let (traffic_plan, survey) = {
                 let (traffic, traffic_view) = (&mut traffic, &mut traffic_view);
                 let town_plan = &generated.world;
@@ -4622,7 +4629,25 @@ fn main() -> EngineResult<()> {
                     || {
                         crowd
                             .update(world, &citizens, &alarms, eye2, game_time, dt)
-                            .and_then(|()| sweepers.update(world, &citizens, eye2, game_time, dt))
+                            .and_then(|()| {
+                                sweepers.update(world, &citizens, eye2, game_time, dt)
+                            })?;
+                        if !critters_on {
+                            return Ok(());
+                        }
+                        // After the citizens: a pet keeps its owner's time.
+                        let crowd = &crowd;
+                        critters.update(
+                            world,
+                            &citizens,
+                            &alarms,
+                            &|id| crowd.delay_of(id),
+                            &|world, id| crowd.hand_of(world, id),
+                            eye2,
+                            critter_hero,
+                            game_time,
+                            dt,
+                        )
                     },
                 );
                 crowd_done?;
@@ -4763,6 +4788,37 @@ fn main() -> EngineResult<()> {
                         .to_degrees();
                     fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
                 }
+            }
+            // `HW_VIEW=wibbet|drakelet|driftbell`: a close-up of the nearest one.
+            let species = match view.as_str() {
+                "wibbet" => Some(hw_sim::citizens::critters::Species::Wibbet),
+                "drakelet" => Some(hw_sim::citizens::critters::Species::Drakelet),
+                "driftbell" => Some(hw_sim::citizens::critters::Species::Driftbell),
+                _ => None,
+            };
+            // (`HW_WIBBET=cling`: one up a lamp post.)
+            let cling = std::env::var("HW_WIBBET").is_ok_and(|v| v == "cling");
+            if let Some((at, yaw, _)) = species.and_then(|s| critters.nearest(s, eye, cling)) {
+                let yaw = yaw.to_radians();
+                let ahead = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+                let side = Vec3::new(ahead.z, 0.0, -ahead.x);
+                // A wibbet from in front; a drakelet from beside it, with its
+                // owner; a driftbell from below. One on a post from behind.
+                let (off, look) = match view.as_str() {
+                    "driftbell" => (ahead * 3.0 + side * 2.0 - Vec3::Y * 2.5, Vec3::ZERO),
+                    "drakelet" => (ahead * 1.2 + side * 3.2 + Vec3::Y * 0.2, -Vec3::Y * 0.6),
+                    _ if cling => (side * 0.9 - ahead * 1.6 + Vec3::Y * 0.2, Vec3::ZERO),
+                    _ => (
+                        (ahead + side * 0.55).normalize() * 1.5 + Vec3::Y * 0.55,
+                        Vec3::Y * 0.25,
+                    ),
+                };
+                let p = at + off;
+                let d = at + look - p;
+                let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                    .atan()
+                    .to_degrees();
+                fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
             }
             hw_client::hitch::mark("traffic view");
             // Joined a friend: our own hero bumps into the cars and airships

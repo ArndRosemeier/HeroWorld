@@ -496,6 +496,76 @@ impl Prop {
     }
 }
 
+/// Where a small climbing animal (a wibbet, see `hw_sim::citizens::critters`)
+/// rests on a prop, from the drawn model's own measures
+/// (`hw_client::propmesh`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Perch {
+    /// It clings to a round post of this radius, anywhere between the two
+    /// heights over the prop's foot.
+    Cling { radius: f64, low: f64, high: f64 },
+    /// It hops up and sits on top: where (from the prop's place, along
+    /// its x and its front z), how high, and how far from the prop's
+    /// middle it takes off.
+    Top {
+        x: f64,
+        z: f64,
+        height: f64,
+        from: f64,
+    },
+}
+
+impl Prop {
+    /// Where a wibbet rests on this prop, if it is one they climb.
+    pub fn perch(&self) -> Option<Perch> {
+        let s = self.scale;
+        Some(match self.kind {
+            // The shaft under the lantern, the arms or the collar.
+            PropKind::Lamp(LampStyle::Lantern) => Perch::Cling {
+                radius: 0.065 * s,
+                low: 1.7 * s,
+                high: 3.1 * s,
+            },
+            PropKind::Lamp(LampStyle::Deco) => Perch::Cling {
+                radius: 0.09 * s,
+                low: 1.8 * s,
+                high: 4.4 * s,
+            },
+            PropKind::Lamp(LampStyle::Atomic) => Perch::Cling {
+                radius: 0.1 * s,
+                low: 1.3 * s,
+                high: 2.1 * s,
+            },
+            // The posters round the drum, under the dome's eaves.
+            PropKind::AdPillar => Perch::Cling {
+                radius: 0.555 * s,
+                low: 1.0 * s,
+                high: 2.1 * s,
+            },
+            PropKind::Bin => Perch::Top {
+                x: 0.0,
+                z: 0.0,
+                height: 0.95 * s,
+                from: 0.75,
+            },
+            PropKind::Hydrant => Perch::Top {
+                x: 0.0,
+                z: 0.0,
+                height: 0.71 * s,
+                from: 0.6,
+            },
+            // On the seat, to one side.
+            PropKind::Bench => Perch::Top {
+                x: 0.45 * s,
+                z: 0.03 * s,
+                height: 0.49 * s,
+                from: 0.8,
+            },
+            _ => return None,
+        })
+    }
+}
+
 /// Does a car parked at `q` facing `dir` stay in the parking strip along
 /// the kerb of `r`, every corner of it?
 fn at_the_kerb(r: &WorldRoad, q: DVec2, dir: DVec2, model: CarModel) -> bool {

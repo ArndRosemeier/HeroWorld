@@ -10,6 +10,7 @@
 //! `saucer` (resting just over the floor), `raid` (hanging 14 m up with its
 //! tractor beam), `helmet` and `crown` (a zapper's and an overlord's
 //! headgear), `claw` and `sceptre`; the Vael trader's `disc` and `wares`.
+//! The town's animals: `wibbet`, `drakelet`, `driftbell` (`HW_CLIP` picks the clip).
 //!
 //! xvfb-run -a env ENGINE_SCREENSHOT=$PWD/screenshots/show.png HW_SHOW=cruiser \
 //!   cargo run -p hw-client --bin showroom
@@ -40,6 +41,7 @@ fn model(name: &str, lod: Lod, paint: u8) -> Mesh {
         "taxi_open" => taxi_into(&mut b, lod, false),
         "cap" => return hw_client::policeview::cap(),
         n if n.starts_with("officer") => {}
+        "wibbet" | "drakelet" | "driftbell" => {}
         "patrol" => hw_client::carmesh::patrol_into(&mut b, lod, true),
         "patrol_open" => hw_client::carmesh::patrol_into(&mut b, lod, false),
         "cruiser_open" => car_shell_into(&mut b, CarModel::Cruiser, paint, lod, true),
@@ -211,6 +213,39 @@ fn main() -> EngineResult<()> {
                         .with_pitch_deg(at[3])
                         .with_scale(at[4]),
                 )?;
+            }
+            // `HW_SHOW=wibbet|drakelet|driftbell`: the town's animals, their
+            // three colourings in a row, playing `HW_CLIP` (`HW_LOD` picks
+            // the level, `HW_TURN` and `HW_TILT` turn them, `HW_LIFT` lifts).
+            if matches!(show.as_str(), "wibbet" | "drakelet" | "driftbell") {
+                use hw_sim::citizens::critters::Species;
+                let (species, clip, gap) = match show.as_str() {
+                    "wibbet" => (Species::Wibbet, "Idle", 0.75),
+                    "drakelet" => (Species::Drakelet, "Hover", 1.25),
+                    _ => (Species::Driftbell, "Drift", 1.3),
+                };
+                let dir = hw_client::critterview::creatures_dir().expect("assets/creatures");
+                let level = match lod {
+                    Lod::Near => 0,
+                    Lod::Mid => 1,
+                    Lod::Far => 2,
+                };
+                let clip = std::env::var("HW_CLIP").unwrap_or(clip.into());
+                for (s, coat, levels) in hw_client::critterview::load_all(&dir)? {
+                    if s != species {
+                        continue;
+                    }
+                    let m = &levels[level];
+                    let tris: usize = m.meshes.iter().map(|x| x.indices.len() / 3).sum();
+                    println!("{show} {coat}: {tris} triangles");
+                    let e = world.spawn_animated_shared(
+                        m.clone(),
+                        Place::new((coat as f32 - 1.0) * gap, env_f("HW_LIFT", 0.0), 0.0)
+                            .with_yaw_deg(env_f("HW_TURN", 0.0))
+                            .with_pitch_deg(env_f("HW_TILT", 0.0)),
+                    )?;
+                    world.play_animation(e, &clip)?;
+                }
             }
             world.spawn(Shape::box_at(
                 (0.0, -0.05, 0.0),

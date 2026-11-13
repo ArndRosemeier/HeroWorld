@@ -1,0 +1,1453 @@
+{
+ "spec_version": 1,
+ "id": "drakelet_ember",
+ "generator": "organic.sculpt",
+ "textures": {
+  "texels_per_metre": 1536,
+  "max_size": 1024
+ },
+ "materials": {
+  "scales": {
+   "base_color": [
+    0.552,
+    0.0343,
+    0.0212,
+    1
+   ],
+   "roughness": 0.42,
+   "metallic": 0.0,
+   "pattern": {
+    "layers": [
+     {
+      "mottle": {
+       "color": [
+        0.3864,
+        0.024009999999999997,
+        0.014839999999999999
+       ],
+       "scale": 14,
+       "coverage": 0.45,
+       "contrast": 1.6,
+       "amount": 0.5
+      }
+     },
+     {
+      "inside": {
+       "shape": {
+        "ref": "underside"
+       },
+       "color": [
+        0.956,
+        0.552,
+        0.117
+       ],
+       "soft": 0.02
+      }
+     },
+     {
+      "inside": {
+       "shape": {
+        "ref": "throat"
+       },
+       "color": [
+        0.956,
+        0.552,
+        0.117
+       ],
+       "soft": 0.012
+      }
+     },
+     {
+      "cells": {
+       "color": [
+        0.24840000000000004,
+        0.015434999999999999,
+        0.00954
+       ],
+       "size": 0.016,
+       "width": 0.0022,
+       "amount": 0.55,
+       "relief": -0.0009
+      }
+     },
+     {
+      "cells": {
+       "color": [
+        0.8580000000000001,
+        0.08145,
+        0.0618
+       ],
+       "size": 0.016,
+       "width": 0.0,
+       "fill": 0.35,
+       "amount": 0.3
+      }
+     },
+     {
+      "cavities": {
+       "color": [
+        0.24840000000000004,
+        0.015434999999999999,
+        0.00954
+       ],
+       "radius": 0.015,
+       "amount": 0.5
+      }
+     }
+    ]
+   }
+  },
+  "wingskin": {
+   "base_color": [
+    0.956,
+    0.2623,
+    0.0319,
+    1
+   ],
+   "roughness": 0.5,
+   "metallic": 0.0,
+   "pattern": {
+    "layers": [
+     {
+      "gradient": {
+       "color": [
+        0.478,
+        0.13115,
+        0.01595
+       ],
+       "axis": "x",
+       "from": 0.02,
+       "to": 0.3,
+       "amount": 0.55
+      }
+     },
+     {
+      "cells": {
+       "color": [
+        0.3824,
+        0.10492,
+        0.01276
+       ],
+       "size": 0.07,
+       "width": 0.003,
+       "amount": 0.45,
+       "relief": -0.0006
+      }
+     },
+     {
+      "mottle": {
+       "color": [
+        1.0,
+        0.34098999999999996,
+        0.04147
+       ],
+       "scale": 30,
+       "coverage": 0.4,
+       "amount": 0.3
+      }
+     }
+    ]
+   }
+  },
+  "eye": {
+   "base_color": [
+    0.956,
+    0.6724,
+    0.0452,
+    1
+   ],
+   "roughness": 0.06,
+   "metallic": 0.0,
+   "pattern": {
+    "layers": [
+     {
+      "inside": {
+       "shape": {
+        "mirror_x": {
+         "ref": "pupil"
+        }
+       },
+       "color": [
+        0.004,
+        0.004,
+        0.006
+       ],
+       "soft": 0.0015
+      }
+     },
+     {
+      "inside": {
+       "shape": {
+        "union": [
+         {
+          "sphere": {
+           "centre": [
+            0.055,
+            -0.31,
+            0.485
+           ],
+           "radius": 0.007
+          }
+         },
+         {
+          "sphere": {
+           "centre": [
+            -0.07,
+            -0.306,
+            0.485
+           ],
+           "radius": 0.007
+          }
+         }
+        ]
+       },
+       "color": [
+        1,
+        1,
+        1
+       ],
+       "soft": 0.001
+      }
+     }
+    ]
+   }
+  },
+  "horn": {
+   "base_color": [
+    0.0612,
+    0.013,
+    0.016,
+    1
+   ],
+   "roughness": 0.35,
+   "metallic": 0.0
+  },
+  "collar": {
+   "base_color": [
+    0.0212,
+    0.1878,
+    0.5776,
+    1
+   ],
+   "roughness": 0.5,
+   "metallic": 0.0
+  },
+  "brass": {
+   "base_color": [
+    0.8714,
+    0.552,
+    0.1022,
+    1
+   ],
+   "roughness": 0.25,
+   "metallic": 1.0
+  }
+ },
+ "params": {
+  "parts": {
+   "body": {
+    "ellipsoid": {
+     "centre": [
+      0,
+      0,
+      0.305
+     ],
+     "radii": [
+      0.078,
+      0.132,
+      0.074
+     ]
+    }
+   },
+   "neck": {
+    "capsule": {
+     "a": [
+      0,
+      -0.112,
+      0.338
+     ],
+     "b": [
+      0,
+      -0.2,
+      0.425
+     ],
+     "radius": 0.04,
+     "radius_b": 0.035
+    }
+   },
+   "head": {
+    "ellipsoid": {
+     "centre": [
+      0,
+      -0.25,
+      0.45
+     ],
+     "radii": [
+      0.068,
+      0.072,
+      0.062
+     ]
+    }
+   },
+   "snout": {
+    "ellipsoid": {
+     "centre": [
+      0,
+      -0.322,
+      0.432
+     ],
+     "radii": [
+      0.037,
+      0.046,
+      0.03
+     ]
+    }
+   },
+   "nostril": {
+    "sphere": {
+     "centre": [
+      0.017,
+      -0.356,
+      0.448
+     ],
+     "radius": 0.009
+    }
+   },
+   "brow": {
+    "ellipsoid": {
+     "centre": [
+      0.045,
+      -0.27,
+      0.5
+     ],
+     "radii": [
+      0.03,
+      0.032,
+      0.012
+     ]
+    }
+   },
+   "eye": {
+    "sphere": {
+     "centre": [
+      0.046,
+      -0.283,
+      0.47
+     ],
+     "radius": 0.032
+    }
+   },
+   "horn": {
+    "capsule": {
+     "a": [
+      0.032,
+      -0.212,
+      0.495
+     ],
+     "b": [
+      0.058,
+      -0.135,
+      0.555
+     ],
+     "radius": 0.013,
+     "radius_b": 0.004
+    }
+   },
+   "cheek": {
+    "capsule": {
+     "a": [
+      0.05,
+      -0.225,
+      0.435
+     ],
+     "b": [
+      0.082,
+      -0.165,
+      0.43
+     ],
+     "radius": 0.011,
+     "radius_b": 0.004
+    }
+   },
+   "collar": {
+    "rotate": {
+     "degrees": [
+      -42,
+      0,
+      0
+     ],
+     "about": [
+      0,
+      -0.148,
+      0.378
+     ],
+     "shape": {
+      "torus": {
+       "centre": [
+        0,
+        -0.148,
+        0.378
+       ],
+       "radius": 0.039,
+       "thickness": 0.011,
+       "axis": "y"
+      }
+     }
+    }
+   },
+   "tag": {
+    "sphere": {
+     "centre": [
+      0,
+      -0.176,
+      0.336
+     ],
+     "radius": 0.014
+    }
+   },
+   "wing": {
+    "capsule": {
+     "a": [
+      0.088,
+      0.005,
+      0.36
+     ],
+     "b": [
+      0.27,
+      -0.072,
+      0.392
+     ],
+     "radius": 0.019,
+     "radius_b": 0.014
+    }
+   },
+   "finger": {
+    "capsule": {
+     "a": [
+      0.27,
+      -0.072,
+      0.392
+     ],
+     "b": [
+      0.5,
+      0.012,
+      0.385
+     ],
+     "radius": 0.014,
+     "radius_b": 0.006
+    }
+   },
+   "skin_in": {
+    "subtract": {
+     "from": {
+      "ellipsoid": {
+       "centre": [
+        0.185,
+        0.07,
+        0.378
+       ],
+       "radii": [
+        0.125,
+        0.135,
+        0.0075
+       ]
+      }
+     },
+     "cut": [
+      {
+       "cylinder": {
+        "a": [
+         0.13,
+         0.235,
+         0.3
+        ],
+        "b": [
+         0.13,
+         0.235,
+         0.46
+        ],
+        "radius": 0.07
+       }
+      }
+     ],
+     "k": 0.004
+    }
+   },
+   "skin_out": {
+    "subtract": {
+     "from": {
+      "ellipsoid": {
+       "centre": [
+        0.375,
+        0.05,
+        0.387
+       ],
+       "radii": [
+        0.135,
+        0.12,
+        0.0065
+       ]
+      }
+     },
+     "cut": [
+      {
+       "cylinder": {
+        "a": [
+         0.3,
+         0.215,
+         0.3
+        ],
+        "b": [
+         0.3,
+         0.215,
+         0.46
+        ],
+        "radius": 0.075
+       }
+      },
+      {
+       "cylinder": {
+        "a": [
+         0.445,
+         0.185,
+         0.3
+        ],
+        "b": [
+         0.445,
+         0.185,
+         0.46
+        ],
+        "radius": 0.07
+       }
+      }
+     ],
+     "k": 0.004
+    }
+   },
+   "rib": {
+    "capsule": {
+     "a": [
+      0.27,
+      -0.072,
+      0.392
+     ],
+     "b": [
+      0.36,
+      0.145,
+      0.386
+     ],
+     "radius": 0.009,
+     "radius_b": 0.004
+    }
+   },
+   "foreleg": {
+    "capsule": {
+     "a": [
+      0.05,
+      -0.075,
+      0.262
+     ],
+     "b": [
+      0.088,
+      -0.09,
+      0.2
+     ],
+     "radius": 0.026,
+     "radius_b": 0.02
+    }
+   },
+   "forearm": {
+    "capsule": {
+     "a": [
+      0.088,
+      -0.09,
+      0.2
+     ],
+     "b": [
+      0.088,
+      -0.118,
+      0.152
+     ],
+     "radius": 0.02,
+     "radius_b": 0.016
+    }
+   },
+   "forepaw": {
+    "ellipsoid": {
+     "centre": [
+      0.088,
+      -0.136,
+      0.14
+     ],
+     "radii": [
+      0.021,
+      0.032,
+      0.013
+     ]
+    }
+   },
+   "thigh": {
+    "capsule": {
+     "a": [
+      0.055,
+      0.07,
+      0.265
+     ],
+     "b": [
+      0.102,
+      0.045,
+      0.198
+     ],
+     "radius": 0.033,
+     "radius_b": 0.023
+    }
+   },
+   "shin": {
+    "capsule": {
+     "a": [
+      0.102,
+      0.045,
+      0.198
+     ],
+     "b": [
+      0.1,
+      0.088,
+      0.152
+     ],
+     "radius": 0.022,
+     "radius_b": 0.016
+    }
+   },
+   "hindpaw": {
+    "ellipsoid": {
+     "centre": [
+      0.1,
+      0.066,
+      0.14
+     ],
+     "radii": [
+      0.022,
+      0.038,
+      0.013
+     ]
+    }
+   },
+   "fin": {
+    "ellipsoid": {
+     "centre": [
+      0,
+      0.49,
+      0.335
+     ],
+     "radii": [
+      0.012,
+      0.045,
+      0.036
+     ]
+    }
+   },
+   "spines": {
+    "union": [
+     {
+      "ellipsoid": {
+       "centre": [
+        0,
+        -0.055,
+        0.378
+       ],
+       "radii": [
+        0.008,
+        0.024,
+        0.022
+       ]
+      }
+     },
+     {
+      "ellipsoid": {
+       "centre": [
+        0,
+        -0.01,
+        0.384
+       ],
+       "radii": [
+        0.008,
+        0.024,
+        0.022
+       ]
+      }
+     },
+     {
+      "ellipsoid": {
+       "centre": [
+        0,
+        0.035,
+        0.382
+       ],
+       "radii": [
+        0.008,
+        0.024,
+        0.022
+       ]
+      }
+     },
+     {
+      "ellipsoid": {
+       "centre": [
+        0,
+        0.08,
+        0.37
+       ],
+       "radii": [
+        0.008,
+        0.024,
+        0.022
+       ]
+      }
+     }
+    ]
+   },
+   "underside": {
+    "ellipsoid": {
+     "centre": [
+      0,
+      -0.02,
+      0.24
+     ],
+     "radii": [
+      0.055,
+      0.2,
+      0.06
+     ]
+    }
+   },
+   "face": {
+    "mirror_x": {
+     "union": [
+      {
+       "ref": "nostril"
+      },
+      {
+       "ref": "brow"
+      },
+      {
+       "ref": "eye"
+      },
+      {
+       "ref": "horn"
+      },
+      {
+       "ref": "cheek"
+      }
+     ]
+    }
+   },
+   "throat": {
+    "capsule": {
+     "a": [
+      0,
+      -0.13,
+      0.3
+     ],
+     "b": [
+      0,
+      -0.24,
+      0.395
+     ],
+     "radius": 0.03
+    }
+   },
+   "pupil": {
+    "ellipsoid": {
+     "centre": [
+      0.066,
+      -0.306,
+      0.47
+     ],
+     "radii": [
+      0.013,
+      0.013,
+      0.023
+     ]
+    }
+   },
+   "tail1": {
+    "capsule": {
+     "a": [
+      0,
+      0.1,
+      0.3
+     ],
+     "b": [
+      0,
+      0.23,
+      0.292
+     ],
+     "radius": 0.045,
+     "radius_b": 0.032
+    }
+   },
+   "tail2": {
+    "capsule": {
+     "a": [
+      0,
+      0.23,
+      0.292
+     ],
+     "b": [
+      0,
+      0.35,
+      0.3
+     ],
+     "radius": 0.032,
+     "radius_b": 0.021
+    }
+   },
+   "tail3": {
+    "capsule": {
+     "a": [
+      0,
+      0.35,
+      0.3
+     ],
+     "b": [
+      0,
+      0.455,
+      0.325
+     ],
+     "radius": 0.021,
+     "radius_b": 0.012
+    }
+   }
+  },
+  "shape": {
+   "above": {
+    "height": 0.0,
+    "shape": {
+     "union": [
+      {
+       "smooth_union": {
+        "k": 0.012,
+        "shapes": [
+         {
+          "smooth_union": {
+           "k": 0.03,
+           "shapes": [
+            {
+             "ref": "body"
+            },
+            {
+             "ref": "neck"
+            },
+            {
+             "smooth_union": {
+              "k": 0.02,
+              "shapes": [
+               {
+                "ref": "head"
+               },
+               {
+                "ref": "snout"
+               },
+               {
+                "mirror_x": {
+                 "ref": "brow"
+                }
+               }
+              ]
+             }
+            },
+            {
+             "smooth_union": {
+              "k": 0.012,
+              "shapes": [
+               {
+                "ref": "tail1"
+               },
+               {
+                "ref": "tail2"
+               },
+               {
+                "ref": "tail3"
+               }
+              ]
+             }
+            }
+           ]
+          }
+         },
+         {
+          "mirror_x": {
+           "smooth_union": {
+            "k": 0.006,
+            "shapes": [
+             {
+              "ref": "wing"
+             },
+             {
+              "ref": "finger"
+             },
+             {
+              "ref": "rib"
+             },
+             {
+              "ref": "skin_in"
+             },
+             {
+              "ref": "skin_out"
+             }
+            ]
+           }
+          }
+         },
+         {
+          "mirror_x": {
+           "smooth_union": {
+            "k": 0.01,
+            "shapes": [
+             {
+              "ref": "foreleg"
+             },
+             {
+              "ref": "forearm"
+             },
+             {
+              "ref": "forepaw"
+             }
+            ]
+           }
+          }
+         },
+         {
+          "mirror_x": {
+           "smooth_union": {
+            "k": 0.01,
+            "shapes": [
+             {
+              "ref": "thigh"
+             },
+             {
+              "ref": "shin"
+             },
+             {
+              "ref": "hindpaw"
+             }
+            ]
+           }
+          }
+         },
+         {
+          "mirror_x": {
+           "ref": "nostril"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "smooth_union": {
+        "k": 0.004,
+        "shapes": [
+         {
+          "ref": "spines"
+         },
+         {
+          "ref": "fin"
+         },
+         {
+          "mirror_x": {
+           "ref": "horn"
+          }
+         },
+         {
+          "mirror_x": {
+           "ref": "cheek"
+          }
+         }
+        ]
+       }
+      },
+      {
+       "union": [
+        {
+         "ref": "collar"
+        },
+        {
+         "ref": "tag"
+        }
+       ]
+      },
+      {
+       "mirror_x": {
+        "ref": "eye"
+       }
+      }
+     ]
+    }
+   }
+  },
+  "base_slot": "scales",
+  "paint": {
+   "eye": {
+    "mirror_x": {
+     "ref": "eye"
+    }
+   },
+   "wingskin": {
+    "mirror_x": {
+     "union": [
+      {
+       "ref": "skin_in"
+      },
+      {
+       "ref": "skin_out"
+      }
+     ]
+    }
+   },
+   "horn": {
+    "union": [
+     {
+      "ref": "spines"
+     },
+     {
+      "ref": "fin"
+     },
+     {
+      "mirror_x": {
+       "ref": "horn"
+      }
+     },
+     {
+      "mirror_x": {
+       "ref": "cheek"
+      }
+     }
+    ]
+   },
+   "collar": {
+    "ref": "collar"
+   },
+   "brass": {
+    "ref": "tag"
+   }
+  },
+  "paint_reach": 0.002,
+  "max_triangles": 16000,
+  "detail": 6,
+  "rig": {
+   "bones": {
+    "body": {
+     "head": [
+      0,
+      0.1,
+      0.3
+     ],
+     "tail": [
+      0,
+      -0.09,
+      0.315
+     ]
+    },
+    "neck": {
+     "parent": "body",
+     "from": "neck"
+    },
+    "head": {
+     "parent": "neck",
+     "head": [
+      0,
+      -0.2,
+      0.425
+     ],
+     "tail": [
+      0,
+      -0.36,
+      0.435
+     ]
+    },
+    "wing.L": {
+     "parent": "body",
+     "from": "wing"
+    },
+    "finger.L": {
+     "parent": "wing.L",
+     "from": "finger"
+    },
+    "foreleg.L": {
+     "parent": "body",
+     "from": "foreleg"
+    },
+    "forearm.L": {
+     "parent": "foreleg.L",
+     "from": "forearm"
+    },
+    "forepaw.L": {
+     "parent": "forearm.L",
+     "head": [
+      0.088,
+      -0.118,
+      0.148
+     ],
+     "tail": [
+      0.088,
+      -0.165,
+      0.134
+     ]
+    },
+    "thigh.L": {
+     "parent": "body",
+     "from": "thigh"
+    },
+    "shin.L": {
+     "parent": "thigh.L",
+     "from": "shin"
+    },
+    "hindpaw.L": {
+     "parent": "shin.L",
+     "head": [
+      0.1,
+      0.088,
+      0.148
+     ],
+     "tail": [
+      0.1,
+      0.03,
+      0.134
+     ]
+    },
+    "tail1": {
+     "parent": "body",
+     "from": "tail1"
+    },
+    "tail2": {
+     "parent": "tail1",
+     "from": "tail2"
+    },
+    "tail3": {
+     "parent": "tail2",
+     "from": "tail3"
+    }
+   },
+   "carry": {
+    "body": [
+     "body",
+     "spines"
+    ],
+    "neck": [
+     "neck",
+     "collar",
+     "tag"
+    ],
+    "head": [
+     "head",
+     "snout",
+     "face"
+    ],
+    "wing.L": [
+     "wing",
+     "skin_in"
+    ],
+    "finger.L": [
+     "finger",
+     "skin_out",
+     "rib"
+    ],
+    "forepaw.L": [
+     "forepaw"
+    ],
+    "hindpaw.L": [
+     "hindpaw"
+    ],
+    "tail3": [
+     "tail3",
+     "fin"
+    ]
+   },
+   "legs": {
+    "fore.L": {
+     "upper": "foreleg.L",
+     "lower": "forearm.L",
+     "foot": "forepaw.L"
+    },
+    "hind.L": {
+     "upper": "thigh.L",
+     "lower": "shin.L",
+     "foot": "hindpaw.L"
+    }
+   },
+   "softness": {
+    "default": 0.01
+   },
+   "clips": {
+    "Hover": {
+     "seconds": 0.5,
+     "loop": true,
+     "motions": [
+      {
+       "turn": {
+        "bone": "body",
+        "wave": "constant",
+        "pitch": 24
+       }
+      },
+      {
+       "turn": {
+        "bone": "neck",
+        "wave": "constant",
+        "pitch": -12
+       }
+      },
+      {
+       "turn": {
+        "bone": "head",
+        "wave": "constant",
+        "pitch": -12
+       }
+      },
+      {
+       "turn": {
+        "bone": "tail1",
+        "wave": "constant",
+        "pitch": -16
+       }
+      },
+      {
+       "turn": {
+        "bone": "wing.*",
+        "wave": "sine",
+        "cycles": 1,
+        "phase": 0.0,
+        "roll": -40
+       }
+      },
+      {
+       "turn": {
+        "bone": "finger.*",
+        "wave": "sine",
+        "cycles": 1,
+        "phase": -0.18,
+        "roll": -28.0
+       }
+      },
+      {
+       "move": {
+        "z": 0.07,
+        "wave": "constant"
+       }
+      },
+      {
+       "move": {
+        "z": 0.022,
+        "cycles": 1,
+        "phase": 0.3
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "tail1",
+         "tail2",
+         "tail3"
+        ],
+        "pitch": 6,
+        "cycles": 1,
+        "lag": 0.15,
+        "grow": 1.3
+       }
+      },
+      {
+       "turn": {
+        "bone": "thigh.*",
+        "wave": "sine",
+        "cycles": 1,
+        "phase": 0.3,
+        "pitch": 8
+       }
+      },
+      {
+       "turn": {
+        "bone": "foreleg.*",
+        "wave": "sine",
+        "cycles": 1,
+        "phase": 0.55,
+        "pitch": 8
+       }
+      }
+     ]
+    },
+    "Fly": {
+     "seconds": 0.5,
+     "loop": true,
+     "motions": [
+      {
+       "turn": {
+        "bone": "thigh.*",
+        "wave": "constant",
+        "pitch": -35
+       }
+      },
+      {
+       "turn": {
+        "bone": "foreleg.*",
+        "wave": "constant",
+        "pitch": -40
+       }
+      },
+      {
+       "turn": {
+        "bone": "neck",
+        "wave": "constant",
+        "pitch": -14
+       }
+      },
+      {
+       "turn": {
+        "bone": "head",
+        "wave": "constant",
+        "pitch": 8
+       }
+      },
+      {
+       "turn": {
+        "bone": "wing.*",
+        "wave": "sine",
+        "cycles": 1,
+        "phase": 0.0,
+        "roll": -34
+       }
+      },
+      {
+       "turn": {
+        "bone": "finger.*",
+        "wave": "sine",
+        "cycles": 1,
+        "phase": -0.18,
+        "roll": -23.799999999999997
+       }
+      },
+      {
+       "move": {
+        "z": 0.07,
+        "wave": "constant"
+       }
+      },
+      {
+       "move": {
+        "z": 0.018,
+        "cycles": 1,
+        "phase": 0.3
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "tail1",
+         "tail2",
+         "tail3"
+        ],
+        "pitch": 7,
+        "cycles": 1,
+        "lag": 0.18,
+        "grow": 1.4
+       }
+      }
+     ]
+    },
+    "Sit": {
+     "seconds": 4.0,
+     "loop": true,
+     "motions": [
+      {
+       "turn": {
+        "bone": "wing.*",
+        "wave": "constant",
+        "roll": 38
+       }
+      },
+      {
+       "turn": {
+        "bone": "finger.*",
+        "wave": "constant",
+        "roll": -75
+       }
+      },
+      {
+       "turn": {
+        "bone": "head",
+        "wave": "sine",
+        "cycles": 1,
+        "phase": 0.0,
+        "yaw": 28
+       }
+      },
+      {
+       "turn": {
+        "bone": "neck",
+        "wave": "sine",
+        "cycles": 2,
+        "phase": 0.0,
+        "pitch": 6
+       }
+      },
+      {
+       "turn": {
+        "bone": "wing.*",
+        "wave": "sine",
+        "cycles": 2,
+        "phase": 0.0,
+        "roll": 4
+       }
+      },
+      {
+       "wave": {
+        "bones": [
+         "tail1",
+         "tail2",
+         "tail3"
+        ],
+        "yaw": 12,
+        "cycles": 2,
+        "lag": 0.15,
+        "grow": 1.3
+       }
+      },
+      {
+       "move": {
+        "z": 0.003,
+        "cycles": 4
+       }
+      },
+      {
+       "gait": {
+        "legs": {
+         "fore.L": 0,
+         "fore.R": 0,
+         "hind.L": 0,
+         "hind.R": 0
+        },
+        "stride": 0.0,
+        "lift": 0.0,
+        "duty": 0.95
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "lods": [
+  {
+   "max_triangles": 3600
+  },
+  {
+   "max_triangles": 800
+  }
+ ],
+ "qa": {
+  "max_triangles": 18000,
+  "require_uvs": true,
+  "require_manifold": true,
+  "require_origin_at_base": true,
+  "max_dimension_m": 1.5
+ }
+}

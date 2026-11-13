@@ -107,6 +107,22 @@ impl CrowdView {
         self.shown.len()
     }
 
+    /// Seconds citizen `id` is drawn behind the town's clock (after a
+    /// knock or a stare), so what goes with them (a pet on its lead) can
+    /// keep to the same time.
+    pub fn delay_of(&self, id: u64) -> f64 {
+        self.delay.get(&id).copied().unwrap_or(0.0)
+    }
+
+    /// Where citizen `id`'s right hand is, while they are drawn as a full
+    /// character.
+    pub fn hand_of(&self, world: &World, id: u64) -> Option<Vec3> {
+        let s = self.shown.get(&id)?;
+        let body = world.crowd_agent_character(s.crowd, s.agent)?;
+        let hand = world.bone_transform(body, "hand_r").ok()?;
+        Some(hand.w_axis.truncate())
+    }
+
     /// How many citizens shown this frame stand within `r` of `p` (the
     /// soundscape's crowd).
     pub fn within(&self, p: Vec3, r: f64) -> usize {
