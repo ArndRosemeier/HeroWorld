@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.261 (2026-11-13)
+
+- Housekeeping only: design notes for the server.
+
 ## 0.260 (2026-11-13)
 
 - The Doctor's colossus and its weak points are always simulated in full, however far from any hero.

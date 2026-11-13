@@ -133,3 +133,12 @@ Left, in order: (a) done, (b) incidents and crimes (bounded by the 6 km area and
 Full unless measured otherwise), (c) a boosted hero crossing town test for wake rationing,
 (d) retire the wall-clock deferral (`TICK_BUDGET_US`) once (a) to (c) are in, (e) the open
 questions above, with Arnd.
+
+## Decisions (Arnd, 2026-11-13)
+
+- Villain AI keeps the 1 km first ring, capped at 400 (distance only decides who is dropped first).
+- Pins: a thing with a target or a windup, the colossus and its weak points, plus (when those
+  systems join the plan) things carrying someone, in a lift or vehicle, and incidents a hero has
+  answered.
+- Replication: the 500 m interest radius stays inside the first ring; the 1 to 2 km ring gets no
+  extra bandwidth.
