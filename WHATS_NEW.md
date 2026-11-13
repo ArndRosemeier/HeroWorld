@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.257 (2026-11-13)
+
+- Villains far from any hero now take turns by distance rings: the ones nearest act every moment, farther ones every other moment (at full speed), and the rest wait. A huge crowd can no longer slow the game.
+
 ## 0.256 (2026-11-13)
 
 - Big crowds of villains no longer move in slow motion when the game has to ration their turns: they walk as fast as ever, whatever the crowd size.

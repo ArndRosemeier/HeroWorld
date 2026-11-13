@@ -29,7 +29,7 @@ use hw_net::{
     EFFECT_SPRINT, EFFECT_SUPER_JUMP, EFFECT_SUPER_SPEED, EFFECT_TOUGH, EFFECT_WALL_RUN,
     EFFECT_WEAKENED, POWER_IDS,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A hero's health and energy at level 1.
 pub const HERO_HEALTH: f32 = 100.0;
@@ -1207,6 +1207,10 @@ pub struct Fights {
     /// At least this many ticks between a villain's turns (1 normally; tests
     /// raise it to check that speed does not depend on it).
     pub min_think_stride: u64,
+    /// Which villains act this tick, and how often (see [`crate::tiers`]).
+    pub tiers: crate::tiers::Tiers,
+    /// Villains per tier in the last tick: full, reduced, dormant.
+    pub tier_counts: [usize; 3],
     /// Microseconds the parts of the last combat step took (the server's
     /// tick-budget report; [`crate::Sim::take_step_times`]).
     pub laps: Vec<(&'static str, u64)>,
@@ -1309,6 +1313,31 @@ pub const ORDERLY_REACH: f64 = 14.0;
 pub const ORDERLY_BELOW: f32 = 0.8;
 pub const ORDERLY_MENDS: f32 = 14.0;
 
+/// When villains act: the tick, the tests' slowest rate and who the tier plan
+/// lets act.
+struct Turn<'a> {
+    tick: u64,
+    min_stride: u64,
+    runs: &'a BTreeSet<NetId>,
+}
+
+/// Villains in the second ring (they act every second tick).
+const REDUCED_VILLAINS: u64 = 200;
+/// Most villains that act in one tick: the first ring plus half the second.
+pub const ACT_CAP: u64 = THINK_CAP + REDUCED_VILLAINS / 2;
+
+/// The villains' rings: at most [`THINK_CAP`] act every tick, another
+/// [`REDUCED_VILLAINS`] every second tick; the rest hold still. The cost of
+/// the villains' step is bounded by these counts ([`ACT_CAP`] a tick),
+/// whatever the crowd.
+pub fn villain_tiers() -> crate::tiers::Config {
+    crate::tiers::Config {
+        full_budget: THINK_CAP as usize,
+        reduced_budget: REDUCED_VILLAINS as usize,
+        ..Default::default()
+    }
+}
+
 impl Default for Fights {
     fn default() -> Self {
         Self {
@@ -1316,6 +1345,8 @@ impl Default for Fights {
             path_searches: 0,
             villains_acted: 0,
             min_think_stride: 1,
+            tiers: crate::tiers::Tiers::new(villain_tiers()),
+            tier_counts: [0; 3],
             laps: Vec::new(),
             events: Vec::new(),
             power_log: Vec::new(),
@@ -1881,11 +1912,54 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     lap("combat npc+throws+sky");
     let floors = world.resource::<Fights>().floors.clone();
     let min_stride = world.resource::<Fights>().min_think_stride;
+    let mut tiers = std::mem::take(&mut world.resource_mut::<Fights>().tiers);
+    let anchors: Vec<crate::tiers::Anchor> = actors
+        .iter()
+        .filter(|a| a.hero.is_some())
+        .map(|a| crate::tiers::Anchor {
+            pos: a.body.pos,
+            vel: a.body.vel,
+        })
+        .collect();
+    let subjects: Vec<crate::tiers::Subject> = actors
+        .iter()
+        .filter_map(|a| {
+            a.enemy.map(|e| crate::tiers::Subject {
+                id: a.id,
+                pos: a.body.pos,
+                // Fighting a hero: it keeps acting whatever its distance.
+                pinned: e.windup.is_some() || a.f.target.is_some(),
+            })
+        })
+        .collect();
+    let plan = tiers.plan(tick, &anchors, &subjects);
+    for &(id, slept) in &plan.woke {
+        // What was frozen stays frozen: its deadlines move on by the time
+        // it was not simulated.
+        if let Some(a) = actors.iter_mut().find(|a| a.id == id) {
+            if let Some(en) = a.enemy.as_mut() {
+                en.next_attack += slept;
+                en.next_trick += slept;
+                en.windup = en.windup.map(|(at, who)| (at + slept, who));
+                en.last_think = tick.saturating_sub(1);
+            }
+        }
+    }
+    {
+        let mut f = world.resource_mut::<Fights>();
+        f.tier_counts = plan.counts;
+        f.tiers = tiers;
+    }
+    let runs: BTreeSet<NetId> = plan.run.iter().map(|r| r.0).collect();
     let (searches, acted) = enemies_act(
         &mut actors,
         &solids,
         floors.as_deref(),
-        (tick, min_stride),
+        Turn {
+            tick,
+            min_stride,
+            runs: &runs,
+        },
         &mut out.fx,
         &mut paths,
         &mut bombs,
@@ -4547,11 +4621,16 @@ fn enemies_act(
     actors: &mut [Actor],
     solids: &Obstacles,
     floors: Option<&crate::floornav::Floors>,
-    (tick, min_stride): (u64, u64),
+    turn: Turn<'_>,
     fx: &mut Vec<Fx>,
     paths: &mut BTreeMap<NetId, Path>,
     bombs: &mut Vec<Bomb>,
 ) -> (u32, u32) {
+    let Turn {
+        tick,
+        min_stride,
+        runs,
+    } = turn;
     let mut budget = PATH_BUDGET;
     let mut acted = 0u32;
     // Who stands where, so a villain looks only at its crew and at those
@@ -4579,13 +4658,16 @@ fn enemies_act(
     // (by place in the id order, so the turns go round): the step costs the
     // same for a thousand as for four hundred, and a huge crowd moves slower
     // rather than stalling the game.
-    let stride = (crew.values().map(Vec::len).sum::<usize>() as u64)
-        .div_ceil(THINK_CAP)
-        .max(min_stride);
+    let stride = min_stride;
     for i in 0..actors.len() {
         let Some(mut en) = actors[i].enemy else {
             continue;
         };
+        // Only what the tier plan runs this tick acts (and the rest holds
+        // still: see `crate::tiers`).
+        if !runs.contains(&actors[i].id) {
+            continue;
+        }
         if stride > 1 && !(i as u64 + tick).is_multiple_of(stride) {
             continue;
         }

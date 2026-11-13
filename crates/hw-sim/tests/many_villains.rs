@@ -11,7 +11,7 @@
 use glam::{DVec2, DVec3};
 use hw_core::Seed;
 use hw_net::PlayerId;
-use hw_sim::combat::{PATH_BUDGET, THINK_CAP};
+use hw_sim::combat::{ACT_CAP, PATH_BUDGET, THINK_CAP};
 use hw_sim::{GeneratedTown, Sim, TICK_HZ};
 
 /// A town with one hero at the start and `groups` groups of villains round
@@ -69,7 +69,7 @@ fn run(sim: &mut Sim, ticks: u64) -> Run {
             f.path_searches
         );
         assert!(
-            u64::from(f.villains_acted) <= THINK_CAP,
+            u64::from(f.villains_acted) <= ACT_CAP,
             "{} villains acted in one tick",
             f.villains_acted
         );
@@ -98,6 +98,8 @@ fn a_crowd_over_the_cap_acts_in_turns() {
     let (mut sim, villains) = crowd(100, 1, 20.0, 8.0);
     assert!(villains as u64 > THINK_CAP, "{villains} villains");
     let r = run(&mut sim, u64::from(TICK_HZ) * 4);
+    let [full, reduced, _] = sim.fights().tier_counts;
+    assert!(full as u64 <= THINK_CAP && reduced > 0, "{full} {reduced}");
     assert!(r.most_acting > 0);
     assert!(
         u64::from(r.most_acting) < villains as u64,
