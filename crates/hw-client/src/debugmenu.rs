@@ -924,13 +924,31 @@ pub fn places(world: &Area, solids: &Obstacles) -> Vec<Place> {
                 c.centre,
             );
         }
-        let p = c.centre + DVec2::new(9.0, 0.0);
+        // By the well, on a clear spot among the stalls and benches.
+        let layout = hw_gen::urban::underground::molehaven_layout(u);
+        let p = (0..24)
+            .map(|k| {
+                let a = std::f64::consts::TAU * k as f64 / 24.0;
+                c.centre + DVec2::new(a.cos(), a.sin()) * 6.4
+            })
+            .find(|&p| layout.as_ref().is_none_or(|l| l.clear(p, 0.8)))
+            .unwrap_or(c.centre + DVec2::new(6.4, 0.0));
         add(
             &mut out,
             "Underground",
             "Molehaven market".into(),
             Some(DVec3::new(p.x, c.floor + 0.3, p.y)),
             c.centre,
+        );
+    }
+    if let Some(g) = u.entrances.iter().find(|e| e.molehaven) {
+        let p = g.pos + g.door * 7.0;
+        add(
+            &mut out,
+            "Underground",
+            "Molehaven gate, on the street".into(),
+            clear_near(solids, p, None),
+            g.pos,
         );
     }
     out

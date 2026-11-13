@@ -479,7 +479,7 @@ pub fn stands(world: &Area) -> Vec<Stand> {
             LandmarkKind::MooringMast => "The airfield",
             LandmarkKind::RocketGantry => "The rocket port",
             LandmarkKind::AtomicPlant => "Atomic plant gate",
-            LandmarkKind::MoleDrill => "The mole drill",
+            LandmarkKind::MoleDrill => "Molehaven gate (mole drill)",
             LandmarkKind::WeatherTower => "The weather tower",
             LandmarkKind::Hospital => "Aether Mercy Hospital",
             LandmarkKind::CometBuilding => hw_gen::urban::comet::name(l),
@@ -493,6 +493,17 @@ pub fn stands(world: &Area) -> Vec<Stand> {
         } else {
             l.pos + l.dir * (l.plaza - 3.0).max(2.0)
         };
+        // The drill's stand is at Molehaven's gate, beside it.
+        if l.kind == LandmarkKind::MoleDrill {
+            if let Some(g) = world.underground().entrances.iter().find(|e| e.molehaven) {
+                let q = g.pos + g.door * 6.0;
+                out.push(Stand {
+                    name: name.into(),
+                    pos: DVec3::new(q.x, world.ground(q), q.y),
+                });
+                continue;
+            }
+        }
         if out.iter().all(|s| s.name != name) {
             out.push(Stand {
                 name: name.into(),

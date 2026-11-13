@@ -54,10 +54,10 @@
 //! Environment: `HW_SEED` (world seed, default 1, or the one you last played); `HW_POP` (people in the
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; by default
 //! the city picked in the title's city window; joining players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift` (a stair pavilion), `stairs` (part way down its spiral), `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `comet`, `cometlobby`, `cometgallery`, `cometstairs`, `comethall`, `cometlift` (a Comet building with its game-scale interior; `HW_COMET=0|1|2` picks the atrium, grand hall or split-level one), `hospital`, `ward`, `pods`, `hospitaldoor` (the nearest hospital: across its plaza, in its Recovery Hall, at its pods, at its door), `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the first call on the police visor, with `HW_INCIDENT`; `HW_VISOR=1` keeps the visor down, `HW_VISOR=0.4` freezes it part way in), `far` (a main road across town, where people and traffic must follow) or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift` (a stair pavilion), `stairs` (part way down its spiral), `tunnel`, `molehaven`, `molegate` (its gate on the street), `molesign` (a signpost to it), `moleramp` (the sign over the ramp down from the tunnels), `moleroom` (a side chamber), `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `comet`, `cometlobby`, `cometgallery`, `cometstairs`, `comethall`, `cometlift` (a Comet building with its game-scale interior; `HW_COMET=0|1|2` picks the atrium, grand hall or split-level one), `hospital`, `ward`, `pods`, `hospitaldoor` (the nearest hospital: across its plaza, in its Recovery Hall, at its pods, at its door), `rocket`, `rocketpad`, `rocketarm`, `rocketboard` (the rocket port; `HW_ROCKET_T=<s>` freezes its first launch that many seconds in: 5 venting, 25 counting, 31 lit, 40 climbing, 290 landing), `call` (the first call on the police visor, with `HW_INCIDENT`; `HW_VISOR=1` keeps the visor down, `HW_VISOR=0.4` freezes it part way in), `far` (a main road across town, where people and traffic must follow) or
 //! town: 300 a hamlet, 40000 the default, millions a metropolis; joining
 //! players get the host's); `HW_NAME`; `HW_VIEW` =
-//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `weather` (the weather tower and its shower; `weathertop`, `weatherfoot`, `weatherstreet` close up; `HW_WEATHER=brew|rain|clear|bow|fair` picks the moment), `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift` (a stair pavilion), `stairs` (part way down its spiral), `tunnel`, `molehaven`, `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `far` (a main road across town, where people and traffic must follow) or
+//! `hero` (default), `inside`, `sky`, `overview`, `street`, `river`, `cutaway`, `park`, `pad`, `spire`, `plinth` (the spire plaza's edge and steps close up), `lighthouse`, `weather` (the weather tower and its shower; `weathertop`, `weatherfoot`, `weatherstreet` close up; `HW_WEATHER=brew|rain|clear|bow|fair` picks the moment), `quay`, `wrecked`, `traffic`, `signals`, `market`, `skylanes`, `lift` (a stair pavilion), `stairs` (part way down its spiral), `tunnel`, `molehaven`, `molegate` (its gate on the street), `molesign` (a signpost to it), `moleramp` (the sign over the ramp down from the tunnels), `moleroom` (a side chamber), `tube` (a tube station's street pavilion), `station`, `tubeline`, `capsule`, `ruin`, `lab`, `kiosk`, `grotto`, `far` (a main road across town, where people and traffic must follow) or
 //! `props` picks the starting camera (handy with `ENGINE_SCREENSHOT`; `props` looks at the
 //! nearest prop whose kind contains `HW_PROP`, a car by default); `HW_CUT_LEVEL` the floor shown
 //! cut open; `HW_WALK=1` makes the hero run forward on its own (for tests);
@@ -1538,7 +1538,8 @@ fn main() -> EngineResult<()> {
             let yaw = d.x.atan2(d.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, c.floor as f32 + 8.0, p.y as f32), yaw, -26.0)
         }
-        "lift" | "stairs" | "tunnel" | "molehaven" => {
+        "lift" | "stairs" | "tunnel" | "molehaven" | "molegate" | "moleramp" | "moleroom"
+        | "molesign" => {
             // The underground: a stair pavilion on the street (`stairs`:
             // part way down the spiral), a utility tunnel from inside, or
             // Molehaven's great hall.
@@ -1579,6 +1580,41 @@ fn main() -> EngineResult<()> {
                     let yaw = v.along.x.atan2(v.along.y).to_degrees() as f32;
                     let y = v.floor_at(p) + 1.8;
                     FlyCamera::new((p.x as f32, y as f32, p.y as f32), yaw, -4.0)
+                }
+                ("molegate", _, _, _) if u.entrances.iter().any(|e| e.molehaven) => {
+                    // Molehaven's gate from the street, a few steps off.
+                    let e = u.entrances.iter().find(|e| e.molehaven).expect("gate");
+                    let p = e.pos + e.door * 10.0 + e.door.perp() * 3.5;
+                    let d = e.pos - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, e.top as f32 + 2.2, p.y as f32), yaw, 8.0)
+                }
+                ("molesign", _, _, _) if !u.signs.is_empty() => {
+                    // The signpost nearest the gate, from beside it.
+                    let sg = &u.signs[0];
+                    let p = sg.pos - sg.point * 3.0 + sg.point.perp() * 4.0;
+                    let d = sg.pos - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    let g = generated.world.ground(p);
+                    FlyCamera::new((p.x as f32, g as f32 + 2.0, p.y as f32), yaw, 8.0)
+                }
+                ("moleramp", _, _, Some(c)) if c.ramp_sign.is_some() => {
+                    // In the tunnel, looking at the sign over the ramp down.
+                    let rs = c.ramp_sign.expect("sign");
+                    let p = rs.at - rs.face * 7.0;
+                    let d = rs.at - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, rs.bottom as f32 - 0.9, p.y as f32), yaw, 4.0)
+                }
+                ("moleroom", _, _, Some(c)) if c.chambers.len() > 1 => {
+                    // Into the side chambers from the hall: the first one.
+                    let hall = &u.voids[c.chambers[0]];
+                    let ch = &u.voids[c.chambers[1]];
+                    let mid = ch.world((ch.min + ch.max) * 0.5);
+                    let p = mid + (hall.origin - mid).normalize_or(DVec2::X) * 9.0;
+                    let d = mid - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, c.floor as f32 + 3.2, p.y as f32), yaw, -12.0)
                 }
                 ("molehaven", _, _, Some(c)) => {
                     let hall = &u.voids[c.chambers[0]];

@@ -946,7 +946,7 @@ fn lab_room(b: &mut MeshBuilder, v: &Void, other: &dyn Fn(DVec3) -> bool) {
 
 // ------------------------------------------------------------ fixtures
 
-fn fixture(b: &mut MeshBuilder, f: &Fixture, glows: &mut Vec<Glow>) {
+pub(crate) fn fixture(b: &mut MeshBuilder, f: &Fixture, glows: &mut Vec<Glow>) {
     use FixtureKind::*;
     let p = f.plan();
     let y = f.at.y;

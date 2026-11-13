@@ -1587,40 +1587,35 @@ fn plan_moles(u: &Underground) -> (f64, DVec2, Vec<MoleWay>) {
         ways.push(MoleWay::Stand(at + d * 1.5, -d));
     }
     for h in &l.houses {
-        match h.door {
-            Some(door) => {
-                let front = h.at + door * (h.stem * 1.35 + 0.8);
-                // To the market ring, just past the stalls' awnings, and
-                // back: straight towards the middle, so clear of the stalls
-                // and the other houses.
-                let out = front - well;
-                let market = well + out.normalize_or(DVec2::X) * MARKET_RING;
-                // Not if the way runs through a stall.
-                let blocked = (0..=20).any(|k| {
-                    let p = front.lerp(market, k as f64 / 20.0);
-                    l.stalls.iter().any(|&(at, d)| {
-                        let q = p - at;
-                        let (along, side) = (q.dot(d), q.dot(d.perp()).abs());
-                        side < 1.5 && along > -0.7 && along < 1.0
-                    })
-                });
-                if blocked {
-                    // A stall stands before the door: nobody waits there.
-                } else if out.length() > MARKET_RING + 1.5 {
-                    ways.push(MoleWay::Errand(front, market));
-                    ways.push(MoleWay::Errand(market, front));
-                } else {
-                    ways.push(MoleWay::Stand(front, door));
-                }
-            }
-            None => {
-                // Neighbours chatting by the house.
-                let a = h.at + DVec2::X * (h.stem * 1.35 + 0.7);
-                let b = a + DVec2::new(0.4, 1.0);
-                ways.push(MoleWay::Stand(a, (b - a).normalize()));
-                ways.push(MoleWay::Stand(b, (a - b).normalize()));
+        if let Some(door) = h.door {
+            let front = h.at + door * (h.stem * 1.35 + 0.8);
+            // To the market ring, just past the stalls' awnings, and
+            // back: straight towards the middle, so clear of the stalls
+            // and the other houses.
+            let out = front - well;
+            let market = well + out.normalize_or(DVec2::X) * MARKET_RING;
+            // Not if the way runs through a stall.
+            let blocked = (0..=20).any(|k| {
+                let p = front.lerp(market, k as f64 / 20.0);
+                l.stalls.iter().any(|&(at, d)| {
+                    let q = p - at;
+                    let (along, side) = (q.dot(d), q.dot(d.perp()).abs());
+                    side < 1.5 && along > -0.7 && along < 1.0
+                })
+            });
+            if blocked {
+                // A stall stands before the door: nobody waits there.
+            } else if h.hall && out.length() > MARKET_RING + 1.5 {
+                ways.push(MoleWay::Errand(front, market));
+                ways.push(MoleWay::Errand(market, front));
+            } else {
+                ways.push(MoleWay::Stand(front, door));
             }
         }
+    }
+    // Neighbours talking in the side chambers.
+    for &(at, facing) in &l.chats {
+        ways.push(MoleWay::Stand(at, facing));
     }
     for k in 0..8 {
         ways.push(MoleWay::Stroll {
@@ -1694,6 +1689,11 @@ mod tests {
         let c = people(t.area.clone());
         let (_, centre, ways) = &c.moles;
         assert!(ways.len() >= 30, "{} mole people", ways.len());
+        let solid: Vec<_> = l
+            .footprints()
+            .into_iter()
+            .filter(|fp| fp.span().0 < l.floor + 1.8)
+            .collect();
         let mut moved = 0;
         for k in 0..240 {
             let time = k as f64 * 5.0;
@@ -1714,6 +1714,10 @@ mod tests {
                 assert!(p.distance(l.well.0) > l.well.1 + 0.5, "{p} in the well");
                 for h in &l.houses {
                     assert!(p.distance(h.at) > h.stem * 1.35 + 0.4, "{p} in a house");
+                }
+                // Nothing that stands there: lanterns, barrels, the idol...
+                for fp in &solid {
+                    assert!(fp.distance(p) > 0.3, "{p} walks into {fp:?}");
                 }
                 for &(at, d) in &l.stalls {
                     let q = p - at;

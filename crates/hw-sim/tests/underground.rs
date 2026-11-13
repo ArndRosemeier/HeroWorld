@@ -171,8 +171,18 @@ fn molehaven_has_a_floor_and_walls() {
     let u = town.world.underground().clone();
     let c = u.cavern.clone().expect("Molehaven");
     let e = u.entrances.iter().find(|e| e.molehaven).expect("its stair");
+    // From the pavement in front of the gate, in under its arch, on to the
+    // top landing and down.
+    let start = e.pos + e.door * (SHAFT_HALF + 5.0);
+    put(
+        &mut sim,
+        hero,
+        DVec3::new(start.x, town.world.ground(start) + 0.3, start.y),
+    );
+    run(&mut sim, me, InputState::default(), 0.5);
     let r0 = e.spiral.route()[0];
-    put(&mut sim, hero, DVec3::new(r0.x, r0.y + 0.2, r0.z));
+    let lead_in = r0 + DVec3::new(e.door.x, 0.0, e.door.y) * 2.5;
+    follow(&mut sim, me, hero, &[lead_in, r0]);
     follow(&mut sim, me, hero, &e.spiral.route());
     // Off the last step: into the hall when the stair stands in it, else
     // out along the passage.
@@ -207,4 +217,53 @@ fn molehaven_has_a_floor_and_walls() {
         );
         assert!(p.y < c.floor + 0.6, "climbed to {:.1}", p.y);
     }
+}
+
+#[test]
+fn down_the_ramp_from_the_tunnels_into_molehaven() {
+    let town = GeneratedTown::generate(Seed(1), 40_000.0);
+    let mut sim = Sim::for_town(Seed(1), &town);
+    let me = PlayerId(1);
+    let hero = sim.spawn_hero(me, sim.spawn_point(1));
+    let u = town.world.underground().clone();
+    let c = u.cavern.clone().expect("Molehaven");
+    let ramp = &u.voids[c.ramp.expect("a ramp from the tunnels")];
+    let sign = c.ramp_sign.expect("a sign over the ramp");
+    // Under the sign in the tunnel, then down the ramp the way it points.
+    let top = ramp.world(DVec2::new(ramp.max.x - 1.5, 0.0));
+    put(
+        &mut sim,
+        hero,
+        DVec3::new(top.x, ramp.floor_at(top) + 0.3, top.y),
+    );
+    run(&mut sim, me, InputState::default(), 0.5);
+    let len = ramp.max.x - ramp.min.x;
+    let foot = ramp.world(DVec2::new(ramp.min.x + 0.5, 0.0));
+    let mut route = Vec::new();
+    let n = (len / 2.0).ceil() as usize;
+    for k in 1..=n {
+        let q = top.lerp(foot, k as f64 / n as f64);
+        route.push(DVec3::new(q.x, 0.0, q.y));
+    }
+    follow(&mut sim, me, hero, &route);
+    assert!(
+        sign.point.dot(foot - top) > 0.0,
+        "the sign points up the ramp"
+    );
+    // On into the hall towards the well, over open floor.
+    let well = c.centre;
+    run(&mut sim, me, walk((well - foot).normalize()), 1.5);
+    run(&mut sim, me, InputState::default(), 0.5);
+    let p = sim.position(hero).unwrap();
+    let q = DVec2::new(p.x, p.z);
+    assert!(
+        (p.y - c.floor).abs() < 0.3,
+        "at {:.1}, cavern floor {:.1}",
+        p.y,
+        c.floor
+    );
+    assert!(
+        c.chambers.iter().any(|&i| u.voids[i].covers(q, 0.0)),
+        "not in Molehaven: {q:?}"
+    );
 }

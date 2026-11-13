@@ -1348,10 +1348,31 @@ thread near the works. Views: `HW_VIEW=works`, `worksline`, `worksdock`, `worksh
   for the glowing atom signs): a 1 m wide ring of stone steps round a pillar, 16 steps and
   3.2 m of depth to a turn, a rail round the hole on three sides, the way in on the fourth.
   You walk down (and back up); the foot opens into the passage to the tunnel.
-- **Molehaven**, the mole people's cavern: mushroom houses with round doors, glowing
-  toadstools and crystals, a market of striped stalls round a glowing well under an iron
-  arch, side caves. Its own lift has an amber sign, and a ramp leads there from the
-  tunnels. Short, pale mole folk in goggles keep the stalls, run errands, stroll and chat.
+- **Molehaven**, the mole people's town in a cavern 27 m down under the mole drill
+  (`hw-gen/src/urban/molehaven.rs`, drawn by `hw-client/src/molehavenview.rs`). Two ways in,
+  both walked: **Molehaven's gate**, beside the drill's plinth (stone piers with brass bands
+  and caged lanterns, a riveted iron arch studded with bulbs, the mole emblem, a mole's face
+  in goggles, on its crown, a beacon on top) over a spiral stair down into the great hall;
+  and a **ramp** down from the utility tunnels, under an amber sign hung from the tunnel's
+  roof (the emblem and a lit arrow pointing down the ramp). Up to 8 **signposts** with the
+  emblem and a brass arrow stand at the back of the pavements within 280 m of the gate,
+  pointing at it; the town map and the minimap mark the gate with the mole's face (on the
+  minimap's rim when it is off the map), and the taxi stand "Molehaven gate (mole drill)"
+  is in front of it.
+  The great hall (56 x 40 m, 16 m high): up to ten mushroom houses (limewashed stems,
+  spotted caps, arched plank doors with a step and a lamp, round lit windows in brass frames,
+  window boxes, stovepipes), a market of five striped stalls with goods round a glowing well,
+  benches, lantern posts, barrels, carts and pots between the houses, washing lines, rugs at
+  the doors, toadstool lamps, crystals and stalagmites along the walls, two rock columns,
+  stalactites, strings of bulbs from the drill's **bore**, which comes down through the roof
+  over the well (iron-lined, a riveted collar, struts into the rock, the bit's hot tip) and
+  pours a glowing stream into it. Each side chamber has a job: a **workshop** (benches, a
+  pump, carts), a **mushroom farm** (rows of glowing pots, giant mushrooms), a **shrine**
+  (a carved mole idol, candles, a glow pool) and **cottages** round a yard. Everything that
+  stands down there is solid (`MolehavenLayout::footprints`) and keeps clear of the ways in.
+  Short, pale mole folk in goggles keep the stalls, run errands, stroll round the well and
+  chat in the side chambers. Views: `HW_VIEW=molehaven`, `market`, `moleroom`, `molegate`,
+  `molesign`, `moleramp`.
 - **The mole drill** (`hw-gen/src/urban/drillrig.rs`, `hw-client/src/drillview.rs`), right
   over Molehaven's great hall (the cavern is planned under it; its bore comes down over the
   well): a riveted red-oxide derrick 23 m tall on its own plinth (radius 15 or 13.5 m), a
@@ -1365,7 +1386,7 @@ thread near the works. Views: `HW_VIEW=works`, `worksline`, `worksdock`, `worksh
   6.5 s (the drill is hauled up 3.2 m, a column of steam roars about 30 m high) and it
   settles for 4 s. Made within 1 000 m, animated within 700 m. Sound: the drill's grind
   (260 m, harder as the pressure builds), the whistle (800 m), the rumble (450 m), the
-  blast (700 m). Taxis go there ("The mole drill"). Views: `HW_VIEW=drill`, `drillbore`;
+  blast (700 m). Taxis go there ("Molehaven gate (mole drill)"). Views: `HW_VIEW=drill`, `drillbore`;
   `HW_DRILL_AT=s` shifts its clock (e.g. 30 to catch an eruption at the start).
 
 ### The deep underground (`hw-gen/src/urban/deep/`)

@@ -330,6 +330,7 @@ pub fn mole_gate(u: &Underground) -> Option<(DVec3, DVec2)> {
             p.distance(l.well.0) > l.well.1 + 4.0
                 && l.stalls.iter().all(|s| p.distance(s.0) > 4.0)
                 && l.houses.iter().all(|h| p.distance(h.at) > h.cap + 3.0)
+                && l.clear(p, 2.0)
         })
     };
     let mut best: Option<(f64, DVec2, f64)> = None;

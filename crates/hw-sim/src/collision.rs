@@ -724,6 +724,36 @@ impl Obstacles {
         // The stairs down from the street: pillars, steps, rails.
         for e in &world.underground().entrances {
             out.add_all(e.spiral.solids(true).iter().flat_map(solids_of).collect());
+            if e.molehaven {
+                out.add_all(
+                    hw_gen::urban::molehaven::gate_footprints(e)
+                        .iter()
+                        .flat_map(solids_of)
+                        .collect(),
+                );
+            }
+        }
+        // Molehaven's signposts, the sign over its ramp, and everything
+        // standing in the cavern, in cells so a body tests only what is near.
+        {
+            let u = world.underground();
+            let mut parts: Vec<hw_gen::urban::footprint::Footprint> =
+                u.signs.iter().flat_map(|s| s.footprints()).collect();
+            if let Some(c) = &u.cavern {
+                parts.extend(c.ramp_sign.iter().flat_map(|s| s.footprints()));
+            }
+            if let Some(l) = hw_gen::urban::underground::molehaven_layout(u) {
+                parts.extend(l.footprints());
+            }
+            let mut cells: BTreeMap<(i64, i64), Vec<Solid>> = BTreeMap::new();
+            for f in &parts {
+                let c = f.at();
+                let key = ((c.x / 12.0).floor() as i64, (c.y / 12.0).floor() as i64);
+                cells.entry(key).or_default().extend(solids_of(f));
+            }
+            for (_, solids) in cells {
+                out.add_all(solids);
+            }
         }
         out.deep = Some(DeepSolids {
             town: world.clone(),
@@ -2180,6 +2210,28 @@ mod tests {
             assert!(
                 o.solid_at(DVec3::new(c.x, y0 + 0.1, c.y)),
                 "a hospital part at {c:?}, {y0:.1} m up, can be walked through"
+            );
+        }
+        // Molehaven: its gate and signposts on the street, the sign over its
+        // ramp, and everything standing in the cavern.
+        let u = w.underground();
+        let mut mole: Vec<Footprint> = u.signs.iter().flat_map(|s| s.footprints()).collect();
+        for e in u.entrances.iter().filter(|e| e.molehaven) {
+            mole.extend(hw_gen::urban::molehaven::gate_footprints(e));
+        }
+        if let Some(c) = &u.cavern {
+            mole.extend(c.ramp_sign.iter().flat_map(|s| s.footprints()));
+        }
+        let layout = hw_gen::urban::underground::molehaven_layout(u).expect("Molehaven");
+        mole.extend(layout.footprints());
+        assert!(mole.len() > 100, "{} Molehaven parts", mole.len());
+        for f in &mole {
+            let c = f.at();
+            let (y0, y1) = f.span();
+            let y = y0 + (0.5 * (y1 - y0)).min(0.3);
+            assert!(
+                o.solid_at(DVec3::new(c.x, y, c.y)),
+                "a Molehaven part at {c:?}, {y:.1} m up, can be walked through"
             );
         }
         // On the plinth the ground is its top.
