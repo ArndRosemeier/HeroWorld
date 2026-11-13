@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.259 (2026-11-13)
+
+- Housekeeping only: notes on what is next for keeping the busy world quick.
+
 ## 0.258 (2026-11-13)
 
 - Housekeeping: the slow-tick log now says how many villains were near, mid-distance or waiting, and turns are shared out evenly between ticks.

@@ -1,7 +1,7 @@
 # Server tiers: who is simulated how often
 
-Status: design, with the scheduler built (`crates/hw-sim/src/tiers.rs`, tested) and not yet wired
-into the server. Decided with Arnd on 2026-11-13.
+Status: scheduler built (`crates/hw-sim/src/tiers.rs`, tested) and driving villains since 0.257
+(see build order). Decided with Arnd on 2026-11-13.
 
 ## Goal
 
@@ -120,3 +120,15 @@ rule: a thing is never changed by time it was not simulated.
   lift or vehicle, part of an open incident a hero has answered.
 - Replication: the client interest radius (500 m) is inside Full; Reduced things reach clients at
   half the rate and are interpolated. To check against the bandwidth budget.
+
+## Status 2026-11-13 (0.258)
+
+Done: scheduler; villains (`enemies_act`) run by the plan with elapsed-tick walking and deadline
+shift on wake; per-tier counts in the overrun log; tests `villain_speed.rs` and the
+thousand-villain test in `many_villains.rs`.
+
+Left, in order: (a) colossus and robots (`robots::act`: few things, pin them Full; check their
+gait at Reduced), (b) incidents and crimes (bounded by the 6 km area and a few dozen things: keep
+Full unless measured otherwise), (c) a boosted hero crossing town test for wake rationing,
+(d) retire the wall-clock deferral (`TICK_BUDGET_US`) once (a) to (c) are in, (e) the open
+questions above, with Arnd.
