@@ -127,8 +127,9 @@ Done: scheduler; villains (`enemies_act`) run by the plan with elapsed-tick walk
 shift on wake; per-tier counts in the overrun log; tests `villain_speed.rs` and the
 thousand-villain test in `many_villains.rs`.
 
-Left, in order: (a) colossus and robots (`robots::act`: few things, pin them Full; check their
-gait at Reduced), (b) incidents and crimes (bounded by the 6 km area and a few dozen things: keep
+Done 0.260: (a) colossus and weak points are pinned Full (`robots::act` steps them every tick).
+
+Left, in order: (a) done, (b) incidents and crimes (bounded by the 6 km area and a few dozen things: keep
 Full unless measured otherwise), (c) a boosted hero crossing town test for wake rationing,
 (d) retire the wall-clock deferral (`TICK_BUDGET_US`) once (a) to (c) are in, (e) the open
 questions above, with Arnd.

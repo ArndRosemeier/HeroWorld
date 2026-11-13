@@ -1932,7 +1932,11 @@ pub(crate) fn step(world: &mut World, tick: u64) {
                 id: a.id,
                 pos: a.body.pos,
                 // Fighting a hero: it keeps acting whatever its distance.
-                pinned: e.windup.is_some() || a.f.target.is_some(),
+                // Machines move in `robots::act` every tick, and their weak
+                // points ride them: they always stay in the first ring.
+                pinned: e.windup.is_some()
+                    || a.f.target.is_some()
+                    || matches!(e.kind, EnemyKind::Colossus | EnemyKind::WeakPoint),
             })
         })
         .collect();
