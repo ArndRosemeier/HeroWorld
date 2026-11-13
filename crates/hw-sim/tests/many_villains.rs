@@ -173,3 +173,32 @@ fn a_long_town_run_with_a_crowd_stays_cheap() {
         r.overruns
     );
 }
+
+/// A hero crossing a town of villain groups at 60 m/s: waking is rationed,
+/// so no tick does more than the cap, and the villains by the hero are first
+/// ring (they act) when it arrives.
+#[test]
+fn a_boosted_hero_crossing_town_wakes_things_within_the_cap() {
+    let town = GeneratedTown::generate(Seed(3), 20_000.0);
+    let mut sim = Sim::for_town(Seed(3), &town);
+    let start = sim.spawn_point(1);
+    let hero = sim.spawn_hero(PlayerId(1), start + DVec3::new(0.0, 0.0, 0.0));
+    // Groups every 40 m along a 1.6 km line, 25 m to the side.
+    for k in 0..40 {
+        let at = start + DVec3::new(k as f64 * 40.0, 0.0, 25.0);
+        sim.add_fight_spot(at, DVec2::new(0.0, -1.0));
+    }
+    let villains = sim.enemies().len();
+    assert!(villains > 80, "{villains}");
+    for t in 0..u64::from(TICK_HZ) * 26 {
+        let x = t as f64 * 60.0 / f64::from(TICK_HZ);
+        let mut body = sim.body(hero).unwrap();
+        body.pos = start + DVec3::new(x, 20.0, 0.0);
+        body.vel = DVec3::new(60.0, 0.0, 0.0);
+        sim.set_body(hero, body);
+        sim.step();
+        let f = sim.fights();
+        assert!(u64::from(f.villains_acted) <= ACT_CAP, "tick {t}");
+        assert!(f.tier_counts[0] as u64 <= THINK_CAP, "tick {t}");
+    }
+}

@@ -73,9 +73,6 @@ pub const TICK_HZ: u32 = 30;
 /// What one part of the server's step may take in one tick (µs): a third
 /// of the tick. More is logged as an overrun naming the part.
 pub const PART_BUDGET_US: u64 = 12_000;
-/// What a whole step may spend (µs) before it puts off the work that can
-/// wait (a second's housekeeping, vandalism): two thirds of the tick.
-pub const TICK_BUDGET_US: u128 = 20_000;
 /// Most bodies the traffic stops for in one tick (see [`thin_out`]).
 pub const MAX_BLOCKERS: usize = 120;
 
@@ -98,9 +95,6 @@ fn thin_out(mut standing: Vec<DVec3>, heroes: &[DVec3]) -> Vec<DVec3> {
     standing
 }
 
-/// A put-off part runs after at most this many ticks, budget or not, so
-/// nothing starves.
-pub const MAX_DEFER: u32 = 10;
 /// Seconds per tick.
 pub const DT: f64 = 1.0 / TICK_HZ as f64;
 
@@ -650,8 +644,6 @@ pub struct Sim {
     step_times: Vec<(&'static str, u64)>,
     /// Parts of a step that overran their budget (see [`Sim::note_part`]).
     overruns: Vec<String>,
-    /// Ticks each put-off part is owed (see [`Sim::may_run`]).
-    owed: [u32; 2],
     /// Engine physics for loose bodies.
     pub physics: Physics,
     /// The simulated areas around the players.
@@ -1039,7 +1031,6 @@ impl Sim {
             track,
             step_times: Vec::new(),
             overruns: Vec::new(),
-            owed: [0; 2],
             physics: Physics::new(solids),
             bubbles: Bubbles::default(),
             damage: Damage::default(),
@@ -1257,30 +1248,6 @@ impl Sim {
         std::mem::take(&mut self.step_times)
     }
 
-    /// Should the part in `slot` that is `due_now` run now? A part that has
-    /// to wait (the step already spent [`TICK_BUDGET_US`] since `t0`) is
-    /// owed and runs on a later tick, at the latest after [`MAX_DEFER`].
-    /// Only the parts that can run any tick use this.
-    fn may_run(&mut self, slot: usize, name: &str, due_now: bool, t0: std::time::Instant) -> bool {
-        if !(due_now || self.owed[slot] > 0) {
-            return false;
-        }
-        if t0.elapsed().as_micros() > TICK_BUDGET_US && self.owed[slot] < MAX_DEFER {
-            self.owed[slot] += 1;
-            if self.overruns.len() < 8 {
-                self.overruns.push(format!(
-                    "server tick {}: '{name}' put off (the step had spent {} ms), owed {} ticks",
-                    self.tick,
-                    t0.elapsed().as_millis(),
-                    self.owed[slot]
-                ));
-            }
-            return false;
-        }
-        self.owed[slot] = 0;
-        true
-    }
-
     pub fn step(&mut self) {
         let t0 = std::time::Instant::now();
         let mut t = t0;
@@ -1300,7 +1267,7 @@ impl Sim {
             .collateral
             .clone_from(&self.damage.collateral);
         self.incidents.step(&mut self.world, self.tick);
-        if self.may_run(0, "vandalism", self.tick.is_multiple_of(TICK_HZ as u64), t0) {
+        if self.tick.is_multiple_of(TICK_HZ as u64) {
             self.incidents
                 .vandalise(&mut self.world, self.tick, &mut self.street);
         }
@@ -1401,12 +1368,7 @@ impl Sim {
         self.bubbles.update(&players);
         self.strike();
         self.lap("srv bubbles+strike us", &mut t);
-        if self.may_run(
-            1,
-            "second's housekeeping",
-            self.tick.is_multiple_of(TICK_HZ as u64),
-            t0,
-        ) {
+        if self.tick.is_multiple_of(TICK_HZ as u64) {
             let solids = self.solids();
             let at: Vec<DVec3> = heroes.iter().map(|h| h.2).collect();
             self.damage.repair_unseen(&solids, &at, self.tick, TICK_HZ);

@@ -131,7 +131,7 @@ Done 0.260: (a) colossus and weak points are pinned Full (`robots::act` steps th
 
 Left, in order: (a) done, (b) incidents and crimes (bounded by the 6 km area and a few dozen things: keep
 Full unless measured otherwise), (c) a boosted hero crossing town test for wake rationing,
-(d) retire the wall-clock deferral (`TICK_BUDGET_US`) once (a) to (c) are in, (e) the open
+(d) retire the wall-clock deferral (done 0.263), (e) the open
 questions above, with Arnd.
 
 ## Decisions (Arnd, 2026-11-13)
@@ -146,3 +146,21 @@ questions above, with Arnd.
 Pins in code (0.262): target or windup, carried (by a drone), colossus and weak points. Lifts and
 vehicles carry no villains today, and an incident a hero has answered makes its villains target
 that hero, so the target pin covers it; each gets its own pin when its system joins the plan.
+
+## Status 2026-11-13, 0.263: finished
+
+Measured (tests/server_profile.rs, debug build, 20 s, hero in town): with 0 / 60 / 250 villain
+groups (about 0 / 250 / 900 villains) the whole step costs 0.6 / 8 / 15 ms, of which combat's
+villain part is 0 / 3.7 / 9 ms (bounded by the rings), traffic 0.4 / 2.7 / 2.7 ms (blockers
+capped at 120), and every other part (incidents + crimes, npc heroes, sidekicks, story, missions,
+taxi, tube, alarms, movers, doors, housekeeping) is 5 to 120 microseconds. Those parts are small
+and bounded by the 6 km area, so they stay per-tick: putting them on the plan would add code and
+risk and save nothing.
+
+Retired: the wall-clock deferral (`TICK_BUDGET_US`, `MAX_DEFER`, `Sim::may_run`). It made the
+result depend on how fast the machine was, which the design forbids, and with the work bounded
+by counts it had nothing left to guard. Vandalism and the second's housekeeping run on their
+tick. `THINK_CAP` stays: it is the first ring's size.
+
+Tests: `villain_speed.rs` (same speed at every stride, colossus and carried pins),
+`many_villains.rs` (thousand villains, boosted hero crossing town, caps every tick).
