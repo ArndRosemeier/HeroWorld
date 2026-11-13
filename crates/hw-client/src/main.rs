@@ -615,6 +615,8 @@ fn main() -> EngineResult<()> {
     // The fight: targets, effects, the screen.
     let mut fight = FightView::new();
     let mut robots = RobotView::new();
+    let mut safes = hw_client::safeview::SafeView::default();
+    let mut safe_shown = false;
     let mut radio = hw_client::radioview::Radio::default();
     // The police visor: marks the radio's calls in front of the hero's eyes.
     let mut visor = hw_client::visor::Visor::from_env();
@@ -779,7 +781,7 @@ fn main() -> EngineResult<()> {
         hero_cam_yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
     }
     let mut fly = match view.as_str() {
-        "street" | "citizen" | "alpha" | "riders" | "act" => {
+        "street" | "citizen" | "alpha" | "riders" | "act" | "safe" => {
             let p = spawn - spawn_dir * 8.0;
             let yaw = spawn_dir.x.atan2(spawn_dir.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, ground(p) as f32 + 6.0, p.y as f32), yaw, 8.0)
@@ -4172,6 +4174,16 @@ fn main() -> EngineResult<()> {
             robots.on_fx(world, &mut fight, &events, &heroes, &muzzles, mine);
             hw_client::hitch::mark("robots");
             robots.update(world, &heroes, frame.dt)?;
+            // The hideouts' safes, and where they stand for the things in them.
+            safes.update(world, &heroes)?;
+            cases.safes = heroes
+                .iter()
+                .filter(|e| e.kind == hw_net::EntityKind::Safe)
+                .map(|e| {
+                    let (at, facing) = hw_client::safeview::stands(e);
+                    (at.as_vec3(), facing.as_vec2())
+                })
+                .collect();
             robots.music(world, &heroes);
             // `HW_VIEW=sentry`: a close-up of the first robo-sentry (with
             // HW_INCIDENT=colossus HW_COLOSSUS_BREAK=2, the ones it drops).
@@ -4185,6 +4197,37 @@ fn main() -> EngineResult<()> {
                         .atan()
                         .to_degrees();
                     fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
+            // `HW_VIEW=safe`: a hideout's safe shut and broken open (the
+            // painting in it), close up, set down by the hero.
+            if view == "safe" && !safe_shown {
+                if let Some(me) = session.my_position(&heroes) {
+                    safe_shown = true;
+                    let at = me.as_vec3() + Vec3::new(3.0, 0.0, 0.0);
+                    for (k, open) in [false, true].into_iter().enumerate() {
+                        let p = at + Vec3::Z * (k as f32 * 1.7 - 0.85);
+                        world.place(
+                            hw_client::safeview::safe_mesh(open),
+                            Place::new(p.x, p.y, p.z).with_yaw_deg(-90.0),
+                        )?;
+                        if open {
+                            world.place(
+                                hw_client::missionview::thing_mesh(
+                                    hw_sim::missions::board::CrimeKind::Art,
+                                ),
+                                Place::new(p.x, p.y + 0.21, p.z)
+                                    .with_yaw_deg(-90.0)
+                                    .with_scale(0.95),
+                            )?;
+                        }
+                    }
+                    let eye = at + Vec3::new(-2.6, 1.5, 0.9);
+                    let d = at + Vec3::Y * 0.8 - eye;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((eye.x, eye.y, eye.z), d.x.atan2(d.z).to_degrees(), pitch);
                 }
             }
             // `HW_VIEW=alpha` (with HW_INCIDENT=rampage): a close-up of the
@@ -4547,6 +4590,7 @@ fn main() -> EngineResult<()> {
                     }
                     movers.extend(airships.solids_near(&[me], game_time));
                     movers.extend(story.statue_solids(&generated.world));
+                    movers.extend(hw_client::safeview::solids(&heroes));
                     if let Some(l) = extras.lifts.as_ref() {
                         movers.extend(l.lifts().solids_near(&[me], 25.0, game_time));
                     }

@@ -713,6 +713,7 @@ Numbers at level 1; health and damage scale with the villain's level like a hero
 | Mutant Bulwark | Lab | Minion | 52 | 7 every 2.2 s | 2.4 m | 8 | A brute with a big brass atom shield on its left arm. Aimed blows (bolts, beams) from more than 3.5 m in front mostly clang off the shield (a quarter gets through); blasts, holds and anything from close by or from the side get through. Get close, or go round it. |
 | Lab Grenadier | Lab | Minion | 32 | 11 every 4.2 s | 18 m | 7 | Olive overalls and a leather helmet. Lobs a fizzing bomb where you stand: a red ring shows where, and it bursts 1.9 s later (2.6 m round). Step out of the ring. |
 | Lab Orderly | Lab | Minion | 30 | 5 every 2.6 s | 20 m | 7 | Mint overalls, white gloves. Every 4 s it patches up a hurt friend within 14 m (14 health at level 1, a green beam); in between it shoots. Take it out first. |
+| Safe | – | Locked | 200 | – | – | 10 | A gang's safe with a hideout case's thing in it. Tab to it and break it open; it stays where it stands. |
 | Weak point | – | Part | 240 | – | – | 25 | A breakable part of a robot: the colossus's knees and cannon, the sentry's dish. Tab to it. |
 
 Brutes, bulwarks, grenadiers, orderlies, technicians, Jackets and gunsels are knocked down by knockback powers; the sentry,
@@ -868,7 +869,10 @@ at Atomic Annie (she keeps the hall's steps and no longer hands anything out):
   the town's **buildings of halls** (2+ floors, at least 12 m a side): **one tenement in four,
   one shop-and-office block in six** (works keep their machines); the rest are homes and shops
   with their own furniture. A hideout shows from the street: its **ground-floor windows are
-  boarded up** (planks nailed across, no light behind them).
+  boarded up** (planks nailed across, no light behind them), and where cars may park in front of
+  it, **the gang's car** stands at the kerb (0.267): a long black Cruiser under a blood-red roof,
+  a paint no other car wears (`GANG_PAINT`; about 4 hideouts in 10 have the kerb for one). It is
+  a parked car like any other: solid, and it can be thrown.
 
 The team can have up to **3 cases open** at once (`OPEN_LIMIT`; nothing else assumes a number),
 never two in one building. Cases are numbered with the crime's number and each is against one of
@@ -896,8 +900,15 @@ rooms, and a finale that depends on the job.
   it turns to fight again. Beating the boss closes the case.
 - **Find the thing** (evidence): **one real object** the crime is about (a strongbox of cash,
   printing plates, a crate with a glowing canister, the prototype in its case, a painting
-  propped up, a ledger), in a far corner of a room on a high floor, **guarded by that room's
-  crew**: it cannot be taken while they stand. Then hold **E** within 2.8 m for 3 s. Taking it
+  propped up, a ledger), **locked in the gang's safe** in a far corner of a room on a high
+  floor. The safe (0.267) is a real thing: 1.1 m wide, 1.5 m high, solid, square to the walls,
+  its door towards the room's crew. It is a target like a villain (**Tab** or click it, name
+  "Safe", rank "Locked", **200 health** at level 1 and 60 % more per extra hero, 10 karma) that
+  never fights back and is never carried off: **break it open** with any attack, from in front of
+  its door. When it gives, the door hangs open, the thing shows inside, and **the noise calls the
+  nearest crew that has heard nothing** (as a room's alarm does). The thing is also **guarded by
+  its room's crew**: it cannot be taken while they stand. Then hold **E** within 2.8 m for 3 s.
+  An opened safe stays where it stands until no hero is within 90 m (`SAFE_GONE`). Taking it
   **raises the whole gang**: everyone still standing, the boss and its guard too, comes for the
   hero, and a crew of **2** cuts off the way out at the door (`CUTOFF_SIZE`). The case closes
   when the hero who took it is **3 m outside the building** (or nobody is left to stop them).

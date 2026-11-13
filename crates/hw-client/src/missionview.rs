@@ -18,7 +18,7 @@ use hw_net::ToClient;
 use hw_sim::missions::board::CrimeKind;
 use hw_sim::missions::Place;
 use hw_sim::missions::{
-    CaseKind, CLOSED, CLUES, CLUE_REACH, DONE, GANGS, GO, GUARDED, HOSTAGES, IDLE, INSIDE,
+    CaseKind, CLOSED, CLUES, CLUE_REACH, DONE, GANGS, GO, GUARDED, HOSTAGES, IDLE, INSIDE, LOCKED,
 };
 
 /// Who speaks on the wrist radio.
@@ -197,10 +197,13 @@ pub struct MissionView {
     things: BTreeMap<(u16, usize), EntityId>,
     /// Counts the glints, to vary where they appear.
     sparkle_n: u32,
+    /// The safes standing about: each one's middle on the floor and the
+    /// way its door faces (from the game, every frame).
+    pub safes: Vec<(Vec3, glam::Vec2)>,
 }
 
 /// The mesh of the thing a gang hides (see `interior::pieces::evidence`).
-fn thing_mesh(kind: CrimeKind) -> Mesh {
+pub fn thing_mesh(kind: CrimeKind) -> Mesh {
     let mut b = crate::citymesh::MeshBuilder::new();
     let mut m = crate::interior::pieces::Maker::new(
         &mut b,
@@ -414,7 +417,8 @@ impl MissionView {
                 s.clues
                     .iter()
                     .enumerate()
-                    .filter(|(_, c)| c.1 != DONE)
+                    // Locked in its safe, it is not to be seen.
+                    .filter(|(_, c)| c.1 != DONE && c.1 != LOCKED)
                     .map(move |(i, c)| ((s.number, i), c.0, s.crime))
             })
             .collect();
@@ -433,13 +437,17 @@ impl MissionView {
             if self.things.contains_key(&key) {
                 continue;
             }
-            let yaw = (key.0 as f32 * 71.0 + key.1 as f32 * 40.0) % 360.0;
-            if let Ok(e) = world.place(
-                thing_mesh(crime),
-                engine::prelude::Place::new(at.x, at.y + 0.02, at.z)
-                    .with_yaw_deg(yaw)
+            // In an open safe it sits on the safe's floor, facing out of
+            // the door; anywhere else it lies on the ground, bigger.
+            let place = match self.safe_at(at) {
+                Some(facing) => engine::prelude::Place::new(at.x, at.y + 0.21, at.z)
+                    .with_yaw_deg(facing.x.atan2(facing.y).to_degrees())
+                    .with_scale(0.95),
+                None => engine::prelude::Place::new(at.x, at.y + 0.02, at.z)
+                    .with_yaw_deg((key.0 as f32 * 71.0 + key.1 as f32 * 40.0) % 360.0)
                     .with_scale(1.7),
-            ) {
+            };
+            if let Ok(e) = world.place(thing_mesh(crime), place) {
                 self.things.insert(key, e);
             }
         }
@@ -455,15 +463,21 @@ impl MissionView {
             {
                 for (at, state) in &s.clues {
                     if *state != DONE {
+                        // A safe glints on its door (the thing is behind
+                        // it, or in the dark inside).
+                        let door = self.safe_at(*at).map_or(Vec3::ZERO, |f| {
+                            Vec3::new(f.x, 0.0, f.y) * 0.5 + Vec3::Y * 0.45
+                        });
                         crate::fightview::glow_at(
                             world,
                             // Small glints on the object itself, not a
                             // bubble round it: it must read as the thing.
-                            *at + Vec3::new(
-                                (self.sparkle_n % 5) as f32 * 0.12 - 0.24,
-                                0.25 + (self.sparkle_n % 3) as f32 * 0.18,
-                                0.0,
-                            ),
+                            *at + door
+                                + Vec3::new(
+                                    (self.sparkle_n % 5) as f32 * 0.12 - 0.24,
+                                    0.25 + (self.sparkle_n % 3) as f32 * 0.18,
+                                    0.0,
+                                ),
                             rgb(255, 236, 170),
                             0.07,
                         );
@@ -492,6 +506,13 @@ impl MissionView {
             })
             .min_by(|a, b| hero.distance(a.1 .0).total_cmp(&hero.distance(b.1 .0)))
             .map(|(s, (_, state))| match (s.kind, *state) {
+                (_, LOCKED) => (
+                    format!(
+                        "{} is locked in this safe: break it open (target it and attack)",
+                        crate::casefile::capitalised(s.crime.thing())
+                    ),
+                    None,
+                ),
                 (CaseKind::Hostages, GUARDED) => ("Beat their guards first".to_string(), None),
                 (_, GUARDED) => (
                     format!("Beat the crew guarding {} first", s.crime.thing()),
@@ -500,6 +521,14 @@ impl MissionView {
                 (CaseKind::Hostages, _) => ("Hold E to untie them".to_string(), Some(s.held)),
                 _ => (format!("Hold E to take {}", s.crime.thing()), Some(s.held)),
             })
+    }
+
+    /// The way the door of the safe standing at `at` faces, if one does.
+    fn safe_at(&self, at: Vec3) -> Option<glam::Vec2> {
+        self.safes
+            .iter()
+            .find(|s| s.0.distance(at) < 0.4)
+            .map(|s| s.1)
     }
 
     /// The line on the air (under the story's) and the prompt.
@@ -686,7 +715,7 @@ fn brief(gang: &str, step: &StepView, last: bool, crime: CrimeKind) -> Vec<Strin
         CaseKind::Evidence if building => vec![
             format!("{}: {gang} are holed up {at}.", crime.title()),
             format!(
-                "Find {} before they move it. Look upstairs too.",
+                "Find {} before they move it: they keep it locked in a safe upstairs. Break the safe open.",
                 crime.thing()
             ),
         ],
@@ -706,6 +735,11 @@ fn brief(gang: &str, step: &StepView, last: bool, crime: CrimeKind) -> Vec<Strin
             "Beat their guards, then untie them.".to_string(),
         ],
     }
+}
+
+/// Things still locked in their safes.
+fn locked(s: &State) -> usize {
+    s.clues.iter().filter(|c| c.1 == LOCKED).count()
 }
 
 /// What the radio says of a case going from `before` (None: new to us)
@@ -795,6 +829,10 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
             "{} is making a run for it and yelling for help! Don't let them get their breath back.",
             boss_name(now.gang)
         ))),
+        (INSIDE, INSIDE) if locked(b) > locked(now) => out.push(say(format!(
+            "The safe's open, and the whole floor heard it go! Take {} and watch your back.",
+            now.crime.thing()
+        ))),
         (INSIDE, INSIDE) if now.alarms != b.alarms => out.push(say(
             "They've raised the alarm: the next room is coming. Finish them fast next time!"
                 .to_string(),
@@ -856,6 +894,25 @@ mod tests {
             crime: CrimeKind::Payroll,
             level: 5,
         }
+    }
+
+    #[test]
+    fn a_safe_broken_open_is_said_once_and_not_as_an_alarm() {
+        let mut shut = st(INSIDE, CaseKind::Evidence, 1, 0);
+        shut.clues = vec![(Vec3::ZERO, LOCKED)];
+        let mut open = shut.clone();
+        open.clues[0].1 = GUARDED;
+        // Its noise called a crew: one line, about the safe.
+        open.alarms = 1;
+        let said = lines(Some(&shut), &open, 1);
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(said[0].text.contains("safe's open"), "{said:?}");
+        assert!(lines(Some(&open), &open, 1).is_empty());
+        // By the shut safe the prompt says what to do, with no bar.
+        let mut view = MissionView::default();
+        view.cases.insert(1, shut);
+        let (text, bar) = view.prompt(Vec3::ZERO).expect("a prompt");
+        assert!(text.contains("break it open") && bar.is_none(), "{text}");
     }
 
     #[test]

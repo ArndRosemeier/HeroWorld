@@ -69,6 +69,9 @@ pub enum CarModel {
 
 /// Paint schemes for cars (two-tone).
 pub const CAR_PAINTS: u8 = 8;
+/// The paint of a gang's car, parked at its hideout: black under a
+/// blood-red roof. No car in the traffic or at the kerb wears it.
+pub const GANG_PAINT: u8 = CAR_PAINTS;
 /// Individuals per tree species.
 pub const TREE_VARIANTS: u8 = 4;
 
@@ -262,6 +265,9 @@ impl PropKind {
         out.extend((0..SHRUB_VARIANTS).map(PropKind::Shrub));
         for m in [Cruiser, Bubble, Hover] {
             out.extend((0..CAR_PAINTS).map(|p| PropKind::Car(m, p)));
+            if m == CarModel::Cruiser {
+                out.push(PropKind::Car(m, GANG_PAINT));
+            }
         }
         out.extend((0..STATUE_POSES).map(PropKind::Statue));
         out.extend([Jersey, Sawhorse, Sandbags, Drum].map(PropKind::Barricade));
@@ -559,6 +565,9 @@ pub(super) fn plan_props(l: &Local, quays: &[QuayWall], steps: &[WaterSteps]) ->
     p.shop_fronts(seed.child("shop-fronts"));
     p.street_life(seed.child("street-life"));
     p.fences(seed.child("fences"));
+    // The gangs' cars at their hideouts: after everything, so the props
+    // before keep their numbers; they take a free place at the kerb.
+    p.gang_cars();
     p.out
 }
 
@@ -1742,6 +1751,59 @@ impl<'a> Placer<'a> {
             .min_by(|a, b| a.1.total_cmp(&b.1))
     }
 
+    /// A gang's car at the kerb in front of each hideout (see
+    /// [`crate::building::BuildingSite::is_hideout`]): a long black sedan
+    /// under a blood-red roof, so a hideout shows from down the street.
+    /// Placed after the other parked cars, in a free place at the kerb; only
+    /// where cars may park, and by the building's own seed, so every unit
+    /// that plans this stretch of kerb puts it in the same place.
+    fn gang_cars(&mut self) {
+        for i in 0..self.l.buildings.len() {
+            let site = self.building(i).site.clone();
+            if !site.is_hideout() {
+                continue;
+            }
+            let Some((ri, kerb)) = self.road_in_front(&site) else {
+                continue;
+            };
+            let road = self.roads.roads[ri].clone();
+            if !road.parking_fits() || kerb > road.pavement + 1.5 {
+                continue;
+            }
+            let mut rng = site.seed.child("gang car").rng();
+            let front = site.origin - site.inward * 0.5;
+            // A little off the middle of the front, then further along
+            // either way if that spot will not do.
+            let x0 = site.size.x * rng.range(0.3, 0.7);
+            for step in [0.0, 6.5, -6.5, 13.0, -13.0] {
+                let p = front + site.along * (x0 + step);
+                // The nearest stretch of the road, and its kerb on our side.
+                let Some((a, b)) = road.pts.windows(2).map(|w| (w[0], w[1])).min_by(|s, t| {
+                    segment_distance(p, s.0, s.1).total_cmp(&segment_distance(p, t.0, t.1))
+                }) else {
+                    break;
+                };
+                let d = (b - a).normalize_or(DVec2::X);
+                let t = (p - a).dot(d).clamp(0.0, (b - a).length());
+                let on = a + d * t;
+                let sd = if (p - on).dot(d.perp()) >= 0.0 {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let q = on + d.perp() * sd * (road.half - 1.15);
+                let kind = PropKind::Car(CarModel::Cruiser, GANG_PAINT);
+                if !self.on_road(q, 2.6, Some(ri), false)
+                    && !self.on_road(q, 1.2, Some(ri), true)
+                    && at_the_kerb(&road, q, d * sd, CarModel::Cruiser)
+                    && self.put(kind, q, d * sd, 1.0, 3.0)
+                {
+                    break;
+                }
+            }
+        }
+    }
+
     /// In front of shops: cafe tables against the shop windows where the
     /// pavement is wide enough to walk past, and newspaper stands.
     fn shop_fronts(&mut self, seed: Seed) {
@@ -2184,5 +2246,41 @@ mod tests {
         // Same seed, same props.
         let again = TownWorld::generate(seed, TownParams::sample(seed, 40_000.0)).everything();
         assert_eq!(w.props, again.props);
+    }
+    #[test]
+    fn gang_cars_stand_at_their_hideouts() {
+        let seed = Seed(1);
+        let tw = TownWorld::generate(seed, TownParams::sample(seed, 40_000.0));
+        let w = tw.everything();
+        let hideouts: Vec<_> = w
+            .buildings
+            .iter()
+            .filter(|(_, b)| b.site.is_hideout())
+            .map(|(_, b)| b.site.clone())
+            .collect();
+        let cars: Vec<&Prop> = w
+            .props
+            .iter()
+            .map(|x| &x.1)
+            .filter(|x| x.kind == PropKind::Car(CarModel::Cruiser, GANG_PAINT))
+            .collect();
+        eprintln!("{} hideouts, {} gang cars", hideouts.len(), cars.len());
+        // Most hideouts have a kerb to park at; never more cars than hideouts.
+        assert!(cars.len() * 3 >= hideouts.len(), "too few gang cars");
+        assert!(cars.len() <= hideouts.len());
+        // Each stands in the street by a hideout's front, not anywhere.
+        for c in &cars {
+            let near = hideouts.iter().any(|s| {
+                let d = c.pos - s.origin;
+                let (x, z) = (d.dot(s.along), d.dot(s.inward));
+                x > -16.0 && x < s.size.x + 16.0 && z < 0.0 && z > -14.0
+            });
+            assert!(near, "a gang car at {:.0?} by no hideout", c.pos);
+        }
+        // No other car wears the gang's paint.
+        assert!(w
+            .props
+            .iter()
+            .all(|x| !matches!(x.1.kind, PropKind::Car(m, p) if p >= CAR_PAINTS && m != CarModel::Cruiser)));
     }
 }

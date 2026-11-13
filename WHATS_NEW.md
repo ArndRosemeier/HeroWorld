@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.267 (2026-11-13)
+
+- The thing a gang hides is now locked in a safe. Target the safe (Tab or click) and break it open with your powers; the door swings wide and the thing is inside. The noise brings the next crew.
+- A hideout with room at the kerb has the gang's car parked in front: a long black sedan under a blood-red roof.
+- Everyone playing together needs this version. Towns are generated a little differently.
+
 ## 0.266 (2026-11-13)
 
 - A hurt boss really runs: through the building to the crew farthest away, who then come for you.

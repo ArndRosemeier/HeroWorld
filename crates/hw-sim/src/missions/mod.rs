@@ -35,7 +35,7 @@ mod running;
 pub mod sites;
 
 pub use plan::{Plan, Step};
-pub use running::Running;
+pub use running::{safe_front, safe_middle, safe_solid, Running};
 pub use sites::{Place, Places, Site};
 
 use crate::combat::{self, Fights};
@@ -103,6 +103,16 @@ pub const FREE_SECONDS: f64 = 2.0;
 pub const GUARDED: u8 = 0;
 pub const READY: u8 = 1;
 pub const DONE: u8 = 2;
+/// A thing still locked in its safe: break the safe open first.
+pub const LOCKED: u8 = 3;
+/// A gang's safe: half its width and depth (m), its height, and how far
+/// in front of its door its body (what heroes aim at) is.
+pub const SAFE_HALF: glam::DVec2 = glam::DVec2::new(0.55, 0.42);
+pub const SAFE_HEIGHT: f64 = 1.5;
+pub const SAFE_FRONT: f64 = 0.14;
+/// An opened safe of a closed case is taken away once no hero is within
+/// this of it (m).
+pub const SAFE_GONE: f64 = 90.0;
 /// Bystander numbers of hostages (apart from incidents' and street
 /// crimes'): this bit, the case's number and the hostage's.
 pub(crate) const HOSTAGE_IDS: u32 = 0x4000_0000;
@@ -292,6 +302,8 @@ pub struct Missions {
     /// Streets made rough by a crime nobody took: where, until which tick
     /// (taken by the server for [`crate::incidents`]).
     pub emboldened: Vec<(glam::DVec2, u64)>,
+    /// Safes of closed cases, standing until nobody is near.
+    left: Vec<running::Safe>,
     now: u64,
     last_sent: BTreeMap<u16, ToClient>,
     board_sent: Option<ToClient>,
@@ -316,6 +328,7 @@ impl Default for Missions {
             missed: 0,
             lost: String::new(),
             emboldened: Vec::new(),
+            left: Vec::new(),
             now: 0,
             last_sent: BTreeMap::new(),
             board_sent: None,
@@ -734,6 +747,14 @@ impl Missions {
             r.search(world, tick, &heroes);
         }
         if tick.is_multiple_of(crate::TICK_HZ as u64) {
+            // Safes of closed cases go once nobody is there to see it.
+            let (stay, go): (Vec<_>, Vec<_>) = std::mem::take(&mut self.left)
+                .into_iter()
+                .partition(|s| heroes.iter().any(|h| h.at.distance(s.at) < SAFE_GONE));
+            self.left = stay;
+            for s in go {
+                s.remove(world);
+            }
             self.keep_book(world);
             let mut done = Vec::new();
             for (k, r) in self.cases.iter_mut().enumerate() {
@@ -751,6 +772,17 @@ impl Missions {
             }
         }
         self.tell(world);
+    }
+
+    /// Every safe standing in a hideout, as solids: heroes and villains
+    /// walk round them (what is drawn is what collides).
+    pub fn safe_solids(&self) -> Vec<crate::collision::Solid> {
+        self.cases
+            .iter()
+            .flat_map(|r| r.safes())
+            .chain(self.left.iter())
+            .map(|s| s.solid())
+            .collect()
     }
 
     /// The cases in the host's file: a book that is new to us (the host
@@ -842,7 +874,8 @@ impl Missions {
             r.site().building.is_some(),
         );
         if r.is_hideout() {
-            r.wrap_up(world, self.now);
+            let safes = r.wrap_up(world, self.now);
+            self.left.extend(safes);
         } else {
             r.leave(world);
         }

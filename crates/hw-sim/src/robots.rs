@@ -531,7 +531,11 @@ fn project_shields(actors: &mut [Actor], tick: u64) {
         let Some(en) = a.enemy else {
             continue;
         };
-        if matches!(en.kind, EnemyKind::WeakPoint | EnemyKind::Colossus) || !a.f.fighting() {
+        if matches!(
+            en.kind,
+            EnemyKind::WeakPoint | EnemyKind::Colossus | EnemyKind::Safe
+        ) || !a.f.fighting()
+        {
             continue;
         }
         if projectors

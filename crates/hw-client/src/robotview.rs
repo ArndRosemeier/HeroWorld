@@ -1492,6 +1492,7 @@ pub fn bar_height(kind: EntityKind) -> f32 {
         EntityKind::Sentry => 3.0,
         EntityKind::Alpha => 2.9,
         EntityKind::WeakPoint => 1.9,
+        EntityKind::Safe => 1.75,
         _ => 2.15,
     }
 }

@@ -337,6 +337,9 @@ pub enum EntityKind {
     /// A Zorrak overlord: a lieutenant, a great brain under a glass dome,
     /// with a brain-ray sceptre.
     Overlord,
+    /// A gang's safe, the thing a case is after locked in it: broken open
+    /// (`Status::Down`) it stands with its door hanging.
+    Safe,
 }
 
 impl EntityKind {
@@ -371,6 +374,7 @@ impl EntityKind {
             EntityKind::Zapper => 26,
             EntityKind::Grabber => 27,
             EntityKind::Overlord => 28,
+            EntityKind::Safe => 29,
         }
     }
 
@@ -405,6 +409,7 @@ impl EntityKind {
             26 => Ok(EntityKind::Zapper),
             27 => Ok(EntityKind::Grabber),
             28 => Ok(EntityKind::Overlord),
+            29 => Ok(EntityKind::Safe),
             _ => Err(WireError),
         }
     }
@@ -436,6 +441,7 @@ impl EntityKind {
                 | EntityKind::Zapper
                 | EntityKind::Grabber
                 | EntityKind::Overlord
+                | EntityKind::Safe
         )
     }
 
@@ -469,11 +475,11 @@ impl EntityKind {
         )
     }
 
-    /// Drawn as a machine (prefab parts), not as a person.
+    /// Drawn as a machine (prefab parts) or a thing, not as a person.
     pub fn is_robot(self) -> bool {
         matches!(
             self,
-            EntityKind::Sentry | EntityKind::Colossus | EntityKind::WeakPoint
+            EntityKind::Sentry | EntityKind::Colossus | EntityKind::WeakPoint | EntityKind::Safe
         )
     }
 }

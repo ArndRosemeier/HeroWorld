@@ -1346,6 +1346,7 @@ impl Sim {
         let mut movers = rocket::solids(&self.rockets, now, &heroes, 25.0);
         movers.extend(self.airships.solids_near(&heroes, now));
         movers.extend(self.story.statue_solids());
+        movers.extend(self.missions.safe_solids());
         movers.extend(self.lifts.solids_near(&heroes, 25.0, now));
         self.lap("srv movers us", &mut t);
         if let Some(t) = self.wrecks.traffic.as_mut() {

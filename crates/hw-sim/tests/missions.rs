@@ -173,6 +173,62 @@ fn a_hero_takes_a_case_and_closes_it() {
         "taken past its guards"
     );
     put_down(&mut sim, guard);
+    // It is locked in a safe: a solid thing a hero cannot walk into.
+    let safe = sim
+        .enemies()
+        .into_iter()
+        .find(|e| e.1 == EnemyKind::Safe)
+        .expect("a safe");
+    let solids = sim.world.resource::<hw_sim::Solids>().0.clone();
+    assert!(
+        solids.solid_at(at + DVec3::Y * 0.7),
+        "the safe is drawn but not solid"
+    );
+    assert!(
+        !solids.solid_at(safe.2 + DVec3::Y * 0.7),
+        "its door cannot be reached"
+    );
+    hold(&mut sim, hero, at, missions::CLUE_SECONDS * 1.3);
+    assert!(
+        !sim.missions.case(number).unwrap().clues()[0].1,
+        "taken out of a locked safe"
+    );
+    // Broken open in a fight: the hero blasts its door from in front.
+    let alarms = sim.missions.case(number).unwrap().alarms();
+    let stand = safe.2 + (safe.2 - at).normalize() * 2.5;
+    let mut ticks = 0;
+    while sim
+        .enemies()
+        .iter()
+        .any(|e| e.0 == safe.0 && e.3.fighting())
+    {
+        ticks += 1;
+        assert!(ticks < TICK_HZ * 120, "the safe never broke");
+        put(&mut sim, hero, stand);
+        sim.set_input(
+            PlayerId(1),
+            InputState {
+                target: Some(safe.0),
+                aim: (safe.2 - stand).normalize().as_vec3().to_array(),
+                blast: ticks % 4 == 0,
+                ..InputState::default()
+            },
+        );
+        sim.step();
+    }
+    sim.set_input(PlayerId(1), InputState::default());
+    sim.step();
+    // The noise brought a crew that had heard nothing.
+    assert!(
+        sim.missions.case(number).unwrap().alarms() > alarms,
+        "nobody heard the safe go"
+    );
+    // It stands there open: not carried off like a villain.
+    for _ in 0..TICK_HZ * 8 {
+        put(&mut sim, hero, stand);
+        sim.step();
+    }
+    assert!(sim.enemies().iter().any(|e| e.0 == safe.0), "the safe went");
     let before = sim.enemies().len();
     hold(&mut sim, hero, at, missions::CLUE_SECONDS * 1.3);
     let r = sim.missions.case(number).expect("still open: not out yet");
@@ -675,7 +731,7 @@ fn a_closed_hideout_gives_up_and_someone_says_thanks() {
     let standing = |sim: &mut Sim| {
         sim.enemies()
             .iter()
-            .filter(|e| e.3.fighting() && e.1 != EnemyKind::WeakPoint)
+            .filter(|e| e.3.fighting() && !matches!(e.1, EnemyKind::WeakPoint | EnemyKind::Safe))
             .count()
     };
     assert!(standing(&mut sim) >= 8);
@@ -683,6 +739,16 @@ fn a_closed_hideout_gives_up_and_someone_says_thanks() {
         CaseKind::Evidence => {
             if let Some(g) = guard {
                 put_down(&mut sim, g);
+            }
+            for (en, mut f) in sim
+                .world
+                .query::<(&hw_sim::combat::Enemy, &mut hw_sim::combat::Fighter)>()
+                .iter_mut(&mut sim.world)
+            {
+                if en.kind == EnemyKind::Safe {
+                    f.health = 0.0;
+                    f.status = hw_net::Status::Down;
+                }
             }
             hold(
                 &mut sim,
@@ -714,11 +780,30 @@ fn a_closed_hideout_gives_up_and_someone_says_thanks() {
     assert!(!b.holds(thanks[0], 0.0), "outside the building");
     // The police drones take them all in.
     let mut left = TICK_HZ * 240;
-    while !sim.enemies().is_empty() && left > 0 {
+    let people = |sim: &mut Sim| sim.enemies().iter().any(|e| e.1 != EnemyKind::Safe);
+    while people(&mut sim) && left > 0 {
         put(&mut sim, hero, outside);
         sim.step();
         left -= 1;
     }
-    let rest: Vec<_> = sim.enemies().iter().map(|e| (e.1, e.3.status)).collect();
+    let rest: Vec<_> = sim
+        .enemies()
+        .iter()
+        .filter(|e| e.1 != EnemyKind::Safe)
+        .map(|e| (e.1, e.3.status))
+        .collect();
     assert!(rest.is_empty(), "still there: {rest:?}");
+    // An opened safe stands while a hero is about, and goes (no longer
+    // solid either) once nobody is near.
+    if job == CaseKind::Evidence {
+        assert_eq!(sim.enemies().len(), 1, "the safe stays for now");
+        assert_eq!(sim.missions.safe_solids().len(), 1);
+    }
+    let far = outside + DVec3::new(0.0, 0.0, -2.0 * missions::SAFE_GONE);
+    for _ in 0..TICK_HZ * 2 {
+        put(&mut sim, hero, far);
+        sim.step();
+    }
+    assert!(sim.enemies().is_empty(), "a safe was left behind");
+    assert!(sim.missions.safe_solids().is_empty());
 }

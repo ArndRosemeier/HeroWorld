@@ -32,6 +32,72 @@ struct Clue {
     /// The room whose crew guards a thing to find (in `rooms`): it cannot
     /// be taken while they stand.
     guard: Option<usize>,
+    /// The safe it is locked in.
+    safe: Option<Safe>,
+}
+
+/// A gang's safe with the thing in it: a villain of its own kind
+/// ([`EnemyKind::Safe`]) that stands there and is broken open.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Safe {
+    pub id: NetId,
+    spot: usize,
+    /// Its middle on the floor, and the way its door faces.
+    pub at: DVec3,
+    pub facing: DVec2,
+    /// Its door is broken open.
+    open: bool,
+}
+
+impl Safe {
+    pub(crate) fn solid(&self) -> crate::collision::Solid {
+        safe_solid(self.at, self.facing)
+    }
+
+    /// Takes it out of the world.
+    pub(crate) fn remove(&self, world: &mut World) {
+        let found = world
+            .query::<(Entity, &Net)>()
+            .iter(world)
+            .find(|(_, n)| n.0 == self.id)
+            .map(|(e, _)| e);
+        if let Some(e) = found {
+            world.despawn(e);
+        }
+        if let Some(s) = world.resource_mut::<Fights>().spots.get_mut(self.spot) {
+            s.members = 0;
+            s.respawn_at = None;
+        }
+    }
+}
+
+/// The solid box of a safe whose middle stands at `at` on the floor, its
+/// door facing `facing`: what [`crate::missions::SAFE_HALF`] and
+/// [`crate::missions::SAFE_HEIGHT`] say, which is what is drawn.
+pub fn safe_solid(at: DVec3, facing: DVec2) -> crate::collision::Solid {
+    let f = facing.normalize_or(DVec2::Y);
+    crate::collision::Solid {
+        origin: DVec2::new(at.x, at.z),
+        along: f.perp(),
+        inward: f,
+        min: -SAFE_HALF,
+        max: SAFE_HALF,
+        y0: at.y,
+        y1: at.y + SAFE_HEIGHT,
+    }
+}
+
+/// Where a safe's body (what heroes aim at) is: just in front of its
+/// door, so a hero facing the door sees it past the safe's own box.
+pub fn safe_front(at: DVec3, facing: DVec2) -> DVec3 {
+    let f = facing.normalize_or(DVec2::Y) * (SAFE_HALF.y + SAFE_FRONT);
+    at + DVec3::new(f.x, 0.0, f.y)
+}
+
+/// The middle of the safe whose body is at `front` (see [`safe_front`]).
+pub fn safe_middle(front: DVec3, facing: DVec2) -> DVec3 {
+    let f = facing.normalize_or(DVec2::Y) * (SAFE_HALF.y + SAFE_FRONT);
+    front - DVec3::new(f.x, 0.0, f.y)
 }
 
 /// What a second's look at a case found.
@@ -388,6 +454,99 @@ impl Running {
         }
     }
 
+    /// A safe stands at `at` in building `b`, square to its walls, its
+    /// door towards `towards` if a hero can stand in front of it there.
+    fn lock_up(
+        &self,
+        world: &mut World,
+        tick: u64,
+        heroes: usize,
+        b: &crate::floornav::Building,
+        at: DVec3,
+        towards: DVec3,
+    ) -> Safe {
+        let solids = world.resource::<crate::Solids>().0.clone();
+        let want = DVec2::new(towards.x - at.x, towards.z - at.z);
+        let d = b.dir.normalize_or(DVec2::X);
+        let mut ways = [d, -d, d.perp(), -d.perp()];
+        ways.sort_by(|a, b| b.dot(want).total_cmp(&a.dot(want)));
+        let c = DVec2::new(at.x, at.z);
+        let facing = ways
+            .into_iter()
+            .find(|w| room_to_stand(&solids, c + *w * (SAFE_HALF.y + 0.9), at.y))
+            .unwrap_or(ways[0]);
+        let front = safe_front(at, facing);
+        let level = world
+            .resource::<Fights>()
+            .team_level
+            .saturating_add(self.plan.extra);
+        let spot = {
+            let mut f = world.resource_mut::<Fights>();
+            f.spots.push(Spot {
+                once: true,
+                groups: 1,
+                members: 1,
+                ..Spot::fight(front, facing)
+            });
+            f.spots.len() - 1
+        };
+        let id = combat::spawn_enemy(world, tick, EnemyKind::Safe, level, spot, front, heroes);
+        let found = world
+            .query::<(Entity, &Net)>()
+            .iter(world)
+            .find(|(_, n)| n.0 == id)
+            .map(|(e, _)| e);
+        if let Some(e) = found {
+            let yaw = facing.x.atan2(facing.y);
+            world
+                .entity_mut(e)
+                .insert(crate::Orientation(crate::robots::yaw_rotation(yaw)));
+        }
+        Safe {
+            id,
+            spot,
+            at,
+            facing,
+            open: false,
+        }
+    }
+
+    /// The safes of this case (they stay solid, open or not).
+    pub(crate) fn safes(&self) -> impl Iterator<Item = &Safe> {
+        self.clues.iter().filter_map(|k| k.safe.as_ref())
+    }
+
+    /// A safe whose door was broken this tick stands open, and the noise
+    /// brings the nearest crew that has heard nothing yet.
+    fn open_safes(&mut self, world: &mut World, tick: u64, heroes: &[Seen]) {
+        if self.clues.iter().all(|k| k.safe.is_none_or(|s| s.open)) {
+            return;
+        }
+        let shut: Vec<NetId> = world
+            .query::<(&Net, &combat::Enemy, &Fighter)>()
+            .iter(world)
+            .filter(|(_, en, f)| en.kind == EnemyKind::Safe && f.fighting())
+            .map(|(n, _, _)| n.0)
+            .collect();
+        let mut broken = Vec::new();
+        for s in self.clues.iter_mut().filter_map(|k| k.safe.as_mut()) {
+            if !s.open && !shut.contains(&s.id) {
+                s.open = true;
+                broken.push(s.at);
+            }
+        }
+        for at in broken {
+            let nearest = heroes.iter().min_by(|a, b| {
+                a.at.distance(at)
+                    .total_cmp(&b.at.distance(at))
+                    .then(a.id.cmp(&b.id))
+            });
+            if let Some(h) = nearest {
+                self.call_nearest(world, tick, heroes, at, h.id);
+            }
+        }
+    }
+
     /// A hostage held at `at`, facing their guards at `guard`.
     fn hostage(&self, world: &mut World, tick: u64, at: DVec3, guard: DVec3) -> u32 {
         let id = HOSTAGE_IDS | ((self.number as u32 & 0xffff) << 4) | self.clues.len() as u32;
@@ -482,6 +641,7 @@ impl Running {
                 found: false,
                 hostage,
                 guard: None,
+                safe: None,
             });
         }
     }
@@ -606,12 +766,17 @@ impl Running {
                 if let Some(at) = far_corner(&solids, b, &chosen[i].1, y, self.rooms[i].at) {
                     let hostage = (job == CaseKind::Hostages)
                         .then(|| (i, self.hostage(world, tick, at, self.rooms[i].at)));
+                    // The thing is locked in a safe, its door towards
+                    // the room's crew.
+                    let safe = (job == CaseKind::Evidence)
+                        .then(|| self.lock_up(world, tick, heroes, b, at, self.rooms[i].at));
                     self.clues.push(Clue {
                         at,
                         found: false,
                         hostage,
                         // The room's own crew stands over the thing.
                         guard: (job == CaseKind::Evidence).then_some(i),
+                        safe,
                     });
                     used.push(i);
                 }
@@ -625,11 +790,13 @@ impl Running {
                 .chain(rooms.iter())
                 .find_map(|r| far_corner(&solids, b, &r.1, r.2, from));
             if let Some(at) = at {
+                let safe = Some(self.lock_up(world, tick, heroes, b, at, from));
                 self.clues.push(Clue {
                     at,
                     found: false,
                     hostage: None,
                     guard: None,
+                    safe,
                 });
             }
         }
@@ -677,6 +844,9 @@ impl Running {
                 f.spots[s].respawn_at = None;
             }
         }
+        for s in self.safes().copied().collect::<Vec<_>>() {
+            s.remove(world);
+        }
         self.rooms.clear();
         self.boss = None;
         self.door = None;
@@ -697,7 +867,9 @@ impl Running {
     /// up (down and cuffed: the police drones take them in, with no karma
     /// for anyone), and someone waits outside to thank the heroes (the
     /// thing's owner, a neighbour). The case lets go of its groups.
-    pub(crate) fn wrap_up(&mut self, world: &mut World, tick: u64) {
+    /// Its safes stay where they stand: they are handed back, to be taken
+    /// away once nobody is near.
+    pub(crate) fn wrap_up(&mut self, world: &mut World, tick: u64) -> Vec<Safe> {
         let spots: Vec<usize> = self.groups_mut().map(|r| r.spot).collect();
         for (en, mut f) in world
             .query::<(&combat::Enemy, &mut Fighter)>()
@@ -724,11 +896,13 @@ impl Running {
                 crate::incidents::release_bystanders(world, tick, id);
             }
         }
+        let safes = self.safes().copied().collect();
         self.rooms.clear();
         self.boss = None;
         self.door = None;
         self.cutoff = None;
         self.clues.clear();
+        safes
     }
 
     /// Heroes holding the help key at a clue, or by a hostage whose
@@ -737,6 +911,7 @@ impl Running {
         if self.stage != INSIDE {
             return;
         }
+        self.open_safes(world, tick, heroes);
         let states: Vec<u8> = (0..self.clues.len())
             .map(|k| self.state(world, k))
             .collect();
@@ -774,11 +949,13 @@ impl Running {
         }
     }
 
-    /// Clue or hostage `k`: guarded, ready or done.
+    /// Clue or hostage `k`: locked in its safe, guarded, ready or done.
     fn state(&self, world: &mut World, k: usize) -> u8 {
         let c = &self.clues[k];
         if c.found {
             DONE
+        } else if c.safe.is_some_and(|s| !s.open) {
+            LOCKED
         } else if c.hostage.is_some_and(|(room, _)| {
             self.rooms
                 .get(room)
