@@ -292,7 +292,34 @@ impl FloorGraph {
                     continue;
                 }
                 let c = (lo + hi) * 0.5;
-                g.add_on_pads(DVec3::new(c.x, a.y, c.y));
+                let y = a.y;
+                // Where they meet along an edge, a point either side of
+                // it (as at a doorway), so one crosses it square and
+                // not round the end of a rail.
+                let across = if hi.x - lo.x < 2.0 * ON {
+                    Some(DVec2::X)
+                } else if hi.y - lo.y < 2.0 * ON {
+                    Some(DVec2::Y)
+                } else {
+                    None
+                };
+                let sides = across.and_then(|n| {
+                    let (p, q) = (c - n * DOOR_SIDE, c + n * DOOR_SIDE);
+                    let on = |r: &Rect, v: DVec2| r.inset(-ON).contains_point(v);
+                    let (ra, rb) = (g.pads[i].rect, g.pads[j].rect);
+                    ((on(&ra, p) && on(&rb, q)) || (on(&ra, q) && on(&rb, p))).then_some((p, q))
+                });
+                match sides {
+                    Some((p, q)) => {
+                        let (p, q) = (DVec3::new(p.x, y, p.y), DVec3::new(q.x, y, q.y));
+                        if let (Some(u), Some(v)) = (g.add_on_pads(p), g.add_on_pads(q)) {
+                            g.join(u, v, Via::Walk);
+                        }
+                    }
+                    None => {
+                        g.add_on_pads(DVec3::new(c.x, y, c.y));
+                    }
+                }
             }
         }
         // Lifts: a ride between any two stops.
@@ -1069,6 +1096,16 @@ mod tests {
                     }
                 }
             }
+        }
+        // Gangs' dens: narrow plots, a hall of balconies and bridges.
+        for k in 0..12u64 {
+            let size = DVec2::new(12.0 + (k % 6) as f64 * 0.5, 22.0 + (k % 5) as f64 * 2.5);
+            out.extend(plan_scheme(
+                Seed(40 + k),
+                size,
+                3 + (k % 2) as u32,
+                Scheme::Den,
+            ));
         }
         out
     }

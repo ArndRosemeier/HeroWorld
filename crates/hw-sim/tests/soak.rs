@@ -438,9 +438,11 @@ fn an_evening_of_co_op_play() {
             let off = DVec3::from_array(mine.pos).distance(DVec3::from_array(e.pos));
             assert!(
                 off <= speed * 0.25 + 1e-9,
-                "bot{k} sees {:?} ({:?}, {speed:.1} m/s) {off:.3} m off",
+                "bot{k} sees {:?} ({:?}, {speed:.1} m/s) {off:.3} m off at {:.2?} (its copy at {:.2?})",
                 e.id,
-                e.kind
+                e.kind,
+                e.pos,
+                mine.pos
             );
         }
     }

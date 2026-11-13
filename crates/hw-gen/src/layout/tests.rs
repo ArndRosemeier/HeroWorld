@@ -341,3 +341,88 @@ fn loft_houses_fit_small_plots() {
         assert!(living.rect.size().min_element() >= 8.5, "{k}");
     }
 }
+
+/// Every plot a den fits on gets a sound one: a great hall through the
+/// whole height, balconies and bridges in it, every storey its own
+/// height, and the storeys' floors level through the house.
+#[test]
+fn dens_are_sound() {
+    use super::den::{plan, MIN_DEN};
+    use std::collections::BTreeSet;
+    let (mut bridges, mut between, mut tall, mut all) = (0, 0, 0, 0);
+    let mut shapes = BTreeSet::new();
+    for k in 0..400u64 {
+        let size = DVec2::new(
+            MIN_DEN.x + (k % 9) as f64 * 0.5 + (k % 4) as f64 * 3.0,
+            MIN_DEN.y + (k % 23) as f64 * 0.5,
+        );
+        let storeys = 3 + (k % 2) as u32;
+        let l = plan(Seed(900 + k), size, storeys).expect("a den fits");
+        assert_eq!(l, plan(Seed(900 + k), size, storeys).expect("a den fits"));
+        let p = l.problems();
+        assert!(p.is_empty(), "{k} {size:?} x{storeys}: {p:#?}");
+        let levels = l.levels();
+        assert_eq!(levels.len() as u32, storeys, "{k}");
+        // The hall: the whole height and width of the house.
+        let hall = &l.spaces[0];
+        assert_eq!(hall.kind, SpaceKind::Hall);
+        assert!(hall.h >= 12.0 && hall.h == l.height(), "{k}: {}", hall.h);
+        assert_eq!(hall.rect.size().x, size.x);
+        // No two storeys next to each other the same height.
+        for w in levels.windows(3) {
+            assert!(
+                ((w[2] - w[1]) - (w[1] - w[0])).abs() > 0.4,
+                "{k}: {levels:?}"
+            );
+        }
+        // Balconies stand a storey's headroom apart where one hangs
+        // over another.
+        let decks: Vec<&Space> = l.spaces.iter().filter(|s| s.within == Some(0)).collect();
+        for (i, a) in decks.iter().enumerate() {
+            for c in &decks[i + 1..] {
+                if a.rect.overlap(&c.rect) > 1e-3 {
+                    assert!((a.y - c.y).abs() >= 3.0 - 1e-6, "{k}: {} {}", a.y, c.y);
+                }
+            }
+        }
+        all += 1;
+        let ends = |s: &Space| s.rect.min.y > hall.rect.min.y && s.rect.max.y < hall.rect.max.y;
+        let in_band = |s: &Space| s.rect.min.x > 1.0 && s.rect.max.x < size.x - 1.0;
+        if decks.iter().any(|s| ends(s) && in_band(s)) {
+            bridges += 1;
+        }
+        if decks
+            .iter()
+            .any(|s| levels.iter().all(|y| (s.y - y).abs() > 0.5))
+        {
+            between += 1;
+        }
+        if l.spaces
+            .iter()
+            .any(|s| s.within.is_none() && s.kind != SpaceKind::Hall && s.h > 8.0)
+        {
+            tall += 1;
+        }
+        shapes.insert((
+            (hall.rect.min.y * 2.0) as i64,
+            (hall.rect.max.y * 2.0) as i64,
+            decks.len(),
+            l.spaces.len(),
+            (l.height() * 2.0) as i64,
+        ));
+    }
+    assert!(bridges * 2 > all, "{bridges} of {all} have a bridge");
+    assert!(
+        between * 3 > all,
+        "{between} of {all} have a balcony between storeys"
+    );
+    assert!(
+        tall * 5 > all,
+        "{tall} of {all} have a room two storeys high"
+    );
+    assert!(
+        shapes.len() * 10 > all * 9,
+        "{} shapes of {all}",
+        shapes.len()
+    );
+}

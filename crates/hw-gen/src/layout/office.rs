@@ -101,6 +101,7 @@ pub fn plan_scheme(seed: Seed, size: DVec2, storeys: u32, scheme: Scheme) -> Opt
         Scheme::Block => MIN_BLOCK,
         Scheme::Terrace | Scheme::Villa => MIN_ROW,
         Scheme::Loft => MIN_LOFT,
+        Scheme::Den => super::den::MIN_DEN,
         _ => MIN_SIZE,
     };
     if size.x < least.x || size.y < least.y || storeys < 2 {
@@ -116,14 +117,15 @@ pub fn plan_scheme(seed: Seed, size: DVec2, storeys: u32, scheme: Scheme) -> Opt
         Scheme::Terrace => row(seed, size, storeys, false),
         Scheme::Villa => row(seed, size, 2, true),
         Scheme::Loft => loft(seed, size),
+        Scheme::Den => super::den::plan(seed, size, storeys),
     }
 }
 
-fn snap(v: f64) -> f64 {
+pub(super) fn snap(v: f64) -> f64 {
     (v * 2.0).round() * 0.5
 }
 
-fn rect(x0: f64, z0: f64, x1: f64, z1: f64) -> Rect {
+pub(super) fn rect(x0: f64, z0: f64, x1: f64, z1: f64) -> Rect {
     Rect::from_xz(x0, z0, x1, z1)
 }
 
@@ -291,7 +293,7 @@ fn overlook(b: &mut Builder, from: usize, rooms: &[usize], y: f64) {
 }
 
 /// Floor heights from storey heights, and the roof last.
-fn levels(hs: &[f64]) -> Vec<f64> {
+pub(super) fn levels(hs: &[f64]) -> Vec<f64> {
     let mut ys = vec![0.0];
     for h in hs {
         ys.push(ys.last().copied().unwrap_or(0.0) + h);

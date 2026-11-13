@@ -3,6 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.273 (2026-11-13)
+
+- Gang hideouts are no longer a stack of look-alike floors. Most are now dens: one great hall through the whole height of the house, with balconies at its ends at every storey and in between, open stairs that climb along the walls from one balcony across to the next, and bridges over the drop.
+- Every storey has its own height, from 4 to 7.5 m, and its own rooms: one or two, some two storeys high behind a wall of glass, some open to the hall like a box at the theatre.
+- Dens are a storey higher than the houses they were, and no two are alike: the hall stands at the street, at the back or in the middle.
+- The gang walks all of it: stairs, bridges and balconies.
+- Police cruisers land far more often. In 0.272 most of them only hovered over the door, because in narrow lanes the officers had no allowed way to it; now the cars wait round the door as well.
+- This changes what is inside the hideouts of every town. Everyone playing together needs this version.
+
 ## 0.272 (2026-11-13)
 
 - The police have a car and officers. When a hideout case closes, a Sky Patrol cruiser comes down out of the sky with its siren going: a black and white flying car with twin fins, gold stars, chrome skids and a turning red beacon. It lands in the street by the door, and the cars wait for it.

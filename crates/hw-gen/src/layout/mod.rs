@@ -21,6 +21,7 @@
 //! street front, z inwards, y up from the ground floor. Pure data from the
 //! seed, like every plan.
 
+pub mod den;
 pub mod furnish;
 pub mod lifts;
 pub mod office;
@@ -412,6 +413,11 @@ pub enum Scheme {
     /// storeys high, a straight flight along its back wall, and a bedroom
     /// gallery over the kitchen at the other end.
     Loft,
+    /// A gang's den: a great hall through the whole height of the house,
+    /// balconies at its ends at every storey and in between, open flights
+    /// from balcony to balcony along its walls and bridges across; rooms
+    /// of unlike heights in front of it and behind (see [`den`]).
+    Den,
 }
 
 impl Scheme {

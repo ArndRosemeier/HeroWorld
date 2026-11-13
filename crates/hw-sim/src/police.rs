@@ -63,7 +63,8 @@ const LEVEL: f64 = 0.12;
 const SLOPE: f64 = 0.3;
 /// Cars keep off the road this far round a cruiser standing in it (the
 /// [`AlarmKind::Police`](crate::alarms::AlarmKind::Police) alarm it
-/// raises): this near it, its officers may walk in the road.
+/// raises): this near it, and this near their posts by the door, its
+/// officers may walk in the road.
 const ROAD_HELD: f64 = 6.0;
 /// With no hero this near, the police are gone at once (m).
 const NOBODY: f64 = 320.0;
@@ -406,6 +407,17 @@ fn posts(solids: &Obstacles, door: DVec3, out: DVec2) -> Vec<DVec3> {
     found
 }
 
+/// The middle of the officers' posts by the door (x, z). In the old
+/// town's lanes a house's door opens straight onto the road, so the
+/// posts stand in it: a second police alarm there keeps the cars off.
+fn guard_spot(posts: &[DVec3]) -> DVec2 {
+    let n = posts.len().max(1) as f64;
+    posts
+        .iter()
+        .fold(DVec2::ZERO, |a, p| a + DVec2::new(p.x, p.z))
+        / n
+}
+
 /// The places a cruiser might land for a call, best first: its box's
 /// middle and its nose. First in the street by the door, standing along
 /// it as a car would (in the near lane, then the middle of the road),
@@ -537,6 +549,9 @@ fn try_landing(
     }
     // Each officer's walk: out at their side, round the cruiser's end if
     // it stands in the way, and straight to their post.
+    // The road is held round the cruiser and round the posts by the door
+    // (see `guard_spot`): there the officers may walk in it.
+    let by_door = guard_spot(&s.posts);
     let walkable = |a: DVec3, b: DVec3| {
         let n = (a.distance(b) / 0.5).ceil().max(1.0) as usize;
         let mut last = a.y;
@@ -544,7 +559,8 @@ fn try_landing(
             let p = a.lerp(b, i as f64 / n as f64);
             let q = DVec2::new(p.x, p.z);
             let g = street(solids, q);
-            let ok = (g - last).abs() < 0.35 && (off_road(q) || q.distance(c) < ROAD_HELD);
+            let held = q.distance(c) < ROAD_HELD || q.distance(by_door) < ROAD_HELD;
+            let ok = (g - last).abs() < 0.35 && (off_road(q) || held);
             last = g;
             ok
         });
@@ -584,11 +600,27 @@ fn try_landing(
                 y,
             )
         };
-        let routes = [
+        let mut routes = vec![
             vec![start, post],
             vec![start, corner(side), post],
             vec![start, corner(side), corner(-side), post],
         ];
+        // Round whatever stands between (a lamp, a tree, a parked car):
+        // by a point out in front of the door, or one out from the post.
+        let door = DVec2::new(s.door.x, s.door.z);
+        let flat = DVec2::new(post.x, post.z);
+        let mut by: Vec<DVec3> = Vec::new();
+        for d in [2.5, 4.5, 7.0] {
+            by.push(on_ground(flat + s.out * d, y));
+            for t in [0.0, -3.0, 3.0] {
+                by.push(on_ground(door + s.out * (d + 1.0) + s.out.perp() * t, y));
+            }
+        }
+        for &p in &by {
+            routes.push(vec![start, p, post]);
+            routes.push(vec![start, corner(side), p, post]);
+            routes.push(vec![start, corner(side), corner(-side), p, post]);
+        }
         let way = routes.into_iter().find(|w| {
             w.windows(2)
                 .all(|p| !through(p[0], p[1]) && walkable(p[0], p[1]))
@@ -836,6 +868,18 @@ pub fn step(
                     tick,
                     TICK_HZ,
                 );
+                // And round the posts by the door, where they are not
+                // the same place.
+                let posts: Vec<DVec3> = l.ways.iter().filter_map(|w| w.last().copied()).collect();
+                let g = guard_spot(&posts);
+                if !posts.is_empty() && g.distance(mid) > ROAD_HELD * 0.5 {
+                    alarms.raise_or_refresh(
+                        crate::alarms::AlarmKind::Police,
+                        DVec3::new(g.x, posts[0].y, g.y),
+                        tick,
+                        TICK_HZ,
+                    );
+                }
             }
         }
         // Nobody left to see it: gone.

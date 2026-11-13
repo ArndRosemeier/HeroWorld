@@ -1065,6 +1065,19 @@ fn main() -> EngineResult<()> {
                     b.base,
                     l.as_ref().map(|l| l.scheme)
                 );
+                // (A den's hall and its levels, to place `HW_HALLS_EYE`.)
+                if let Some(l) = l
+                    .as_ref()
+                    .filter(|l| l.scheme == hw_gen::layout::Scheme::Den)
+                {
+                    let r = l.spaces[0].rect;
+                    eprintln!(
+                        "  den hall z {:.1}..{:.1}, levels {:?}",
+                        r.min.y,
+                        r.max.y,
+                        l.levels()
+                    );
+                }
             }
             // `HW_HALLS_EYE=x,y,z,x,y,z`: the eye and what it looks at, in
             // the building's own (x, z) and height over its ground.

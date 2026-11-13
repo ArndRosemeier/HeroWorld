@@ -377,6 +377,11 @@ impl BuildingSite {
     /// (its plot must be at least [`office::MIN_SIZE`]).
     pub fn into_halls(mut self, storeys: u32) -> Self {
         self.floors = storeys.max(2);
+        // A gang's den is a storey higher than the house it was: its
+        // great hall wants the height.
+        if self.picked_as_hideout() && self.den_fits() {
+            self.floors = (self.floors + 1).clamp(3, 4);
+        }
         self.halls = Some(self.plan_halls().height());
         self
     }
@@ -385,6 +390,11 @@ impl BuildingSite {
     /// homes, else an office building or (on a narrow plot) a shop house.
     fn plan_halls(&self) -> Layout {
         let seed = self.seed.child("layout");
+        if self.picked_as_hideout() && self.den_fits() {
+            if let Some(l) = crate::layout::den::plan(seed, self.size, self.floors) {
+                return l;
+            }
+        }
         if matches!(self.usage, BuildingUse::Apartments | BuildingUse::Tenement) {
             office::plan_flats(seed, self.size, self.floors)
         } else if self.usage == BuildingUse::House {
@@ -406,7 +416,20 @@ impl BuildingSite {
     /// the exception, not the street: the rest are homes and shops.
     /// Decided by its seed alone.
     pub fn is_hideout(&self) -> bool {
-        if self.halls.is_none() || self.floors < 2 || self.size.min_element() < 12.0 {
+        self.halls.is_some() && self.picked_as_hideout()
+    }
+
+    /// A hideout's plot too small for an office building's halls gets a
+    /// den ([`crate::layout::den`]) where that fits.
+    fn den_fits(&self) -> bool {
+        use crate::layout::den::MIN_DEN;
+        let (s, big) = (self.size, office::MIN_SIZE);
+        s.x >= MIN_DEN.x && s.y >= MIN_DEN.y && (s.x < big.x || s.y < big.y)
+    }
+
+    /// [`Self::is_hideout`], if it is a building of halls.
+    fn picked_as_hideout(&self) -> bool {
+        if self.floors < 2 || self.size.min_element() < 12.0 {
             return false;
         }
         match self.usage {
