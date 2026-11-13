@@ -113,6 +113,9 @@ pub struct CrimeView {
     pub level: u8,
     /// 0 small, 1 middling, 2 big.
     pub size: u8,
+    /// A hot tip, and the minutes it stays on the board (255: taken).
+    pub hot: bool,
+    pub minutes: u8,
     pub at: Vec3,
     pub name: String,
     pub taken: bool,
@@ -124,6 +127,9 @@ pub struct Board {
     pub crimes: Vec<CrimeView>,
     pub limit: u8,
     pub open: u8,
+    /// Crimes that went untaken so far, and whether a board came yet.
+    pub missed: u16,
+    pub heard: bool,
 }
 
 /// A case that was closed, for the cabinet.
@@ -215,8 +221,23 @@ impl MissionView {
                 crimes,
                 limit,
                 open,
+                missed,
+                lost,
             } => {
+                // A crime nobody took (not on first hearing of the board).
+                if self.board.heard && *missed != self.board.missed && !lost.is_empty() {
+                    let line = Line {
+                        who: DISPATCH,
+                        text: format!(
+                            "Too late for the {lost}: the gang got away with it. The streets round there will be rougher for a while."
+                        ),
+                    };
+                    self.heard.push(line.clone());
+                    self.lines.push_back(line);
+                }
                 self.board = Board {
+                    heard: true,
+                    missed: *missed,
                     crimes: crimes
                         .iter()
                         .map(|c| CrimeView {
@@ -226,6 +247,8 @@ impl MissionView {
                             gang: (c.gang as usize).min(GANGS.len() - 1),
                             level: c.level,
                             size: c.size,
+                            hot: c.hot,
+                            minutes: c.minutes,
                             at: Vec3::from_array(c.at),
                             name: c.name.clone(),
                             taken: c.taken,
@@ -701,6 +724,16 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
                 "{} is clear. Case closed, swell work!",
                 crate::casefile::capitalised(&place)
             )));
+            if now.in_building() && now.steps.len() == 1 {
+                out.push(say(match now.kind {
+                    CaseKind::Evidence => format!(
+                        "The rest have given up: the police drones are taking them in. Somebody's outside to thank you for {}.",
+                        now.crime.thing()
+                    ),
+                    _ => "The rest have given up without their boss: the police drones are taking them in."
+                        .to_string(),
+                }));
+            }
             out.push(say(match open {
                 0 => "More crimes are on the police computer when you want one.".to_string(),
                 1 => "One case still open: check your file (J).".to_string(),
@@ -841,7 +874,10 @@ mod tests {
             &st(CLOSED, CaseKind::Takeover, 1, 0),
             2,
         );
-        assert!(closed[0].text.contains("closed") && closed[1].text.contains("2 cases"));
+        assert!(closed[0].text.contains("closed"));
+        // The ending of a hideout, then what is left to do.
+        assert!(closed[1].text.contains("given up"), "{}", closed[1].text);
+        assert!(closed.last().unwrap().text.contains("2 cases"));
         let m = mark(&st(INSIDE, CaseKind::Evidence, 4, 1)).expect("a mark");
         assert!(
             m.goal.contains("1 of 3") && m.goal.contains("1 of 6") && m.heading.contains("No. 4"),

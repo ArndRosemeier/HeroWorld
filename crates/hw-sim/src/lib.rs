@@ -1280,6 +1280,10 @@ impl Sim {
         self.lap("srv incidents+crimes us", &mut t);
         self.story.step(&mut self.world, self.tick);
         self.missions.step(&mut self.world, self.tick);
+        if self.tick.is_multiple_of(TICK_HZ as u64) {
+            self.incidents
+                .set_emboldened(self.missions.emboldened.iter().map(|e| e.0).collect());
+        }
         self.raise_crime_alarms();
         self.lap("srv story+missions us", &mut t);
         let solids = self.solids();

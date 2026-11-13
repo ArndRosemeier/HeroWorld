@@ -1011,6 +1011,9 @@ pub struct Enemy {
     /// Making off from a crime nobody stopped: it hurries to its `home`,
     /// far down the street, and is gone there (see [`crate::incidents`]).
     pub leaving: bool,
+    /// Breaking off until this tick: it fights nobody and runs to its
+    /// `home` (a boss making for another room; see [`crate::missions`]).
+    pub flee_until: u64,
     /// The tick it last acted. A villain that waits its turn (see
     /// [`enemies_act`]) walks the ticks it missed in one go, so it moves at
     /// the same speed however often it acts.
@@ -1753,6 +1756,7 @@ pub(crate) fn spawn_enemy(
             warned: None,
             look: None,
             leaving: false,
+            flee_until: 0,
             last_think: tick.saturating_sub(1),
         },
         LastChange(tick),
@@ -4808,6 +4812,10 @@ fn enemies_act(
                     }
                     fx.push(event(tick, FxKind::Warn, actors[i].id, hero_id, me));
                 }
+                // Breaking off: nobody to fight until it is where it runs to.
+                if tick < en.flee_until && !charmed {
+                    foe = None;
+                }
                 if let Some(j) = foe.filter(|&j| !charmed && !actors[j].f.charmed(tick)) {
                     // Friends close by come along.
                     let (spot, foe_id) = (en.spot, actors[j].id);
@@ -4838,7 +4846,13 @@ fn enemies_act(
                         }
                     } else if flat.length() > if strolls { STROLL_RADIUS + 0.5 } else { 1.0 } {
                         // Walking back to its corner; making off at a jog.
-                        let pace = if en.leaving { 0.62 } else { 0.3 };
+                        let pace = if tick < en.flee_until {
+                            spec.speed.max(0.7)
+                        } else if en.leaving {
+                            0.62
+                        } else {
+                            0.3
+                        };
                         let d = heading(
                             paths,
                             solids,

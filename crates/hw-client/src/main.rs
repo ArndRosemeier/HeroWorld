@@ -1024,6 +1024,8 @@ fn main() -> EngineResult<()> {
                     std::env::var("HW_HALLS_USE")
                         .map_or(true, |want| format!("{:?}", b.site.usage) == want)
                 })
+                // (`HW_HALLS_HIDEOUT=1`: only gang hideouts.)
+                .filter(|b| std::env::var("HW_HALLS_HIDEOUT").is_err() || b.site.is_hideout())
                 // (`HW_HALLS_CLUB=1`: only night clubs.)
                 .filter(|b| std::env::var("HW_HALLS_CLUB").is_err() || b.site.is_club())
                 // (`HW_HALLS_SCHEME=Block`: only buildings of that scheme.)

@@ -845,22 +845,30 @@ at Atomic Annie (she keeps the hall's steps and no longer hands anything out):
   icons: **Crime-o-Vision**, Case files (J), Crime scanner (the visor, T), City map (M) and
   Hero powers (B). It takes the pointer; Y or the sputnik button closes it.
 - **Crime-o-Vision** (`police.rs`): a glassy overlay whose opacity wavers like a bad picture
-  tube (with a rolling band and the odd glitch; steady with reduced motion). It lists the next
-  **10 crimes** nearest first. Each row has the crime's **symbol** (payroll robbery: money
+  tube (with a rolling band and the odd glitch; steady with reduced motion). It lists the
+  **10 crimes** on the board, nearest first. Each row has the crime's **symbol** (payroll robbery: money
   sack; counterfeit ring: banknotes; smuggling den: crate; stolen prototype: ray gun; art
   theft: framed painting; protection racket: ledger), its title and the hideout's name ("Old
   hotel on Juniper Street"), the **job** with an icon (**arrest the boss**: handcuffs, **find
   the thing**: magnifier), the **gang** (a coloured dot and its short name), the gangsters'
   **level** (the team's level plus 0-2; green when easy, gold on par, orange and red when tough)
   the hideout's **size** (one, two or three little houses lit: DEN, HIDEOUT, FORTRESS)
+  the **minutes** it stays on the board (red from 3 down), a pulsing **HOT TIP** flag,
   and the **distance** from the hero. **TAKE** opens the case (FULL when 3 are open, ON IT when
   taken). The radio's heading and compass then follow it.
 - **The board** (`missions/board.rs`): crime number *n* is a pure function of the world's seed
-  and *n* (which hideout, what crime, which job, how many levels over the team). The board shows
-  crimes *closed+1 .. closed+10*, so closing a case slides it along. The gang is picked from
-  those that come out at the team's level. Hideouts are the town's **buildings of halls** with 2+
-  floors and at least 12 m a side: every tenement, one shop-and-office block in six (works keep their machines).
-  A town of seed 3 has about 85.
+  and *n* (which hideout, what crime, which job, how many levels over the team, its size,
+  whether it is a hot tip). The board holds **10 crimes**; each stays **10 to 30 minutes**
+  (`LIFE_SECONDS` 20 min, times 0.5-1.5 by its number), a **hot tip** (one in six) half as long,
+  and the next number takes its place when it is closed or its time is up. A crime that is
+  taken stays until its case closes. A **hot tip pays half as much again**. A crime **nobody
+  took** makes the streets within 450 m of its hideout **rough for 10 minutes**: street crime is
+  as common there as round a gang's hangout (`EMBOLDENED_SECONDS`), and the radio says so. The
+  gang is picked from those that come out at the team's level. Hideouts are the exception among
+  the town's **buildings of halls** (2+ floors, at least 12 m a side): **one tenement in four,
+  one shop-and-office block in six** (works keep their machines); the rest are homes and shops
+  with their own furniture. A hideout shows from the street: its **ground-floor windows are
+  boarded up** (planks nailed across, no light behind them).
 
 The team can have up to **3 cases open** at once (`OPEN_LIMIT`; nothing else assumes a number),
 never two in one building. Cases are numbered with the crime's number and each is against one of
@@ -873,8 +881,8 @@ rooms, and a finale that depends on the job.
 - **Size** (`board.rs`, `SIZE_ROOMS`): a **den** holds 2 rooms, a **hideout** 4, a **fortress** 6,
   besides the boss's room (never more than the building has: rooms are halls, boardrooms,
   lobbies, shops and concourses at least 8 m a side, and a flat's rooms and back rooms at least
-  3.8 m). **3 villains a room** for one hero and one more for each friend. In a town of seed 3:
-  40 dens, 41 hideouts, 11 fortresses.
+  3.8 m). **3 villains a room** for one hero and one more for each friend. In a town of seed 3
+  (20 000 people): 39 dens, 38 hideouts, 10 fortresses.
 - **Lookouts**: **2** stand at the way in (`DOOR_SIZE`).
 - **The alarm** (`ALARM_SECONDS`): a crew that has fought a hero for **6 s** and still stands
   shouts for help, and the **nearest crew that has heard nothing** comes along. One room, not a
@@ -882,8 +890,10 @@ rooms, and a finale that depends on the job.
   room taken down inside 6 s calls nobody.
 - **Arrest the boss** (takeover): the **boss** (named in the case file and on the radio) waits
   on the top floor with 3 guards, **1 level over the gang's**. Below **40 %** health it **breaks
-  off once**: it runs from the hero for 5 s and calls the nearest crew still standing
-  (`BOSS_BREAKS`, `BOSS_RUN_SECONDS`), then turns to fight again. Beating the boss closes the case.
+  off once**: for up to 9 s it fights nobody and runs through the building, down the stairs if
+  need be, to the crew still standing that is farthest away (with none left: to the way out),
+  and that crew takes the hero on (`BOSS_BREAKS`, `BOSS_RUN_SECONDS`, `Enemy::flee_until`). There
+  it turns to fight again. Beating the boss closes the case.
 - **Find the thing** (evidence): **one real object** the crime is about (a strongbox of cash,
   printing plates, a crate with a glowing canister, the prototype in its case, a painting
   propped up, a ledger), in a far corner of a room on a high floor, **guarded by that room's
@@ -913,9 +923,13 @@ In a building:
   follow you through doors and up stairs by the building's route map (see Villain AI).
 - The gang moves in when a hero comes within **90 m** of the place (on the flat), and leaves if
   no hero is within **250 m** for **30 s** (the case stays; it comes back when you do).
+- **The ending**: when a hideout case closes, whoever of the gang still stands **gives up**
+  (down and cuffed, no karma: the police drones take them in), and **someone waits outside the
+  door to thank the heroes** (the thing's owner, a neighbour), then walks off.
 - **Reward**: every hero within 150 m gets a share of the karma their next level takes when
   the case closes: **15 %** for a den, **25 %** for a hideout, **40 %** for a fortress, and a
-  tenth more of that for each level the gang stands over the team (`share_of`).
+  tenth more of that for each level the gang stands over the team (`share_of`); half as much
+  again for a hot tip.
 
 **Adding to cases** (the hooks): a new crime is a `CrimeKind` value (its words, symbol in
 `police::crime_icon`, the thing in `pieces::evidence`); a new kind of place is a `Place` value, a

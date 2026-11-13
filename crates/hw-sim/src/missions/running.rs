@@ -120,8 +120,13 @@ impl Running {
     /// What closing it pays: a share of the next level's karma, by the
     /// hideout's size and its gang's level (other cases: the old share).
     pub fn share(&self) -> f64 {
-        if self.plan.variant == 0 && self.plan.steps.len() == 1 && self.site().building.is_some() {
+        if self.is_hideout() {
             share_of(self.plan.size, self.plan.extra)
+                * if self.plan.hot {
+                    1.0 + board::HOT_BONUS
+                } else {
+                    1.0
+                }
         } else {
             REWARD_SHARE
         }
@@ -683,6 +688,49 @@ impl Running {
         self.held = 0.0;
     }
 
+    /// A hideout case closed: is this one (a crime from the board)?
+    pub fn is_hideout(&self) -> bool {
+        self.plan.variant == 0 && self.plan.steps.len() == 1 && self.site().building.is_some()
+    }
+
+    /// The ending of a hideout case: whoever of the gang still stands gives
+    /// up (down and cuffed: the police drones take them in, with no karma
+    /// for anyone), and someone waits outside to thank the heroes (the
+    /// thing's owner, a neighbour). The case lets go of its groups.
+    pub(crate) fn wrap_up(&mut self, world: &mut World, tick: u64) {
+        let spots: Vec<usize> = self.groups_mut().map(|r| r.spot).collect();
+        for (en, mut f) in world
+            .query::<(&combat::Enemy, &mut Fighter)>()
+            .iter_mut(world)
+        {
+            if spots.contains(&en.spot) && f.fighting() {
+                f.health = 0.0;
+                f.status = hw_net::Status::Down;
+                f.until = tick;
+                f.target = None;
+            }
+        }
+        if let (Some(at), Some(k)) = (self.way_in, self.site().building) {
+            let b = &self.floors.buildings[k];
+            let out = DVec2::new(at.x - b.pos.x, at.z - b.pos.y).normalize_or(DVec2::X);
+            let solids = world.resource::<crate::Solids>().0.clone();
+            let stand = (2..7).find_map(|m| {
+                let p = at + DVec3::new(out.x, 0.0, out.y) * (m as f64 * 1.5);
+                (!b.holds(p, 0.5)).then(|| open_near(&solids, p)).flatten()
+            });
+            if let Some(p) = stand {
+                let id = HOSTAGE_IDS | ((self.number as u32 & 0xffff) << 4) | OWNER;
+                crate::incidents::spawn_bystander(world, tick, id, p, -out, None);
+                crate::incidents::release_bystanders(world, tick, id);
+            }
+        }
+        self.rooms.clear();
+        self.boss = None;
+        self.door = None;
+        self.cutoff = None;
+        self.clues.clear();
+    }
+
     /// Heroes holding the help key at a clue, or by a hostage whose
     /// guards are beaten.
     pub(crate) fn search(&mut self, world: &mut World, tick: u64, heroes: &[Seen]) {
@@ -939,9 +987,20 @@ impl Running {
         };
         let kind = GANGS[self.gang].boss;
         let until = tick + (BOSS_RUN_SECONDS * TICK_HZ as f64) as u64;
+        // Where to: the crew still standing farthest from here, else the
+        // way out.
+        let fights = fighting(world, heroes);
+        let crews: Vec<DVec3> = self
+            .rooms
+            .iter()
+            .chain(self.door.iter())
+            .filter(|r| !fights.contains_key(&r.spot) && !subdued(world, r.spot))
+            .map(|r| r.at)
+            .collect();
+        let way_in = self.way_in;
         let mut ran: Option<(DVec3, Option<NetId>)> = None;
-        for (en, m, mut f) in world
-            .query::<(&combat::Enemy, &Motion, &mut Fighter)>()
+        for (mut en, m, mut f) in world
+            .query::<(&mut combat::Enemy, &Motion, &mut Fighter)>()
             .iter_mut(world)
         {
             if en.spot != b.spot || en.kind != kind || !f.standing() {
@@ -950,21 +1009,31 @@ impl Running {
             if f.health > f.max_health * BOSS_BREAKS {
                 continue;
             }
-            let from = f
-                .target
-                .and_then(|t| heroes.iter().find(|h| h.id == t))
-                .or_else(|| {
-                    heroes
+            let here = m.0.pos;
+            let to = crews
+                .iter()
+                .copied()
+                .max_by(|a, b| a.distance(here).total_cmp(&b.distance(here)))
+                .or(way_in)
+                .filter(|p| p.distance(here) > 4.0);
+            match to {
+                Some(to) => {
+                    // A step short of the crew's middle: beside them.
+                    en.home = to;
+                    en.flee_until = until;
+                    en.windup = None;
+                }
+                None => {
+                    // Nowhere to run to: it backs off from the hero.
+                    let from = heroes
                         .iter()
-                        .min_by(|a, b| a.at.distance(m.0.pos).total_cmp(&b.at.distance(m.0.pos)))
-                })
-                .map(|h| h.at);
-            let Some(from) = from else {
-                continue;
-            };
-            f.feared_until = f.feared_until.max(until);
-            f.fear_from = from;
-            ran = Some((m.0.pos, f.target));
+                        .min_by(|a, b| a.at.distance(here).total_cmp(&b.at.distance(here)))
+                        .map_or(here, |h| h.at);
+                    f.feared_until = f.feared_until.max(until);
+                    f.fear_from = from;
+                }
+            }
+            ran = Some((to.unwrap_or(here), f.target));
         }
         let Some((at, foe)) = ran else {
             return;
@@ -972,7 +1041,8 @@ impl Running {
         self.boss_ran = Some(until);
         self.alarms = self.alarms.wrapping_add(1);
         if let Some(foe) = foe.or(heroes.first().map(|h| h.id)) {
-            // Its own count of the alarm was taken above.
+            // The crew it runs to takes the hero on (its own count of the
+            // alarm was taken above).
             let before = self.alarms;
             self.call_nearest(world, tick, heroes, at, foe);
             self.alarms = before;

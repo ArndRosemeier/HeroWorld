@@ -500,9 +500,41 @@ fn row(
         FontId::monospace(10.0),
         a(with_alpha(AETHER, 0.9)),
     );
+    // Time left on the board, and a hot tip's flag.
+    if c.minutes != 255 {
+        let soon = c.minutes <= 3;
+        p.text(
+            pos2(r.left() + 585.0, r.top() + 45.0),
+            Align2::LEFT_CENTER,
+            format!("{} MIN", c.minutes),
+            FontId::monospace(11.0),
+            a(if soon {
+                HERO_RED
+            } else {
+                with_alpha(CREAM, 0.7)
+            }),
+        );
+    }
+    if c.hot {
+        let pulse = if uikit::reduced_motion(ui.ctx()) {
+            1.0
+        } else {
+            0.7 + 0.3 * (t * 5.0).sin()
+        };
+        let tag = Rect::from_min_size(pos2(r.left() + 236.0, r.top() + 8.0), vec2(72.0, 18.0));
+        p.rect_filled(tag, CornerRadius::same(9), a(with_alpha(HERO_RED, pulse)));
+        crate::googie::bolt_icon(p, tag.left_center() + vec2(10.0, 0.0), 6.0);
+        p.text(
+            tag.center() + vec2(7.0, 0.0),
+            Align2::CENTER_CENTER,
+            "HOT TIP",
+            FontId::monospace(10.0),
+            a(CREAM),
+        );
+    }
     // Distance.
     p.text(
-        pos2(r.left() + 585.0, r.center().y),
+        pos2(r.left() + 585.0, r.top() + 20.0),
         Align2::LEFT_CENTER,
         distance_text(dist),
         FontId::monospace(15.0),

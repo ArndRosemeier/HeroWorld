@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.266 (2026-11-13)
+
+- A hurt boss really runs: through the building to the crew farthest away, who then come for you.
+- Crime-o-Vision moves: every crime shows the minutes it has left, and a new one takes its place. A HOT TIP pays half as much again but is gone twice as fast. A crime nobody takes makes the streets round its hideout rougher for ten minutes.
+- When a hideout case closes, the gangsters still standing give up and the police drones take them in. Somebody waits outside the door to thank you.
+- Hideouts are now the exception: one tenement in four, with boarded-up ground-floor windows. The other buildings are ordinary homes again.
+- Everyone playing together needs this version. Towns are generated a little differently, so an old save's furniture may differ.
+
 ## 0.265 (2026-11-13)
 
 - Busting a hideout has more to it. Lookouts stand at the door. A room you do not take down within a few seconds shouts for the next room.

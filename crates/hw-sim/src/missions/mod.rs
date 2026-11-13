@@ -87,7 +87,7 @@ pub const ALARM_SECONDS: f64 = 6.0;
 pub const FIGHT_REACH: f64 = 30.0;
 /// The boss breaks off below this share of its health, for this long.
 pub const BOSS_BREAKS: f32 = 0.4;
-pub const BOSS_RUN_SECONDS: f64 = 5.0;
+pub const BOSS_RUN_SECONDS: f64 = 9.0;
 /// Out of the building by this much (m), the thing is safe.
 pub const OUT_MARGIN: f64 = 3.0;
 /// Things an evidence case hides: one, a real object.
@@ -106,6 +106,8 @@ pub const DONE: u8 = 2;
 /// Bystander numbers of hostages (apart from incidents' and street
 /// crimes'): this bit, the case's number and the hostage's.
 pub(crate) const HOSTAGE_IDS: u32 = 0x4000_0000;
+/// The one who thanks the heroes outside a hideout (in a hostage's place).
+pub(crate) const OWNER: u32 = 15;
 /// Heroes this near the building share the reward (m) ...
 pub const REWARD: f64 = 150.0;
 /// ... this share of what their next level takes.
@@ -280,6 +282,17 @@ pub struct Missions {
     pub opened: u16,
     /// Most cases open at once.
     pub limit: usize,
+    /// The crimes on the board: each until its tick, unless taken.
+    slots: Vec<Slot>,
+    /// The highest crime number put on the board so far.
+    issued: u16,
+    /// Crimes that went off the board untaken, and the last one's place.
+    missed: u16,
+    lost: String,
+    /// Streets made rough by a crime nobody took: where, until which tick
+    /// (taken by the server for [`crate::incidents`]).
+    pub emboldened: Vec<(glam::DVec2, u64)>,
+    now: u64,
     last_sent: BTreeMap<u16, ToClient>,
     board_sent: Option<ToClient>,
     news: Vec<ToClient>,
@@ -298,6 +311,12 @@ impl Default for Missions {
             closed: 0,
             opened: 0,
             limit: OPEN_LIMIT,
+            slots: Vec::new(),
+            issued: 0,
+            missed: 0,
+            lost: String::new(),
+            emboldened: Vec::new(),
+            now: 0,
             last_sent: BTreeMap::new(),
             board_sent: None,
             news: Vec::new(),
@@ -313,6 +332,14 @@ fn room_counts(floors: &Floors) -> Vec<u8> {
         .iter()
         .map(|b| running::gang_rooms(b).len().min(255) as u8)
         .collect()
+}
+
+/// A crime on the board.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Slot {
+    number: u16,
+    /// It goes off the board at this tick if nobody took it.
+    until: u64,
 }
 
 /// Hero Hall's contact hero (the cases keep clear of her).
@@ -502,6 +529,7 @@ impl Missions {
             crime: Default::default(),
             extra: 0,
             size: 2,
+            hot: false,
         };
         self.cases
             .push(Running::new(number, plan, 0, places.floors.clone()));
@@ -547,8 +575,7 @@ impl Missions {
             return;
         };
         for number in std::mem::take(&mut self.requests) {
-            let on_board = number as u32 > self.closed as u32
-                && number as u32 <= self.closed as u32 + board::BOARD as u32;
+            let on_board = self.slots.iter().any(|s| s.number == number);
             if !on_board || self.cases.len() >= self.limit {
                 continue;
             }
@@ -572,6 +599,49 @@ impl Missions {
         }
     }
 
+    /// Once a second: crimes nobody took go off the board when their time
+    /// is up (the streets round their hideout are rough for a while), and
+    /// new ones come up.
+    fn turn_board(&mut self, tick: u64) {
+        let Some(places) = self.places.clone() else {
+            return;
+        };
+        let ticks = |s: f64| (s * crate::TICK_HZ as f64) as u64;
+        let open: Vec<u16> = self.cases.iter().map(|r| r.number).collect();
+        let (stay, gone): (Vec<Slot>, Vec<Slot>) = std::mem::take(&mut self.slots)
+            .into_iter()
+            .partition(|s| tick < s.until || open.contains(&s.number));
+        self.slots = stay;
+        for s in gone {
+            let Some(c) = board::crime(&places, self.seed, s.number) else {
+                continue;
+            };
+            let site = sites::building_site(&places, c.building);
+            self.missed = self.missed.wrapping_add(1);
+            self.lost = places.names.get(c.building).cloned().unwrap_or_default();
+            self.emboldened.push((
+                glam::DVec2::new(site.at.x, site.at.z),
+                tick + ticks(board::EMBOLDENED_SECONDS),
+            ));
+        }
+        self.emboldened.retain(|e| tick < e.1);
+        while self.slots.len() < board::BOARD && self.issued < u16::MAX {
+            let number = self.issued + 1;
+            let Some(c) = board::crime(&places, self.seed, number) else {
+                break;
+            };
+            self.issued = number;
+            // A crime already open (from the host's file) is not offered.
+            if open.contains(&number) {
+                continue;
+            }
+            self.slots.push(Slot {
+                number,
+                until: tick + ticks(board::life(self.seed, number, c.hot)),
+            });
+        }
+    }
+
     /// A case in the list, in the order of its number.
     fn insert(&mut self, r: Running) {
         let at = self
@@ -589,12 +659,16 @@ impl Missions {
                 crimes: Vec::new(),
                 limit: self.limit.min(255) as u8,
                 open: 0,
+                missed: 0,
+                lost: String::new(),
             };
         };
         let team = world.resource::<Fights>().team_level;
-        let crimes = (1..=board::BOARD as u32)
-            .filter_map(|i| {
-                let number = u16::try_from(self.closed as u32 + i).ok()?;
+        let crimes = self
+            .slots
+            .iter()
+            .filter_map(|slot| {
+                let number = slot.number;
                 let c = board::crime(places, self.seed, number)?;
                 let case = self.cases.iter().find(|r| r.number == number);
                 let gang =
@@ -613,6 +687,14 @@ impl Missions {
                     gang: gang as u8,
                     level: team.saturating_add(c.extra),
                     size: c.size,
+                    hot: c.hot,
+                    // Whole minutes left, rounded up (a taken one stays).
+                    minutes: if case.is_some() {
+                        255
+                    } else {
+                        let left = slot.until.saturating_sub(self.now);
+                        left.div_ceil(60 * crate::TICK_HZ as u64).min(254) as u8
+                    },
                     at: site.at.as_vec3().to_array(),
                     name,
                     taken: case.is_some()
@@ -627,6 +709,8 @@ impl Missions {
             crimes,
             limit: self.limit.min(255) as u8,
             open: self.cases.len().min(255) as u8,
+            missed: self.missed,
+            lost: self.lost.clone(),
         }
     }
 
@@ -636,6 +720,10 @@ impl Missions {
         crate::incidents::walk_ways(world, tick);
         if !self.available() {
             return;
+        }
+        self.now = tick;
+        if tick.is_multiple_of(crate::TICK_HZ as u64) || self.slots.is_empty() {
+            self.turn_board(tick);
         }
         self.open_requested(world);
         let heroes = heroes(world);
@@ -722,6 +810,9 @@ impl Missions {
         }
         self.opened = book.opened;
         self.closed = book.closed;
+        // The board starts afresh after what was handed out.
+        self.slots.clear();
+        self.issued = book.opened;
         if book.world == self.seed {
             if let Some(places) = self.places.clone() {
                 for c in &book.open {
@@ -750,7 +841,12 @@ impl Missions {
             r.share(),
             r.site().building.is_some(),
         );
-        r.leave(world);
+        if r.is_hideout() {
+            r.wrap_up(world, self.now);
+        } else {
+            r.leave(world);
+        }
+        self.slots.retain(|s| s.number != r.number);
         self.closed = self.closed.wrapping_add(1);
         let mut news = r.news(world);
         if let ToClient::Case { stage, .. } = &mut news {
