@@ -11,6 +11,7 @@
 //! Plain data and pure functions of the town: the client asks it where to
 //! put grass blades around the camera.
 
+use super::deep::StreetHole;
 use super::growth::Era;
 use super::props::{Prop, PropKind};
 use super::streets::StreetStyle;
@@ -147,6 +148,8 @@ struct GreenTile {
     building_cells: BTreeMap<Key, Vec<u32>>,
     /// Discs grass keeps clear of.
     clear: BTreeMap<Key, Vec<(DVec2, f64)>>,
+    /// The holes over stairs down, with their paved aprons.
+    holes: Vec<StreetHole>,
     /// Plates where road ends meet ([`super::surface::road_joins`]): centre
     /// and pavement radius, by cell.
     joins: BTreeMap<Key, Vec<(DVec2, f64)>>,
@@ -222,6 +225,7 @@ impl GreenTile {
                 }
             }
         }
+        let holes = w.street_holes(glo, ghi);
         GreenTile {
             roads,
             buildings,
@@ -230,6 +234,7 @@ impl GreenTile {
             road_cells,
             building_cells,
             clear,
+            holes,
             joins,
         }
     }
@@ -337,6 +342,9 @@ impl Greenery {
         for b in &t.bridges {
             c = c.min(segment_distance(p, b.a, b.b) - b.half - 1.0);
         }
+        for h in &t.holes {
+            c = c.min(h.distance(p, h.apron));
+        }
         (road, c.min(w.ground(p) - SAND_TOP))
     }
 
@@ -348,10 +356,11 @@ impl Greenery {
     }
 
     fn cleared(&self, w: &TownWorld, p: DVec2) -> bool {
-        self.tile(w, p)
-            .clear
+        let t = self.tile(w, p);
+        t.clear
             .get(&key(p))
             .is_some_and(|l| l.iter().any(|(q, r)| q.distance(p) < *r))
+            || t.holes.iter().any(|h| h.distance(p, h.apron + 0.1) < 0.0)
     }
 
     /// The street style of the district `p` lies in.

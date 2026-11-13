@@ -1538,7 +1538,7 @@ fn main() -> EngineResult<()> {
             let yaw = d.x.atan2(d.y).to_degrees() as f32;
             FlyCamera::new((p.x as f32, c.floor as f32 + 8.0, p.y as f32), yaw, -26.0)
         }
-        "lift" | "stairs" | "tunnel" | "molehaven" => {
+        "lift" | "stairs" | "stairtop" | "stairfoot" | "tunnel" | "molehaven" => {
             // The underground: a stair pavilion on the street (`stairs`:
             // part way down the spiral), a utility tunnel from inside, or
             // Molehaven's great hall.
@@ -1562,11 +1562,36 @@ fn main() -> EngineResult<()> {
                 ("stairs", Some(e), _, _) => {
                     // A few steps down, looking along the stair.
                     let route = e.spiral.route();
-                    let k = 22.min(route.len() - 1);
+                    let k = 9.min(route.len() - 1);
                     let (a, b) = (route[k], route[(k + 3).min(route.len() - 1)]);
                     let d = b - a;
                     let yaw = d.x.atan2(d.z).to_degrees() as f32;
-                    FlyCamera::new((a.x as f32, a.y as f32 + 1.7, a.z as f32), yaw, -12.0)
+                    FlyCamera::new((a.x as f32, a.y as f32 + 1.6, a.z as f32), yaw, -30.0)
+                }
+                ("stairtop", Some(e), _, _) => {
+                    // At the parapet, looking down the stairwell.
+                    let p = e.pos + e.door * 2.6;
+                    let d = e.pos - p;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, e.top as f32 + 1.7, p.y as f32), yaw, -55.0)
+                }
+                ("stairfoot", Some(e), _, _) => {
+                    // Where the stair comes down, looking at its foot.
+                    // From the passage the shaft opens into, a few metres out.
+                    let side = e.door.perp();
+                    let a = [e.door, -e.door, side, -side]
+                        .into_iter()
+                        .flat_map(|d| [4.5, 3.5].map(|k| e.pos + d * k))
+                        .find(|p| {
+                            u.at(*p).any(|(_, v)| {
+                                v.kind != hw_gen::urban::underground::VoidKind::Shaft
+                                    && (v.floor_at(*p) - e.bottom).abs() < 0.6
+                            })
+                        })
+                        .unwrap_or(e.pos + e.door * 3.5);
+                    let d = e.pos - a;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    FlyCamera::new((a.x as f32, e.bottom as f32 + 1.7, a.y as f32), yaw, -18.0)
                 }
                 ("lift", Some(e), _, _) => {
                     let p = e.pos + e.door * 9.0 + e.door.perp() * 4.0;

@@ -1540,9 +1540,12 @@ fn draw_road(
     // over itself, the overlap is cut out of one of them.
     let whole = r.strip_points();
     let first = whole.iter().position(|p| p.0 == run[0].0).unwrap_or(0);
+    // Stairs down open through the road where their shafts are.
+    let (rlo, rhi) = hw_gen::urban::surface::roads_box(std::slice::from_ref(r));
+    let holes = w.street_holes(rlo - DVec2::splat(5.0), rhi + DVec2::splat(5.0));
     let cutters = [
-        Cutters::new(r, &whole, cover, false),
-        Cutters::new(r, &whole, cover, true),
+        Cutters::new(r, &whole, cover, false, &holes),
+        Cutters::new(r, &whole, cover, true, &holes),
     ];
     let shape = |carriage: bool| {
         let lift = if carriage {
@@ -1615,7 +1618,13 @@ struct Cutters {
 const CUT_CELL: f64 = 8.0;
 
 impl Cutters {
-    fn new(r: &WorldRoad, whole: &[(DVec2, DVec2)], cover: &[WorldRoad], carriage: bool) -> Self {
+    fn new(
+        r: &WorldRoad,
+        whole: &[(DVec2, DVec2)],
+        cover: &[WorldRoad],
+        carriage: bool,
+        holes: &[hw_gen::urban::deep::StreetHole],
+    ) -> Self {
         let parts = |o: &WorldRoad| -> Vec<(f64, f64)> {
             let t = o.half + o.pavement;
             if carriage {
@@ -1646,6 +1655,13 @@ impl Cutters {
             for (a, b) in parts(o) {
                 pieces.extend(quads(&pts, a, b).into_iter().map(|q| (q, None)));
             }
+        }
+        for h in holes {
+            let (x, z) = (h.door.perp() * h.hole, h.door * h.hole);
+            pieces.push((
+                vec![h.pos - x - z, h.pos + x - z, h.pos + x + z, h.pos - x + z],
+                None,
+            ));
         }
         for (a, b) in parts(r) {
             pieces.extend(

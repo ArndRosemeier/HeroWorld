@@ -554,6 +554,81 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// A hole in the street over a stair down: what grass, lawns and
+/// pavements leave open.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StreetHole {
+    pub pos: DVec2,
+    /// The way the door faces (unit): the square's own +z.
+    pub door: DVec2,
+    /// Half the side of the open shaft, and of the paved apron round it.
+    pub hole: f64,
+    pub apron: f64,
+}
+
+impl StreetHole {
+    /// Signed distance from `p` to the square of half side `half` round
+    /// the hole (negative inside).
+    pub fn distance(&self, p: DVec2, half: f64) -> f64 {
+        let d = p - self.pos;
+        let l = DVec2::new(d.dot(self.door.perp()), d.dot(self.door)).abs() - DVec2::splat(half);
+        l.max(DVec2::ZERO).length() + l.x.max(l.y).min(0.0)
+    }
+}
+
+impl TownWorld {
+    /// The holes in the street over the stairs down whose shafts lie in
+    /// `lo`..`hi`: the shallow underground's, and the deep one's (tube
+    /// stations, ways up, the lab's kiosk) where the tube or the lab is.
+    pub fn street_holes(&self, lo: DVec2, hi: DVec2) -> Vec<StreetHole> {
+        use super::underground::{APRON, SHAFT_HALF};
+        let inside = |p: DVec2| p.x >= lo.x && p.y >= lo.y && p.x <= hi.x && p.y <= hi.y;
+        let mut out: Vec<StreetHole> = self
+            .underground()
+            .entrances
+            .iter()
+            .filter(|e| inside(e.pos))
+            .map(|e| StreetHole {
+                pos: e.pos,
+                door: e.door,
+                hole: SHAFT_HALF,
+                apron: SHAFT_HALF + APRON,
+            })
+            .collect();
+        // A way up can stand a little outside the tile that plans it.
+        let m = DVec2::splat(40.0);
+        let (a, b) = (tile_of(lo - m), tile_of(hi + m));
+        let net = self.tube();
+        let lair = self.lair_centre();
+        for x in a.0..=b.0 {
+            for y in a.1..=b.1 {
+                let k = (x, y);
+                let c = tile_centre(k);
+                let deep = self.deep_in_land(k)
+                    && (net.stretches_in(k).is_some_and(|s| !s.is_empty())
+                        || !net.stations_in(k).is_empty()
+                        || lair.is_some_and(|l| (l - c).abs().max_element() < TILE));
+                if !deep {
+                    continue;
+                }
+                for e in self.deep_tile(k).entrances.iter().filter(|e| inside(e.pos)) {
+                    let apron = match e.kind {
+                        EntranceKind::Kiosk => SHAFT_HALF + 0.3,
+                        EntranceKind::Tube | EntranceKind::Exit => SHAFT_HALF + APRON,
+                    };
+                    out.push(StreetHole {
+                        pos: e.pos,
+                        door: e.door,
+                        hole: SHAFT_HALF,
+                        apron,
+                    });
+                }
+            }
+        }
+        out
+    }
+}
+
 impl TownWorld {
     /// The tube network (planned once, from the main roads).
     pub fn tube(&self) -> &TubeNet {

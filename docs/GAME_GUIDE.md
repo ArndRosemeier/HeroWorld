@@ -1345,9 +1345,15 @@ thread near the works. Views: `HW_VIEW=works`, `worksline`, `worksdock`, `worksh
 
 - **Utility tunnels** under the main roads: concrete, pipes, a glowing Aether conduit along
   the ceiling. Entered through **spiral stairs** in Googie pavilions on the pavements (look
-  for the glowing atom signs): a 1 m wide ring of stone steps round a pillar, 16 steps and
+  for the glowing atom signs): a 1 m wide ring of terrazzo steps round a pillar, 16 steps and
   3.2 m of depth to a turn, a rail round the hole on three sides, the way in on the fourth.
-  You walk down (and back up); the foot opens into the passage to the tunnel.
+  You walk down (and back up); the foot opens into the passage to the tunnel. Lawns, grass
+  and pavements leave the hole and its paved apron (2.4 m round it) open
+  (`TownWorld::street_holes`). Steps have chrome nosing and a smooth underside; a solid
+  chrome balustrade (0.95 m) runs on the open side from a rail's height below the street
+  down to a metre above the floor, a brass handrail on the pillar, and an Aether strip
+  2.2 m over the steps lights the way (one lamp a turn and two at the foot). The same stair
+  serves every deep shaft. Views: `HW_VIEW=lift`, `stairtop`, `stairs`, `stairfoot`.
 - **Molehaven**, the mole people's cavern: mushroom houses with round doors, glowing
   toadstools and crystals, a market of striped stalls round a glowing well under an iron
   arch, side caves. Its own lift has an amber sign, and a ramp leads there from the

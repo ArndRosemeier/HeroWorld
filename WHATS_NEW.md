@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.264 (2026-11-13)
+
+- Stairs into the underground are open to the sky again: no more lawn or pavement drawn over the hole, so you can see down them from the street.
+- The stairs themselves are rebuilt: pale terrazzo treads with chrome nosing, a smooth stone underside, a chrome balustrade on the open side, a brass handrail and a glowing Aether strip winding down the pillar, an atom set into the pillar's top, and cream tiled walls.
+- The floor at the foot of a stair no longer flickers.
+
 ## 0.263 (2026-11-13)
 
 - The server no longer puts work off when a machine is slow: its work is now limited by counts, so it behaves the same on every machine.
