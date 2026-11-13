@@ -51,6 +51,18 @@ pub const ENERGY_REGEN: (f32, f32) = (6.0, 25.0);
 /// A knocked fighter tumbles and lies this many seconds, then takes
 /// [`GET_UP_SECONDS`] to stand (it can be hit all along, but not act).
 pub const KNOCKED_SECONDS: f64 = 2.2;
+/// A blow that does not floor a villain outright (a [`Fields::knock`] under
+/// one) staggers it by that much; staggered this far a minion, a lieutenant
+/// and a boss go down (and steady themselves again). A full knock floors
+/// anyone at once.
+pub const STAGGER_FLOORS: [f32; 3] = [0.3, 0.6, 1.0];
+/// Stagger a villain shakes off each second it is left alone.
+pub const STAGGER_FADES: f32 = 0.1;
+/// A hero with a trail going at least this fast (m/s) hurts the villains
+/// they pass within [`TRAIL_REACH`], every [`TRAIL_STEP`] seconds.
+pub const TRAIL_SPEED: f64 = 11.0;
+pub const TRAIL_REACH: f64 = 2.5;
+pub const TRAIL_STEP: f64 = 0.5;
 pub const GET_UP_SECONDS: f64 = 1.4;
 /// Seconds a defeated villain lies cuffed before the police drone comes.
 pub const POLICE_DELAY: f64 = 2.0;
@@ -638,6 +650,9 @@ impl EnemyKind {
 /// Health, energy, status and powers of anything that fights.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Fighter {
+    /// A villain's: the augment it carries and drops (its grade and
+    /// strength; see [`crate::augments::carry`]).
+    pub carried: Option<hw_net::Augment>,
     pub health: f32,
     pub max_health: f32,
     pub energy: f32,
@@ -721,10 +736,16 @@ pub struct Fighter {
     pub buff_until: u64,
     pub buff_resist: f32,
     pub buff_might: f32,
-    pub buff_steadfast: bool,
-    pub buff_execute: bool,
-    /// Villains lose sight of this hero until this tick (or a blow).
+    pub buff_steadfast: f32,
+    pub buff_execute: f32,
+    /// Villains lose sight of this hero until this tick (or a blow): they
+    /// notice from this share less far (1: not at all).
     pub hidden_until: u64,
+    pub hide: f32,
+    /// How far blows have staggered it toward a knock-down (see
+    /// [`STAGGER_FLOORS`]), and the tick of the last one.
+    pub stagger: f32,
+    pub staggered_at: u64,
     /// The next tick a Guardian Angel may catch a fatal blow.
     pub angel_ready: u64,
     /// The next tick a second wind may come.
@@ -743,6 +764,7 @@ pub struct Fighter {
 impl Fighter {
     pub fn hero() -> Self {
         Self {
+            carried: None,
             health: HERO_HEALTH,
             max_health: HERO_HEALTH,
             energy: HERO_ENERGY,
@@ -790,9 +812,12 @@ impl Fighter {
             buff_until: 0,
             buff_resist: 0.0,
             buff_might: 0.0,
-            buff_steadfast: false,
-            buff_execute: false,
+            buff_steadfast: 0.0,
+            buff_execute: 0.0,
             hidden_until: 0,
+            hide: 0.0,
+            stagger: 0.0,
+            staggered_at: 0,
             angel_ready: 0,
             wind_ready: 0,
             rise_ready: 0,
@@ -875,8 +900,18 @@ impl Fighter {
         tick < self.burn_until
     }
 
+    /// Out of every villain's sight at `tick`.
     pub fn hidden(&self, tick: u64) -> bool {
-        tick < self.hidden_until
+        tick < self.hidden_until && self.hide >= 1.0
+    }
+
+    /// The share less far villains notice this hero from at `tick` (0 to 1).
+    pub fn unnoticed(&self, tick: u64) -> f32 {
+        if tick < self.hidden_until {
+            self.hide.clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
     }
 
     /// Its own power on itself at `tick`.
@@ -917,14 +952,26 @@ impl Fighter {
         (1.0 + self.kit.passive.haste as f64) * if self.rallied { RALLY_HASTE } else { 1.0 }
     }
 
-    /// Never knocked down at `tick`.
-    pub fn steadfast(&self, tick: u64) -> bool {
-        self.kit.passive.steadfast || (self.buffed(tick) && self.buff_steadfast)
+    /// The share less time a knock keeps it down at `tick` (1: never
+    /// knocked down).
+    pub fn steadfast(&self, tick: u64) -> f32 {
+        let buff = if self.buffed(tick) {
+            self.buff_steadfast
+        } else {
+            0.0
+        };
+        self.kit.passive.steadfast.max(buff).clamp(0.0, 1.0)
+    }
+
+    /// The travel boosts its augments give, in percent (see
+    /// [`CombatState::boosts`]).
+    pub fn boosts(&self) -> [u8; 4] {
+        self.kit.boosts()
     }
 
     fn enemy(kind: EnemyKind, level: u8) -> Self {
         let s = enemy_spec(kind);
-        let health = s.health * level_scale(level);
+        let health = s.health * level_scale(level) * (1.0 + villain_growth(level));
         Self {
             health,
             max_health: health,
@@ -984,10 +1031,15 @@ impl Fighter {
                 | (self.feared(tick) as u32 * EFFECT_FEARED)
                 | (self.disarmed(tick) as u32 * EFFECT_DISARMED)
                 | ((tick < self.weak_until) as u32 * EFFECT_WEAKENED)
-                | (self.hidden(tick) as u32 * EFFECT_HIDDEN)
+                | ((tick < self.hidden_until) as u32 * EFFECT_HIDDEN)
                 | (self.buffed(tick) as u32 * EFFECT_EMPOWERED)
                 | self.marks,
             toggles: self.kit.toggles_on(),
+            // A villain's: what it carries.
+            boosts: match self.carried {
+                Some(c) => [c.percent, c.grade + 1, 0, 0],
+                None => self.boosts(),
+            },
         }
     }
 }
@@ -996,6 +1048,16 @@ impl Fighter {
 pub fn level_scale(level: u8) -> f32 {
     1.0 + 0.1 * (level.max(1) - 1) as f32
 }
+
+/// How much tougher villains of `level` are than [`level_scale`] says, to
+/// match the augments a hero of that level has set by then: nothing up
+/// to level 4 (few augments, weak ones), [`VILLAIN_GROWTH`] at level 20.
+/// Their health grows by all of it, their blows by half.
+pub fn villain_growth(level: u8) -> f32 {
+    let t = ((level.max(1) as f32 - 4.0) / 16.0).clamp(0.0, 1.0);
+    VILLAIN_GROWTH * t * t * (3.0 - 2.0 * t)
+}
+pub const VILLAIN_GROWTH: f32 = 0.4;
 
 /// A villain.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -1170,6 +1232,22 @@ impl Spot {
     }
 }
 
+/// An augment a hero may get: for a villain beaten, or a find (see
+/// [`crate::augments::roll`]; the simulation rolls it and hands it over).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Drop {
+    /// The hero it may drop for, the villain beaten (or the hero, for a
+    /// find) and where it lies.
+    pub hero: NetId,
+    pub from: NetId,
+    pub at: DVec3,
+    /// What the villain carried (its grade and strength; the effect is
+    /// the hero's own roll). `None` for a find (the thing a hideout bust
+    /// ends at): always an augment, never a common one, of `level`.
+    pub carried: Option<hw_net::Augment>,
+    pub level: u8,
+}
+
 /// Karma a hero earned this tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Reward {
@@ -1248,6 +1326,9 @@ pub struct Fights {
     pub team_level: u8,
     /// Karma earned in the last tick (the simulation pays it out).
     pub rewards: Vec<Reward>,
+    /// Augments heroes may get for the last tick (the simulation rolls
+    /// them and hands them over).
+    pub drops: Vec<Drop>,
     /// Villains beaten in the last tick, by hero (moves factions' regard).
     pub deeds: Vec<Deed>,
     /// Factions a hero helped in the last tick, and by how much (talking
@@ -1381,6 +1462,7 @@ impl Default for Fights {
             seed: 0,
             team_level: 1,
             rewards: Vec::new(),
+            drops: Vec::new(),
             deeds: Vec::new(),
             friends: Vec::new(),
             throws: Vec::new(),
@@ -1743,6 +1825,17 @@ pub(crate) fn spawn_enemy(
         .get(spot)
         .map_or((false, None), |s| (s.wake.is_some(), s.provoke));
     let mut fighter = Fighter::enemy(kind, level);
+    // Some carry an augment (a boss always): tougher by its strength, and
+    // it drops for every hero who helps beat them. Parts of a machine
+    // carry nothing.
+    if !matches!(kind, EnemyKind::WeakPoint | EnemyKind::Safe) {
+        let mut dice = crate::augments::Dice::for_drop(tick, id.0, spot as u32);
+        if let Some(a) = crate::augments::carry(rank_of(kind), level, &mut dice) {
+            fighter.carried = Some(a);
+            fighter.max_health *= 1.0 + a.percent as f32 / 100.0;
+            fighter.health = fighter.max_health;
+        }
+    }
     // The colossus and its parts take a team: tougher for more heroes.
     if matches!(
         kind,
@@ -1808,6 +1901,7 @@ struct Out {
     /// Blows at the city (where, radius, power).
     city: Vec<(DVec3, f32, f32)>,
     rewards: Vec<Reward>,
+    drops: Vec<Drop>,
     deeds: Vec<Deed>,
     /// Sidekicks called: (owner, player, power, which of how many, where,
     /// level).
@@ -1829,6 +1923,8 @@ pub(crate) struct Summon {
     pub index: u8,
     pub at: DVec3,
     pub level: u8,
+    /// How strong it is (the power's `summon_power`, with its augments).
+    pub strength: f32,
 }
 
 /// A rescue bubble sent: the hero, and the trapped or hurt person's place
@@ -1850,6 +1946,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     };
     world.resource_mut::<Fights>().events.clear();
     world.resource_mut::<Fights>().rewards.clear();
+    world.resource_mut::<Fights>().drops.clear();
     world.resource_mut::<Fights>().deeds.clear();
     world.resource_mut::<Fights>().friends.clear();
     world.resource_mut::<Fights>().rescues.clear();
@@ -2022,6 +2119,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     world.resource_mut::<Fights>().routes = routes;
     lap("combat bombs+robots");
     burns(&mut actors, tick, &mut out);
+    trails(&mut actors, &solids, tick, &mut out);
     statuses(&mut actors, &drones, tick, &mut out, &mut spawn_drones);
     // Ice broken by a blow this tick.
     for a in actors.iter_mut().filter(|a| a.shattered) {
@@ -2307,7 +2405,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
                 .push((c, a.body.vel + flat * 3.0 + DVec3::Y * 1.5));
             // The power recharges as after a throw.
             let p = a.f.lifted_with;
-            a.f.ready[p.0 as usize] = tick + ticks(powers::recharge(def_of(p)) / a.f.haste());
+            a.f.ready[p.0 as usize] = tick + ticks(a.f.kit.recharge(p) / a.f.haste());
             let mut e = event(
                 tick,
                 FxKind::Throw,
@@ -2584,6 +2682,7 @@ pub(crate) fn step(world: &mut World, tick: u64) {
     f.events = fx;
     f.power_log = out.log;
     f.rewards = out.rewards;
+    f.drops = out.drops;
     f.deeds = out.deeds;
     f.city = city;
     f.rescues = out.rescues;
@@ -2617,7 +2716,7 @@ pub(crate) fn hit(
     knock: bool,
     tick: u64,
 ) -> (bool, bool, f32) {
-    strike(actors, from, to, damage, knock, tick, false)
+    strike(actors, from, to, damage, knock as u8 as f32, tick, false)
 }
 
 /// [`hit`] for a single aimed blow (a bolt, a punch, a beam from Hero
@@ -2632,15 +2731,18 @@ pub(crate) fn hit_aimed(
     knock: bool,
     tick: u64,
 ) -> (bool, bool, f32) {
-    strike(actors, from, to, damage, knock, tick, true)
+    strike(actors, from, to, damage, knock as u8 as f32, tick, true)
 }
 
+/// Deals `damage` from actor `from` to actor `to`; `knock` is how hard it
+/// staggers (1: floors at once; see [`STAGGER_FLOORS`]), `blockable`
+/// whether a shield bearer's shield can stop it.
 fn strike(
     actors: &mut [Actor],
     from: usize,
     to: usize,
     damage: f32,
-    knock: bool,
+    knock: f32,
     tick: u64,
     blockable: bool,
 ) -> (bool, bool, f32) {
@@ -2658,17 +2760,27 @@ fn strike(
     if actors[from].hero.is_some() {
         actors[from].f.hidden_until = 0;
     }
-    // A hero's verdict: minions fall at a blow.
-    let executes =
-        actors[from].hero.is_some() && actors[from].f.buffed(tick) && actors[from].f.buff_execute;
+    // A hero's verdict: minions fall at a blow (or once a blow leaves
+    // them at that share of their health).
+    let executes = if actors[from].hero.is_some() && actors[from].f.buffed(tick) {
+        actors[from].f.buff_execute
+    } else {
+        0.0
+    };
     // A shield bearer holds its shield toward the one it fights.
     let shield_way = actors[to]
         .f
         .target
         .and_then(|f| actors.iter().find(|a| a.id == f))
         .map(|f| f.body.pos);
+    // Villains hit harder as heroes' augments grow (see [`villain_growth`]).
+    let grown = if actors[from].enemy.is_some() {
+        1.0 + 0.5 * villain_growth(actors[from].f.level)
+    } else {
+        1.0
+    };
     let t = &mut actors[to];
-    let mut dealt = damage;
+    let mut dealt = damage * grown;
     // A hex: everyone's blows land harder.
     if tick < t.f.weak_until {
         dealt *= 1.0 + t.f.weak;
@@ -2710,11 +2822,25 @@ fn strike(
     let minion = t
         .enemy
         .is_some_and(|e| rank_of(e.kind) == 0 && !e.kind.heavy());
-    if executes && minion {
+    if executes > 0.0 && minion && t.f.health - dealt <= t.f.max_health * (executes.min(1.0)) {
         dealt = dealt.max(t.f.health);
     }
     let heavy = t.enemy.is_some_and(|e| e.kind.heavy());
-    let mut knock = knock && !heavy;
+    // A full knock floors at once; less staggers, and enough stagger
+    // floors (a minion sooner than a boss).
+    let mut knock = if heavy || knock <= 0.0 {
+        false
+    } else if knock >= 1.0 {
+        true
+    } else if let Some(en) = t.enemy {
+        let rested = tick.saturating_sub(t.f.staggered_at) as f32 * DT as f32;
+        t.f.stagger = (t.f.stagger - STAGGER_FADES * rested).max(0.0) + knock;
+        t.f.staggered_at = tick;
+        // A little slack, so three hits of a third always floor.
+        t.f.stagger >= STAGGER_FLOORS[rank_of(en.kind)] - 1e-4
+    } else {
+        false
+    };
     if blockable && on_shield(t, shield_way, from_pos, tick) {
         dealt *= SHIELD_LETS_THROUGH;
         knock = false;
@@ -2724,12 +2850,12 @@ fn strike(
     let floor = if t.npc { 1.0 } else { 0.0 };
     // A guardian angel: once in a while a fatal blow leaves a hero up.
     let angel = t.hero.is_some()
-        && t.f.kit.passive.angel
+        && t.f.kit.passive.angel > 0.0
         && tick >= t.f.angel_ready
         && t.f.health - dealt <= 0.0
         && t.f.standing();
     let floor = if angel {
-        t.f.angel_ready = tick + ticks(ANGEL_EVERY);
+        t.f.angel_ready = tick + ticks(ANGEL_EVERY / t.f.kit.passive.angel.max(0.1) as f64);
         t.saved = true;
         1.0
     } else {
@@ -2778,6 +2904,7 @@ fn strike(
     } else if knock && villain {
         t.f.status = Status::Knocked;
         t.f.until = tick + ticks(KNOCKED_SECONDS);
+        t.f.stagger = 0.0;
     }
     let knocked = villain && (knock || defeated) && !heavy;
     if knocked {
@@ -3036,7 +3163,7 @@ fn blow(
     out: &mut Out,
 ) -> (bool, bool, f32) {
     let d = def_of(power);
-    let f = d.fields;
+    let f = actors[i].f.kit.fields(power);
     let mut damage = damage;
     let mine = actors[i].f.kit.passive;
     let exploit = f.exploit + mine.exploit;
@@ -3065,7 +3192,7 @@ fn blow(
         && actors[t].f.health <= actors[t].f.max_health * mine.cuff
     {
         let rest = actors[t].f.health;
-        let (_, beaten, _) = strike(actors, i, t, rest, false, tick, false);
+        let (_, beaten, _) = strike(actors, i, t, rest, 0.0, tick, false);
         defeat = beaten;
     }
     let charmed = riders(actors, i, t, dealt, defeat, &f, centre, tick);
@@ -3338,7 +3465,7 @@ fn element(
                 i,
                 k,
                 dealt * powers::LIGHTNING_SHARE,
-                false,
+                0.0,
                 tick,
                 false,
             );
@@ -3389,20 +3516,21 @@ fn allies(
     tick: u64,
     out: &mut Out,
 ) {
-    let f = def_of(power).fields;
+    let f = actors[i].f.kit.fields(power);
     let me_id = actors[i].id;
     let element = actors[i].f.kit.element.code();
     let heal = f.heal * level_scale(level);
-    let buffs = f.resist > 0.0 || f.might > 0.0 || f.steadfast || f.execute || f.hide;
+    let buffs =
+        f.resist > 0.0 || f.might > 0.0 || f.steadfast > 0.0 || f.execute > 0.0 || f.hide > 0.0;
     for (k, a) in actors.iter_mut().enumerate() {
         let mine = k == i;
         let friend = a.hero.is_some() && a.body.pos.distance(at) <= f.radius;
         if !mine && !friend {
             continue;
         }
-        if f.revive && a.f.status == Status::Down && a.hero.is_some() {
+        if f.revive > 0.0 && a.f.status == Status::Down && a.hero.is_some() {
             a.f.status = Status::Standing;
-            a.f.health = a.f.max_health * REVIVE_HEALTH;
+            a.f.health = a.f.max_health * (REVIVE_HEALTH * f.revive).clamp(0.05, 1.0);
             a.f.revive = 0.0;
             a.f.last_combat = tick;
             out.fx
@@ -3432,8 +3560,9 @@ fn allies(
             a.f.buff_might = f.might;
             a.f.buff_steadfast = f.steadfast;
             a.f.buff_execute = f.execute;
-            if f.hide {
+            if f.hide > 0.0 {
                 a.f.hidden_until = tick + ticks(f.lasts);
+                a.f.hide = f.hide;
             }
             kind = kind.or(Some(event(tick, FxKind::Buff, me_id, a.id, a.chest())));
         }
@@ -3444,7 +3573,7 @@ fn allies(
         }
     }
     // A hidden hero drops out of every villain's sight.
-    if f.hide {
+    if f.hide >= 1.0 {
         for a in actors.iter_mut() {
             if a.enemy.is_some() && a.f.target == Some(me_id) {
                 a.f.target = None;
@@ -3582,7 +3711,7 @@ fn heroes_act(
             continue;
         };
         let d = def_of(power);
-        let f = d.fields;
+        let f = kit.fields(power);
         let name = d.name;
         if !actors[i].f.standing() {
             out.log.push(format!(
@@ -3817,7 +3946,7 @@ fn heroes_act(
         let cost = if throwing || commanding {
             0.0
         } else {
-            powers::energy(d)
+            kit.energy(power)
         };
         let ready = throwing || commanding || tick >= me.ready[power.0 as usize];
         if tick < me.busy_until || !ready || me.energy < cost {
@@ -3842,7 +3971,7 @@ fn heroes_act(
         me.energy -= cost;
         me.busy_until = tick + ticks(ACTION_LOCK);
         if (delivery != Delivery::Grab || throwing) && !commanding {
-            me.ready[power.0 as usize] = tick + ticks(powers::recharge(d) / me.haste());
+            me.ready[power.0 as usize] = tick + ticks(kit.recharge(power) / me.haste());
         }
         let level = me.level;
         let damage = f.damage * level_scale(level) * me.outgoing(tick);
@@ -3900,10 +4029,11 @@ fn heroes_act(
                 }
                 actors[i].f.last_combat = tick;
                 out.fx.push(event_of(FxKind::Beam, me_id, from + dir * len));
-                if f.wreck > 0.0 && !f.spare {
+                let wreck = f.wreck * (1.0 - f.spare).max(0.0);
+                if wreck > 0.0 {
                     let blast = crate::destruction::hero_power(level).blast;
                     let mid = from + dir * (len * 0.5);
-                    out.city.push((mid, 2.0, blast * f.wreck));
+                    out.city.push((mid, 2.0, blast * wreck));
                 }
             }
             Delivery::Cone => {
@@ -3968,10 +4098,11 @@ fn heroes_act(
                 if f.heal > 0.0 || f.lasts > 0.0 {
                     allies(actors, i, power, pos, level, solids, tick, out);
                 }
-                if f.wreck > 0.0 && !f.spare {
+                let wreck = f.wreck * (1.0 - f.spare).max(0.0);
+                if wreck > 0.0 {
                     // The street round the hero takes it too.
                     let blast = crate::destruction::hero_power(level).blast;
-                    out.city.push((pos + DVec3::Y * 0.5, 4.0, blast * f.wreck));
+                    out.city.push((pos + DVec3::Y * 0.5, 4.0, blast * wreck));
                 }
             }
             Delivery::Sky => {
@@ -4121,10 +4252,10 @@ fn heroes_act(
                         let mut e = event_of(FxKind::Shockwave, me_id, centre);
                         e.amount = caught;
                         out.fx.push(e);
-                        if f.wreck > 0.0 && !f.spare {
+                        let wreck = f.wreck * (1.0 - f.spare).max(0.0);
+                        if wreck > 0.0 {
                             let blast = crate::destruction::hero_power(level).blast;
-                            out.city
-                                .push((centre + DVec3::Y * 0.5, 3.0, blast * f.wreck));
+                            out.city.push((centre + DVec3::Y * 0.5, 3.0, blast * wreck));
                         }
                     }
                     _ => {}
@@ -4178,6 +4309,7 @@ fn heroes_act(
                             index: n,
                             at,
                             level,
+                            strength: actors[i].f.kit.fields(power).summon_power,
                         });
                         out.fx.push(event_of(FxKind::SidekickCall, me_id, at));
                     }
@@ -4312,7 +4444,10 @@ fn leaps(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out) {
         }
         let force = landing_force(fall);
         let reach = STOMP_REACH * (1.0 + force as f64);
-        let damage = STOMP_DAMAGE * (0.5 + force) * level_scale(actors[i].f.level);
+        let damage = STOMP_DAMAGE
+            * (0.5 + force)
+            * level_scale(actors[i].f.level)
+            * (1.0 + actors[i].f.kit.passive.stomp);
         let standing = actors[i].f.fighting();
         let mut caught = 0u16;
         if standing {
@@ -4366,7 +4501,7 @@ fn burst(
     tick: u64,
     out: &mut Out,
 ) -> u16 {
-    let area = def_of(b.power).fields.radius;
+    let area = actors[i].f.kit.fields(b.power).radius;
     let mut caught = 0;
     for k in 0..actors.len() {
         if !hittable(&actors[k])
@@ -4430,7 +4565,7 @@ fn land_sky(
         let Some(i) = index_of(&*actors, m.from) else {
             continue;
         };
-        let f = def_of(m.power).fields;
+        let f = actors[i].f.kit.fields(m.power);
         let caught = burst(
             actors,
             i,
@@ -4450,9 +4585,10 @@ fn land_sky(
         e.element = actors[i].f.kit.element.code();
         e.amount = caught;
         out.fx.push(e);
-        if f.wreck > 0.0 && !f.spare {
+        let wreck = f.wreck * (1.0 - f.spare).max(0.0);
+        if wreck > 0.0 {
             let blast = crate::destruction::hero_power(m.level).blast;
-            out.city.push((m.at + DVec3::Y * 0.5, 3.5, blast * f.wreck));
+            out.city.push((m.at + DVec3::Y * 0.5, 3.5, blast * wreck));
         }
     }
 }
@@ -4491,7 +4627,7 @@ fn burns(actors: &mut [Actor], tick: u64, out: &mut Out) {
         let from = by.and_then(|b| index_of(&*actors, b));
         let (defeat, dealt) = match from {
             Some(i) => {
-                let (_, defeat, dealt) = strike(actors, i, t, damage, false, tick, false);
+                let (_, defeat, dealt) = strike(actors, i, t, damage, 0.0, tick, false);
                 (defeat, dealt)
             }
             None => {
@@ -4511,6 +4647,48 @@ fn burns(actors: &mut [Actor], tick: u64, out: &mut Out) {
         e.defeat = defeat;
         e.element = from.map_or(0, |i| actors[i].f.kit.element.code());
         out.fx.push(e);
+    }
+}
+
+/// Trails: a hero whose running power has one (an augment's, see
+/// [`crate::augments::Effect::Trail`]) and who runs at [`TRAIL_SPEED`] or
+/// faster hurts every villain they pass within [`TRAIL_REACH`].
+fn trails(actors: &mut [Actor], solids: &Obstacles, tick: u64, out: &mut Out) {
+    if !tick.is_multiple_of(ticks(TRAIL_STEP)) {
+        return;
+    }
+    for i in 0..actors.len() {
+        let a = &actors[i];
+        let trail = a.f.kit.passive.trail;
+        let v = a.body.vel;
+        if a.hero.is_none()
+            || trail <= 0.0
+            || !a.f.fighting()
+            || !a.body.grounded
+            || v.x.hypot(v.z) < TRAIL_SPEED
+        {
+            continue;
+        }
+        let (me, chest) = (a.id, a.chest());
+        let damage = trail * level_scale(a.f.level) * TRAIL_STEP as f32;
+        let element = a.f.kit.element.code();
+        let near: Vec<usize> = (0..actors.len())
+            .filter(|&k| {
+                k != i
+                    && hittable(&actors[k])
+                    && actors[k].body.pos.distance(actors[i].body.pos) <= TRAIL_REACH
+                    && clear_line(solids, chest, actors[k].chest())
+            })
+            .collect();
+        for k in near {
+            let (_, defeat, dealt) = strike(actors, i, k, damage, 0.0, tick, false);
+            let mut e = event(tick, FxKind::Burn, me, actors[k].id, actors[k].chest());
+            e.amount = dealt.round() as u16;
+            e.defeat = defeat;
+            e.element = element;
+            out.fx.push(e);
+            actors[i].f.last_combat = tick;
+        }
     }
 }
 
@@ -4536,8 +4714,18 @@ fn pay_out(actors: &[Actor], out: &mut Out) {
                 hero: h.id,
                 karma: (karma as f32 * bounty).round() as u32,
             });
-            // Parts of a machine are not people of the faction.
+            // Parts of a machine are not people of the faction (and carry
+            // nothing to drop).
             if !matches!(en.kind, EnemyKind::WeakPoint | EnemyKind::Safe) {
+                if !h.npc && v.f.carried.is_some() {
+                    out.drops.push(Drop {
+                        hero: h.id,
+                        from: v.id,
+                        at: v.chest(),
+                        carried: v.f.carried,
+                        level: v.f.level,
+                    });
+                }
                 out.deeds.push(Deed {
                     hero: h.id,
                     beaten: crate::factions::of_enemy(en.kind),
@@ -4798,7 +4986,9 @@ fn enemies_act(
                     .map(|j| (j, actors[j].body.pos.distance(actors[i].body.pos)))
                     .filter(|(j, d)| {
                         // A lookout hears the street below without seeing it.
-                        *d < spec.aggro && (en.perch || in_sight(solids, me, actors[*j].chest()))
+                        let seen = 1.0 - actors[*j].f.unnoticed(tick) as f64;
+                        *d < spec.aggro * seen
+                            && (en.perch || in_sight(solids, me, actors[*j].chest()))
                     })
                     .collect();
                 noticed.sort_by(|x, y| x.1.total_cmp(&y.1));

@@ -3,6 +3,16 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.270 (2026-11-13)
+
+- Augments: loot for your powers. Some villains carry one, with a gem glinting over their head (copper, blue or gold for common, rare and relic); beat them and everyone who helped gets one. Every boss carries one, and a hideout bust ends with a find.
+- An augment adds one effect to one power, for good: more damage, or something the power never did before, like a bolt that also holds, a punch that burns, a shield that throws blows back, a faster flight. There are 39 effects, each with its own icon.
+- Every power has three sockets, for three different effects. Open the powers window (B), drag an augment from the bag onto a power's socket. The window says in numbers what it will do there. A new one in a full socket destroys the old one.
+- Augments from tougher villains are stronger, so there is always a better one to find. Ones you don't want trade in for karma to spend on powers.
+- Villains above level 4 are tougher than before, to keep up.
+- Knockdowns can be partial now: a staggering blow floors a minion after a hit or two, a boss after several.
+- Everyone playing together needs this version.
+
 ## 0.269 (2026-11-13)
 
 - Molehaven's side caves no longer have a step of bare rock round their walls: the floor runs right up to the rock.

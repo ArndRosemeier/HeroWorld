@@ -524,6 +524,30 @@ impl Session {
         }
     }
 
+    /// Sets an augment from the bag into a socket, or trades one in (the
+    /// host checks it).
+    pub fn augment(&mut self, a: hw_client::augmentview::AugmentAction) {
+        use hw_client::augmentview::AugmentAction;
+        match (self, a) {
+            (Session::Local { host, .. }, AugmentAction::Set { bag, power, slot }) => {
+                host.post(move |h, me| {
+                    let _ = h.sim.set_augment(me, bag as usize, power, slot);
+                })
+            }
+            (Session::Local { host, .. }, AugmentAction::Trade { bag }) => {
+                host.post(move |h, me| {
+                    let _ = h.sim.trade_augment(me, bag as usize);
+                })
+            }
+            (Session::Remote { conn, .. }, AugmentAction::Set { bag, power, slot }) => {
+                conn.send(ToServer::SetAugment { bag, power, slot })
+            }
+            (Session::Remote { conn, .. }, AugmentAction::Trade { bag }) => {
+                conn.send(ToServer::TradeAugment { bag })
+            }
+        }
+    }
+
     /// Our hero file, if it changed since the last call.
     pub fn take_sheet(&mut self) -> Option<Sheet> {
         match self {

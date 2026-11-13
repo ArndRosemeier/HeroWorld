@@ -6,6 +6,7 @@
 //! The rules live in `hw_sim::progress` and `hw_sim::powers`; the host
 //! checks every purchase again, so this only asks.
 
+use crate::augmentview::{self, AugmentAction, AugmentUi};
 use crate::fightview::{element_ui_colour, power_ui_colour};
 use crate::tray::{self, Tray};
 use engine::ui::egui;
@@ -54,6 +55,8 @@ pub enum PowerAction {
     Create(Sheet),
     /// A hero from before the power trees picked their element.
     Element(Element),
+    /// An augment set into a socket, or traded in.
+    Augment(AugmentAction),
 }
 
 const GOLD: egui::Color32 = egui::Color32::from_rgb(255, 214, 90);
@@ -85,6 +88,8 @@ pub struct PowersView {
     /// Which key fires which power (kept in line by the game, shown and
     /// changed here).
     pub tray: Tray,
+    /// The sockets and the bag.
+    augments: AugmentUi,
 }
 
 impl Default for PowersView {
@@ -104,6 +109,7 @@ impl PowersView {
             origin: 0,
             element: Element::Fire,
             tray: Tray::default(),
+            augments: AugmentUi::default(),
         }
     }
 
@@ -133,6 +139,7 @@ impl PowersView {
         creating: bool,
     ) -> Vec<PowerAction> {
         let mut out = Vec::new();
+        self.augments.sync(sheet);
         self.strip(ctx, sheet, fighting);
         if creating {
             if let Some(s) = self.origin_card(ctx) {
@@ -220,7 +227,7 @@ impl PowersView {
             egui::Window::new("Powers")
                 .collapsible(false)
                 .resizable(false)
-                .default_width(COL_STEP * COLUMNS as f32 + 20.0)
+                .default_width(COL_STEP * COLUMNS as f32 + augmentview::BAG_WIDTH + 40.0)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -20.0)),
             "Powers",
             Some(&mut open),
@@ -300,18 +307,35 @@ impl PowersView {
                 } else {
                     origin.tree
                 };
+                // A free power picked below stays picked on either tab.
                 if self
                     .selected
                     .and_then(powers::get)
-                    .is_none_or(|d| d.tree != tree)
+                    .is_none_or(|d| d.tree != tree && !powers::is_free(d.id))
                 {
                     self.selected = powers::tree(tree).next().map(|d| d.id);
                 }
-                self.tree(ui, sheet, tree);
-                ui.separator();
-                if let Some(d) = self.selected.and_then(powers::get) {
-                    self.details(ui, sheet, d, out);
-                }
+                // The tree and the picked power on the left, the bag of
+                // augments beside them (below, the window grew too tall).
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(COL_STEP * COLUMNS as f32);
+                        self.tree(ui, sheet, tree);
+                        ui.separator();
+                        if let Some(d) = self.selected.and_then(powers::get) {
+                            self.details(ui, sheet, d, out);
+                        }
+                    });
+                    // (A separator here would stretch the window to the
+                    // screen's height.)
+                    ui.add_space(10.0);
+                    ui.vertical(|ui| {
+                        ui.set_width(augmentview::BAG_WIDTH);
+                        let mut asked = Vec::new();
+                        self.augments.bag(ui, sheet, &mut asked);
+                        out.extend(asked.into_iter().map(PowerAction::Augment));
+                    });
+                });
                 ui.separator();
                 ui.label(
                     egui::RichText::new(
@@ -332,12 +356,30 @@ impl PowersView {
                     );
                     for p in PowerId::FREE {
                         let d = def_of(p);
-                        ui.label(
-                            egui::RichText::new(d.name)
-                                .size(13.0)
-                                .color(power_ui_colour(p, sheet.element)),
-                        )
-                        .on_hover_text(what_it_does(d));
+                        // A click picks it, like a power of the tree: its
+                        // sockets show above. Lit when what is in hand fits.
+                        let lit = self.augments.fits_in_hand(ui.ctx(), sheet, d);
+                        let text = egui::RichText::new(d.name).size(13.0).color(if lit {
+                            egui::Color32::from_rgb(110, 240, 200)
+                        } else {
+                            power_ui_colour(p, sheet.element)
+                        });
+                        let resp = ui
+                            .selectable_label(self.selected == Some(p), text)
+                            .on_hover_text(what_it_does(d));
+                        if resp.clicked() {
+                            self.selected = Some(p);
+                            self.confirm = None;
+                        }
+                        let (dots, _) =
+                            ui.allocate_exact_size(egui::vec2(20.0, 10.0), egui::Sense::hover());
+                        augmentview::socket_dots(
+                            ui.painter(),
+                            dots.right_center() - egui::vec2(3.0, 0.0),
+                            sheet,
+                            d,
+                            2.5,
+                        );
                         if tray::keyed(p) {
                             self.tray_handle(ui, p);
                         }
@@ -500,7 +542,34 @@ impl PowersView {
                 egui::FontId::proportional(11.0),
                 text.gamma_multiply(0.8),
             );
-            if resp.clicked() {
+            if owned {
+                augmentview::socket_dots(
+                    &painter,
+                    r.right_bottom() - egui::vec2(8.0, 8.0),
+                    sheet,
+                    d,
+                    2.5,
+                );
+                // What is in hand fits this power: it lights up.
+                if self.augments.fits_in_hand(ui.ctx(), sheet, d) {
+                    let pulse = 0.6 + 0.4 * (crate::uikit::now(ui.ctx()) * 5.0).sin();
+                    painter.rect_stroke(
+                        r.expand(2.0),
+                        leaf,
+                        egui::Stroke::new(
+                            2.5_f32,
+                            egui::Color32::from_rgb(110, 240, 200).gamma_multiply(pulse),
+                        ),
+                        egui::StrokeKind::Outside,
+                    );
+                }
+            }
+            // An augment let go over the power: the power is picked, its
+            // sockets show below.
+            let carried_here = resp.contains_pointer()
+                && self.augments.in_hand(ui.ctx(), sheet).is_some()
+                && ui.input(|i| i.pointer.any_down());
+            if resp.clicked() || (carried_here && self.selected != Some(d.id)) {
                 self.selected = Some(d.id);
                 self.confirm = None;
             }
@@ -540,7 +609,13 @@ impl PowersView {
                         .floor() as u32;
                     match can_give_up(sheet, d.id) {
                         Ok(()) => {
-                            let label = if self.confirm == Some(d.id) {
+                            let set = sheet.sockets(d.id).iter().filter(|a| !a.is_none()).count();
+                            let label = if self.confirm == Some(d.id) && set > 0 {
+                                format!(
+                                    "Really give it up? (+{back}, its {set} augment{} lost)",
+                                    if set == 1 { " is" } else { "s are" }
+                                )
+                            } else if self.confirm == Some(d.id) {
                                 format!("Really give it up? (+{back})")
                             } else {
                                 format!("Give up (+{back})")
@@ -626,6 +701,9 @@ impl PowersView {
                     .color(egui::Color32::from_rgb(255, 190, 150)),
             );
         }
+        let mut asked = Vec::new();
+        self.augments.sockets(ui, sheet, d, &mut asked);
+        out.extend(asked.into_iter().map(PowerAction::Augment));
     }
 
     /// Where an owned power sits on the tray, as a handle to drag it there
@@ -933,8 +1011,10 @@ pub fn what_it_does(d: &PowerDef) -> String {
         };
         bits.push(format!("{:.0} damage{times} at level 1", f.damage));
     }
-    if f.knock {
+    if f.knock >= 1.0 {
         bits.push("knocks down".into());
+    } else if f.knock > 0.0 {
+        bits.push("staggers".into());
     }
     if f.launch > 0.0 {
         bits.push("throws them up".into());
@@ -1031,7 +1111,7 @@ pub fn what_it_does(d: &PowerDef) -> String {
     if f.heal > 0.0 {
         bits.push(format!("heals {:.0} at level 1", f.heal));
     }
-    if f.revive {
+    if f.revive > 0.0 {
         bits.push("gets downed friends up".into());
     }
     let lasting = if f.lasts > 0.0 && d.delivery() != Delivery::Passive {
@@ -1057,16 +1137,16 @@ pub fn what_it_does(d: &PowerDef) -> String {
     if f.haste > 0.0 {
         bits.push(format!("powers recharge {} faster{lasting}", pct(f.haste)));
     }
-    if f.steadfast {
+    if f.steadfast > 0.0 {
         bits.push(format!("never knocked down{lasting}"));
     }
-    if f.hide {
+    if f.hide > 0.0 {
         bits.push(format!("villains lose sight of you{lasting}"));
     }
-    if f.execute {
+    if f.execute > 0.0 {
         bits.push(format!("minions fall at one blow{lasting}"));
     }
-    if f.angel {
+    if f.angel > 0.0 {
         bits.push("now and then a blow that would down you leaves you standing".into());
     }
     if f.aura > 0.0 {
@@ -1118,7 +1198,7 @@ pub fn what_it_does(d: &PowerDef) -> String {
             f.trail
         ));
     }
-    if f.wreck > 0.0 && !f.spare {
+    if f.wreck > 0.0 && f.spare < 1.0 {
         bits.push("wrecks the street round it".into());
     }
     if !bits.is_empty() {

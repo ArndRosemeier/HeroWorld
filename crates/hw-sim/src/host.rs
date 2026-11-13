@@ -418,6 +418,13 @@ impl Host {
                 ToServer::GiveUp { power } => {
                     let _ = self.sim.give_up(player, power);
                 }
+                ToServer::SetAugment { bag, power, slot } => {
+                    // Refused: nothing changes; the client checks first.
+                    let _ = self.sim.set_augment(player, bag as usize, power, slot);
+                }
+                ToServer::TradeAugment { bag } => {
+                    let _ = self.sim.trade_augment(player, bag as usize);
+                }
                 ToServer::Look { part, parts, bytes } => {
                     let whole = self
                         .remotes

@@ -178,6 +178,20 @@ struct Floater {
     rise: f32,
 }
 
+/// An augment our hero just got: it flies from where the villain fell to
+/// the hero, then shows as a card for a few seconds.
+struct Pickup {
+    from: Vec3,
+    augment: hw_net::Augment,
+    age: f32,
+    /// The bag was full: it went for karma at once.
+    traded: bool,
+}
+
+/// Seconds a pickup flies to the hero, and how long it shows in all.
+const PICKUP_FLIGHT: f32 = 0.9;
+const PICKUP_LIFE: f32 = 5.5;
+
 /// The fight's sounds (clips in `assets/sound`, see its README).
 struct Sounds {
     punch: Sound,
@@ -369,6 +383,11 @@ pub struct FightView {
     sparkle: f32,
     /// A short line in the middle of the screen ("Out of range").
     note: Option<(String, f32)>,
+    /// Augments just picked up, on their way to the hero or shown.
+    pickups: Vec<Pickup>,
+    /// Our hero's powers as they are with their augments (what a power
+    /// costs and how long it recharges follow them).
+    kit: Kit,
     /// Drone hums, following each drone.
     hums: BTreeMap<NetId, SoundId>,
     /// Ray guns in technicians' hands: character entity -> gun.
@@ -436,6 +455,8 @@ impl FightView {
             sounds: None,
             said: Vec::new(),
             floaters: Vec::new(),
+            pickups: Vec::new(),
+            kit: Kit::of(&hw_sim::progress::starter()),
             speech: SpeechBubbles::default(),
             shake: 0.0,
             hurt: 0.0,
@@ -500,6 +521,7 @@ impl FightView {
             click_ray,
         } = powers;
         let kit = sheet.map_or_else(|| Kit::of(&hw_sim::progress::starter()), Kit::of);
+        self.kit = kit;
         let mut out = FightInput::default();
         // A target that fell or left is dropped.
         if let Some(t) = self.target {
@@ -589,7 +611,7 @@ impl FightView {
                 continue;
             }
             let spec = def_of(power);
-            let cost = powers::energy(spec);
+            let cost = kit.energy(power);
             let carrying = me
                 .and_then(|m| m.combat)
                 .is_some_and(|c| c.effects & hw_net::EFFECT_CARRYING != 0);
@@ -1403,6 +1425,32 @@ impl FightView {
                         self.say(&text);
                     }
                 }
+                FxKind::Drop => {
+                    // An augment for our hero: it flies over, with a
+                    // chime that is deeper and fuller the better it is.
+                    if on_me {
+                        let augment = hw_net::Augment {
+                            effect: e.theme,
+                            percent: (e.amount & 0xff) as u8,
+                            grade: (e.amount >> 8) as u8,
+                        };
+                        self.pickups.push(Pickup {
+                            from: at,
+                            augment,
+                            age: 0.0,
+                            traded: e.defeat,
+                        });
+                        let (volume, pitch) = match augment.grade {
+                            0 => (0.7, 1.45),
+                            1 => (0.9, 1.15),
+                            _ => (1.0, 0.8),
+                        };
+                        self.play(world, |s| &s.chime, at, volume, pitch);
+                        if augment.grade >= 2 {
+                            self.play(world, |s| &s.chime, at, 0.8, 1.2);
+                        }
+                    }
+                }
                 FxKind::Loot => {
                     if e.amount == 0 {
                         self.loot.remove(&e.from);
@@ -1704,8 +1752,8 @@ impl FightView {
         } else {
             1.0
         };
-        if let Some(d) = powers::get(p) {
-            self.cooldown[p.0 as usize] = (powers::recharge(d) / haste) as f32;
+        if powers::get(p).is_some() {
+            self.cooldown[p.0 as usize] = (self.kit.recharge(p) / haste) as f32;
         }
     }
 
@@ -2024,6 +2072,10 @@ impl FightView {
             f.at.y += dt * f.rise;
         }
         self.floaters.retain(|f| f.age < f.life);
+        for p in &mut self.pickups {
+            p.age += dt;
+        }
+        self.pickups.retain(|p| p.age < PICKUP_LIFE);
         self.speech.update(dt);
         if let Some(n) = &mut self.note {
             n.1 -= dt;
@@ -2266,12 +2318,26 @@ impl FightView {
                 continue;
             }
             let targeted = self.target == Some(e.id);
-            if c.health == 255 && !targeted {
-                continue;
-            }
             let Some(p) = project(pos(e) + Vec3::Y * crate::robotview::bar_height(e.kind)) else {
                 continue;
             };
+            // One that carries an augment glints in its grade's colour,
+            // hurt or not: beat it and it drops.
+            if let Some((_, grade)) = c.carried() {
+                let near = me.is_some_and(|m| pos(m).distance(pos(e)) < 60.0);
+                if near {
+                    crate::augmentview::gem(
+                        &painter,
+                        p - egui::vec2(0.0, if targeted { 30.0 } else { 14.0 }),
+                        7.0,
+                        hw_sim::augments::Grade::from_code(grade),
+                        now + e.id.0 as f32 * 0.7,
+                    );
+                }
+            }
+            if c.health == 255 && !targeted {
+                continue;
+            }
             let w = 46.0;
             let r = egui::Rect::from_min_size(p - egui::vec2(w * 0.5, 0.0), egui::vec2(w, 5.0));
             painter.rect_filled(r.expand(1.0), 1.0, dark);
@@ -2489,7 +2555,7 @@ impl FightView {
                     continue;
                 };
                 let spec = def_of(power);
-                let cost = powers::energy(spec);
+                let cost = kit.energy(power);
                 let lift = spec.base == Power::Lift;
                 let cd = self.cooldown[power.0 as usize];
                 let ready = cd <= 0.0 && (energy + 0.5 >= cost || carrying && lift);
@@ -2502,7 +2568,7 @@ impl FightView {
                     uikit::SlotLook::Waiting
                 };
                 let recharge = if cd > 0.0 {
-                    cd / powers::recharge(spec).max(0.1) as f32
+                    cd / kit.recharge(power).max(0.1) as f32
                 } else {
                     0.0
                 };
@@ -2535,8 +2601,16 @@ impl FightView {
                     },
                     slot.width() - name_x - 5.0,
                 );
+                // Its sockets: a dot for each, lit where an augment is set.
+                crate::augmentview::socket_dots(
+                    &painter,
+                    slot.right_bottom() - egui::vec2(7.0, 6.0),
+                    sheet,
+                    spec,
+                    2.2,
+                );
                 let cost = if spec.toggle && on {
-                    format!("on, -{:.0}% energy", spec.fields.upkeep * 100.0)
+                    format!("on, -{:.0}% energy", kit.fields(power).upkeep * 100.0)
                 } else if spec.toggle {
                     "off".into()
                 } else if cost > 0.0 {
@@ -2649,6 +2723,91 @@ impl FightView {
             }
         }
 
+        // Augments just picked up: each flies from where the villain fell
+        // to our hero, then shows as a card above the tray.
+        let chest = me.map(|m| pos(m) + Vec3::Y * 1.2);
+        let mut shown = 0;
+        for p in &self.pickups {
+            use crate::augmentview as av;
+            let grade = hw_sim::augments::Grade::of(p.augment);
+            let colour = av::grade_colour(grade);
+            if p.age < PICKUP_FLIGHT {
+                let t = p.age / PICKUP_FLIGHT;
+                // Up out of the villain, then into the hero.
+                let ease = t * t * (3.0 - 2.0 * t);
+                let Some(to) = chest else { continue };
+                let at = p.from.lerp(to, ease) + Vec3::Y * (1.4 * (t * std::f32::consts::PI).sin());
+                let Some(c) = project(at) else { continue };
+                let size = av::CHIP * (1.15 - 0.55 * ease);
+                for k in 0..3 {
+                    painter.circle_filled(
+                        c,
+                        size * (0.75 + k as f32 * 0.22),
+                        colour.gamma_multiply(0.16 - k as f32 * 0.04),
+                    );
+                }
+                uikit::star(
+                    &painter,
+                    c,
+                    size * 0.95,
+                    now * 2.0,
+                    colour.gamma_multiply(0.5),
+                );
+                av::chip(
+                    &painter,
+                    egui::Rect::from_center_size(c, egui::vec2(size, size)),
+                    p.augment,
+                    now,
+                    0.0,
+                );
+                continue;
+            }
+            let age = p.age - PICKUP_FLIGHT;
+            let a = (age * 4.0).min(1.0) * ((PICKUP_LIFE - p.age) * 2.0).clamp(0.0, 1.0);
+            let w = 250.0;
+            let r = egui::Rect::from_min_size(
+                egui::pos2(
+                    screen.center().x - w * 0.5,
+                    screen.bottom() - 250.0 - shown as f32 * 54.0 - (1.0 - a) * 10.0,
+                ),
+                egui::vec2(w, 48.0),
+            );
+            shown += 1;
+            painter.rect_filled(r, 10.0, uikit::with_alpha(uikit::DEEP, 0.88 * a));
+            painter.rect_stroke(
+                r,
+                10.0,
+                egui::Stroke::new(2.0_f32, colour.gamma_multiply(a)),
+                egui::StrokeKind::Inside,
+            );
+            if a > 0.5 {
+                av::chip(
+                    &painter,
+                    egui::Rect::from_min_size(r.min + egui::vec2(5.0, 4.0), egui::vec2(40.0, 40.0)),
+                    p.augment,
+                    now,
+                    0.0,
+                );
+            }
+            painter.text(
+                r.min + egui::vec2(54.0, 6.0),
+                egui::Align2::LEFT_TOP,
+                format!("{} {}", grade.name(), av::title(p.augment)),
+                uikit::ui_font(ctx, 15.0),
+                colour.gamma_multiply(a),
+            );
+            painter.text(
+                r.min + egui::vec2(54.0, 27.0),
+                egui::Align2::LEFT_TOP,
+                if p.traded {
+                    "Bag full: traded in for karma"
+                } else {
+                    "B: set it into a power"
+                },
+                font(12.0),
+                uikit::DIM.gamma_multiply(a),
+            );
+        }
         if let Some((text, left)) = &self.note {
             let a = left.min(1.0);
             uikit::shadow_text(

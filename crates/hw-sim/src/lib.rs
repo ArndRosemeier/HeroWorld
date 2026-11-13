@@ -7,6 +7,7 @@
 
 pub mod airships;
 pub mod alarms;
+pub mod augments;
 pub mod balance;
 pub mod bubbles;
 pub mod citizens;
@@ -409,6 +410,17 @@ pub struct Moves {
     pub wall_run: bool,
     /// The hero's level: travel powers grow with it.
     pub level: u8,
+    /// What augments add, in percent: to speed on the ground (Sprint,
+    /// Super Speed), to flying speed, to speed through the air without
+    /// flying (a super jump, a glide) and to a super jump's height. Whole
+    /// percents, the same ones the client is sent (see
+    /// [`combat::Fighter::boosts`]), so prediction steps exactly alike.
+    pub boosts: [u8; 4],
+}
+
+/// `x` with `percent` more.
+fn boosted(x: f64, percent: u8) -> f64 {
+    x * (1.0 + percent as f64 / 100.0)
 }
 
 impl Moves {
@@ -421,6 +433,7 @@ impl Moves {
         glide: false,
         wall_run: false,
         level: 1,
+        boosts: [0; 4],
     };
     /// Flight allowed (tests and tools that fly).
     pub const FLYER: Moves = Moves {
@@ -440,6 +453,7 @@ impl Moves {
             sprint: effects & hw_net::EFFECT_SPRINT != 0,
             glide: effects & hw_net::EFFECT_GLIDE != 0,
             wall_run: effects & hw_net::EFFECT_WALL_RUN != 0,
+            boosts: c.boosts,
         }
     }
 
@@ -448,6 +462,7 @@ impl Moves {
         use powers::travel;
         Self {
             level,
+            boosts: kit.boosts(),
             fly: kit.travels(travel::FLY),
             super_jump: kit.travels(travel::JUMP),
             speed: kit.travels(travel::SPEED),
@@ -472,8 +487,9 @@ pub fn step_hero(body: &mut Body, input: InputState, solids: &Obstacles) {
 /// and client prediction both run exactly this, so they agree.
 pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, moves: Moves) {
     input.fly &= moves.fly;
+    let [swift, soar, leap, height] = moves.boosts;
     if input.fly {
-        fly_step(body, input);
+        fly_step(body, input, soar);
         // A flier is not held to the ground (see `move_body`).
         body.grounded = false;
         solids.move_body(body, DT);
@@ -484,26 +500,36 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
         return;
     }
     let level = moves.level;
+    let leap_speed = boosted(super_leap_speed(level), leap);
     let top = if moves.speed && body.grounded {
-        if input.boost {
-            super_speed_boost(level)
-        } else {
-            super_speed(level)
-        }
+        boosted(
+            if input.boost {
+                super_speed_boost(level)
+            } else {
+                super_speed(level)
+            },
+            swift,
+        )
     } else if moves.super_jump && !body.grounded {
         // A leap keeps a speedster's run if that is faster.
-        super_leap_speed(level).max(if moves.speed {
+        leap_speed.max(if moves.speed {
             horizontal_speed(body)
         } else {
             0.0
         })
     } else if moves.speed {
         // Off the ground a speedster keeps most of their run.
-        super_speed(level).max(horizontal_speed(body))
+        boosted(super_speed(level), swift).max(horizontal_speed(body))
     } else if moves.sprint {
-        sprint_speed(level)
+        boosted(sprint_speed(level), swift)
     } else {
         RUN_SPEED
+    };
+    // A glider floating down glides faster with what was set into Glide.
+    let top = if moves.glide && input.jump && !body.grounded && !moves.super_jump {
+        boosted(top, leap)
+    } else {
+        top
     };
     let want = DVec3::new(input.move_x as f64, 0.0, input.move_z as f64) * top;
     let horizontal = DVec3::new(body.vel.x, 0.0, body.vel.z);
@@ -526,12 +552,12 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
     let rising_leap = moves.super_jump && !body.grounded && body.vel.y > JUMP_SPEED;
     if input.jump && body.grounded {
         if moves.super_jump {
-            body.vel.y = super_jump_speed(level);
+            body.vel.y = (2.0 * GRAVITY * boosted(super_jump_height(level), height)).sqrt();
             // Launch: the leap carries on the way the hero was going at
             // once, instead of speeding up in the air.
             let stick = DVec2::new(input.move_x as f64, input.move_z as f64);
             if stick.length_squared() > 1e-6 {
-                let keep = horizontal_speed(body).max(super_leap_speed(level) * 0.8);
+                let keep = horizontal_speed(body).max(leap_speed * 0.8);
                 let v = stick.normalize() * keep * stick.length().min(1.0);
                 let v = DVec3::new(v.x, 0.0, v.y);
                 body.vel.x = v.x;
@@ -566,12 +592,14 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
 /// Flight: no gravity; the velocity turns toward where the hero steers
 /// (move in three dimensions, plus jump/descend to climb or sink) and comes
 /// to a hover when nothing is held.
-fn fly_step(body: &mut Body, input: InputState) {
+fn fly_step(body: &mut Body, input: InputState, soar: u8) {
     let (speed, accel, climb) = if input.boost {
         (FLY_BOOST_SPEED, FLY_BOOST_ACCEL, FLY_CLIMB * 2.0)
     } else {
         (FLY_SPEED, FLY_ACCEL, FLY_CLIMB)
     };
+    // Faster with what was set into Flight: level flight and climbing.
+    let (speed, climb) = (boosted(speed, soar), boosted(climb, soar));
     let steer = DVec3::new(
         input.move_x as f64,
         input.move_y as f64,
@@ -2019,6 +2047,39 @@ impl Sim {
         back
     }
 
+    /// `owner` sets the augment at `bag` in their bag into socket `slot`
+    /// of `power`, for good. Returns the augment that was there (lost).
+    pub fn set_augment(
+        &mut self,
+        owner: PlayerId,
+        bag: usize,
+        power: PowerId,
+        slot: u8,
+    ) -> Result<Option<hw_net::Augment>, augments::SetError> {
+        let mut result = Err(augments::SetError::NoSuchAugment);
+        self.change_sheet(owner, |s| result = augments::set(s, bag, power, slot));
+        result
+    }
+
+    /// `owner` trades the augment at `bag` in. Returns the karma it gave.
+    pub fn trade_augment(
+        &mut self,
+        owner: PlayerId,
+        bag: usize,
+    ) -> Result<u32, augments::SetError> {
+        let mut result = Err(augments::SetError::NoSuchAugment);
+        self.change_sheet(owner, |s| result = augments::trade(s, bag));
+        result
+    }
+
+    /// Puts `augment` into `owner`'s bag (the debug menu, tests): traded
+    /// in at once if the bag is full.
+    pub fn give_augment(&mut self, owner: PlayerId, augment: hw_net::Augment) {
+        self.change_sheet(owner, |s| {
+            augments::collect(s, augment);
+        });
+    }
+
     /// Sets `owner`'s element (the debug menu's switch: an element is
     /// otherwise for good).
     pub fn set_element(&mut self, owner: PlayerId, element: powers::Element) {
@@ -2106,6 +2167,7 @@ impl Sim {
                 }
             }
         }
+        self.hand_out_drops();
         let rewards = self.world.resource::<Fights>().rewards.clone();
         if rewards.is_empty() {
             return;
@@ -2134,6 +2196,49 @@ impl Sim {
                     fighter.energy = fighter.max_energy;
                     let mut e = combat_event(tick, FxKind::LevelUp, n.0, at);
                     e.amount = level as u16;
+                    fx.push(e);
+                }
+            }
+        }
+        self.world.resource_mut::<Fights>().events.extend(fx);
+    }
+
+    /// Rolls the augments heroes may get for this tick's beaten villains
+    /// and finds, and puts them into their bags (a full bag trades one in
+    /// at once): each hero their own roll, nobody takes another's.
+    fn hand_out_drops(&mut self) {
+        let drops = self.world.resource::<Fights>().drops.clone();
+        if drops.is_empty() {
+            return;
+        }
+        let tick = self.tick;
+        let mut fx = Vec::new();
+        for d in drops {
+            for (n, mut p, m) in self
+                .world
+                .query::<(&Net, &mut Progress, &Motion)>()
+                .iter_mut(&mut self.world)
+            {
+                if n.0 != d.hero {
+                    continue;
+                }
+                let mut dice = augments::Dice::for_drop(tick, d.from.0, d.hero.0);
+                let a = match d.carried {
+                    Some(c) => augments::drop_for(&p.sheet, c, &mut dice),
+                    None => augments::find(&p.sheet, d.level, &mut dice),
+                };
+                let traded = augments::collect(&mut p.sheet, a);
+                p.changed = true;
+                let mut e = combat_event(tick, FxKind::Drop, d.from, d.at);
+                e.to = n.0;
+                e.theme = a.effect;
+                e.amount = a.percent as u16 | (a.grade as u16) << 8;
+                // A full bag: it went for karma at once.
+                e.defeat = traded.is_some();
+                fx.push(e);
+                if let Some(karma) = traded {
+                    let mut e = combat_event(tick, FxKind::Karma, n.0, m.0.pos + DVec3::Y * 1.2);
+                    e.amount = karma.min(u16::MAX as u32) as u16;
                     fx.push(e);
                 }
             }

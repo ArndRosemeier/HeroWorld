@@ -344,6 +344,58 @@ All of them grow with the hero's level, evenly from level 1 to level 20
   leap. Villains within 3.5 m (up to 7 m from the top of a level-20 leap) and in sight
   take 7 to 21 damage (`STOMP_DAMAGE`, times the level scale) and are knocked over.
 
+### Augments (`hw-sim/src/augments.rs`, `hw-client/src/augmentview.rs`)
+
+Loot. An augment adds a share of **one effect** to **one power**, for good.
+
+- **What one is** (`hw_net::Augment`): an effect, a percent and a grade. The percent is a
+  share of the power's own worth ("magnitude 1", from `powers::value`): 20% Hold on a
+  bolt holds for a fifth of what a hold power of the bolt's worth would. Where the power
+  already does the thing, it does more of it; where it does not, it starts to, weakly
+  (new behaviours have a floor so they show: a hold at least 0.8 s, a shove 1.5 m).
+- **Effects** (`Effect`, 39 of them, each with its own icon): on powers that hurt:
+  Damage, Burn, Drain, Exploit, Leap (the hit jumps on), Knockdown, Launch, Push, Hold,
+  Freeze, Slow, Confuse, Fear, Charm, Disarm, Weaken, Range, Area, Wreck, Spare; on
+  heals, shields and buffs: Heal, Shield, Reflect, Lasting; on anything fired: Quick
+  (recharge) and Thrifty (energy); on kept powers: Resist, Dodge, Brace, Regen, Might,
+  Haste, Aura, Ward, Light (a toggle takes less energy recovery); on travel powers:
+  Speed, Height, Stomp, Trail (running at 11 m/s or more hurts villains within 2.5 m).
+  `fits` says which effect goes on which power; the window lists them under each power
+  ("Takes").
+- **Flight takes Speed only.** No augment makes flying cheaper.
+- **Yes/no effects are amounts now:** knock, spare, revive, hide, execute, Guardian
+  Angel and steadfast are 0 to 1 in `Fields`. A part knockdown staggers
+  (`STAGGER_FLOORS`: 0.3 fells a minion, 0.6 a lieutenant, 1.0 a boss; it fades 0.1 a
+  second), a part verdict fells minions below that share of health, part stealth
+  shortens how far villains see the hero.
+- **Sockets:** three per power, or as many as there are effects that fit it (Flight has
+  one). The three must be different effects. Free powers have sockets too. Setting is
+  for good: an augment cannot be taken out, a new one in its socket destroys the old
+  one (the window asks first), and giving a power up loses its augments.
+- **Strength** (`strength`): by the level of the villain it came from, level 1 to 20:
+  common 8% to 20%, rare 10% to 25%, relic 12% to 30%.
+- **Where they come from:** some villains carry one from the moment they appear
+  (`carry`, `DROP_CHANCE`: 2.3% of minions, 1 in 5 lieutenants, every boss; a boss's is
+  rare or better 7 times in 10). A carrier shows a gem over its head in the grade's
+  colour (copper, blue, gold) and has that many percent more health. Every hero who
+  helped beat it gets their own copy, with their own effect: 7 in 10 fit a power they
+  own (`FITS_OWNED`). A hideout case closed gives each hero there a find, never a common
+  one. About 20 an hour (`tests/augments.rs` plays it).
+- **The bag** holds 30 (`MAX_BAG`); a drop into a full bag is traded in at once.
+- **Trading in** (`trade_value`): karma to spend (it does not raise the level). A common
+  one from a level 1 villain gives 48, from level 20 120; a rare one three times, a
+  relic ten times that.
+- **Villains keep up** (`combat::villain_growth`): from level 5 on villains have more
+  health than a tenth per level, up to 40% more at level 20, and hit harder by half of
+  that, to match a hero's augments.
+- **On screen:** the powers window (B) shows the bag beside the tree and the picked
+  power's sockets under it, with what each augment does there in numbers. Drag one from
+  the bag onto a socket (or click it, then the socket); powers and sockets it fits light
+  up, and a green arrow marks one that would improve a power. The tray and the tree show
+  a dot per socket. A drop flies from the villain to the hero and shows as a card.
+- **Saved** in the hero file (`augments`, `bag`; hero file version 3). Travel boosts are
+  sent as whole percents (`CombatState::boosts`), so the client predicts them exactly.
+
 ### The powers
 
 Every origin tree has 22 or 23 powers in six rows; the travel tree seven. The window says
@@ -1802,6 +1854,7 @@ run, or put them in a `.bat`.
 | `HW_POWERS=1` | With `HW_LEVEL`: buy the whole tree (the first of each fork). |
 | `HW_ORIGIN=n` | With `HW_LEVEL`: play origin n (0-4), karma given back. |
 | `HW_ELEMENT=n` | With `HW_LEVEL`: element n (1 Fire, 2 Frost, 3 Energy, 4 Necrotic, 5 Lightning, 6 Psychic). |
+| `HW_AUGMENTS=1` | With `HW_LEVEL`: a bag of augments and a few set (the debug menu has "A bag of augments" too). |
 | `HW_FLY=1` | Start flying. |
 | `HW_STORY=n` | Start with n chapters of the Doctor's story done (not saved); `HW_BRIEFED=1` also briefed on the next. `HW_VIEW=statue` looks at the statue (`HW_STORY=7`). Where each chapter plays: `cargo run --release -p hw-sim --example story_places -- <seed> <people>`. |
 | `HW_NAME=...` | Hero name for this run. |

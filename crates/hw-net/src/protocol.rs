@@ -528,6 +528,63 @@ pub struct OwnedPower {
     pub paid: u32,
 }
 
+/// An augment: a piece of loot that adds `percent` of one effect
+/// (`hw_sim::augments::Effect`'s number) to a power. `grade` is how rare it
+/// is (0 common, 1 rare, 2 relic); what it does follows from the percent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Augment {
+    pub effect: u8,
+    pub percent: u8,
+    pub grade: u8,
+}
+
+impl Augment {
+    fn write(&self, w: &mut Writer) {
+        w.u8(self.effect).u8(self.percent).u8(self.grade);
+    }
+
+    fn read(r: &mut Reader) -> Result<Self, WireError> {
+        let a = Augment {
+            effect: r.u8()?,
+            percent: r.u8()?,
+            grade: r.u8()?,
+        };
+        if a.percent > MAX_AUGMENT_PERCENT || a.grade > 2 {
+            return Err(WireError);
+        }
+        Ok(a)
+    }
+
+    /// No augment (an empty socket).
+    pub const NONE: Augment = Augment {
+        effect: 0,
+        percent: 0,
+        grade: 0,
+    };
+
+    pub fn is_none(self) -> bool {
+        self.effect == 0 || self.percent == 0
+    }
+}
+
+/// An augment set into one of a power's sockets, for good.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SetAugment {
+    pub power: PowerId,
+    /// Which socket (0 to [`SOCKETS`] - 1).
+    pub slot: u8,
+    pub augment: Augment,
+}
+
+/// Sockets every power has.
+pub const SOCKETS: usize = 3;
+/// Loose augments a hero can keep.
+pub const MAX_BAG: usize = 30;
+/// Most set augments a sheet carries (every power a hero can own, full).
+pub const MAX_SET_AUGMENTS: usize = (MAX_POWERS + 4) * SOCKETS;
+/// The strongest an augment can be (percent).
+pub const MAX_AUGMENT_PERCENT: u8 = 100;
+
 /// A hero's progress: what the hero file on the player's PC holds and the
 /// server plays by (see `hw_sim::progress` for the rules).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -555,6 +612,10 @@ pub struct Sheet {
     /// The team's cases as the host's file keeps them (see
     /// `hw_sim::missions`).
     pub cases: CaseBook,
+    /// Augments set into powers' sockets (see `hw_sim::augments`).
+    pub augments: Vec<SetAugment>,
+    /// Loose augments, found and not set yet.
+    pub bag: Vec<Augment>,
 }
 
 /// Cases kept in a hero file: how many were handed out and closed, and
@@ -677,6 +738,10 @@ impl Sheet {
             + 2
             + 1
             + 5 * self.cases.open.len().min(MAX_SAVED_CASES)
+            + 1
+            + 5 * self.augments.len().min(MAX_SET_AUGMENTS)
+            + 1
+            + 3 * self.bag.len().min(MAX_BAG)
     }
 
     pub fn write(&self, w: &mut Writer) {
@@ -709,6 +774,17 @@ impl Sheet {
         w.u8(n as u8);
         for c in &b.open[..n] {
             w.u16(c.number).u8(c.gang).u8(c.variant).u8(c.step);
+        }
+        let n = self.augments.len().min(MAX_SET_AUGMENTS);
+        w.u8(n as u8);
+        for a in &self.augments[..n] {
+            w.u8(a.power.0).u8(a.slot);
+            a.augment.write(w);
+        }
+        let n = self.bag.len().min(MAX_BAG);
+        w.u8(n as u8);
+        for a in &self.bag[..n] {
+            a.write(w);
         }
     }
 
@@ -769,6 +845,31 @@ impl Sheet {
             closed,
             open,
         };
+        let n = r.u8()? as usize;
+        if n > MAX_SET_AUGMENTS {
+            return Err(WireError);
+        }
+        let mut augments = Vec::with_capacity(n);
+        for _ in 0..n {
+            let power = PowerId(r.u8()?);
+            let slot = r.u8()?;
+            if power.0 as usize >= POWER_IDS || slot as usize >= SOCKETS {
+                return Err(WireError);
+            }
+            augments.push(SetAugment {
+                power,
+                slot,
+                augment: Augment::read(r)?,
+            });
+        }
+        let n = r.u8()? as usize;
+        if n > MAX_BAG {
+            return Err(WireError);
+        }
+        let mut bag = Vec::with_capacity(n);
+        for _ in 0..n {
+            bag.push(Augment::read(r)?);
+        }
         Ok(Self {
             lifetime,
             karma,
@@ -780,7 +881,20 @@ impl Sheet {
             briefed,
             gate_home,
             cases,
+            augments,
+            bag,
         })
+    }
+
+    /// The augments in `power`'s sockets (empty sockets: [`Augment::NONE`]).
+    pub fn sockets(&self, power: PowerId) -> [Augment; SOCKETS] {
+        let mut out = [Augment::NONE; SOCKETS];
+        for a in self.augments.iter().filter(|a| a.power == power) {
+            if let Some(slot) = out.get_mut(a.slot as usize) {
+                *slot = a.augment;
+            }
+        }
+        out
     }
 
     /// Whether the hero owns this power (the free powers: always).
@@ -804,6 +918,24 @@ pub struct CombatState {
     /// A hero's toggles that are on, as bits by power number (sent as a
     /// short list of numbers).
     pub toggles: u128,
+    /// How much faster a hero's travel powers are for their augments, in
+    /// percent: on the ground, flying, through the air on a super jump,
+    /// and how much higher a super jump goes (the client plays its own
+    /// hero's movement ahead by these).
+    ///
+    /// A villain's holds what it carries instead: its strength in percent
+    /// and its grade plus one (see [`CombatState::carried`]).
+    pub boosts: [u8; 4],
+}
+
+impl CombatState {
+    /// What a villain carries and will drop, as (strength in percent,
+    /// grade); `None` for one that carries nothing. Only a villain's
+    /// state says this (a hero's `boosts` are their travel boosts).
+    pub fn carried(&self) -> Option<(u8, u8)> {
+        let [percent, grade, ..] = self.boosts;
+        (grade > 0 && percent > 0).then(|| (percent, grade - 1))
+    }
 }
 
 /// Bound by a binding hold.
@@ -855,8 +987,11 @@ pub const EFFECT_DISARMED: u32 = 1 << 22;
 /// A self power is on (a titan's might, a dodge, a verdict).
 pub const EFFECT_EMPOWERED: u32 = 1 << 23;
 
-/// A fighter's state without its toggles (one byte each after these).
+/// A fighter's state without its toggles (one byte each after these) and
+/// its travel boosts (four bytes when [`EFFECT_BOOSTED`] is set).
 const COMBAT_BYTES: usize = 13;
+/// Travel boosts follow (set by the writer from [`CombatState::boosts`]).
+pub const EFFECT_BOOSTED: u32 = 1 << 31;
 
 /// No rotation.
 pub const NO_ROTATION: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
@@ -937,9 +1072,11 @@ impl EntityState {
             + if f & F_VEL != 0 { 12 } else { 0 }
             + if f & F_ROT != 0 { 16 } else { 0 }
             + if f & F_OWNER != 0 { 2 } else { 0 }
-            + self
-                .combat
-                .map_or(0, |c| COMBAT_BYTES + c.toggles.count_ones() as usize)
+            + self.combat.map_or(0, |c| {
+                COMBAT_BYTES
+                    + c.toggles.count_ones() as usize
+                    + if c.boosts != [0; 4] { 4 } else { 0 }
+            })
             + if f & F_MOUNT != 0 { 5 } else { 0 }
     }
 
@@ -967,12 +1104,18 @@ impl EntityState {
                 .u8(c.energy)
                 .u8(c.status.code())
                 .u8(c.level)
-                .u32(c.target.map_or(0, |t| t.0))
-                .u32(c.effects);
+                .u32(c.target.map_or(0, |t| t.0));
+            let boosted = c.boosts != [0; 4];
+            w.u32(c.effects & !EFFECT_BOOSTED | if boosted { EFFECT_BOOSTED } else { 0 });
             let on: Vec<u8> = (0..128u8).filter(|i| c.toggles & (1 << i) != 0).collect();
             w.u8(on.len() as u8);
             for i in on {
                 w.u8(i);
+            }
+            if boosted {
+                for b in c.boosts {
+                    w.u8(b);
+                }
             }
         }
         if let Some((on, part)) = self.mount {
@@ -1007,7 +1150,7 @@ impl EntityState {
             None
         };
         let combat = if f & F_COMBAT != 0 {
-            Some(CombatState {
+            let mut c = CombatState {
                 health: r.u8()?,
                 energy: r.u8()?,
                 status: Status::from_code(r.u8()?)?,
@@ -1028,7 +1171,17 @@ impl EntityState {
                     }
                     on
                 },
-            })
+                boosts: [0; 4],
+            };
+            if c.effects & EFFECT_BOOSTED != 0 {
+                c.effects &= !EFFECT_BOOSTED;
+                c.boosts = [r.u8()?, r.u8()?, r.u8()?, r.u8()?];
+                // The writer sets the bit only for boosts that are there.
+                if c.boosts == [0; 4] {
+                    return Err(WireError);
+                }
+            }
+            Some(c)
         } else {
             None
         };
@@ -1223,6 +1376,10 @@ pub enum FxKind {
     /// `to` stepped through a portal of `from`'s and came out at `at` (its
     /// feet), turned by `amount` (1/65536 turns).
     GateCross,
+    /// An augment dropped at `at` for hero `to` (`from`: the villain who
+    /// had it, or the hero for a find): `theme` is its effect, `amount`
+    /// its percent, and its grade in the high byte (`grade << 8`).
+    Drop,
 }
 
 /// What a villain carries off ([`FxKind::Loot`]).
@@ -1334,6 +1491,7 @@ impl FxKind {
             FxKind::GateOpen => 68,
             FxKind::GateShut => 69,
             FxKind::GateCross => 70,
+            FxKind::Drop => 71,
         }
     }
 
@@ -1409,6 +1567,7 @@ impl FxKind {
             68 => FxKind::GateOpen,
             69 => FxKind::GateShut,
             70 => FxKind::GateCross,
+            71 => FxKind::Drop,
             _ => return Err(WireError),
         })
     }
@@ -1706,6 +1865,17 @@ pub enum ToServer {
     /// Give a power up (90% of its price comes back).
     GiveUp {
         power: PowerId,
+    },
+    /// Set the augment at `bag` (its place in the hero's bag) into socket
+    /// `slot` of `power`, for good (what was there is lost).
+    SetAugment {
+        bag: u8,
+        power: PowerId,
+        slot: u8,
+    },
+    /// Trade the augment at `bag` in for karma.
+    TradeAugment {
+        bag: u8,
     },
     /// A piece of this player's looks (see [`Look`]), sent on joining.
     Look {
@@ -2351,6 +2521,8 @@ impl ToServer {
             ToServer::Look { bytes, .. } => 1 + 2 + 2 + bytes.len(),
             ToServer::Door { .. } => 1 + 8 + 4 + 1,
             ToServer::TakeCase { .. } => 1 + 2,
+            ToServer::SetAugment { .. } => 1 + 3,
+            ToServer::TradeAugment { .. } => 1 + 1,
         }
     }
 
@@ -2388,6 +2560,12 @@ impl ToServer {
             ToServer::TakeCase { number } => {
                 w.u8(9).u16(*number);
             }
+            ToServer::SetAugment { bag, power, slot } => {
+                w.u8(10).u8(*bag).u8(power.0).u8(*slot);
+            }
+            ToServer::TradeAugment { bag } => {
+                w.u8(11).u8(*bag);
+            }
         }
     }
 
@@ -2414,6 +2592,12 @@ impl ToServer {
                 open: r.bool()?,
             },
             9 => ToServer::TakeCase { number: r.u16()? },
+            10 => ToServer::SetAugment {
+                bag: r.u8()?,
+                power: PowerId(r.u8()?),
+                slot: r.u8()?,
+            },
+            11 => ToServer::TradeAugment { bag: r.u8()? },
             _ => return Err(WireError),
         })
     }
@@ -2811,6 +2995,31 @@ mod tests {
                     },
                 ],
             },
+            augments: vec![
+                SetAugment {
+                    power: PowerId(10),
+                    slot: 2,
+                    augment: Augment {
+                        effect: 9,
+                        percent: 14,
+                        grade: 1,
+                    },
+                },
+                SetAugment {
+                    power: PowerId(1),
+                    slot: 0,
+                    augment: Augment {
+                        effect: 1,
+                        percent: 8,
+                        grade: 0,
+                    },
+                },
+            ],
+            bag: vec![Augment {
+                effect: 24,
+                percent: 30,
+                grade: 2,
+            }],
         }
     }
 
@@ -2872,6 +3081,15 @@ mod tests {
                         },
                     ),
                     (10, ToServer::TakeCase { number: 14 }),
+                    (
+                        11,
+                        ToServer::SetAugment {
+                            bag: 4,
+                            power: PowerId(10),
+                            slot: 2,
+                        },
+                    ),
+                    (12, ToServer::TradeAugment { bag: 29 }),
                 ],
             },
             ClientMsg::Bye,
@@ -3104,6 +3322,7 @@ mod tests {
                         target: Some(NetId(3)),
                         effects: EFFECT_HELD | EFFECT_SHIELD,
                         toggles: 1 << 60 | 1 << 74,
+                        boosts: [20, 0, 35, 8],
                     }),
                     ..Default::default()
                 },

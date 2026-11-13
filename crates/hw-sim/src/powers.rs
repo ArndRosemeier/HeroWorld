@@ -18,7 +18,7 @@
 //! Each hero also has one [`Element`], picked at creation: it rides on
 //! every blow, scaled by the blow's damage.
 
-use hw_net::{Power, PowerId, Sheet, POWER_IDS};
+use hw_net::{Augment, Power, PowerId, Sheet, POWER_IDS, SOCKETS};
 
 /// The trees powers sit in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -104,8 +104,10 @@ pub struct Fields {
     // ---- On others ----
     /// Damage at level 1 (grows with the level).
     pub damage: f32,
-    /// Every hit knocks down (others only when they defeat).
-    pub knock: bool,
+    /// How hard a hit staggers: at 1 every hit knocks down (others only
+    /// when they defeat). Less builds up over several hits, sooner on
+    /// minions than on bosses (see [`crate::combat::STAGGER_FLOORS`]).
+    pub knock: f32,
     /// Throws the one hit up (m/s).
     pub launch: f32,
     /// Shoves the one hit away (m); below zero pulls toward the centre.
@@ -142,13 +144,15 @@ pub struct Fields {
     pub delay: f64,
     /// How hard it hits the street round it (buildings, cars).
     pub wreck: f32,
-    /// Spares the street and bystanders round it (an augment, later).
-    pub spare: bool,
+    /// The share of the street and the bystanders round it that it
+    /// spares (1: all of it).
+    pub spare: f32,
     // ---- The hero and friends ----
     /// Health given back (at level 1).
     pub heal: f32,
-    /// Gets downed friends in the area back on their feet.
-    pub revive: bool,
+    /// Gets downed friends in the area back on their feet, with this
+    /// share of the health a revive gives (1: as a teammate's hand does).
+    pub revive: f32,
     /// Share of every blow a shield stops, for `lasts`.
     pub shield: f32,
     /// Share of a blow sent back at the one who struck.
@@ -161,14 +165,19 @@ pub struct Fields {
     pub might: f32,
     /// Share faster recharge.
     pub haste: f32,
-    /// Never knocked down.
-    pub steadfast: bool,
-    /// Villains lose sight of the hero (until the hero strikes).
-    pub hide: bool,
-    /// Minions fall at a single blow.
-    pub execute: bool,
-    /// Once in a while a blow that would down the hero leaves them standing.
-    pub angel: bool,
+    /// The share less time a knock keeps the hero down (1: never
+    /// knocked down).
+    pub steadfast: f32,
+    /// Villains lose sight of the hero (until the hero strikes): they
+    /// notice from this share less far (1: not at all).
+    pub hide: f32,
+    /// Minions left at or below this share of their health by a blow
+    /// fall to it (1: at any single blow).
+    pub execute: f32,
+    /// Once in a while a blow that would down the hero leaves them
+    /// standing; this many times as often (1: every
+    /// [`crate::combat::ANGEL_EVERY`]).
+    pub angel: f32,
     /// Friends near the hero (within [`AURA_RADIUS`]) hit this share harder.
     pub aura: f32,
     /// Friends near the hero take this share less.
@@ -210,6 +219,20 @@ pub struct Fields {
     pub lands: Lands,
     /// Damage a second to villains near a hero going fast.
     pub trail: f32,
+    // ---- Only from augments (see [`crate::augments`]) ----
+    /// Recharges this share of half its wait sooner (1: in half the time).
+    pub quick: f32,
+    /// Takes this share of half its energy less (1: half the energy).
+    pub thrifty: f32,
+    /// Share faster on the ground (Sprint, Super Speed), in the air
+    /// (Flight, Glide), and the share higher a super jump goes.
+    pub swift: f32,
+    pub soar: f32,
+    /// Share faster through the air on a super jump.
+    pub leap: f32,
+    pub height: f32,
+    /// Share harder a super jump's landing stomp hits.
+    pub stomp: f32,
 }
 
 impl Fields {
@@ -217,7 +240,7 @@ impl Fields {
         range: 0.0,
         radius: 0.0,
         damage: 0.0,
-        knock: false,
+        knock: 0.0,
         launch: 0.0,
         push: 0.0,
         hold: 0.0,
@@ -237,19 +260,19 @@ impl Fields {
         repeats: 0,
         delay: 0.0,
         wreck: 0.0,
-        spare: false,
+        spare: 0.0,
         heal: 0.0,
-        revive: false,
+        revive: 0.0,
         shield: 0.0,
         reflect: 0.0,
         resist: 0.0,
         regen: 0.0,
         might: 0.0,
         haste: 0.0,
-        steadfast: false,
-        hide: false,
-        execute: false,
-        angel: false,
+        steadfast: 0.0,
+        hide: 0.0,
+        execute: 0.0,
+        angel: 0.0,
         aura: 0.0,
         ward: 0.0,
         lasts: 0.0,
@@ -269,6 +292,13 @@ impl Fields {
         travel: 0,
         lands: Lands::Target,
         trail: 0.0,
+        quick: 0.0,
+        thrifty: 0.0,
+        swift: 0.0,
+        soar: 0.0,
+        leap: 0.0,
+        height: 0.0,
+        stomp: 0.0,
     };
 
     /// Adds a passive power's fields to a sum of them (resistances
@@ -278,8 +308,8 @@ impl Fields {
         self.regen += o.regen;
         self.might += o.might;
         self.haste += o.haste;
-        self.steadfast |= o.steadfast;
-        self.angel |= o.angel;
+        self.steadfast = self.steadfast.max(o.steadfast);
+        self.angel = self.angel.max(o.angel);
         self.aura = self.aura.max(o.aura);
         self.ward = self.ward.max(o.ward);
         self.reflect += o.reflect;
@@ -300,6 +330,11 @@ impl Fields {
         self.chain = self.chain.max(o.chain);
         self.travel |= o.travel;
         self.trail += o.trail;
+        self.swift += o.swift;
+        self.soar += o.soar;
+        self.leap += o.leap;
+        self.height += o.height;
+        self.stomp += o.stomp;
     }
 }
 
@@ -478,7 +513,7 @@ use Tree::*;
 const BOLT: Fields = Fields {
     damage: 36.0,
     range: 40.0,
-    knock: true,
+    knock: 1.0,
     ..F
 };
 const HOLD: Fields = Fields {
@@ -496,13 +531,13 @@ const SHIELD: Fields = Fields {
 const LIFT: Fields = Fields {
     damage: 60.0,
     range: 30.0,
-    knock: true,
+    knock: 1.0,
     ..F
 };
 const BLAST: Fields = Fields {
     damage: 34.0,
     radius: 8.0,
-    knock: true,
+    knock: 1.0,
     ..F
 };
 const MEND: Fields = Fields {
@@ -514,7 +549,7 @@ const BEAM: Fields = Fields {
     damage: 50.0,
     range: 36.0,
     radius: 1.4,
-    knock: true,
+    knock: 1.0,
     ..F
 };
 const METEOR: Fields = Fields {
@@ -522,14 +557,14 @@ const METEOR: Fields = Fields {
     range: 45.0,
     radius: 5.5,
     delay: 1.2,
-    knock: true,
+    knock: 1.0,
     wreck: 3.0,
     ..F
 };
 const NOVA: Fields = Fields {
     damage: 120.0,
     radius: 16.0,
-    knock: true,
+    knock: 1.0,
     wreck: 2.0,
     ..F
 };
@@ -904,7 +939,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             damage: 12.0,
             radius: 8.0,
-            knock: true,
+            knock: 1.0,
             push: 6.0,
             ..F
         },
@@ -996,7 +1031,7 @@ pub static POWERS: &[PowerDef] = &[
             delay: 1.5,
             push: -10.0,
             hold: 3.0,
-            knock: true,
+            knock: 1.0,
             wreck: 4.0,
             ..F
         },
@@ -1072,7 +1107,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             radius: 8.0,
             fear: 4.0,
-            spare: true,
+            spare: 1.0,
             ..F
         },
     ),
@@ -1334,7 +1369,7 @@ pub static POWERS: &[PowerDef] = &[
             radius: 6.0,
             delay: 1.0,
             repeats: 8,
-            knock: true,
+            knock: 1.0,
             wreck: 1.0,
             ..F
         },
@@ -1355,7 +1390,7 @@ pub static POWERS: &[PowerDef] = &[
             radius: 12.0,
             delay: 1.0,
             push: -8.0,
-            knock: true,
+            knock: 1.0,
             wreck: 5.0,
             ..F
         },
@@ -1374,7 +1409,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             damage: 34.0,
             range: 3.2,
-            knock: true,
+            knock: 1.0,
             ..F
         },
     ),
@@ -1406,7 +1441,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             damage: 30.0,
             range: 3.2,
-            knock: true,
+            knock: 1.0,
             launch: 9.0,
             ..F
         },
@@ -1478,7 +1513,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             range: 20.0,
             damage: 30.0,
-            knock: true,
+            knock: 1.0,
             lands: Lands::Path,
             ..F
         },
@@ -1514,7 +1549,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             damage: 30.0,
             radius: 4.5,
-            knock: true,
+            knock: 1.0,
             ..F
         },
     ),
@@ -1533,7 +1568,7 @@ pub static POWERS: &[PowerDef] = &[
             range: 35.0,
             radius: 4.0,
             delay: 0.8,
-            knock: true,
+            knock: 1.0,
             wreck: 2.0,
             ..F
         },
@@ -1584,7 +1619,7 @@ pub static POWERS: &[PowerDef] = &[
             damage: 40.0,
             range: 20.0,
             radius: 1.6,
-            knock: true,
+            knock: 1.0,
             wreck: 1.0,
             ..F
         },
@@ -1602,7 +1637,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             damage: 45.0,
             range: 3.2,
-            knock: true,
+            knock: 1.0,
             push: 10.0,
             ..F
         },
@@ -1638,7 +1673,7 @@ pub static POWERS: &[PowerDef] = &[
             B::Invulnerable,
             "stone",
             Fields {
-                steadfast: true,
+                steadfast: 1.0,
                 resist: 0.1,
                 ..F
             },
@@ -1659,7 +1694,7 @@ pub static POWERS: &[PowerDef] = &[
             range: 30.0,
             damage: 40.0,
             radius: 5.0,
-            knock: true,
+            knock: 1.0,
             lands: Lands::Arrival,
             wreck: 1.0,
             ..F
@@ -1720,7 +1755,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             resist: 0.5,
             might: 0.5,
-            steadfast: true,
+            steadfast: 1.0,
             lasts: 20.0,
             ..F
         },
@@ -1767,7 +1802,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             damage: 30.0,
             range: 3.2,
-            knock: true,
+            knock: 1.0,
             ..F
         },
     ),
@@ -1859,7 +1894,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             damage: 24.0,
             radius: 8.0,
-            knock: true,
+            knock: 1.0,
             heal: 20.0,
             ..F
         },
@@ -2020,7 +2055,7 @@ pub static POWERS: &[PowerDef] = &[
         2,
         B::Invulnerable,
         "light",
-        Fields { angel: true, ..F },
+        Fields { angel: 1.0, ..F },
     ),
     toggle(
         def(
@@ -2067,7 +2102,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             heal: 100.0,
             radius: 30.0,
-            revive: true,
+            revive: 1.0,
             ..F
         },
     )),
@@ -2176,9 +2211,9 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             radius: 6.0,
             confuse: 4.0,
-            hide: true,
+            hide: 1.0,
             lasts: 3.0,
-            spare: true,
+            spare: 1.0,
             ..F
         },
     ),
@@ -2228,8 +2263,8 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             damage: 18.0,
             radius: 4.0,
-            knock: true,
-            spare: true,
+            knock: 1.0,
+            spare: 1.0,
             ..F
         },
     ),
@@ -2263,7 +2298,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             radius: 10.0,
             fear: 4.0,
-            spare: true,
+            spare: 1.0,
             ..F
         },
     ),
@@ -2278,7 +2313,7 @@ pub static POWERS: &[PowerDef] = &[
         B::Shield,
         "smoke",
         Fields {
-            hide: true,
+            hide: 1.0,
             lasts: 8.0,
             ..F
         },
@@ -2348,7 +2383,7 @@ pub static POWERS: &[PowerDef] = &[
             B::Invulnerable,
             "wits",
             Fields {
-                steadfast: true,
+                steadfast: 1.0,
                 resist: 0.2,
                 ..F
             },
@@ -2368,7 +2403,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             range: 25.0,
             damage: 30.0,
-            knock: true,
+            knock: 1.0,
             lands: Lands::Path,
             ..F
         },
@@ -2419,7 +2454,7 @@ pub static POWERS: &[PowerDef] = &[
         B::Shield,
         "smoke",
         Fields {
-            hide: true,
+            hide: 1.0,
             lasts: 10.0,
             ..F
         },
@@ -2435,7 +2470,7 @@ pub static POWERS: &[PowerDef] = &[
         B::Shield,
         "wits",
         Fields {
-            execute: true,
+            execute: 1.0,
             lasts: 10.0,
             ..F
         },
@@ -2453,7 +2488,7 @@ pub static POWERS: &[PowerDef] = &[
         Fields {
             radius: 25.0,
             fear: 8.0,
-            spare: true,
+            spare: 1.0,
             ..F
         },
     )),
@@ -2530,20 +2565,26 @@ pub fn tree(tree: Tree) -> impl Iterator<Item = &'static PowerDef> {
 
 // ---- What a power costs to use ----
 
-/// How much a power does, in one number: what energy and recharge follow
-/// from. Damage counts by how many it reaches, control by the seconds it
-/// takes away, help by how much and how many.
-pub fn value(d: &PowerDef) -> f32 {
+/// How many villains a power is reckoned to reach (an area by its size).
+pub fn targets(d: &PowerDef) -> f32 {
     let f = &d.fields;
     let area = |r: f64| 1.0 + r as f32 / 4.0;
-    let targets = match d.delivery() {
+    match d.delivery() {
         Delivery::Melee | Delivery::Ranged => 1.0 + f.spread * f.spread_to as f32,
         Delivery::Line | Delivery::Cone => 2.0,
         Delivery::Burst | Delivery::Sky => area(f.radius),
         Delivery::Blink if f.lands == Lands::Path => 2.0,
         Delivery::Blink => area(f.radius),
         _ => 1.0,
-    };
+    }
+}
+
+/// How much a power does, in one number: what energy and recharge follow
+/// from. Damage counts by how many it reaches, control by the seconds it
+/// takes away, help by how much and how many.
+pub fn value(d: &PowerDef) -> f32 {
+    let f = &d.fields;
+    let targets = targets(d);
     let hits = f.repeats.max(1) as f32;
     let harm = f.damage * (1.0 + f.dot + f.drain + f.exploit * 0.5) * hits * targets;
     let control = (f.hold as f32 * 8.0
@@ -2563,10 +2604,10 @@ pub fn value(d: &PowerDef) -> f32 {
         + f.shield * lasting * 4.0
         + f.reflect * lasting * 10.0
         + (f.resist.max(0.0) + f.might + f.haste) * lasting * 25.0
-        + f.steadfast as u8 as f32 * lasting * 2.0
-        + f.hide as u8 as f32 * lasting * 6.0
-        + f.execute as u8 as f32 * lasting * 15.0
-        + f.revive as u8 as f32 * 100.0)
+        + f.steadfast * lasting * 2.0
+        + f.hide * lasting * 6.0
+        + f.execute * lasting * 15.0
+        + f.revive * 100.0)
         * friends;
     let moving = if d.delivery() == Delivery::Blink {
         f.range as f32 * 1.5 + if f.lands == Lands::Home { 60.0 } else { 0.0 }
@@ -2735,16 +2776,70 @@ pub struct Kit {
     pub passive: Fields,
     /// The power the blast key fires (the hero's first bolt), if any.
     pub blast: Option<PowerId>,
+    /// The augments in the powers' sockets (see [`crate::augments`]).
+    sockets: Sockets,
+}
+
+/// Powers with augments a kit holds: every power a hero can own.
+const SOCKET_ROWS: usize = hw_net::protocol::MAX_SET_AUGMENTS / SOCKETS;
+
+/// The augments set into a hero's powers: a short list of powers and
+/// their three sockets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Sockets {
+    rows: [(PowerId, [Augment; SOCKETS]); SOCKET_ROWS],
+    len: u8,
+}
+
+impl Sockets {
+    const NONE: Sockets = Sockets {
+        rows: [(PowerId(0), [Augment::NONE; SOCKETS]); SOCKET_ROWS],
+        len: 0,
+    };
+
+    fn of(&self, id: PowerId) -> [Augment; SOCKETS] {
+        self.rows[..self.len as usize]
+            .iter()
+            .find(|r| r.0 == id)
+            .map_or([Augment::NONE; SOCKETS], |r| r.1)
+    }
+
+    /// Puts `a` into socket `slot` of `id` (nothing happens past the
+    /// last row: a sane sheet never has that many powers).
+    fn put(&mut self, id: PowerId, slot: usize, a: Augment) {
+        if slot >= SOCKETS {
+            return;
+        }
+        let n = self.len as usize;
+        let row = match self.rows[..n].iter().position(|r| r.0 == id) {
+            Some(i) => i,
+            None if n < SOCKET_ROWS => {
+                self.rows[n] = (id, [Augment::NONE; SOCKETS]);
+                self.len += 1;
+                n
+            }
+            None => return,
+        };
+        self.rows[row].1[slot] = a;
+    }
 }
 
 impl Default for Kit {
     fn default() -> Self {
+        Self::bare(Sockets::NONE, 0, Element::None)
+    }
+}
+
+impl Kit {
+    /// A kit with only the free powers, these augments and these toggles on.
+    fn bare(sockets: Sockets, on: u128, element: Element) -> Self {
         let mut k = Kit {
             owned: 0,
-            on: 0,
-            element: Element::None,
+            on,
+            element,
             passive: Fields::NONE,
             blast: None,
+            sockets,
         };
         // The free powers count like bought ones (Super Jump and Sprint
         // bring their travel bits).
@@ -2753,30 +2848,81 @@ impl Default for Kit {
         }
         k
     }
-}
 
-impl Kit {
     pub fn of(sheet: &Sheet) -> Self {
-        let mut k = Kit {
-            element: Element::from_code(sheet.element),
-            ..Kit::default()
-        };
+        let mut sockets = Sockets::NONE;
+        for a in &sheet.augments {
+            if sheet.has(a.power) {
+                sockets.put(a.power, a.slot as usize, a.augment);
+            }
+        }
+        let mut k = Kit::bare(sockets, 0, Element::from_code(sheet.element));
         for p in &sheet.powers {
             k.add(p.power);
         }
         k
     }
 
+    /// This kit with `augments` in the sockets of `id` (tests and tools).
+    pub fn with_augments(self, id: PowerId, augments: &[Augment]) -> Self {
+        let mut sockets = self.sockets;
+        for (slot, a) in augments.iter().enumerate().take(SOCKETS) {
+            sockets.put(id, slot, *a);
+        }
+        let owned: Vec<PowerId> = self.owned().collect();
+        let mut k = Kit::bare(sockets, self.on, self.element);
+        for id in owned {
+            k.add(id);
+        }
+        k
+    }
+
+    /// The augments in the sockets of `id`.
+    pub fn sockets(&self, id: PowerId) -> [Augment; SOCKETS] {
+        self.sockets.of(id)
+    }
+
+    /// What augments add to travel, in whole percent: speed on the ground,
+    /// flying, through the air without flying, and a super jump's height
+    /// (see [`crate::Moves::boosts`]).
+    pub fn boosts(&self) -> [u8; 4] {
+        let p = &self.passive;
+        [p.swift, p.soar, p.leap, p.height].map(|x| (x * 100.0).round().clamp(0.0, 255.0) as u8)
+    }
+
+    /// What power `id` does in this hero's hands: its fields with the
+    /// augments in its sockets added (see [`crate::augments::apply`]).
+    pub fn fields(&self, id: PowerId) -> Fields {
+        let d = def_of(id);
+        if self.sockets.len == 0 {
+            return d.fields;
+        }
+        crate::augments::apply(d, &self.sockets.of(id))
+    }
+
+    /// Energy power `id` takes in this hero's hands.
+    pub fn energy(&self, id: PowerId) -> f32 {
+        crate::augments::energy(def_of(id), &self.fields(id))
+    }
+
+    /// Seconds before power `id` is ready again in this hero's hands
+    /// (before any haste).
+    pub fn recharge(&self, id: PowerId) -> f64 {
+        crate::augments::recharge(def_of(id), &self.fields(id))
+    }
+
     fn add(&mut self, id: PowerId) {
         let Some(d) = get(id) else {
             return;
         };
-        self.owned |= 1 << id.0;
-        if d.passive() {
-            self.passive.add_passive(&d.fields);
+        // Once only: a power's passive fields count once.
+        if self.has(id) {
+            return;
         }
-        if d.toggle && self.is_on(id) {
-            self.passive.add_passive(&d.fields);
+        self.owned |= 1 << id.0;
+        if d.passive() || (d.toggle && self.is_on(id)) {
+            let fields = self.fields(id);
+            self.passive.add_passive(&fields);
         }
         let first_bolt = self.blast.is_none_or(|b| {
             let o = def_of(b);
@@ -2834,11 +2980,8 @@ impl Kit {
     /// owned toggles count).
     pub fn set_toggles(&mut self, on: u128) {
         let owned: Vec<PowerId> = self.owned().collect();
-        let mut k = Kit {
-            element: self.element,
-            ..Kit::default()
-        };
-        k.on = on & self.owned & toggle_bits();
+        let on = on & self.owned & toggle_bits();
+        let mut k = Kit::bare(self.sockets, on, self.element);
         for id in owned {
             k.add(id);
         }

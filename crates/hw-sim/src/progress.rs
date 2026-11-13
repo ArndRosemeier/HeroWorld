@@ -6,7 +6,8 @@
 //! tree, a power once what it needs is owned. Its price goes by its row and
 //! by how many powers the hero has already; giving a power up returns 90%
 //! of what was paid, once nothing still owned needs it. What a power does
-//! follows from the hero's level (see [`crate::combat::level_scale`]).
+//! follows from the hero's level (see [`crate::combat::level_scale`]) and
+//! from the augments set into it (see [`crate::augments`]).
 //!
 //! Pacing: one level costs about one first-row power, level 2 comes after
 //! about ten minutes of play, level 20 after about ten hours, with about
@@ -241,6 +242,8 @@ pub fn give_up(sheet: &mut Sheet, power: PowerId) -> Result<u32, GiveUpError> {
     let p = sheet.powers.remove(i);
     let back = (p.paid as f64 * REFUND).floor() as u32;
     sheet.karma += back;
+    // Its augments go with it: the refund is for the power only.
+    crate::augments::lose_with(sheet, power);
     Ok(back)
 }
 
@@ -250,6 +253,7 @@ pub fn refund_all(sheet: &mut Sheet) {
     let paid: u32 = sheet.powers.iter().map(|p| p.paid).sum();
     sheet.karma = sheet.karma.saturating_add(paid);
     sheet.powers.clear();
+    sheet.augments.retain(|a| powers::is_free(a.power));
 }
 
 /// A new hero of `origin` (an index into [`ORIGINS`]) and `element`: no
@@ -319,6 +323,7 @@ pub fn sanitize(mut s: Sheet) -> Sheet {
         }
     }
     s.powers = kept;
+    crate::augments::sanitize(&mut s);
     s.story = s.story.min(crate::story::CHAPTERS.len() as u8);
     s.briefed &= (s.story as usize) < crate::story::CHAPTERS.len();
     s

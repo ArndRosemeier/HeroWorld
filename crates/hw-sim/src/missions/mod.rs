@@ -873,6 +873,27 @@ impl Missions {
             r.share(),
             r.site().building.is_some(),
         );
+        // What the gang had: an augment for each hero there, never a
+        // common one.
+        let (at, tall) = (r.site().at, r.site().building.is_some());
+        let finds: Vec<combat::Drop> = heroes
+            .iter()
+            .filter(|h| {
+                if tall {
+                    running::flat(h.at, at) < REWARD
+                } else {
+                    running::near(h.at, at, REWARD)
+                }
+            })
+            .map(|h| combat::Drop {
+                hero: h.id,
+                from: h.id,
+                at: h.at + DVec3::Y * 1.2,
+                carried: None,
+                level: h.level,
+            })
+            .collect();
+        world.resource_mut::<Fights>().drops.extend(finds);
         if r.is_hideout() {
             let safes = r.wrap_up(world, self.now);
             self.left.extend(safes);

@@ -49,6 +49,8 @@ pub enum DebugAction {
     Element(hw_sim::powers::Element),
     /// Give every power back (90% of each price back).
     ClearPowers,
+    /// Augments of every grade into the bag (and a few set).
+    Augments,
     /// Move a faction's regard for the hero by this much.
     Regard(Faction, i8),
     /// Every faction back to how it sees townsfolk.
@@ -328,6 +330,9 @@ fn hero_tab(ui: &mut egui::Ui, info: &DebugInfo, out: &mut Vec<DebugAction>) {
         if ui.button("Give all back").clicked() {
             out.push(DebugAction::ClearPowers);
         }
+        if ui.button("A bag of augments").clicked() {
+            out.push(DebugAction::Augments);
+        }
     });
     ui.label("B opens the powers window to buy one at a time.");
     ui.horizontal_wrapped(|ui| {
@@ -514,6 +519,35 @@ pub fn buy_all(mut s: Sheet) -> Sheet {
         }
     }
     s
+}
+
+/// Augments for trying them out: the bag filled with ones of every grade
+/// for a hero of `level` (most fit a power the hero has), and the hero's
+/// first few powers with a socket or two filled.
+pub fn give_augments(s: &mut Sheet, level: u8) {
+    use hw_sim::augments::{self, Dice, Grade};
+    let mut dice = Dice(0x5eed ^ s.powers.len() as u64);
+    // A few set, so sockets show filled.
+    let owned: Vec<hw_net::PowerId> = hw_net::PowerId::FREE
+        .into_iter()
+        .chain(s.powers.iter().map(|p| p.power))
+        .collect();
+    for (k, p) in owned.into_iter().take(6).enumerate() {
+        let d = hw_sim::powers::def_of(p);
+        for (slot, e) in augments::fitting(d).take((k % 3) + 1).enumerate() {
+            let grade = Grade::from_code(((k + slot) % 3) as u8);
+            s.bag.insert(0, augments::make(e, grade, level));
+            let _ = augments::set(s, 0, p, slot as u8);
+        }
+    }
+    while s.bag.len() < hw_net::MAX_BAG - 6 {
+        let a = match s.bag.len() % 4 {
+            0 => augments::find(s, level, &mut dice),
+            _ => augments::roll(s, 2, level, &mut dice)
+                .unwrap_or_else(|| augments::find(s, level, &mut dice)),
+        };
+        s.bag.push(a);
+    }
 }
 
 /// The sheet with every power given back (90% of each price refunded),

@@ -69,8 +69,9 @@ pub(crate) fn spawn(world: &mut World, sm: combat::Summon, tick: u64) -> NetId {
         index,
         at,
         level,
+        strength,
     } = sm;
-    let strength = crate::powers::def_of(power).fields.summon_power.max(0.1);
+    let strength = strength.max(0.1);
     // The first of a call sends old ones (still lying there, or another
     // power's) home.
     let old: Vec<Entity> = world

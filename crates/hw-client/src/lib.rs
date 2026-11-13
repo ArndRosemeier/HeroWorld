@@ -3,6 +3,7 @@
 //! people from Actors.
 
 pub mod atomview;
+pub mod augmentview;
 pub mod bench;
 pub mod buildingmesh;
 pub mod busview;

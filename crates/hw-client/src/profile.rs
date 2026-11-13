@@ -187,8 +187,9 @@ impl Profile {
 
 /// Hero file format, so later fields don't break old heroes. Version 2
 /// brought the power trees: older heroes get all their karma back once and
-/// pick again, element too.
-const HERO_VERSION: u64 = 2;
+/// pick again, element too. Version 3 brought augments: older heroes have
+/// none, with empty sockets.
+const HERO_VERSION: u64 = 3;
 
 fn sheet_to_json(s: &Sheet) -> Value {
     json!({
@@ -204,6 +205,13 @@ fn sheet_to_json(s: &Sheet) -> Value {
             "power": p.power.0,
             "paid": p.paid,
         })).collect::<Vec<_>>(),
+        // Augments set into powers' sockets, and the bag of those found.
+        "augments": s.augments.iter().map(|a| json!({
+            "power": a.power.0,
+            "slot": a.slot,
+            "augment": augment_to_json(a.augment),
+        })).collect::<Vec<_>>(),
+        "bag": s.bag.iter().map(|a| augment_to_json(*a)).collect::<Vec<_>>(),
         // Where the hero's portals lead, in the world it was marked in
         // (a string: JSON numbers lose bits past 2^53).
         "portal_home": s.gate_home.map(|g| json!({
@@ -224,6 +232,19 @@ fn sheet_to_json(s: &Sheet) -> Value {
                 "step": c.step,
             })).collect::<Vec<_>>(),
         },
+    })
+}
+
+fn augment_to_json(a: hw_net::Augment) -> Value {
+    json!({ "effect": a.effect, "percent": a.percent, "grade": a.grade })
+}
+
+fn augment_from_json(v: &Value) -> Option<hw_net::Augment> {
+    let byte = |k: &str| Some(v.get(k)?.as_u64()?.min(255) as u8);
+    Some(hw_net::Augment {
+        effect: byte("effect")?,
+        percent: byte("percent")?,
+        grade: byte("grade")?,
     })
 }
 
@@ -307,6 +328,27 @@ fn sheet_from_json(v: &Value) -> Option<Sheet> {
         briefed: o.get("briefed").and_then(|b| b.as_bool()).unwrap_or(false),
         gate_home: o.get("portal_home").and_then(gate_home_from_json),
         cases: cases_from_json(&v["cases"]),
+        // Junk, and what no longer fits, is dropped by `sanitize`.
+        augments: o
+            .get("augments")
+            .and_then(|a| a.as_array())
+            .map(|list| {
+                list.iter()
+                    .filter_map(|a| {
+                        Some(hw_net::SetAugment {
+                            power: PowerId(a.get("power")?.as_u64()?.min(255) as u8),
+                            slot: a.get("slot")?.as_u64()?.min(255) as u8,
+                            augment: augment_from_json(a.get("augment")?)?,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        bag: o
+            .get("bag")
+            .and_then(|a| a.as_array())
+            .map(|list| list.iter().filter_map(augment_from_json).collect())
+            .unwrap_or_default(),
     };
     if num("version") < 2 {
         // Before the power trees: every power back, nothing picked.

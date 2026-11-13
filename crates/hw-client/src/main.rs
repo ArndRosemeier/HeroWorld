@@ -702,6 +702,11 @@ fn main() -> EngineResult<()> {
         if std::env::var_os("HW_POWERS").is_some() {
             s = hw_client::debugmenu::buy_all(s);
         }
+        // HW_AUGMENTS=1: a bag of augments of every grade, and a few set
+        // into the hero's powers (screenshots, trying them out).
+        if std::env::var_os("HW_AUGMENTS").is_some() {
+            hw_client::debugmenu::give_augments(&mut s, level.clamp(1, 20));
+        }
         hero_file = Some(s);
     }
     // HW_STORY=n starts with n chapters of the Doctor's story done
@@ -2657,6 +2662,14 @@ fn main() -> EngineResult<()> {
                         A::ClearPowers => {
                             cheated = true;
                             session.debug_sheet(dm::clear_powers);
+                        }
+                        A::Augments => {
+                            cheated = true;
+                            session.debug_sheet(|mut s| {
+                                let level = hw_sim::progress::level_of(s.lifetime);
+                                dm::give_augments(&mut s, level);
+                                s
+                            });
                         }
                         A::Regard(f, by) => {
                             cheated = true;
@@ -5238,6 +5251,7 @@ fn main() -> EngineResult<()> {
                     match a {
                         PowerAction::Buy(p) => session.buy(p),
                         PowerAction::GiveUp(p) => session.give_up(p),
+                        PowerAction::Augment(a) => session.augment(a),
                         PowerAction::Create(s) => {
                             hero_file = Some(s.clone());
                             my_sheet = s.clone();
