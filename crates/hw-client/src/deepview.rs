@@ -186,15 +186,15 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
                     },
                     other,
                 );
-                if v.kind == VoidKind::Shaft && !v.open {
-                    // A closed lift: a roof over the top.
-                    let c = v.world((v.min + v.max) * 0.5);
-                    let top = v.floor[0] + v.height;
+                let c = v.world((v.min + v.max) * 0.5);
+                let top = v.floor[0] + v.height;
+                if v.kind == VoidKind::Shaft && !v.open && !other(v3(c, top + 0.5)) {
+                    // A closed lift: a roof over the top (none where it
+                    // comes up into another space, as into Molehaven).
                     inner.tex = Some(FacadeLayer::Concrete.into());
                     let k = v.corners();
                     inner.quad(k.map(|p| v3(p, top)), -DVec3::Y, rgb(150, 148, 144));
                     inner.tex = None;
-                    let _ = c;
                 }
             }
             _ => {}
@@ -203,6 +203,10 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
     // The stairs between the layers.
     for l in &t.lifts {
         uv::spiral_stair(&mut inner, &l.spiral);
+        if l.rail {
+            // Up through a floor: paving and a rail round the hole.
+            uv::collar_on(&mut inner, l.spiral.c, l.spiral.dir, |_| l.top);
+        }
     }
     for f in &t.fixtures {
         fixture(&mut inner, f, &mut glows);

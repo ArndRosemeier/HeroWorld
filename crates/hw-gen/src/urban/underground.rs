@@ -204,6 +204,10 @@ impl Underground {
     pub fn floor_for(&self, p: DVec2, y: f64) -> Option<f64> {
         let mut best: Option<f64> = None;
         for (_, v) in self.at(p) {
+            // Molehaven's floor stops at the stair down to the Deeps.
+            if v.kind == VoidKind::Cavern && super::molehaven::over_deep_stair(self, p, 0.0) {
+                continue;
+            }
             let f = v.floor_at(p);
             let reach = v.ceiling_at(p).unwrap_or(f64::MAX);
             if y >= f - 1.0 && y <= reach + 0.45 && best.is_none_or(|b| f > b) {

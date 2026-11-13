@@ -1607,14 +1607,23 @@ fn main() -> EngineResult<()> {
                     FlyCamera::new((p.x as f32, rs.bottom as f32 - 0.9, p.y as f32), yaw, 4.0)
                 }
                 ("moleroom", _, _, Some(c)) if c.chambers.len() > 1 => {
-                    // Into the side chambers from the hall: the first one.
+                    // Into a side chamber from the hall (`HW_ROOM=n`: the
+                    // n-th, 1 by default; `HW_ROOM_HIGH=1` looks down on it).
+                    let n = std::env::var("HW_ROOM")
+                        .ok()
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(1)
+                        .clamp(1, c.chambers.len() - 1);
+                    let high = std::env::var_os("HW_ROOM_HIGH").is_some();
                     let hall = &u.voids[c.chambers[0]];
-                    let ch = &u.voids[c.chambers[1]];
+                    let ch = &u.voids[c.chambers[n]];
                     let mid = ch.world((ch.min + ch.max) * 0.5);
-                    let p = mid + (hall.origin - mid).normalize_or(DVec2::X) * 9.0;
+                    let back = if high { 4.0 } else { 11.0 };
+                    let p = mid + (hall.origin - mid).normalize_or(DVec2::X) * back;
                     let d = mid - p;
                     let yaw = d.x.atan2(d.y).to_degrees() as f32;
-                    FlyCamera::new((p.x as f32, c.floor as f32 + 3.2, p.y as f32), yaw, -12.0)
+                    let (h, pitch) = if high { (7.5, -62.0) } else { (4.6, -18.0) };
+                    FlyCamera::new((p.x as f32, c.floor as f32 + h, p.y as f32), yaw, pitch)
                 }
                 ("molehaven", _, _, Some(c)) => {
                     let hall = &u.voids[c.chambers[0]];

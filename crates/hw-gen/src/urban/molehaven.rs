@@ -180,10 +180,26 @@ fn mix(a: u64, b: u64) -> u32 {
 /// Where the stair on down to the Deeps comes up in Molehaven (the deep
 /// layer plans it there; its foot here must stay clear).
 pub fn deep_lift_spot(u: &Underground) -> Option<DVec2> {
+    deep_stair(u).map(|(c, _)| c)
+}
+
+/// The stair down to the Deeps from the first side chamber: its centre and
+/// the way its door faces (into the chamber, along its back wall).
+pub fn deep_stair(u: &Underground) -> Option<(DVec2, DVec2)> {
     let cav = u.cavern.as_ref()?;
     let &ci = cav.chambers.get(1)?;
     let ch = &u.voids[ci];
-    Some(ch.world(ch.max - DVec2::splat(2.6)))
+    Some((ch.world(ch.max - DVec2::splat(2.6)), -ch.along))
+}
+
+/// Is `p` over the hole of Molehaven's stair down to the Deeps (`grow`
+/// metres round it too)? The cavern has no floor there.
+pub fn over_deep_stair(u: &Underground, p: DVec2, grow: f64) -> bool {
+    deep_stair(u).is_some_and(|(c, dir)| {
+        let d = p - c;
+        let k = SHAFT_HALF + grow;
+        d.dot(dir).abs() <= k && d.dot(dir.perp()).abs() <= k
+    })
 }
 
 /// Places that must stay open: the ways in and out (circles).
@@ -826,6 +842,34 @@ fn room(
                 0.0,
             );
         }
+    }
+    // Every chamber: strings of lamps overhead, and crystals and
+    // stalagmites along its side walls and back corners.
+    l.fixtures.push(Fixture {
+        kind: FixtureKind::LampString,
+        at: DVec3::new(0.0, f + 4.4, 0.0) + {
+            let m = at(0.0, 0.0);
+            DVec3::new(m.x, 0.0, m.y)
+        },
+        dir: back,
+        size: DVec3::new(depth - 1.5, 0.0, width - 1.5),
+        look: mix(seed, 90),
+    });
+    for k in 0..10u64 {
+        let h = mix(seed, 120 + k);
+        let t = (h % 1000) as f64 / 1000.0;
+        // Along one side wall (k even: one side, odd: the other), from the
+        // hall's end to the back corner.
+        let side = if k % 2 == 0 { 1.0 } else { -1.0 };
+        let p = at(-depth * 0.6 + t * (depth * 1.6 - 1.4), side * (width - 1.1));
+        let (kind, size) = if k % 3 == 0 {
+            let s = 1.6 + (h >> 12) as f64 % 5.0 * 0.4;
+            (FixtureKind::Stalagmite, DVec3::new(0.5 + s * 0.1, s, 0.0))
+        } else {
+            let s = 1.2 + (h >> 12) as f64 % 4.0 * 0.5;
+            (FixtureKind::Crystal, DVec3::new(s * 0.25, s, 0.0))
+        };
+        put(l, taken, kind, p, DVec2::X, size, size.x);
     }
     // Two neighbours talking, a little in from the hall.
     let a = at(-depth * 0.35, -0.5);

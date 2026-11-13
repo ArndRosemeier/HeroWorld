@@ -490,6 +490,17 @@ fn emblem_face(b: &mut MeshBuilder, c: DVec3, n: DVec3, r: f64) {
     let s = u.cross(n).normalize();
     let at = |x: f64, y: f64, z: f64| c + s * x + u * y + n * z;
     hoop(b, c, s, u, r, r * 0.06, Surf::Glow, amber());
+    // A pale field, so the brown face reads on the dark plate.
+    oval(
+        b,
+        at(0.0, 0.0, 0.002),
+        s,
+        u,
+        n,
+        r * 0.94,
+        r * 0.94,
+        rgb(236, 220, 178),
+    );
     for ex in [-1.0, 1.0] {
         oval(
             b,

@@ -297,6 +297,9 @@ pub struct InnerLift {
     pub bottom: f64,
     pub top: f64,
     pub spiral: Spiral,
+    /// Its top opens in a floor (Molehaven's side chamber): a rail round
+    /// the hole on the three sides away from the door.
+    pub rail: bool,
 }
 
 /// A tube station as planned in its tile.
@@ -433,7 +436,7 @@ impl DeepTile {
         self.solids
             .extend(self.entrances.iter().flat_map(|e| e.spiral.solids(true)));
         self.solids
-            .extend(self.lifts.iter().flat_map(|l| l.spiral.solids(false)));
+            .extend(self.lifts.iter().flat_map(|l| l.spiral.solids(l.rail)));
         self.solid_grid.clear();
         for (i, f) in self.solids.iter().enumerate() {
             let r = f.reach();
@@ -803,14 +806,15 @@ impl Plan<'_> {
     }
 
     /// A closed stair shaft from `bottom` up to `top` at `c`.
-    pub fn inner_lift(&mut self, c: DVec2, bottom: f64, top: f64) {
-        let spiral = Spiral::new(c, DVec2::Y, top, bottom);
+    pub fn inner_lift(&mut self, c: DVec2, dir: DVec2, bottom: f64, top: f64, rail: bool) {
+        let spiral = Spiral::new(c, dir, top, bottom);
         self.t.voids.push(spiral.shaft(Some(top - bottom + 4.0)));
         self.t.lifts.push(InnerLift {
             pos: c,
             bottom,
             top,
             spiral,
+            rail,
         });
         self.t.lamps.push(DeepLamp {
             pos: DVec3::new(c.x, bottom + 2.6, c.y),
@@ -830,7 +834,7 @@ impl Plan<'_> {
     /// connect its foot to the tile's galleries).
     pub fn lift_to_deeps(&mut self, c: DVec2, top: f64) {
         let bottom = deep_floor(self.w, c);
-        self.inner_lift(c, bottom, top);
+        self.inner_lift(c, DVec2::Y, bottom, top, false);
         self.bottoms.push(c);
     }
 }

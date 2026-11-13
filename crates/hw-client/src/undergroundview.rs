@@ -292,8 +292,14 @@ pub(crate) fn lining_of(
             let corners = [at(x0, y0), at(x1, y0), at(x1, y1), at(x0, y1)];
             let mid = at((x0 + x1) * 0.5, (y0 + y1) * 0.5);
             let f = v.floor_at(mid);
-            // One floor where voids overlap: the first one's.
-            if owns_floor(mid, f) {
+            // One floor where voids overlap: the first one's. Molehaven's
+            // has a hole for the stair down to the Deeps (its collar, drawn
+            // with the stair, covers the cells' ragged edge).
+            let hole = cavern
+                && corners.iter().chain([&mid]).any(|&q| {
+                    hw_gen::urban::molehaven::over_deep_stair(town.underground(), q, 0.0)
+                });
+            if !hole && owns_floor(mid, f) {
                 b.tex = Some(
                     if cavern && v.height < hw_gen::urban::molehaven::HALL_HEIGHT - 0.5 {
                         // The side chambers (lower than the great hall): beaten earth.
@@ -501,12 +507,17 @@ fn tunnel_fittings(b: &mut MeshBuilder, u: &Underground, i: usize) {
 /// Paving round a lift's opening in the street, with a chrome rail on the
 /// three sides away from the door.
 pub(crate) fn collar(b: &mut MeshBuilder, c: DVec2, door: DVec2, town: &TownWorld) {
+    collar_on(b, c, door, |q| town.ground(q));
+}
+
+/// [`collar`] on any floor: `floor(q)` is its height at `q`.
+pub(crate) fn collar_on(b: &mut MeshBuilder, c: DVec2, door: DVec2, floor: impl Fn(DVec2) -> f64) {
     let inner = hw_gen::urban::underground::SHAFT_HALF;
     let outer = inner + 2.4;
     let side = door.perp();
     let p = |x: f64, z: f64| {
         let q = c + side * x + door * z;
-        v3(q, town.ground(q) + 0.07)
+        v3(q, floor(q) + 0.07)
     };
     b.tex = Some(GroundLayer::Paving.into());
     let col = rgb(196, 192, 182);

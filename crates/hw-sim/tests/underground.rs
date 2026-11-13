@@ -267,3 +267,44 @@ fn down_the_ramp_from_the_tunnels_into_molehaven() {
         "not in Molehaven: {q:?}"
     );
 }
+
+#[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
+fn from_molehaven_down_its_stair_to_the_deeps() {
+    let town = GeneratedTown::generate(Seed(1), 40_000.0);
+    let mut sim = Sim::for_town(Seed(1), &town);
+    let me = PlayerId(1);
+    let hero = sim.spawn_hero(me, sim.spawn_point(1));
+    let w = town.world.clone();
+    let u = w.underground().clone();
+    let c = u.cavern.clone().expect("Molehaven");
+    let spot = hw_gen::urban::molehaven::deep_lift_spot(&u).expect("a side chamber");
+    let l = w
+        .deep_near(spot, 10.0)
+        .iter()
+        .flat_map(|t| t.lifts.clone())
+        .find(|l| l.pos.distance(spot) < 0.5)
+        .expect("Molehaven's stair down");
+    assert!(
+        (l.top - c.floor).abs() < 0.1,
+        "top {} floor {}",
+        l.top,
+        c.floor
+    );
+    // From the chamber's floor a few steps away, into the stair and down.
+    let route = l.spiral.route();
+    let r0 = route[0];
+    let start = DVec2::new(r0.x, r0.z) + l.spiral.dir * 4.0;
+    put(&mut sim, hero, DVec3::new(start.x, c.floor + 0.3, start.y));
+    run(&mut sim, me, InputState::default(), 0.5);
+    follow(&mut sim, me, hero, &route);
+    run(&mut sim, me, InputState::default(), 0.5);
+    let p = sim.position(hero).unwrap();
+    assert!(
+        (p.y - l.bottom).abs() < 0.6,
+        "at {:.1}, foot {:.1} (top {:.1})",
+        p.y,
+        l.bottom,
+        l.top
+    );
+}
