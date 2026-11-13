@@ -101,7 +101,7 @@ rule: a thing is never changed by time it was not simulated.
 
 1. **Scheduler** (done): `tiers.rs`, 11 tests: rings, hysteresis, pins, budget guarantee with
    50,000 things and ten heroes, order independence, turns, look-ahead, waking, sleep time.
-2. **Wire it in** (started 0.256: `enemies_act` walks the ticks a villain missed, `Enemy::last_think`, test `villain_speed.rs`; the plan itself is not driving it yet) for one system at a time, behind the plan: first `enemies_act` (replace
+2. **Wire it in** (started 0.256: `enemies_act` walks the ticks a villain missed, `Enemy::last_think`, test `villain_speed.rs`; driven by the plan since 0.257: 400 Full, 200 Reduced, `combat::ACT_CAP` per tick; tier counts in the overrun log 0.258) for one system at a time, behind the plan: first `enemies_act` (replace
    `THINK_CAP`), then the rest of combat, robots, incidents. Each conversion comes with a test
    that the thing moves the same distance per second on every stride.
 3. **Counts in the hitch log:** per tier counts and deferred wakes next to the part timings, so a

@@ -224,6 +224,10 @@ impl Tiers {
             assigned.push((c.id, tier));
         }
 
+        // Turns go round by place among the Reduced things in ID order, so
+        // each tick runs the same share (IDs themselves may all be even).
+        assigned.sort_by_key(|a| a.0);
+        let mut place = 0u64;
         let mut run = Vec::new();
         for (id, tier) in assigned {
             let slot = self.slots.get(&id).copied();
@@ -244,8 +248,10 @@ impl Tiers {
             }
             let due = match tier {
                 Tier::Full => true,
-                // Turns go round by ID, so each tick runs the same share.
-                Tier::Reduced => (id.0 as u64 + tick).is_multiple_of(cfg.reduced_stride),
+                Tier::Reduced => {
+                    place += 1;
+                    (place + tick).is_multiple_of(cfg.reduced_stride)
+                }
                 Tier::Dormant => false,
             };
             let last_run = slot.map_or(tick, |s| s.last_run);

@@ -1236,9 +1236,10 @@ impl Sim {
                 .query::<&combat::Enemy>()
                 .iter(&self.world)
                 .count();
-            let searches = self.world.resource::<combat::Fights>().path_searches;
+            let f = self.world.resource::<combat::Fights>();
+            let (searches, [full, reduced, dormant]) = (f.path_searches, f.tier_counts);
             self.overruns.push(format!(
-                "server tick {}: '{name}' took {:.1} ms (budget {:.0} ms) with {villains} villains, {searches} path searches",
+                "server tick {}: '{name}' took {:.1} ms (budget {:.0} ms) with {villains} villains ({full} full, {reduced} reduced, {dormant} dormant), {searches} path searches",
                 self.tick,
                 us as f64 / 1000.0,
                 PART_BUDGET_US as f64 / 1000.0,

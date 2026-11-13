@@ -1323,8 +1323,11 @@ struct Turn<'a> {
 
 /// Villains in the second ring (they act every second tick).
 const REDUCED_VILLAINS: u64 = 200;
-/// Most villains that act in one tick: the first ring plus half the second.
-pub const ACT_CAP: u64 = THINK_CAP + REDUCED_VILLAINS / 2;
+/// Villains woken in one tick (waking is work, so it is rationed).
+const WAKES_PER_TICK: u64 = 40;
+/// Most villains that act in one tick: the first ring, half the second, and
+/// the ones just woken (who take their first step at once).
+pub const ACT_CAP: u64 = THINK_CAP + REDUCED_VILLAINS / 2 + WAKES_PER_TICK;
 
 /// The villains' rings: at most [`THINK_CAP`] act every tick, another
 /// [`REDUCED_VILLAINS`] every second tick; the rest hold still. The cost of
@@ -1334,6 +1337,7 @@ pub fn villain_tiers() -> crate::tiers::Config {
     crate::tiers::Config {
         full_budget: THINK_CAP as usize,
         reduced_budget: REDUCED_VILLAINS as usize,
+        max_wakes: WAKES_PER_TICK as usize,
         ..Default::default()
     }
 }

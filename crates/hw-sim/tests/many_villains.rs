@@ -107,6 +107,19 @@ fn a_crowd_over_the_cap_acts_in_turns() {
     );
 }
 
+/// A thousand villains round one hero: the first ring is full, the second
+/// takes turns, the rest wait, and no tick does more than the cap.
+#[test]
+fn a_thousand_villains_fill_the_rings_and_no_more() {
+    let (mut sim, villains) = crowd(250, 1, 20.0, 6.0);
+    assert!(villains >= 900, "{villains} villains");
+    let r = run(&mut sim, u64::from(TICK_HZ) * 3);
+    let [full, reduced, dormant] = sim.fights().tier_counts;
+    assert_eq!(full + reduced + dormant, villains);
+    assert!(full as u64 <= THINK_CAP);
+    assert!(u64::from(r.most_acting) <= ACT_CAP);
+}
+
 #[test]
 fn a_dozen_heroes_among_villains_keep_to_the_caps() {
     let (mut sim, villains) = crowd(24, 12, 40.0, 0.0);
