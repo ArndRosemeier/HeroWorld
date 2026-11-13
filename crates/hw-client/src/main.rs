@@ -425,6 +425,7 @@ fn main() -> EngineResult<()> {
     // R: the hero runs on by itself until S or R.
     let mut autorun = false;
     let auto_fight = std::env::var_os("HW_AUTOFIGHT").is_some();
+    let carry_all = std::env::var_os("HW_CARRY").is_some();
     // `HW_AUTOFIGHT=17,20` uses those powers in turn (codes, see `Power`;
     // `1` alone keeps the usual round of every power).
     let auto_turn: Vec<u8> = std::env::var("HW_AUTOFIGHT")
@@ -3162,6 +3163,11 @@ fn main() -> EngineResult<()> {
                 }
                 if f.power != 0 && !(on_ui && f.power == hw_net::PowerId::STRIKE.0) {
                     pending_power = f.power;
+                }
+                // HW_CARRY=1: every villain carries an augment (screenshots
+                // of the gems and the drops).
+                if carry_all {
+                    session.debug_carry();
                 }
                 // HW_AUTOFIGHT=1 fights on its own (for screenshots): bolts
                 // while there is energy, punches up close.

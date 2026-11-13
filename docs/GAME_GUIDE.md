@@ -1855,6 +1855,7 @@ run, or put them in a `.bat`.
 | `HW_ORIGIN=n` | With `HW_LEVEL`: play origin n (0-4), karma given back. |
 | `HW_ELEMENT=n` | With `HW_LEVEL`: element n (1 Fire, 2 Frost, 3 Energy, 4 Necrotic, 5 Lightning, 6 Psychic). |
 | `HW_AUGMENTS=1` | With `HW_LEVEL`: a bag of augments and a few set (the debug menu has "A bag of augments" too). |
+| `HW_CARRY=1` | Every villain carries an augment (to look at the gems and the drops). |
 | `HW_FLY=1` | Start flying. |
 | `HW_STORY=n` | Start with n chapters of the Doctor's story done (not saved); `HW_BRIEFED=1` also briefed on the next. `HW_VIEW=statue` looks at the statue (`HW_STORY=7`). Where each chapter plays: `cargo run --release -p hw-sim --example story_places -- <seed> <people>`. |
 | `HW_NAME=...` | Hero name for this run. |

@@ -779,6 +779,26 @@ impl Session {
         }
     }
 
+    /// `HW_CARRY=1`: every villain there is carries an augment (common,
+    /// rare and relic in turn), for looking at the gems and the drops.
+    pub fn debug_carry(&mut self) {
+        if let Session::Local { host, .. } = self {
+            host.post(|h, _| {
+                for (id, _, _, mut f) in h.sim.enemies() {
+                    if f.carried.is_none() {
+                        let grade = hw_sim::augments::Grade::from_code((id.0 % 3) as u8);
+                        f.carried = Some(hw_net::Augment {
+                            effect: 0,
+                            percent: hw_sim::augments::strength(grade, f.level),
+                            grade: grade.code(),
+                        });
+                        h.sim.set_fighter(id, f);
+                    }
+                }
+            });
+        }
+    }
+
     /// Debug menu: our hero's health and energy full, standing again.
     pub fn debug_heal(&mut self) {
         if let Session::Local { host, .. } = self {

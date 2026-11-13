@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.271 (2026-11-13)
+
+- Nothing new in play: a test switch (`HW_CARRY=1`) that makes every villain carry an augment, for looking at the gems and the drops.
+
 ## 0.270 (2026-11-13)
 
 - Augments: loot for your powers. Some villains carry one, with a gem glinting over their head (copper, blue or gold for common, rare and relic); beat them and everyone who helped gets one. Every boss carries one, and a hideout bust ends with a find.
