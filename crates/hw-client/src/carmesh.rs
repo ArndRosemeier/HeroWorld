@@ -45,7 +45,7 @@ impl Lod {
 }
 
 /// Two-tone paints: body, then roof and trim.
-pub const PAINTS: [[(u8, u8, u8); 2]; 8] = [
+pub const PAINTS: [[(u8, u8, u8); 2]; 9] = [
     [(196, 36, 48), (244, 238, 228)],
     [(56, 186, 186), (244, 238, 228)],
     [(240, 150, 172), (250, 244, 238)],
@@ -54,6 +54,9 @@ pub const PAINTS: [[(u8, u8, u8); 2]; 8] = [
     [(244, 206, 58), (40, 40, 44)],
     [(238, 226, 198), (120, 30, 42)],
     [(176, 148, 218), (204, 208, 218)],
+    // A gang's car (`hw_gen::urban::props::GANG_PAINT`): black under a
+    // blood-red roof.
+    [(20, 20, 24), (150, 18, 26)],
 ];
 
 pub(crate) type Paint = Option<(Surf, Color)>;

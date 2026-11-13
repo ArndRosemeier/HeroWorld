@@ -401,14 +401,16 @@ impl BuildingSite {
     }
 
     /// Is this a gang hideout? Only a building of halls with two or more
-    /// floors and room for a gang: every tenement, one in six
-    /// shop-and-office blocks (works keep their machines). Decided by its seed alone.
+    /// floors and room for a gang: one tenement in four, one in six
+    /// shop-and-office blocks (works keep their machines). Hideouts are
+    /// the exception, not the street: the rest are homes and shops.
+    /// Decided by its seed alone.
     pub fn is_hideout(&self) -> bool {
         if self.halls.is_none() || self.floors < 2 || self.size.min_element() < 12.0 {
             return false;
         }
         match self.usage {
-            BuildingUse::Tenement => true,
+            BuildingUse::Tenement => self.seed.child("hideout").rng().chance(1.0 / 4.0),
             BuildingUse::ShopsAndOffices => self.seed.child("hideout").rng().chance(1.0 / 6.0),
             _ => false,
         }

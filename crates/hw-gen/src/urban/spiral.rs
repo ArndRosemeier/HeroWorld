@@ -28,6 +28,13 @@ pub const NEWEL: f64 = 0.7;
 /// Centre line of the ring, and half the width of a step across it.
 const MID: f64 = 1.2;
 const HALF_WIDTH: f64 = 0.5;
+/// The ring's inner and outer edges, from the shaft's centre: the pillar's
+/// face and the shaft's wall.
+pub const RING: (f64, f64) = (NEWEL, MID + HALF_WIDTH);
+/// The balustrade: its rail's height over a step and its thickness (m),
+/// standing just inside the ring's outer edge.
+pub const RAIL_HEIGHT: f64 = 0.95;
+pub const RAIL_T: f64 = 0.04;
 /// Headroom a walkway under the stair needs (m).
 const HEADROOM: f64 = 2.1;
 /// A person's radius, and the ledge height they step onto.
@@ -162,6 +169,42 @@ impl Spiral {
             .collect()
     }
 
+    /// Whether step `s` has the balustrade on its outer edge: from a drop
+    /// of a rail's height below the top (so no rail stands up out of the
+    /// street) down to where the floor is a metre below.
+    pub fn railed(&self, s: &Step) -> bool {
+        s.top <= self.top - RAIL_HEIGHT + 1e-9 && s.top > self.bottom + 1.0
+    }
+
+    /// The unit normals (local) of the faces of `s` on the ring's outer
+    /// edge: one for a tread, two for a landing in a corner.
+    pub fn outer_faces(s: &Step) -> Vec<DVec2> {
+        [DVec2::X, -DVec2::X, DVec2::Y, -DVec2::Y]
+            .into_iter()
+            .filter(|n| ((s.at + s.half * *n).dot(*n) - RING.1).abs() < 1e-6)
+            .collect()
+    }
+
+    /// The balustrade along the outer edge, as solid parts: a thin wall on
+    /// every railed step, as high as the rail (the drawn rail is on it).
+    pub fn rails(&self) -> Vec<Footprint> {
+        let mut out = Vec::new();
+        for s in self.steps().iter().filter(|s| self.railed(s)) {
+            for n in Spiral::outer_faces(s) {
+                let along = DVec2::new(n.y.abs(), n.x.abs());
+                let at = s.at + n * (s.half.dot(n.abs()) - RAIL_T * 0.5 - 0.04);
+                out.push(Footprint::Box {
+                    at: self.world(at),
+                    dir: self.dir,
+                    half: along * s.half.dot(along) + n.abs() * (RAIL_T * 0.5 + 0.04),
+                    y0: s.top,
+                    y1: s.top + RAIL_HEIGHT,
+                });
+            }
+        }
+        out
+    }
+
     /// Where a person's feet go walking down: the middle of every step,
     /// top landing first (for bots and tests; reverse it to climb).
     pub fn route(&self) -> Vec<glam::DVec3> {
@@ -174,7 +217,7 @@ impl Spiral {
             .collect()
     }
 
-    /// The solid parts: the pillar and every step.
+    /// The solid parts: the pillar, every step and the balustrade.
     pub fn footprints(&self) -> Vec<Footprint> {
         let mut out = vec![Footprint::Box {
             at: self.c,
@@ -190,6 +233,7 @@ impl Spiral {
             y0: s.bottom,
             y1: s.top,
         }));
+        out.extend(self.rails());
         out
     }
 

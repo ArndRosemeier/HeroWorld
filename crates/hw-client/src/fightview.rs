@@ -2688,6 +2688,8 @@ pub fn villain_under(
                 EntityKind::Colossus => (4.0, 14.0, 0.0),
                 EntityKind::WeakPoint => (1.4, 2.8, -1.4),
                 EntityKind::Sentry => (1.1, 3.2, 0.0),
+                // Its body is at its door: the door and the box behind it.
+                EntityKind::Safe => (0.75, 1.5, 0.0),
                 _ => (0.6, 2.1, 0.0),
             };
             let p = pos(e);

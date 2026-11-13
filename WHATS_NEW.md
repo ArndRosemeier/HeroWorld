@@ -3,6 +3,42 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.268 (2026-11-13)
+
+- Molehaven has a proper front door: a stone and iron gate with the mole emblem beside the mole drill, over a stair down into the cavern. A ramp from the utility tunnels leads there too, under a lit sign.
+- Signposts with the mole's face on the streets point the way, the map and minimap mark the gate, and taxis stop at "Molehaven gate".
+- Molehaven itself is finished: mushroom houses with lit windows and doors, a market round a glowing well under the drill's bore, columns, stalactites, strings of lights, and a workshop, mushroom farm, shrine and cottages in the side caves. Everything there is solid.
+- The stair from Molehaven down to the Deeps works again: it was covered by the cavern floor.
+- Towns are generated a little differently again: everyone playing together needs this version.
+
+## 0.267 (2026-11-13)
+
+- The thing a gang hides is now locked in a safe. Target the safe (Tab or click) and break it open with your powers; the door swings wide and the thing is inside. The noise brings the next crew.
+- A hideout with room at the kerb has the gang's car parked in front: a long black sedan under a blood-red roof.
+- Everyone playing together needs this version. Towns are generated a little differently.
+
+## 0.266 (2026-11-13)
+
+- A hurt boss really runs: through the building to the crew farthest away, who then come for you.
+- Crime-o-Vision moves: every crime shows the minutes it has left, and a new one takes its place. A HOT TIP pays half as much again but is gone twice as fast. A crime nobody takes makes the streets round its hideout rougher for ten minutes.
+- When a hideout case closes, the gangsters still standing give up and the police drones take them in. Somebody waits outside the door to thank you.
+- Hideouts are now the exception: one tenement in four, with boarded-up ground-floor windows. The other buildings are ordinary homes again.
+- Everyone playing together needs this version. Towns are generated a little differently, so an old save's furniture may differ.
+
+## 0.265 (2026-11-13)
+
+- Busting a hideout has more to it. Lookouts stand at the door. A room you do not take down within a few seconds shouts for the next room.
+- Find the thing: its room's crew guards it. Once you take it the whole gang comes for you and a crew blocks the door: get out of the building with it.
+- Arrest the boss: badly hurt, the boss makes a run for it and calls for help before turning to fight again.
+- Hideouts come in three sizes (den, hideout, fortress), shown on Crime-o-Vision as little houses. Bigger ones and tougher gangs pay more karma; small ones pay less than before.
+- Everyone playing together needs this version.
+
+## 0.264 (2026-11-13)
+
+- Stairs into the underground are open to the sky again: no more lawn or pavement drawn over the hole, so you can see down them from the street.
+- The stairs themselves are rebuilt: pale terrazzo treads with chrome nosing, a smooth stone underside, a chrome balustrade on the open side, a brass handrail and a glowing Aether strip winding down the pillar, an atom set into the pillar's top, and cream tiled walls.
+- The floor at the foot of a stair no longer flickers.
+
 ## 0.263 (2026-11-13)
 
 - The server no longer puts work off when a machine is slow: its work is now limited by counts, so it behaves the same on every machine.

@@ -18,7 +18,7 @@ use hw_net::ToClient;
 use hw_sim::missions::board::CrimeKind;
 use hw_sim::missions::Place;
 use hw_sim::missions::{
-    CaseKind, CLOSED, CLUES, CLUE_REACH, DONE, GANGS, GO, GUARDED, HOSTAGES, IDLE, INSIDE,
+    CaseKind, CLOSED, CLUES, CLUE_REACH, DONE, GANGS, GO, GUARDED, HOSTAGES, IDLE, INSIDE, LOCKED,
 };
 
 /// Who speaks on the wrist radio.
@@ -67,9 +67,22 @@ pub struct State {
     /// What the gang is up to, and the gangsters' level.
     pub crime: CrimeKind,
     pub level: u8,
+    /// How big the hideout is (0 small, 1 middling, 2 big) and the alarms
+    /// its gang has raised.
+    pub size: u8,
+    pub alarms: u8,
 }
 
 impl State {
+    /// The thing is taken and must be got out of the building.
+    pub fn carrying(&self) -> bool {
+        self.stage == INSIDE
+            && self.kind == CaseKind::Evidence
+            && self.in_building()
+            && !self.clues.is_empty()
+            && self.found() == self.clues.len()
+    }
+
     pub fn found(&self) -> usize {
         self.clues.iter().filter(|c| c.1 == DONE).count()
     }
@@ -98,6 +111,11 @@ pub struct CrimeView {
     pub job: CaseKind,
     pub gang: usize,
     pub level: u8,
+    /// 0 small, 1 middling, 2 big.
+    pub size: u8,
+    /// A hot tip, and the minutes it stays on the board (255: taken).
+    pub hot: bool,
+    pub minutes: u8,
     pub at: Vec3,
     pub name: String,
     pub taken: bool,
@@ -109,6 +127,9 @@ pub struct Board {
     pub crimes: Vec<CrimeView>,
     pub limit: u8,
     pub open: u8,
+    /// Crimes that went untaken so far, and whether a board came yet.
+    pub missed: u16,
+    pub heard: bool,
 }
 
 /// A case that was closed, for the cabinet.
@@ -176,10 +197,13 @@ pub struct MissionView {
     things: BTreeMap<(u16, usize), EntityId>,
     /// Counts the glints, to vary where they appear.
     sparkle_n: u32,
+    /// The safes standing about: each one's middle on the floor and the
+    /// way its door faces (from the game, every frame).
+    pub safes: Vec<(Vec3, glam::Vec2)>,
 }
 
 /// The mesh of the thing a gang hides (see `interior::pieces::evidence`).
-fn thing_mesh(kind: CrimeKind) -> Mesh {
+pub fn thing_mesh(kind: CrimeKind) -> Mesh {
     let mut b = crate::citymesh::MeshBuilder::new();
     let mut m = crate::interior::pieces::Maker::new(
         &mut b,
@@ -200,8 +224,23 @@ impl MissionView {
                 crimes,
                 limit,
                 open,
+                missed,
+                lost,
             } => {
+                // A crime nobody took (not on first hearing of the board).
+                if self.board.heard && *missed != self.board.missed && !lost.is_empty() {
+                    let line = Line {
+                        who: DISPATCH,
+                        text: format!(
+                            "Too late for the {lost}: the gang got away with it. The streets round there will be rougher for a while."
+                        ),
+                    };
+                    self.heard.push(line.clone());
+                    self.lines.push_back(line);
+                }
                 self.board = Board {
+                    heard: true,
+                    missed: *missed,
                     crimes: crimes
                         .iter()
                         .map(|c| CrimeView {
@@ -210,6 +249,9 @@ impl MissionView {
                             job: CaseKind::from_code(c.job),
                             gang: (c.gang as usize).min(GANGS.len() - 1),
                             level: c.level,
+                            size: c.size,
+                            hot: c.hot,
+                            minutes: c.minutes,
                             at: Vec3::from_array(c.at),
                             name: c.name.clone(),
                             taken: c.taken,
@@ -234,6 +276,8 @@ impl MissionView {
                 held,
                 crime,
                 level,
+                size,
+                alarms,
             } => {
                 let steps: Vec<StepView> = steps
                     .iter()
@@ -263,6 +307,8 @@ impl MissionView {
                     held: *held as f32 / 255.0,
                     crime: CrimeKind::from_code(*crime),
                     level: *level,
+                    size: *size,
+                    alarms: *alarms,
                 };
                 let before = if matches!(next.stage, CLOSED | IDLE) {
                     self.cases.remove(number)
@@ -371,7 +417,8 @@ impl MissionView {
                 s.clues
                     .iter()
                     .enumerate()
-                    .filter(|(_, c)| c.1 != DONE)
+                    // Locked in its safe, it is not to be seen.
+                    .filter(|(_, c)| c.1 != DONE && c.1 != LOCKED)
                     .map(move |(i, c)| ((s.number, i), c.0, s.crime))
             })
             .collect();
@@ -390,13 +437,17 @@ impl MissionView {
             if self.things.contains_key(&key) {
                 continue;
             }
-            let yaw = (key.0 as f32 * 71.0 + key.1 as f32 * 40.0) % 360.0;
-            if let Ok(e) = world.place(
-                thing_mesh(crime),
-                engine::prelude::Place::new(at.x, at.y + 0.02, at.z)
-                    .with_yaw_deg(yaw)
+            // In an open safe it sits on the safe's floor, facing out of
+            // the door; anywhere else it lies on the ground, bigger.
+            let place = match self.safe_at(at) {
+                Some(facing) => engine::prelude::Place::new(at.x, at.y + 0.21, at.z)
+                    .with_yaw_deg(facing.x.atan2(facing.y).to_degrees())
+                    .with_scale(0.95),
+                None => engine::prelude::Place::new(at.x, at.y + 0.02, at.z)
+                    .with_yaw_deg((key.0 as f32 * 71.0 + key.1 as f32 * 40.0) % 360.0)
                     .with_scale(1.7),
-            ) {
+            };
+            if let Ok(e) = world.place(thing_mesh(crime), place) {
                 self.things.insert(key, e);
             }
         }
@@ -412,15 +463,21 @@ impl MissionView {
             {
                 for (at, state) in &s.clues {
                     if *state != DONE {
+                        // A safe glints on its door (the thing is behind
+                        // it, or in the dark inside).
+                        let door = self.safe_at(*at).map_or(Vec3::ZERO, |f| {
+                            Vec3::new(f.x, 0.0, f.y) * 0.5 + Vec3::Y * 0.45
+                        });
                         crate::fightview::glow_at(
                             world,
                             // Small glints on the object itself, not a
                             // bubble round it: it must read as the thing.
-                            *at + Vec3::new(
-                                (self.sparkle_n % 5) as f32 * 0.12 - 0.24,
-                                0.25 + (self.sparkle_n % 3) as f32 * 0.18,
-                                0.0,
-                            ),
+                            *at + door
+                                + Vec3::new(
+                                    (self.sparkle_n % 5) as f32 * 0.12 - 0.24,
+                                    0.25 + (self.sparkle_n % 3) as f32 * 0.18,
+                                    0.0,
+                                ),
                             rgb(255, 236, 170),
                             0.07,
                         );
@@ -449,10 +506,29 @@ impl MissionView {
             })
             .min_by(|a, b| hero.distance(a.1 .0).total_cmp(&hero.distance(b.1 .0)))
             .map(|(s, (_, state))| match (s.kind, *state) {
+                (_, LOCKED) => (
+                    format!(
+                        "{} is locked in this safe: break it open (target it and attack)",
+                        crate::casefile::capitalised(s.crime.thing())
+                    ),
+                    None,
+                ),
                 (CaseKind::Hostages, GUARDED) => ("Beat their guards first".to_string(), None),
+                (_, GUARDED) => (
+                    format!("Beat the crew guarding {} first", s.crime.thing()),
+                    None,
+                ),
                 (CaseKind::Hostages, _) => ("Hold E to untie them".to_string(), Some(s.held)),
                 _ => (format!("Hold E to take {}", s.crime.thing()), Some(s.held)),
             })
+    }
+
+    /// The way the door of the safe standing at `at` faces, if one does.
+    fn safe_at(&self, at: Vec3) -> Option<glam::Vec2> {
+        self.safes
+            .iter()
+            .find(|s| s.0.distance(at) < 0.4)
+            .map(|s| s.1)
     }
 
     /// The line on the air (under the story's) and the prompt.
@@ -545,8 +621,15 @@ fn goal(s: &State) -> String {
         String::new()
     };
     match s.kind {
+        _ if s.carrying() => format!("Get out with {}!", s.crime.thing()),
+        CaseKind::Takeover if s.boss == 3 => {
+            format!("{} is making a run for it: after them!", boss_name(s.gang))
+        }
         CaseKind::Takeover if s.in_building() => {
-            format!("Arrest their boss on the top floor{groups}")
+            format!(
+                "Arrest {} on the top floor{groups}",
+                lower_the(boss_name(s.gang))
+            )
         }
         CaseKind::Takeover => format!("Beat their boss{groups}"),
         CaseKind::Crew => format!("Beat the crew: {} of {}", s.cleared, s.groups.max(1)),
@@ -563,6 +646,21 @@ fn goal(s: &State) -> String {
             s.found(),
             s.clues.len().max(HOSTAGES)
         ),
+    }
+}
+
+/// The gang's boss as the files name them, to start a sentence ("The
+/// Praetorian", "Cap'n Blackbarrel").
+fn boss_name(gang: usize) -> String {
+    let f = &crate::casefile::GANG_FLAVOUR[gang.min(crate::casefile::GANG_FLAVOUR.len() - 1)];
+    crate::casefile::capitalised(f.boss)
+}
+
+/// A name inside a sentence: "The Praetorian" reads "the Praetorian".
+fn lower_the(name: String) -> String {
+    match name.strip_prefix("The ") {
+        Some(rest) => format!("the {rest}"),
+        None => name,
     }
 }
 
@@ -617,7 +715,7 @@ fn brief(gang: &str, step: &StepView, last: bool, crime: CrimeKind) -> Vec<Strin
         CaseKind::Evidence if building => vec![
             format!("{}: {gang} are holed up {at}.", crime.title()),
             format!(
-                "Find {} before they move it. Look upstairs too.",
+                "Find {} before they move it: they keep it locked in a safe upstairs. Break the safe open.",
                 crime.thing()
             ),
         ],
@@ -639,6 +737,11 @@ fn brief(gang: &str, step: &StepView, last: bool, crime: CrimeKind) -> Vec<Strin
     }
 }
 
+/// Things still locked in their safes.
+fn locked(s: &State) -> usize {
+    s.clues.iter().filter(|c| c.1 == LOCKED).count()
+}
+
 /// What the radio says of a case going from `before` (None: new to us)
 /// to `now`; `open` cases are left after it.
 pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
@@ -655,6 +758,16 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
                 "{} is clear. Case closed, swell work!",
                 crate::casefile::capitalised(&place)
             )));
+            if now.in_building() && now.steps.len() == 1 {
+                out.push(say(match now.kind {
+                    CaseKind::Evidence => format!(
+                        "The rest have given up: the police drones are taking them in. Somebody's outside to thank you for {}.",
+                        now.crime.thing()
+                    ),
+                    _ => "The rest have given up without their boss: the police drones are taking them in."
+                        .to_string(),
+                }));
+            }
             out.push(say(match open {
                 0 => "More crimes are on the police computer when you want one.".to_string(),
                 1 => "One case still open: check your file (J).".to_string(),
@@ -696,7 +809,7 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
     }
     match (b.stage, now.stage) {
         (GO, INSIDE) if now.in_building() => out.push(say(format!(
-            "That's {place}. Each room has its own crew: take them one at a time."
+            "That's {place}. Lookouts at the door, a crew in each room: take a room down fast, or it calls the next."
         ))),
         (GO, INSIDE) if here.place.underground() => out.push(say(
             "You're down there. Watch yourself, sound carries in the dark.".to_string(),
@@ -706,6 +819,24 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
             "They've regrouped {} while you were away. Go back when you're ready.",
             here.at_place()
         ))),
+        (INSIDE, INSIDE) if now.carrying() && !b.carrying() => {
+            out.push(say(format!(
+                "You've got {}! They know: the whole gang is coming, and a crew is at the door. Get out!",
+                now.crime.thing()
+            )));
+        }
+        (INSIDE, INSIDE) if now.boss == 3 && b.boss != 3 => out.push(say(format!(
+            "{} is making a run for it and yelling for help! Don't let them get their breath back.",
+            boss_name(now.gang)
+        ))),
+        (INSIDE, INSIDE) if locked(b) > locked(now) => out.push(say(format!(
+            "The safe's open, and the whole floor heard it go! Take {} and watch your back.",
+            now.crime.thing()
+        ))),
+        (INSIDE, INSIDE) if now.alarms != b.alarms => out.push(say(
+            "They've raised the alarm: the next room is coming. Finish them fast next time!"
+                .to_string(),
+        )),
         (INSIDE, INSIDE) if now.found() > b.found() => {
             let left = now.clues.len() - now.found();
             out.push(say(match (now.kind, left) {
@@ -757,10 +888,31 @@ mod tests {
                     )
                 })
                 .collect(),
+            size: 0,
+            alarms: 0,
             held: 0.0,
             crime: CrimeKind::Payroll,
             level: 5,
         }
+    }
+
+    #[test]
+    fn a_safe_broken_open_is_said_once_and_not_as_an_alarm() {
+        let mut shut = st(INSIDE, CaseKind::Evidence, 1, 0);
+        shut.clues = vec![(Vec3::ZERO, LOCKED)];
+        let mut open = shut.clone();
+        open.clues[0].1 = GUARDED;
+        // Its noise called a crew: one line, about the safe.
+        open.alarms = 1;
+        let said = lines(Some(&shut), &open, 1);
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(said[0].text.contains("safe's open"), "{said:?}");
+        assert!(lines(Some(&open), &open, 1).is_empty());
+        // By the shut safe the prompt says what to do, with no bar.
+        let mut view = MissionView::default();
+        view.cases.insert(1, shut);
+        let (text, bar) = view.prompt(Vec3::ZERO).expect("a prompt");
+        assert!(text.contains("break it open") && bar.is_none(), "{text}");
     }
 
     #[test]
@@ -779,7 +931,10 @@ mod tests {
             &st(CLOSED, CaseKind::Takeover, 1, 0),
             2,
         );
-        assert!(closed[0].text.contains("closed") && closed[1].text.contains("2 cases"));
+        assert!(closed[0].text.contains("closed"));
+        // The ending of a hideout, then what is left to do.
+        assert!(closed[1].text.contains("given up"), "{}", closed[1].text);
+        assert!(closed.last().unwrap().text.contains("2 cases"));
         let m = mark(&st(INSIDE, CaseKind::Evidence, 4, 1)).expect("a mark");
         assert!(
             m.goal.contains("1 of 3") && m.goal.contains("1 of 6") && m.heading.contains("No. 4"),
@@ -854,6 +1009,8 @@ mod tests {
             held: 0,
             crime: 0,
             level: 3,
+            size: 0,
+            alarms: 0,
         }
     }
     #[test]

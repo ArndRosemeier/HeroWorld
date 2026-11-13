@@ -852,6 +852,9 @@ pub struct Incidents {
     last_colossus: Option<u64>,
     /// Gang hangouts: the streets round them are rough (see [`HOT_REACH`]).
     hot: Vec<DVec2>,
+    /// Streets made rough for a while by a crime nobody took (see
+    /// [`crate::missions::board::EMBOLDENED_SECONDS`]).
+    emboldened: Vec<DVec2>,
     /// Buildings that came down since the last second (people trapped).
     collapses: Vec<u64>,
     news: Vec<ToClient>,
@@ -896,7 +899,16 @@ impl Incidents {
     /// Is `p` in the rough streets round a gang's hangout?
     pub fn is_hot(&self, p: DVec3) -> bool {
         let p = DVec2::new(p.x, p.z);
-        self.hot.iter().any(|h| h.distance(p) < HOT_REACH)
+        self.hot
+            .iter()
+            .chain(self.emboldened.iter())
+            .any(|h| h.distance(p) < HOT_REACH)
+    }
+
+    /// The hideouts whose crimes nobody took: crime is more common round
+    /// them too, for now.
+    pub fn set_emboldened(&mut self, at: Vec<DVec2>) {
+        self.emboldened = at;
     }
 
     /// New incidents come in another square of the town (open ones stay

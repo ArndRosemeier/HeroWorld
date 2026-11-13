@@ -1280,6 +1280,10 @@ impl Sim {
         self.lap("srv incidents+crimes us", &mut t);
         self.story.step(&mut self.world, self.tick);
         self.missions.step(&mut self.world, self.tick);
+        if self.tick.is_multiple_of(TICK_HZ as u64) {
+            self.incidents
+                .set_emboldened(self.missions.emboldened.iter().map(|e| e.0).collect());
+        }
         self.raise_crime_alarms();
         self.lap("srv story+missions us", &mut t);
         let solids = self.solids();
@@ -1342,6 +1346,7 @@ impl Sim {
         let mut movers = rocket::solids(&self.rockets, now, &heroes, 25.0);
         movers.extend(self.airships.solids_near(&heroes, now));
         movers.extend(self.story.statue_solids());
+        movers.extend(self.missions.safe_solids());
         movers.extend(self.lifts.solids_near(&heroes, 25.0, now));
         self.lap("srv movers us", &mut t);
         if let Some(t) = self.wrecks.traffic.as_mut() {

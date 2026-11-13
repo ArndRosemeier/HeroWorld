@@ -66,6 +66,21 @@ fn town_of(n: usize) -> (Sim, Arc<Floors>) {
     (sim, floors)
 }
 
+/// The crew of fight spot `spot` goes down (cuffed).
+fn put_down(sim: &mut Sim, spot: usize) {
+    for (en, mut f) in sim
+        .world
+        .query::<(&hw_sim::combat::Enemy, &mut hw_sim::combat::Fighter)>()
+        .iter_mut(&mut sim.world)
+    {
+        if en.spot == spot {
+            f.health = 0.0;
+            f.status = hw_net::Status::Down;
+            f.until = 0;
+        }
+    }
+}
+
 fn stage(sim: &Sim, number: u16) -> u8 {
     sim.missions
         .case(number)
@@ -149,22 +164,98 @@ fn a_hero_takes_a_case_and_closes_it() {
         "on the ground floor: {clues:?}"
     );
     let karma = sim.sheet(PlayerId(1)).expect("a sheet").karma;
-    for (at, _) in clues {
+    let at = clues[0].0;
+    // Its room's crew stands over it: holding E does nothing yet.
+    let guard = sim.missions.case(number).unwrap().guards()[0].expect("a guard");
+    hold(&mut sim, hero, at, missions::CLUE_SECONDS * 1.3);
+    assert!(
+        !sim.missions.case(number).unwrap().clues()[0].1,
+        "taken past its guards"
+    );
+    put_down(&mut sim, guard);
+    // It is locked in a safe: a solid thing a hero cannot walk into.
+    let safe = sim
+        .enemies()
+        .into_iter()
+        .find(|e| e.1 == EnemyKind::Safe)
+        .expect("a safe");
+    let solids = sim.world.resource::<hw_sim::Solids>().0.clone();
+    assert!(
+        solids.solid_at(at + DVec3::Y * 0.7),
+        "the safe is drawn but not solid"
+    );
+    assert!(
+        !solids.solid_at(safe.2 + DVec3::Y * 0.7),
+        "its door cannot be reached"
+    );
+    hold(&mut sim, hero, at, missions::CLUE_SECONDS * 1.3);
+    assert!(
+        !sim.missions.case(number).unwrap().clues()[0].1,
+        "taken out of a locked safe"
+    );
+    // Broken open in a fight: the hero blasts its door from in front.
+    let alarms = sim.missions.case(number).unwrap().alarms();
+    let stand = safe.2 + (safe.2 - at).normalize() * 2.5;
+    let mut ticks = 0;
+    while sim
+        .enemies()
+        .iter()
+        .any(|e| e.0 == safe.0 && e.3.fighting())
+    {
+        ticks += 1;
+        assert!(ticks < TICK_HZ * 120, "the safe never broke");
+        put(&mut sim, hero, stand);
         sim.set_input(
             PlayerId(1),
             InputState {
-                revive: true,
+                target: Some(safe.0),
+                aim: (safe.2 - stand).normalize().as_vec3().to_array(),
+                blast: ticks % 4 == 0,
                 ..InputState::default()
             },
         );
-        for _ in 0..(missions::CLUE_SECONDS * 1.3 * TICK_HZ as f64) as usize {
-            put(&mut sim, hero, at);
-            sim.step();
-        }
-        sim.set_input(PlayerId(1), InputState::default());
         sim.step();
     }
+    sim.set_input(PlayerId(1), InputState::default());
+    sim.step();
+    // The noise brought a crew that had heard nothing.
+    assert!(
+        sim.missions.case(number).unwrap().alarms() > alarms,
+        "nobody heard the safe go"
+    );
+    // It stands there open: not carried off like a villain.
+    for _ in 0..TICK_HZ * 8 {
+        put(&mut sim, hero, stand);
+        sim.step();
+    }
+    assert!(sim.enemies().iter().any(|e| e.0 == safe.0), "the safe went");
+    let before = sim.enemies().len();
+    hold(&mut sim, hero, at, missions::CLUE_SECONDS * 1.3);
+    let r = sim.missions.case(number).expect("still open: not out yet");
+    assert!(r.clues()[0].1 && r.carried(), "the thing is taken");
+    // The gang knows: a crew cuts off the way out, and everyone comes.
+    assert!(r.alarms() >= 1);
+    let (_, _, cutoff, _) = r.spots();
+    assert!(cutoff.is_some(), "a crew at the way out");
+    assert!(sim.enemies().len() >= before + missions::CUTOFF_SIZE as usize);
+    let after_me = sim
+        .world
+        .query::<(&hw_sim::combat::Enemy, &hw_sim::combat::Fighter)>()
+        .iter(&sim.world)
+        .filter(|(_, f)| f.target == Some(hero))
+        .count();
+    assert!(after_me >= 6, "{after_me} villains after the hero");
+    // Still inside: the case stays open.
     for _ in 0..TICK_HZ * 2 {
+        put(&mut sim, hero, at);
+        sim.step();
+    }
+    assert_eq!(sim.missions.closed, 0, "closed before the hero got out");
+    // Out on the street with it.
+    let outside = front + DVec3::new(0.0, 0.0, -12.0);
+    assert!(!b.holds(outside, missions::OUT_MARGIN));
+    for _ in 0..TICK_HZ * 2 {
+        put(&mut sim, hero, outside);
         sim.step();
     }
     assert_eq!(sim.missions.closed, 1);
@@ -405,4 +496,314 @@ fn a_book_from_another_world_keeps_its_count_but_not_its_cases() {
     }
     assert!(sim.missions.cases.is_empty());
     assert_eq!((sim.missions.opened, sim.missions.closed), (3, 2));
+}
+
+#[test]
+fn a_room_that_fights_on_calls_the_next_room_only() {
+    let (mut sim, floors) = town();
+    let hero = sim.spawn_hero(PlayerId(1), DVec3::new(-150.0, GROUND_Y, -150.0));
+    let number = sim.missions.force(&mut sim.world, CaseKind::Takeover, 0, 0);
+    let b = &floors.buildings[0];
+    let front = b.to_town(b.graph.front());
+    for _ in 0..TICK_HZ * 2 {
+        put(&mut sim, hero, front);
+        sim.step();
+    }
+    let (door, rooms, _, boss) = sim.missions.case(number).unwrap().spots();
+    assert!(door.is_some(), "lookouts at the way in");
+    assert!(rooms.len() >= 4 && boss.is_some());
+    // One room's crew gets the hero to fight; the hero holds out.
+    let first = rooms[0];
+    let on = |sim: &mut Sim| -> Vec<usize> {
+        let mut v: Vec<usize> = sim
+            .world
+            .query::<(&hw_sim::combat::Enemy, &hw_sim::combat::Fighter)>()
+            .iter(&sim.world)
+            .filter(|(_, f)| f.target == Some(hero) && f.standing())
+            .map(|(e, _)| e.spot)
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+    let home = sim
+        .world
+        .query::<&hw_sim::combat::Enemy>()
+        .iter(&sim.world)
+        .find(|e| e.spot == first)
+        .map(|e| e.home)
+        .unwrap();
+    for (en, mut f) in sim
+        .world
+        .query::<(&hw_sim::combat::Enemy, &mut hw_sim::combat::Fighter)>()
+        .iter_mut(&mut sim.world)
+    {
+        if en.spot == first {
+            f.target = Some(hero);
+        }
+    }
+    let stand = home + DVec3::new(2.0, 0.0, 0.0);
+    for _ in 0..(TICK_HZ as f64 * (missions::ALARM_SECONDS + 3.0)) as usize {
+        put(&mut sim, hero, stand);
+        sim.step();
+    }
+    let r = sim.missions.case(number).unwrap();
+    // The room called; so may a crew that saw the hero come in. Nobody
+    // who was called calls on.
+    assert!((1..=3).contains(&r.alarms()), "{} alarms", r.alarms());
+    let fighting = on(&mut sim);
+    assert!(fighting.contains(&first));
+    let called: Vec<usize> = fighting
+        .iter()
+        .copied()
+        .filter(|s| *s != first && Some(*s) != boss)
+        .collect();
+    // The room itself may have drawn neighbours in sight; the alarm adds
+    // one, and never the whole gang.
+    assert!(!called.is_empty(), "nobody came: {fighting:?}");
+    assert!(
+        fighting.len() < rooms.len() + 2,
+        "the whole gang came: {fighting:?}"
+    );
+}
+
+#[test]
+fn a_hurt_boss_breaks_off_and_calls_for_help() {
+    let (mut sim, floors) = town();
+    let hero = sim.spawn_hero(PlayerId(1), DVec3::new(-150.0, GROUND_Y, -150.0));
+    let number = sim.missions.force(&mut sim.world, CaseKind::Takeover, 0, 0);
+    let b = &floors.buildings[0];
+    let front = b.to_town(b.graph.front());
+    for _ in 0..TICK_HZ * 2 {
+        put(&mut sim, hero, front);
+        sim.step();
+    }
+    let boss_spot = sim
+        .missions
+        .case(number)
+        .unwrap()
+        .spots()
+        .3
+        .expect("a boss");
+    let boss_kind = GANGS[0].boss;
+    let mut at = DVec3::ZERO;
+    for (en, m, mut f) in sim
+        .world
+        .query::<(
+            &hw_sim::combat::Enemy,
+            &hw_sim::Motion,
+            &mut hw_sim::combat::Fighter,
+        )>()
+        .iter_mut(&mut sim.world)
+    {
+        if en.spot == boss_spot && en.kind == boss_kind {
+            f.health = f.max_health * 0.3;
+            f.target = Some(hero);
+            at = m.0.pos;
+        }
+    }
+    let stand = at + DVec3::new(3.0, 0.0, 0.0);
+    for _ in 0..TICK_HZ + 2 {
+        put(&mut sim, hero, stand);
+        sim.step();
+    }
+    let news = sim.missions.snapshot();
+    let boss = news
+        .iter()
+        .find_map(|m| match m {
+            hw_net::ToClient::Case { boss, .. } => Some(*boss),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(boss, 3, "the boss is on the run");
+    // It runs through the building to a crew that still stands.
+    let run_from = at;
+    assert_eq!(sim.missions.case(number).unwrap().alarms(), 1);
+    let where_is = |sim: &mut Sim| {
+        sim.world
+            .query::<(&hw_sim::combat::Enemy, &hw_sim::Motion)>()
+            .iter(&sim.world)
+            .find(|(e, _)| e.spot == boss_spot && e.kind == boss_kind)
+            .map(|(e, m)| (m.0.pos, e.home))
+            .unwrap()
+    };
+    let (_, home) = where_is(&mut sim);
+    let far = run_from.distance(home);
+    assert!(far > 6.0, "somewhere to run to: {far:.1} m");
+    for _ in 0..TICK_HZ * 4 {
+        put(&mut sim, hero, stand);
+        sim.step();
+    }
+    // On its way by the stairs (the straight line to the crew may grow
+    // on the way round), fighting nobody.
+    let (now_at, _) = where_is(&mut sim);
+    assert!(
+        now_at.distance(run_from) > 2.5,
+        "the boss ran {:.1} m in 4 s",
+        now_at.distance(run_from)
+    );
+    let fights = sim
+        .world
+        .query::<(&hw_sim::combat::Enemy, &hw_sim::combat::Fighter)>()
+        .iter(&sim.world)
+        .find(|(e, _)| e.spot == boss_spot && e.kind == boss_kind)
+        .map(|(_, f)| f.target)
+        .unwrap();
+    assert_eq!(fights, None, "a boss on the run fights nobody");
+    // It runs once only, and stands to fight again after.
+    for _ in 0..(TICK_HZ as f64 * (missions::BOSS_RUN_SECONDS + 2.0)) as usize {
+        put(&mut sim, hero, stand);
+        sim.step();
+    }
+    let boss = sim
+        .missions
+        .snapshot()
+        .iter()
+        .find_map(|m| match m {
+            hw_net::ToClient::Case { boss, .. } => Some(*boss),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(boss, 1);
+}
+
+#[test]
+fn crimes_nobody_takes_go_off_the_board_and_new_ones_come() {
+    let (mut sim, _) = town_of(2);
+    sim.spawn_hero(PlayerId(1), DVec3::new(-150.0, GROUND_Y, -150.0));
+    let board_now = |sim: &Sim| {
+        sim.missions
+            .snapshot()
+            .into_iter()
+            .find_map(|m| match m {
+                hw_net::ToClient::CaseBoard { crimes, missed, .. } => Some((crimes, missed)),
+                _ => None,
+            })
+            .expect("a board")
+    };
+    sim.step();
+    // Crime 1 is taken: it stays however long it takes.
+    sim.missions.take_case(1);
+    for _ in 0..TICK_HZ {
+        sim.step();
+    }
+    let (first, missed) = board_now(&sim);
+    assert_eq!(missed, 0);
+    assert_eq!(first.len(), board::BOARD);
+    assert!(first.iter().all(|c| c.minutes >= 5), "{first:?}");
+    assert!(first.iter().any(|c| c.minutes == 255 && c.taken));
+    // The longest any crime stays is 30 minutes.
+    let mut left = 31 * 60 * TICK_HZ;
+    while board_now(&sim).1 < 9 && left > 0 {
+        sim.step();
+        left -= 1;
+    }
+    let (crimes, missed) = board_now(&sim);
+    assert_eq!(missed, 9, "every crime but the taken one went");
+    assert_eq!(crimes.len(), board::BOARD, "new ones came");
+    assert!(crimes.iter().any(|c| c.number == 1 && c.taken));
+    assert!(crimes.iter().filter(|c| c.number > 10).count() >= 9);
+    // The streets round a hideout nobody went to are rough for a while.
+    assert!(!sim.missions.emboldened.is_empty());
+    assert_eq!(sim.missions.cases.len(), 1);
+}
+
+#[test]
+fn a_closed_hideout_gives_up_and_someone_says_thanks() {
+    let (mut sim, floors) = town();
+    let hero = sim.spawn_hero(PlayerId(1), DVec3::new(-150.0, GROUND_Y, -150.0));
+    sim.step();
+    sim.missions.take_case(1);
+    sim.step();
+    let b = &floors.buildings[0];
+    let front = b.to_town(b.graph.front());
+    let outside = front + DVec3::new(0.0, 0.0, -12.0);
+    for _ in 0..TICK_HZ * 2 {
+        put(&mut sim, hero, front);
+        sim.step();
+    }
+    let r = sim.missions.case(1).expect("crime 1 is open");
+    assert!(r.is_hideout());
+    let (_, _, _, boss) = r.spots();
+    let job = r.job();
+    let clue = r.clues().first().map(|c| c.0);
+    let guard = r.guards().first().copied().flatten();
+    let standing = |sim: &mut Sim| {
+        sim.enemies()
+            .iter()
+            .filter(|e| e.3.fighting() && !matches!(e.1, EnemyKind::WeakPoint | EnemyKind::Safe))
+            .count()
+    };
+    assert!(standing(&mut sim) >= 8);
+    match job {
+        CaseKind::Evidence => {
+            if let Some(g) = guard {
+                put_down(&mut sim, g);
+            }
+            for (en, mut f) in sim
+                .world
+                .query::<(&hw_sim::combat::Enemy, &mut hw_sim::combat::Fighter)>()
+                .iter_mut(&mut sim.world)
+            {
+                if en.kind == EnemyKind::Safe {
+                    f.health = 0.0;
+                    f.status = hw_net::Status::Down;
+                }
+            }
+            hold(
+                &mut sim,
+                hero,
+                clue.expect("a thing"),
+                missions::CLUE_SECONDS * 1.3,
+            );
+        }
+        _ => put_down(&mut sim, boss.expect("a boss")),
+    }
+    // Out on the street; the drones take the boss's crew (a takeover is
+    // done when they are gone).
+    let mut left = TICK_HZ * 90;
+    while sim.missions.closed == 0 && left > 0 {
+        put(&mut sim, hero, outside);
+        sim.step();
+        left -= 1;
+    }
+    assert_eq!(sim.missions.closed, 1, "the case closed");
+    // Nobody fights on, and someone stands outside to say thanks.
+    assert_eq!(standing(&mut sim), 0, "the rest gave up");
+    let thanks: Vec<DVec3> = sim
+        .world
+        .query::<(&hw_sim::Motion, &hw_sim::incidents::Bystander)>()
+        .iter(&sim.world)
+        .map(|(m, _)| m.0.pos)
+        .collect();
+    assert_eq!(thanks.len(), 1, "one to say thanks");
+    assert!(!b.holds(thanks[0], 0.0), "outside the building");
+    // The police drones take them all in.
+    let mut left = TICK_HZ * 240;
+    let people = |sim: &mut Sim| sim.enemies().iter().any(|e| e.1 != EnemyKind::Safe);
+    while people(&mut sim) && left > 0 {
+        put(&mut sim, hero, outside);
+        sim.step();
+        left -= 1;
+    }
+    let rest: Vec<_> = sim
+        .enemies()
+        .iter()
+        .filter(|e| e.1 != EnemyKind::Safe)
+        .map(|e| (e.1, e.3.status))
+        .collect();
+    assert!(rest.is_empty(), "still there: {rest:?}");
+    // An opened safe stands while a hero is about, and goes (no longer
+    // solid either) once nobody is near.
+    if job == CaseKind::Evidence {
+        assert_eq!(sim.enemies().len(), 1, "the safe stays for now");
+        assert_eq!(sim.missions.safe_solids().len(), 1);
+    }
+    let far = outside + DVec3::new(0.0, 0.0, -2.0 * missions::SAFE_GONE);
+    for _ in 0..TICK_HZ * 2 {
+        put(&mut sim, hero, far);
+        sim.step();
+    }
+    assert!(sim.enemies().is_empty(), "a safe was left behind");
+    assert!(sim.missions.safe_solids().is_empty());
 }

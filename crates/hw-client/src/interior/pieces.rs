@@ -3183,6 +3183,223 @@ pub fn safe(m: &mut Maker, w: f64) {
     }
 }
 
+/// A gang's strongroom safe (1.1 wide, 0.84 deep, 1.5 high, its middle at
+/// the origin, the door to the front): what a hideout case's thing is
+/// locked in. Hollow, with a shelf, so the same body stands there shut
+/// (`open` 0) and broken open (`open` 1: the door hangs wide on its
+/// hinges, its bolts drawn, and what is inside shows). Its box is
+/// `hw_sim::missions::SAFE_HALF` by `SAFE_HEIGHT`: what heroes bump into.
+pub fn vault(m: &mut Maker, open: f64) {
+    let (hw, back, front) = (0.55, -0.42, 0.33);
+    let enamel = Mat::Paint(rgb(38, 66, 58));
+    let lining = Mat::Paint(rgb(70, 78, 80));
+    // A cast-iron plinth on four turned feet, and a stepped cap.
+    for (x, z) in [(-0.43, -0.3), (0.43, -0.3), (-0.43, 0.24), (0.43, 0.24)] {
+        m.lathe(
+            cast_iron(),
+            DVec3::new(x, 0.0, z),
+            &[
+                (0.0, 0.0),
+                (0.07, 0.0),
+                (0.08, 0.03),
+                (0.055, 0.07),
+                (0.0, 0.07),
+            ],
+        );
+    }
+    let mut body = m.sub(DVec3::new(0.0, 0.0, (back + front) * 0.5), 0.0);
+    let depth = front - back;
+    body.slab(cast_iron(), &rrect(hw * 2.0, depth, 0.05, 5), 0.06, 0.12);
+    body.slab(enamel, &rrect(hw * 2.0, depth, 0.05, 5), 1.4, 1.46);
+    body.slab(
+        cast_iron(),
+        &rrect(hw * 2.0 - 0.08, depth - 0.08, 0.04, 5),
+        1.46,
+        1.5,
+    );
+    // The walls: 8 cm of steel all round, open to the front.
+    let (lo, hi) = (0.12, 1.4);
+    m.block(
+        enamel,
+        DVec3::new(-hw + 0.01, lo, back + 0.01),
+        DVec3::new(hw - 0.01, hi, back + 0.09),
+    );
+    for x in [-hw + 0.01, hw - 0.09] {
+        m.block(
+            enamel,
+            DVec3::new(x, lo, back + 0.09),
+            DVec3::new(x + 0.08, hi, front),
+        );
+    }
+    m.block(
+        enamel,
+        DVec3::new(-hw + 0.09, lo, back + 0.09),
+        DVec3::new(hw - 0.09, lo + 0.08, front),
+    );
+    m.block(
+        enamel,
+        DVec3::new(-hw + 0.09, hi - 0.08, back + 0.09),
+        DVec3::new(hw - 0.09, hi, front),
+    );
+    // Chrome bands round the body, riveted at the corners.
+    for y in [0.3, 1.22] {
+        for x in [-hw, hw - 0.012] {
+            m.block(
+                Mat::Chrome,
+                DVec3::new(x, y, back + 0.02),
+                DVec3::new(x + 0.012, y + 0.05, front),
+            );
+        }
+        for x in [-hw + 0.02, hw - 0.02] {
+            m.lathe_along(
+                Mat::Brass,
+                DVec3::new(x, y + 0.025, front),
+                DVec3::Z,
+                &[(0.0, 0.0), (0.016, 0.0), (0.01, 0.012), (0.0, 0.014)],
+            );
+        }
+    }
+    // Inside: a grey lining, a steel shelf with a few bundles and a ledger.
+    m.block(
+        lining,
+        DVec3::new(-hw + 0.09, lo + 0.08, back + 0.09),
+        DVec3::new(hw - 0.09, hi - 0.08, back + 0.1),
+    );
+    m.block(
+        lining,
+        DVec3::new(-hw + 0.09, lo + 0.08, back + 0.1),
+        DVec3::new(hw - 0.09, lo + 0.085, front - 0.02),
+    );
+    m.block(
+        Mat::Chrome,
+        DVec3::new(-hw + 0.09, 0.98, back + 0.1),
+        DVec3::new(hw - 0.09, 1.0, front - 0.06),
+    );
+    for (k, x) in [-0.34, -0.1, 0.16].into_iter().enumerate() {
+        m.block(
+            Mat::Paint(rgb(138, 178, 112)),
+            DVec3::new(x, 1.0, -0.2),
+            DVec3::new(x + 0.2, 1.05 + 0.02 * k as f64, -0.08),
+        );
+        m.block(
+            Mat::Paint(rgb(236, 226, 190)),
+            DVec3::new(x + 0.08, 1.0, -0.202),
+            DVec3::new(x + 0.12, 1.052 + 0.02 * k as f64, -0.078),
+        );
+    }
+    m.block(
+        Mat::Plain(rgb(96, 40, 36)),
+        DVec3::new(-0.3, 1.0, 0.0),
+        DVec3::new(-0.04, 1.045, 0.18),
+    );
+    m.block(
+        Mat::Paint(rgb(236, 226, 190)),
+        DVec3::new(-0.29, 1.005, 0.004),
+        DVec3::new(-0.045, 1.04, 0.184),
+    );
+    // The maker's plate over the door.
+    m.block(
+        Mat::Brass,
+        DVec3::new(-0.16, hi - 0.062, front),
+        DVec3::new(0.16, hi - 0.018, front + 0.006),
+    );
+    // The door on its hinge at the left: wide open, it swings out to the
+    // front and round to the side.
+    let (dw, dy0, dy1) = (hw * 2.0 - 0.18 - 0.02, lo + 0.09, hi - 0.09);
+    let hinge = DVec3::new(-hw + 0.1, 0.0, front);
+    for y in [dy0 + 0.14, (dy0 + dy1) * 0.5 - 0.06, dy1 - 0.26] {
+        m.lathe(
+            Mat::Chrome,
+            DVec3::new(hinge.x - 0.035, y, front + 0.03),
+            &[(0.0, 0.0), (0.028, 0.0), (0.028, 0.12), (0.0, 0.12)],
+        );
+    }
+    let mut d = m.sub(hinge, -open * 1.95);
+    // A chrome rim, the enamelled face a step proud, a steel plug behind.
+    d.block(
+        Mat::Chrome,
+        DVec3::new(0.0, dy0, 0.0),
+        DVec3::new(dw, dy1, 0.05),
+    );
+    d.block(
+        Mat::Paint(rgb(50, 88, 76)),
+        DVec3::new(0.045, dy0 + 0.045, 0.05),
+        DVec3::new(dw - 0.045, dy1 - 0.045, 0.085),
+    );
+    d.block(
+        lining,
+        DVec3::new(0.05, dy0 + 0.05, -0.05),
+        DVec3::new(dw - 0.05, dy1 - 0.05, 0.0),
+    );
+    // Behind the plug, the bolt work: a brass case over the lock, and
+    // the bars that throw the bolts.
+    d.block(
+        Mat::Brass,
+        DVec3::new(dw * 0.5 - 0.16, dy0 + 0.66, -0.065),
+        DVec3::new(dw * 0.5 + 0.16, dy0 + 0.98, -0.05),
+    );
+    for y in [dy0 + 0.2, (dy0 + dy1) * 0.5, dy1 - 0.2] {
+        d.block(
+            Mat::Chrome,
+            DVec3::new(0.12, y - 0.018, -0.062),
+            DVec3::new(dw - 0.06, y + 0.018, -0.05),
+        );
+    }
+    d.block(
+        Mat::Chrome,
+        DVec3::new(dw * 0.5 - 0.02, dy0 + 0.2, -0.068),
+        DVec3::new(dw * 0.5 + 0.02, dy1 - 0.2, -0.062),
+    );
+    // The bolts in the free edge: drawn back unless it is shut.
+    for y in [dy0 + 0.2, (dy0 + dy1) * 0.5, dy1 - 0.2] {
+        d.lathe_along(
+            Mat::Chrome,
+            DVec3::new(dw - 0.06, y, -0.025),
+            DVec3::X,
+            &[(0.0, 0.0), (0.02, 0.0), (0.02, 0.085), (0.0, 0.09)],
+        );
+    }
+    let mid = dw * 0.5;
+    dial(
+        &mut d,
+        DVec3::new(mid, dy0 + 0.82, 0.085),
+        0.1,
+        rgb(255, 226, 170),
+    );
+    // The wheel handle: a hub, five spokes and a rim.
+    let hub = DVec3::new(mid, dy0 + 0.44, 0.085);
+    d.lathe_along(
+        Mat::Chrome,
+        hub,
+        DVec3::Z,
+        &[
+            (0.0, 0.0),
+            (0.05, 0.0),
+            (0.045, 0.06),
+            (0.02, 0.075),
+            (0.0, 0.075),
+        ],
+    );
+    let rim: Vec<DVec3> = (0..=20)
+        .map(|k| {
+            let a = k as f64 * TAU / 20.0;
+            hub + DVec3::new(a.cos() * 0.16, a.sin() * 0.16, 0.055)
+        })
+        .collect();
+    d.tube(Mat::Chrome, &rim, 0.014);
+    for k in 0..5 {
+        let a = k as f64 * TAU / 5.0 + 0.3;
+        d.tube(
+            Mat::Chrome,
+            &[
+                hub + DVec3::new(0.0, 0.0, 0.055),
+                hub + DVec3::new(a.cos() * 0.16, a.sin() * 0.16, 0.055),
+            ],
+            0.011,
+        );
+    }
+}
+
 /// A planning board on legs (0.5 deep, 1.9 high): a map of the city with
 /// photographs, coloured pins and red string between them.
 pub fn pin_board(m: &mut Maker, w: f64) {

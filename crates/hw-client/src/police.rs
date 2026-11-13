@@ -459,7 +459,7 @@ fn row(
         1 => Color32::from_rgb(255, 150, 60),
         _ => HERO_RED,
     };
-    let lc = pos2(r.left() + 520.0, r.center().y);
+    let lc = pos2(r.left() + 520.0, r.top() + 20.0);
     crate::googie::star_icon(p, lc + vec2(-22.0, 0.0), 11.0);
     p.text(
         lc + vec2(-6.0, 0.0),
@@ -468,9 +468,73 @@ fn row(
         uikit::ui_font(ui.ctx(), 16.0),
         a(tone),
     );
+    // How big the hideout is: one, two or three little houses lit, each
+    // taller than the last.
+    for k in 0..3u8 {
+        let h = 7.0 + 4.0 * k as f32;
+        let x = lc.x - 30.0 + 12.0 * k as f32;
+        let base = r.top() + 51.0;
+        let house = Rect::from_min_max(pos2(x, base - h), pos2(x + 9.0, base));
+        let lit = k <= c.size;
+        p.rect_filled(
+            house,
+            CornerRadius::same(1),
+            a(if lit {
+                AETHER
+            } else {
+                with_alpha(AETHER, 0.18)
+            }),
+        );
+        if lit {
+            p.rect_filled(
+                Rect::from_center_size(house.center_top() + vec2(0.0, 3.5), vec2(3.0, 3.0)),
+                CornerRadius::ZERO,
+                a(DEEP),
+            );
+        }
+    }
+    p.text(
+        pos2(lc.x + 10.0, r.top() + 45.0),
+        Align2::LEFT_CENTER,
+        ["DEN", "HIDEOUT", "FORTRESS"][(c.size as usize).min(2)],
+        FontId::monospace(10.0),
+        a(with_alpha(AETHER, 0.9)),
+    );
+    // Time left on the board, and a hot tip's flag.
+    if c.minutes != 255 {
+        let soon = c.minutes <= 3;
+        p.text(
+            pos2(r.left() + 585.0, r.top() + 45.0),
+            Align2::LEFT_CENTER,
+            format!("{} MIN", c.minutes),
+            FontId::monospace(11.0),
+            a(if soon {
+                HERO_RED
+            } else {
+                with_alpha(CREAM, 0.7)
+            }),
+        );
+    }
+    if c.hot {
+        let pulse = if uikit::reduced_motion(ui.ctx()) {
+            1.0
+        } else {
+            0.7 + 0.3 * (t * 5.0).sin()
+        };
+        let tag = Rect::from_min_size(pos2(r.left() + 236.0, r.top() + 8.0), vec2(72.0, 18.0));
+        p.rect_filled(tag, CornerRadius::same(9), a(with_alpha(HERO_RED, pulse)));
+        crate::googie::bolt_icon(p, tag.left_center() + vec2(10.0, 0.0), 6.0);
+        p.text(
+            tag.center() + vec2(7.0, 0.0),
+            Align2::CENTER_CENTER,
+            "HOT TIP",
+            FontId::monospace(10.0),
+            a(CREAM),
+        );
+    }
     // Distance.
     p.text(
-        pos2(r.left() + 585.0, r.center().y),
+        pos2(r.left() + 585.0, r.top() + 20.0),
         Align2::LEFT_CENTER,
         distance_text(dist),
         FontId::monospace(15.0),

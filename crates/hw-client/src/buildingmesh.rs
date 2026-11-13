@@ -56,6 +56,16 @@ fn shade(c: Rgb, k: f64) -> Color {
     rgb(f(c[0]), f(c[1]), f(c[2]))
 }
 
+/// Weathered planks over a hideout's ground-floor windows.
+fn boards() -> Color {
+    rgb(112, 86, 60)
+}
+
+/// Is this window boarded up? A gang hideout's, on the ground floor.
+fn boarded(plan: &BuildingPlan, op: &Opening) -> bool {
+    op.kind == OpeningKind::Window && op.floor == 0 && plan.site.is_hideout()
+}
+
 /// The colour and surface of a window's glass. Some rooms have their
 /// lights on after dark: every window of such a room sits on one of the
 /// glow channels (see `daylight`), glass by day and glowing from dusk, so
@@ -64,6 +74,11 @@ fn pane(plan: &BuildingPlan, look: &Look, op: &Opening) -> (Color, Surf) {
     let dark = (col(look.glass), Surf::Glass);
     if op.kind == OpeningKind::Door {
         return dark;
+    }
+    // A hideout's street windows are boarded up: no glass to see, no
+    // light behind it.
+    if boarded(plan, op) {
+        return (boards(), Surf::Plain);
     }
     let Some((tone, habit)) = crate::interior::room_light(plan, op.floor, op.room) else {
         return dark;
@@ -1102,6 +1117,51 @@ fn opening(c: &mut Ctx, w: &Wall, f: &Floor, op: &Opening, t: (f64, f64), y: (f6
                 (-r, -r + 0.06),
                 col([200, 180, 120]),
             );
+        }
+        OpeningKind::Window if boarded(plan, op) => {
+            // Dark behind, and rough planks nailed across: uneven widths,
+            // gaps between them, one hanging askew of the rest's line.
+            c.quad(w.rect(t0, t1, ya, yb, -r), w.out(), rgb(22, 20, 18));
+            let h = yb - ya;
+            let n = ((h / 0.34).floor() as usize).max(2);
+            let step = h / n as f64;
+            for k in 0..n {
+                let roll = plan
+                    .site
+                    .seed
+                    .child("board")
+                    .child(op.along.to_bits())
+                    .child(k as u64);
+                let mut rng = roll.rng();
+                let y = ya + step * (k as f64 + 0.5) + rng.range(-0.03, 0.03);
+                let half = step * rng.range(0.33, 0.42);
+                let (a, b) = (t0 + rng.range(0.02, 0.14), t1 - rng.range(0.02, 0.14));
+                let shade = rng.range(0.78, 1.08);
+                let tone = rgb(
+                    (112.0 * shade) as u8,
+                    (86.0 * shade) as u8,
+                    (60.0 * shade) as u8,
+                );
+                wall_box(
+                    c,
+                    w,
+                    (a, b),
+                    (y - half, y + half),
+                    (-r + 0.02, -r + 0.06),
+                    tone,
+                );
+            }
+            // Two uprights holding them.
+            for x in [t0 + (t1 - t0) * 0.22, t1 - (t1 - t0) * 0.22] {
+                wall_box(
+                    c,
+                    w,
+                    (x - 0.07, x + 0.07),
+                    (ya + 0.04, yb - 0.04),
+                    (-r + 0.06, -r + 0.095),
+                    rgb(96, 72, 50),
+                );
+            }
         }
         OpeningKind::Entrance | OpeningKind::Window => {
             let (glass, surf) = pane(plan, look, op);

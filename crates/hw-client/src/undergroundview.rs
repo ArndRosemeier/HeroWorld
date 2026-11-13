@@ -15,7 +15,7 @@ use crate::tilestream::{Built, Glow, Key, Layer, Reach, Settings, UnderTiles, Un
 use engine::prelude::*;
 use engine::texgen::{FacadeLayer, GroundLayer};
 use glam::{DVec2, DVec3, Vec3};
-use hw_gen::urban::spiral::{Spiral, NEWEL};
+use hw_gen::urban::spiral::{Spiral, Step, RAIL_HEIGHT, RAIL_T, RING, SLAB};
 use hw_gen::urban::underground::{Underground, Void, VoidKind};
 use hw_gen::urban::world::TownWorld;
 use std::collections::BTreeSet;
@@ -28,6 +28,10 @@ const POOL: usize = 28;
 const STEP: f64 = 1.5;
 /// Group linings in squares this big, one mesh each.
 const CHUNK: f64 = 192.0;
+
+/// How far a cavern's lumpy walls are carved beyond its box at most (m):
+/// `carve`'s side for a cavern is 1.2 plus noise up to 1.6.
+const CAVERN_LUMPS: f64 = 2.9;
 
 /// How the rock is carved round a void: signed distance, negative in the
 /// open (Engine's density is solid where positive). Tunnels are carved a
@@ -171,12 +175,13 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
             }
             Layer::Below => {
                 out.glows.push(Glow {
-                    pos: DVec3::new(e.pos.x, e.bottom + 2.6, e.pos.y),
+                    pos: foot_lamp(&e.spiral),
                     color: col,
                     strength: 6.0,
                     range: 10.0,
                 });
                 spiral_stair(&mut b, &e.spiral);
+                out.glows.extend(stair_lamps(&e.spiral));
             }
         }
     }
@@ -248,6 +253,13 @@ fn open_elsewhere(u: &Underground, i: usize, p: DVec3) -> bool {
 /// void opens onto (junctions, side passages, the shafts' open tops).
 fn lining(b: &mut MeshBuilder, u: &Underground, i: usize, town: &TownWorld) {
     let v = &u.voids[i];
+    let mid = v.world((v.min + v.max) * 0.5);
+    let near: Vec<&Void> = u
+        .near(mid, (v.max - v.min).length() * 0.5 + 4.0)
+        .into_iter()
+        .filter(|&j| j != i)
+        .map(|j| &u.voids[j])
+        .collect();
     lining_of(
         b,
         v,
@@ -255,10 +267,72 @@ fn lining(b: &mut MeshBuilder, u: &Underground, i: usize, town: &TownWorld) {
         |mid, f| {
             !u.at(mid).any(|(j, o)| {
                 j < i && (o.floor_at(mid) - f).abs() < 0.6 && o.kind != VoidKind::Shaft
-            })
+            }) && !(v.kind == VoidKind::Cavern
+                && !v.covers(mid, 0.0)
+                && u.near(mid, CAVERN_LUMPS).into_iter().any(|j| {
+                    // Floors under the lumps of two caverns: the first one's.
+                    j < i
+                        && u.voids[j].kind == VoidKind::Cavern
+                        && u.voids[j].covers(mid, CAVERN_LUMPS)
+                }))
         },
+        &near,
         |p| open_elsewhere(u, i, p),
     );
+}
+
+/// The part of convex polygon `poly` (plan) where `n·p <= d`.
+fn clip(poly: &[DVec2], n: DVec2, d: f64) -> Vec<DVec2> {
+    let mut out = Vec::with_capacity(poly.len() + 1);
+    for k in 0..poly.len() {
+        let (a, c) = (poly[k], poly[(k + 1) % poly.len()]);
+        let (da, dc) = (a.dot(n) - d, c.dot(n) - d);
+        if da <= 0.0 {
+            out.push(a);
+        }
+        if (da < 0.0) != (dc < 0.0) && (da - dc).abs() > 1e-12 {
+            out.push(a + (c - a) * (da / (da - dc)));
+        }
+    }
+    if out.len() < 3 {
+        out.clear();
+    }
+    out
+}
+
+/// Convex `poly` less the rectangle of void `s`: up to four convex pieces.
+fn minus_rect(poly: &[DVec2], s: &Void) -> Vec<Vec<DVec2>> {
+    let (ax, ay) = (s.along, s.inward());
+    let (x0, x1) = (s.origin.dot(ax) + s.min.x, s.origin.dot(ax) + s.max.x);
+    let (y0, y1) = (s.origin.dot(ay) + s.min.y, s.origin.dot(ay) + s.max.y);
+    let left = clip(poly, ax, x0);
+    let right = clip(poly, -ax, -x1);
+    let mid = clip(&clip(poly, -ax, -x0), ax, x1);
+    let below = clip(&mid, ay, y0);
+    let above = clip(&mid, -ay, -y1);
+    [left, right, below, above]
+        .into_iter()
+        .filter(|p| p.len() >= 3)
+        .collect()
+}
+
+/// Does the floor of shaft `s` lie wholly on another void's floor at the
+/// same height (a room it stands in), so that one draws it?
+fn floor_inside(s: &Void, others: &[&Void]) -> bool {
+    let f = s.floor_at(s.world((s.min + s.max) * 0.5));
+    let corners = [
+        s.min,
+        DVec2::new(s.max.x, s.min.y),
+        s.max,
+        DVec2::new(s.min.x, s.max.y),
+    ];
+    others.iter().any(|o| {
+        o.kind != VoidKind::Shaft
+            && corners.iter().all(|c| {
+                let p = s.world(*c);
+                o.covers(p, 0.01) && (o.floor_at(p) - f).abs() < 0.6
+            })
+    })
 }
 
 /// Floor, walls and ceiling of a concrete void (tunnel, passage, shaft):
@@ -270,15 +344,35 @@ pub(crate) fn lining_of(
     v: &Void,
     town: &TownWorld,
     owns_floor: impl Fn(DVec2, f64) -> bool,
+    others: &[&Void],
     elsewhere: impl Fn(DVec3) -> bool,
 ) {
-    let size = v.max - v.min;
+    // Where a shaft meets another void at its foot, the shaft draws the
+    // floor of its own square and the other leaves that square out, so no
+    // two floors lie on each other; a shaft standing in a room leaves the
+    // floor to the room.
+    let shafts: Vec<&Void> = if v.kind == VoidKind::Shaft {
+        Vec::new()
+    } else {
+        others
+            .iter()
+            .copied()
+            .filter(|o| o.kind == VoidKind::Shaft && !floor_inside(o, &[v]))
+            .collect()
+    };
+    let shaft_floor = v.kind != VoidKind::Shaft || !floor_inside(v, others);
+    let cavern = v.kind == VoidKind::Cavern;
+    // A cavern's rock is carved up to [`CAVERN_LUMPS`] beyond its box, a
+    // little below its floor (`carve`): its floor runs on under the lumps,
+    // or that strip shows as a step down round the walls.
+    let grow = if cavern { CAVERN_LUMPS } else { 0.0 };
+    let lo = v.min - DVec2::splat(grow);
+    let size = v.max - v.min + DVec2::splat(2.0 * grow);
     let (nx, ny) = (
         (size.x / STEP).ceil().max(1.0) as usize,
         (size.y / STEP).ceil().max(1.0) as usize,
     );
-    let at = |x: f64, y: f64| v.world(v.min + DVec2::new(size.x * x, size.y * y));
-    let cavern = v.kind == VoidKind::Cavern;
+    let at = |x: f64, y: f64| v.world(lo + DVec2::new(size.x * x, size.y * y));
     let (floor_col, wall_col) = match v.kind {
         VoidKind::Cavern => (rgb(120, 98, 72), rgb(110, 96, 80)),
         VoidKind::Shaft => (rgb(70, 74, 80), rgb(226, 218, 196)),
@@ -292,14 +386,22 @@ pub(crate) fn lining_of(
             let corners = [at(x0, y0), at(x1, y0), at(x1, y1), at(x0, y1)];
             let mid = at((x0 + x1) * 0.5, (y0 + y1) * 0.5);
             let f = v.floor_at(mid);
-            // One floor where voids overlap: the first one's. Molehaven's
-            // has a hole for the stair down to the Deeps (its collar, drawn
-            // with the stair, covers the cells' ragged edge).
+            // One floor where voids overlap: the first one's, a shaft's
+            // own square always its own.
+            // Molehaven's has a hole for the stair down to the Deeps (its
+            // collar, drawn with the stair, covers the cells' ragged edge).
             let hole = cavern
                 && corners.iter().chain([&mid]).any(|&q| {
                     hw_gen::urban::molehaven::over_deep_stair(town.underground(), q, 0.0)
                 });
-            if !hole && owns_floor(mid, f) {
+            // Under the lumps only where no other void has its floor.
+            let under_lumps = !v.covers(mid, 0.0);
+            let owns = if v.kind == VoidKind::Shaft {
+                shaft_floor
+            } else {
+                !hole && owns_floor(mid, f) && !(under_lumps && elsewhere(v3(mid, f + 1.0)))
+            };
+            if owns {
                 b.tex = Some(
                     if cavern && v.height < hw_gen::urban::molehaven::HALL_HEIGHT - 0.5 {
                         // The side chambers (lower than the great hall): beaten earth.
@@ -310,8 +412,16 @@ pub(crate) fn lining_of(
                         GroundLayer::Paving.into()
                     },
                 );
-                let pts = corners.map(|c| v3(c, v.floor_at(c)));
-                b.quad(pts, DVec3::Y, floor_col);
+                let mut pieces = vec![corners.to_vec()];
+                for o in shafts.iter().filter(|o| (o.floor_at(mid) - f).abs() < 0.6) {
+                    pieces = pieces.iter().flat_map(|p| minus_rect(p, o)).collect();
+                }
+                for p in pieces {
+                    for k in 1..p.len() - 1 {
+                        let t = [p[0], p[k], p[k + 1]].map(|c| v3(c, v.floor_at(c)));
+                        b.tri(t, DVec3::Y, floor_col);
+                    }
+                }
                 b.tex = None;
             }
             if cavern || v.open {
@@ -351,10 +461,11 @@ pub(crate) fn lining_of(
                 Some(t) => t,
                 None => town.ground(p) + 0.05,
             };
-            b.tex = Some(if v.open {
-                FacadeLayer::Limestone.into()
-            } else {
-                FacadeLayer::Concrete.into()
+            b.tex = Some(match v.kind {
+                // Glazed cream tiles down a stairwell.
+                VoidKind::Shaft => FacadeLayer::BrickWhite.into(),
+                _ if v.open => FacadeLayer::Limestone.into(),
+                _ => FacadeLayer::Concrete.into(),
             });
             b.quad(
                 [
@@ -513,7 +624,7 @@ pub(crate) fn collar(b: &mut MeshBuilder, c: DVec2, door: DVec2, town: &TownWorl
 /// [`collar`] on any floor: `floor(q)` is its height at `q`.
 pub(crate) fn collar_on(b: &mut MeshBuilder, c: DVec2, door: DVec2, floor: impl Fn(DVec2) -> f64) {
     let inner = hw_gen::urban::underground::SHAFT_HALF;
-    let outer = inner + 2.4;
+    let outer = inner + hw_gen::urban::underground::APRON;
     let side = door.perp();
     let p = |x: f64, z: f64| {
         let q = c + side * x + door * z;
@@ -548,74 +659,478 @@ pub(crate) fn collar_on(b: &mut MeshBuilder, c: DVec2, door: DVec2, floor: impl 
     b.surf = Surf::Plain;
 }
 
-/// A spiral stair down a shaft: the pillar in the middle and every step, a
-/// slab of stone, from the numbers the collision uses.
+/// Granite for treads and landings, darker for the risers, cast stone
+/// under them, cream plaster on the pillar.
+fn c_tread() -> Color {
+    rgb(232, 226, 212)
+}
+fn c_riser() -> Color {
+    rgb(150, 144, 134)
+}
+fn c_soffit() -> Color {
+    rgb(204, 198, 186)
+}
+fn c_pillar() -> Color {
+    rgb(222, 212, 190)
+}
+fn c_brass() -> Color {
+    rgb(206, 164, 92)
+}
+fn c_chrome() -> Color {
+    rgb(218, 222, 230)
+}
+/// The pillar's lit strip: an Aether line following the stair round.
+fn c_strip() -> Color {
+    rgb(130, 230, 255)
+}
+
+/// A spiral stair down a shaft, from the numbers the collision uses: granite
+/// treads with chrome nosing on a smooth cast underside, a chrome
+/// balustrade on the open side, a brass handrail on the pillar and a lit
+/// Aether strip winding round the pillar above it.
 pub(crate) fn spiral_stair(b: &mut MeshBuilder, sp: &Spiral) {
-    let stone = rgb(172, 168, 160);
-    let side = rgb(138, 134, 128);
-    let under = rgb(104, 102, 98);
-    let pillar = rgb(196, 190, 176);
-    // The pillar.
-    b.tex = Some(FacadeLayer::Concrete.into());
-    let corners = [
-        DVec2::new(-NEWEL, -NEWEL),
-        DVec2::new(NEWEL, -NEWEL),
-        DVec2::new(NEWEL, NEWEL),
-        DVec2::new(-NEWEL, NEWEL),
-    ];
-    for k in 0..4 {
-        let (a, c) = (corners[k], corners[(k + 1) % 4]);
-        let out = sp.world(((a + c) * 0.5).normalize()) - sp.c;
-        b.quad(
-            [
-                v3(sp.world(a), sp.bottom),
-                v3(sp.world(c), sp.bottom),
-                v3(sp.world(c), sp.top),
-                v3(sp.world(a), sp.top),
-            ],
-            v3(out, 0.0),
-            pillar,
-        );
-    }
-    b.tex = None;
-    b.quad(corners.map(|c| v3(sp.world(c), sp.top)), DVec3::Y, pillar);
-    for st in sp.steps() {
-        let (lo, hi) = (st.at - st.half, st.at + st.half);
+    let steps = sp.steps();
+    let r = sp.riser();
+    let floor = sp.bottom;
+    let w = |l: DVec2, y: f64| v3(sp.world(l), y);
+    let wn = |n: DVec2| v3(sp.world(n) - sp.c, 0.0);
+    let n4 = [DVec2::X, -DVec2::X, DVec2::Y, -DVec2::Y];
+    // The face of `s` towards `o` (unit, local), if they touch.
+    let towards = |s: &Step, o: &Step| {
+        n4.into_iter().find(|n| {
+            let fc = s.at + s.half * *n;
+            let d = (fc - o.at).abs() - o.half;
+            d.max_element() < 1e-6 && (fc - o.at).dot(*n) < 0.0
+        })
+    };
+    let fronts: Vec<Option<DVec2>> = (0..steps.len())
+        .map(|i| steps.get(i + 1).and_then(|o| towards(&steps[i], o)))
+        .collect();
+    let landing = |i: usize| i.is_multiple_of(4);
+    // The underside's height at local `p` of step `i`: level under a
+    // landing, sloping half a riser either way under a tread, so the
+    // undersides of the treads meet in one smooth helix.
+    let soffit = |i: usize, p: DVec2| -> f64 {
+        let s = &steps[i];
+        let flat = s.top - SLAB;
+        let h = if landing(i) {
+            flat
+        } else {
+            let nf = fronts[i].unwrap_or_else(|| {
+                // The last tread: on, the way the one above it came.
+                -towards(s, &steps[i - 1]).unwrap_or(DVec2::X)
+            });
+            let t = (p - s.at).dot(nf) / s.half.dot(nf.abs());
+            flat - r * 0.5 * t
+        };
+        h.max(floor)
+    };
+    let face = |s: &Step, n: DVec2| {
+        let t = DVec2::new(n.y.abs(), n.x.abs());
+        let fc = s.at + s.half * n;
+        (fc - t * s.half.dot(t), fc + t * s.half.dot(t))
+    };
+    for (i, s) in steps.iter().enumerate() {
+        let (lo, hi) = (s.at - s.half, s.at + s.half);
         let c = [
             DVec2::new(lo.x, lo.y),
             DVec2::new(hi.x, lo.y),
             DVec2::new(hi.x, hi.y),
             DVec2::new(lo.x, hi.y),
         ];
-        b.tex = Some(GroundLayer::Paving.into());
-        b.quad(c.map(|p| v3(sp.world(p), st.top)), DVec3::Y, stone);
+        // The tread: pale terrazzo.
+        b.tex = Some(GroundLayer::PlazaStone.into());
+        b.quad(c.map(|p| w(p, s.top)), DVec3::Y, c_tread());
+        // The underside, where it is off the floor.
         b.tex = None;
-        b.quad(
-            c.map(|p| v3(sp.world(p), st.bottom))
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .try_into()
-                .expect("four"),
-            -DVec3::Y,
-            under,
-        );
-        for k in 0..4 {
-            let (a, d) = (c[k], c[(k + 1) % 4]);
-            let out = sp.world((a + d) * 0.5 - st.at) - sp.c;
-            let out = out - (sp.world(DVec2::ZERO) - sp.c);
+        if c.iter().any(|p| soffit(i, *p) > floor + 0.005) {
+            b.quad(c.map(|p| w(p, soffit(i, p))), -DVec3::Y, c_soffit());
+        }
+        for n in n4 {
+            let (e0, e1) = face(s, n);
+            let fc = (e0 + e1) * 0.5;
+            let t = DVec2::new(n.y.abs(), n.x.abs());
+            if (fc.dot(n) - RING.0).abs() < 1e-6 && fc.dot(t).abs() < RING.0 {
+                continue; // against the pillar
+            }
+            if (fc.dot(n) - RING.1).abs() < 1e-6 {
+                // The outer edge: a stringer just inside the shaft's wall.
+                let (a, d) = (e0 - n * 0.02, e1 - n * 0.02);
+                b.quad(
+                    [
+                        w(a, soffit(i, e0)),
+                        w(d, soffit(i, e1)),
+                        w(d, s.top),
+                        w(a, s.top),
+                    ],
+                    wn(n),
+                    c_soffit(),
+                );
+                continue;
+            }
+            if fronts[i] == Some(n) {
+                // The riser down to the next step, and the step in the
+                // underside where a landing meets a tread.
+                let o = &steps[i + 1];
+                b.tex = Some(FacadeLayer::Granite.into());
+                b.quad(
+                    [w(e0, o.top), w(e1, o.top), w(e1, s.top), w(e0, s.top)],
+                    wn(n),
+                    c_riser(),
+                );
+                b.tex = None;
+                let (h0, h1) = (soffit(i, fc), soffit(i + 1, fc));
+                if (h0 - h1).abs() > 0.005 {
+                    let out = if h0 > h1 { -n } else { n };
+                    b.quad(
+                        [
+                            w(e0, h0.min(h1)),
+                            w(e1, h0.min(h1)),
+                            w(e1, h0.max(h1)),
+                            w(e0, h0.max(h1)),
+                        ],
+                        wn(out),
+                        c_soffit(),
+                    );
+                }
+                // Chrome nosing on the edge.
+                if i > 0 {
+                    let y = s.top - 0.022;
+                    let (a, d) = (e0 + t * 0.01 + n * 0.006, e1 - t * 0.01 + n * 0.006);
+                    crate::carmesh::tube(
+                        b,
+                        &[w(a, y), w(d, y)],
+                        (0.024, 0.024),
+                        6,
+                        Some((Surf::Metal, c_chrome())),
+                    );
+                }
+                continue;
+            }
+            if i > 0 && towards(s, &steps[i - 1]) == Some(n) {
+                continue; // drawn by the step above
+            }
+            // A face nothing meets: the top landing's back, the foot.
+            b.tex = Some(FacadeLayer::Granite.into());
             b.quad(
                 [
-                    v3(sp.world(a), st.bottom),
-                    v3(sp.world(d), st.bottom),
-                    v3(sp.world(d), st.top),
-                    v3(sp.world(a), st.top),
+                    w(e0, soffit(i, e0)),
+                    w(e1, soffit(i, e1)),
+                    w(e1, s.top),
+                    w(e0, s.top),
                 ],
-                v3(out, 0.0),
-                side,
+                wn(n),
+                c_riser(),
+            );
+            b.tex = None;
+        }
+    }
+    pillar(b, sp, &steps);
+    balustrade(b, sp, &steps);
+}
+
+/// Where the light at a stair's foot hangs: over the lowest steps, off
+/// the pillar (which would hide it).
+pub(crate) fn foot_lamp(sp: &Spiral) -> DVec3 {
+    let steps = sp.steps();
+    let p = steps
+        .last()
+        .map_or(sp.c, |s| sp.world(ring_point(s, RING.0 + 0.5)));
+    DVec3::new(p.x, sp.bottom + 2.6, p.y)
+}
+
+/// The light of the pillar's strip, one lamp a turn down the stair (the
+/// strip itself glows but lights nothing).
+pub(crate) fn stair_lamps(sp: &Spiral) -> Vec<Glow> {
+    let steps = sp.steps();
+    steps
+        .iter()
+        .enumerate()
+        .filter(|(i, s)| i % 16 == 6 && s.top + 2.2 < sp.top - 0.2)
+        .map(|(_, s)| {
+            let p = sp.world(ring_point(s, RING.0 + 0.35));
+            Glow {
+                pos: DVec3::new(p.x, s.top + 2.1, p.y),
+                color: c_strip(),
+                strength: 3.5,
+                range: 7.0,
+            }
+        })
+        .chain(steps.last().filter(|_| steps.len() > 8).map(|s| {
+            // At the foot, on the far side of the pillar from the lamp
+            // over the last steps, so the pillar shades neither side.
+            let p = sp.world(-ring_point(s, RING.0 + 0.5));
+            Glow {
+                pos: DVec3::new(p.x, sp.bottom + 2.4, p.y),
+                color: c_strip(),
+                strength: 3.5,
+                range: 7.0,
+            }
+        }))
+        .collect()
+}
+
+/// The plan point of step `s` on the square ring `k` from the centre: a
+/// tread's middle pushed out (or in) to that ring, a landing's corner.
+fn ring_point(s: &Step, k: f64) -> DVec2 {
+    let sg = |v: f64| if v >= 0.0 { 1.0 } else { -1.0 };
+    if (s.half.x - s.half.y).abs() < 1e-6 {
+        return DVec2::new(sg(s.at.x) * k, sg(s.at.y) * k);
+    }
+    if s.half.x < s.half.y {
+        // Narrow along x: it runs along x, on the z side.
+        DVec2::new(s.at.x, sg(s.at.y) * k)
+    } else {
+        DVec2::new(sg(s.at.x) * k, s.at.y)
+    }
+}
+
+/// Rounds the corners of a path in plan (radius `rad`), keeping heights
+/// running smoothly through.
+fn rounded(pts: &[DVec3], rad: f64) -> Vec<DVec3> {
+    let mut pts = pts.to_vec();
+    pts.dedup_by(|a, b| a.distance(*b) < 1e-3);
+    let mut out: Vec<DVec3> = Vec::with_capacity(pts.len() * 2);
+    for (k, &p) in pts.iter().enumerate() {
+        if k == 0 || k + 1 == pts.len() {
+            out.push(p);
+            continue;
+        }
+        let (a, c) = (pts[k - 1], pts[k + 1]);
+        let flat = |v: DVec3| DVec2::new(v.x, v.z);
+        let (din, dout) = (flat(p - a), flat(c - p));
+        if din.length() < 1e-6
+            || dout.length() < 1e-6
+            || din.normalize().dot(dout.normalize()) > 0.9
+        {
+            out.push(p);
+            continue;
+        }
+        let ra = rad.min(din.length() * 0.45);
+        let rc = rad.min(dout.length() * 0.45);
+        let q0 = p + (a - p) * (ra / din.length());
+        let q1 = p + (c - p) * (rc / dout.length());
+        for j in 0..=5 {
+            let t = j as f64 / 5.0;
+            out.push(q0 * (1.0 - t) * (1.0 - t) + p * 2.0 * t * (1.0 - t) + q1 * t * t);
+        }
+    }
+    out.dedup_by(|a, b| a.distance(*b) < 1e-3);
+    out
+}
+
+/// The pillar: cream plaster on a dark granite plinth, a brass handrail on
+/// brackets and a glowing strip winding down with the stair.
+fn pillar(b: &mut MeshBuilder, sp: &Spiral, steps: &[Step]) {
+    let w = |l: DVec2, y: f64| v3(sp.world(l), y);
+    let wn = |n: DVec2| v3(sp.world(n) - sp.c, 0.0);
+    let sides = [DVec2::X, DVec2::Y, -DVec2::X, -DVec2::Y];
+    let k = RING.0;
+    let plinth = 0.2;
+    for n in sides {
+        let t = DVec2::new(-n.y, n.x);
+        let (a, d) = (n * k - t * k, n * k + t * k);
+        b.tex = Some(FacadeLayer::Plaster.into());
+        b.quad(
+            [
+                w(a, sp.bottom + plinth),
+                w(d, sp.bottom + plinth),
+                w(d, sp.top),
+                w(a, sp.top),
+            ],
+            wn(n),
+            c_pillar(),
+        );
+        // The plinth stands a little proud, with a bevelled top.
+        let (pa, pd) = (a + n * 0.025 - t * 0.025, d + n * 0.025 + t * 0.025);
+        b.tex = Some(FacadeLayer::Granite.into());
+        b.quad(
+            [
+                w(pa, sp.bottom),
+                w(pd, sp.bottom),
+                w(pd, sp.bottom + plinth - 0.025),
+                w(pa, sp.bottom + plinth - 0.025),
+            ],
+            wn(n),
+            c_riser(),
+        );
+        b.quad(
+            [
+                w(pa, sp.bottom + plinth - 0.025),
+                w(pd, sp.bottom + plinth - 0.025),
+                w(d, sp.bottom + plinth),
+                w(a, sp.bottom + plinth),
+            ],
+            wn(n) + DVec3::Y,
+            c_riser(),
+        );
+    }
+    b.tex = Some(GroundLayer::PlazaStone.into());
+    let cap = [(-k, -k), (k, -k), (k, k), (-k, k)].map(|(x, z)| w(DVec2::new(x, z), sp.top));
+    b.quad(cap, DVec3::Y, c_tread());
+    b.tex = None;
+    // On the cap, flush with the street: a chrome rim and an inlaid atom
+    // (a lit ring round a chrome bead), stood a few millimetres proud.
+    let rim: Vec<DVec3> = [(-k, -k), (k, -k), (k, k), (-k, k), (-k, -k)]
+        .map(|(x, z)| w(DVec2::new(x, z) * 0.97, sp.top))
+        .to_vec();
+    crate::carmesh::tube(
+        b,
+        &rounded(&rim, 0.05),
+        (0.02, 0.006),
+        6,
+        Some((Surf::Metal, c_chrome())),
+    );
+    for (sx, sz) in [(1.0, 0.45), (0.45, 1.0), (0.75, 0.75)] {
+        let ring: Vec<DVec3> = (0..=40)
+            .map(|j| {
+                let a = TAU * j as f64 / 40.0;
+                let l = DVec2::new(a.cos() * sx, a.sin() * sz) * (k * 0.6);
+                w(l, sp.top + 0.004)
+            })
+            .collect();
+        crate::carmesh::tube(b, &ring, (0.018, 0.004), 6, Some((Surf::Glow, c_strip())));
+    }
+    b.surf = Surf::Metal;
+    sphere(b, w(DVec2::ZERO, sp.top - 0.03), 0.07, c_chrome());
+    b.surf = Surf::Plain;
+    // The handrail on the pillar, 0.9 m over the steps.
+    let on: Vec<&Step> = steps
+        .iter()
+        .skip(1)
+        .filter(|s| s.top + 0.9 < sp.top - 0.05)
+        .collect();
+    let mut rail: Vec<DVec3> = on
+        .iter()
+        .map(|s| w(ring_point(s, k + 0.09), s.top + 0.9))
+        .collect();
+    // Each end turns back into the pillar.
+    if let (Some(a), Some(z)) = (on.first(), on.last()) {
+        rail.insert(0, w(ring_point(a, k + 0.01), a.top + 0.9));
+        rail.push(w(ring_point(z, k + 0.01), z.top + 0.9));
+    }
+    let rail = rounded(&rail, 0.06);
+    crate::carmesh::tube(b, &rail, (0.026, 0.026), 10, Some((Surf::Metal, c_brass())));
+    // Its brackets: one on the middle tread of every side.
+    for (i, s) in steps.iter().enumerate().skip(1) {
+        if i % 4 != 2 || s.top + 0.9 >= sp.top - 0.05 {
+            continue;
+        }
+        let p = ring_point(s, k + 0.09);
+        let q = ring_point(s, k);
+        let y = s.top + 0.9;
+        crate::carmesh::tube(
+            b,
+            &[w(p, y - 0.02), w(p, y - 0.09), w(q, y - 0.09)],
+            (0.012, 0.012),
+            6,
+            Some((Surf::Metal, c_brass())),
+        );
+        // A round chrome rose where the bracket meets the pillar.
+        let n = (q / k).round();
+        lathe(
+            b,
+            w(q, y - 0.09),
+            wn(n),
+            &[(0.0, 0.0), (0.04, 0.0), (0.035, 0.012), (0.0, 0.016)],
+            12,
+            |_| Some((Surf::Metal, c_chrome())),
+        );
+    }
+    // The lit strip, 2.2 m over the steps, while it is below the street.
+    let strip: Vec<(DVec2, f64)> = steps
+        .iter()
+        .map(|s| (ring_point(s, k + 0.006), s.top + 2.2))
+        .filter(|(_, y)| *y < sp.top - 0.2)
+        .collect();
+    b.surf = Surf::Glow;
+    for pair in strip.windows(2) {
+        let ((a, ya), (d, yd)) = (pair[0], pair[1]);
+        // Along a face, or round a corner (through the corner point).
+        let mid = (a + d) * 0.5;
+        let n = if (a.x - d.x).abs() < 1e-6 {
+            DVec2::new(a.x.signum(), 0.0)
+        } else if (a.y - d.y).abs() < 1e-6 {
+            DVec2::new(0.0, a.y.signum())
+        } else {
+            DVec2::ZERO
+        };
+        let segs: Vec<(DVec2, f64, DVec2, f64, DVec2)> = if n != DVec2::ZERO {
+            vec![(a, ya, d, yd, n)]
+        } else {
+            // a and d are on two faces: meet at the corner.
+            let corner = DVec2::new(
+                if a.x.abs() > a.y.abs() { a.x } else { d.x },
+                if a.x.abs() > a.y.abs() { d.y } else { a.y },
+            );
+            let ym = (ya + yd) * 0.5;
+            let n1 = (corner - a).perp().normalize();
+            let n1 = if n1.dot(mid) < 0.0 { -n1 } else { n1 };
+            let n2 = (d - corner).perp().normalize();
+            let n2 = if n2.dot(mid) < 0.0 { -n2 } else { n2 };
+            vec![(a, ya, corner, ym, n1), (corner, ym, d, yd, n2)]
+        };
+        for (p0, y0, p1, y1, n) in segs {
+            b.quad(
+                [
+                    w(p0, y0 - 0.025),
+                    w(p1, y1 - 0.025),
+                    w(p1, y1 + 0.025),
+                    w(p0, y0 + 0.025),
+                ],
+                wn(n),
+                c_strip(),
             );
         }
     }
+    b.surf = Surf::Plain;
+}
+
+/// The chrome balustrade on the open side of the steps (the same line as
+/// [`Spiral::rails`]): a top rail, a lower rail and posts.
+fn balustrade(b: &mut MeshBuilder, sp: &Spiral, steps: &[Step]) {
+    let w = |l: DVec2, y: f64| v3(sp.world(l), y);
+    let k = RING.1 - RAIL_T * 0.5 - 0.04;
+    let mut run: Vec<(usize, DVec2, f64)> = Vec::new();
+    let mut runs = Vec::new();
+    for (i, s) in steps.iter().enumerate() {
+        if sp.railed(s) {
+            run.push((i, ring_point(s, k), s.top));
+        } else if !run.is_empty() {
+            runs.push(std::mem::take(&mut run));
+        }
+    }
+    if !run.is_empty() {
+        runs.push(run);
+    }
+    b.surf = Surf::Metal;
+    for run in runs {
+        if run.len() < 2 {
+            continue;
+        }
+        for (h, rad) in [(RAIL_HEIGHT, 0.032), (RAIL_HEIGHT - 0.5, 0.016)] {
+            let pts: Vec<DVec3> = run.iter().map(|&(_, p, y)| w(p, y + h)).collect();
+            crate::carmesh::tube(
+                b,
+                &rounded(&pts, 0.14),
+                (rad, rad),
+                10,
+                Some((Surf::Metal, c_chrome())),
+            );
+        }
+        for &(i, p, y) in &run {
+            if i.is_multiple_of(2) {
+                crate::carmesh::tube(
+                    b,
+                    &[w(p, y), w(p, y + RAIL_HEIGHT)],
+                    (0.018, 0.018),
+                    8,
+                    Some((Surf::Metal, c_chrome())),
+                );
+            }
+        }
+    }
+    b.surf = Surf::Plain;
 }
 
 /// A Googie pavilion over a stair: four tapered chrome posts, a thin swept

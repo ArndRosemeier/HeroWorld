@@ -274,7 +274,9 @@ pub fn molehaven_layout(u: &Underground) -> Option<MolehavenLayout> {
     let open = |p: DVec2, r: f64, taken: &[(DVec2, f64)]| {
         keep.iter().all(|&(q, k)| p.distance(q) > r + k)
             && taken.iter().all(|&(q, k)| p.distance(q) > r + k + 0.3)
-            && c.chambers.iter().any(|&i| u.voids[i].covers(p, -(r + 0.9)))
+            // Inside the chambers, but things against a wall may stand
+            // near it (the rock is carved a metre or more beyond).
+            && c.chambers.iter().any(|&i| u.voids[i].covers(p, -(r.min(1.0) + 0.5)))
     };
     let hall_l = |x: f64, y: f64| hall.world(DVec2::new(x, y));
     let (hx, hy) = (hall.max.x, hall.max.y);

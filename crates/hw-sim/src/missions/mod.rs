@@ -35,7 +35,7 @@ mod running;
 pub mod sites;
 
 pub use plan::{Plan, Step};
-pub use running::Running;
+pub use running::{safe_front, safe_middle, safe_solid, Running};
 pub use sites::{Place, Places, Site};
 
 use crate::combat::{self, Fights};
@@ -63,6 +63,33 @@ pub const AWAY: f64 = 250.0;
 pub const AWAY_SECONDS: f64 = 30.0;
 /// Rooms the gang holds besides the boss's.
 pub const ROOMS: usize = 6;
+/// Rooms held (besides the boss's) in a small, a middling and a big
+/// hideout, and the share of the next level's karma each pays.
+pub const SIZE_ROOMS: [usize; 3] = [2, 4, ROOMS];
+pub const SIZE_SHARE: [f64; 3] = [0.15, 0.25, 0.4];
+/// Each level the gang stands over the team adds this share of the reward.
+pub const LEVEL_BONUS: f64 = 0.1;
+pub fn rooms_of(size: u8) -> usize {
+    SIZE_ROOMS[(size as usize).min(SIZE_ROOMS.len() - 1)]
+}
+/// The reward for a hideout of `size` whose gang stands `extra` levels
+/// over the team: a share of the karma the next level takes.
+pub fn share_of(size: u8, extra: u8) -> f64 {
+    SIZE_SHARE[(size as usize).min(SIZE_SHARE.len() - 1)] * (1.0 + LEVEL_BONUS * extra as f64)
+}
+/// Lookouts at a hideout's way in, and the crew that cuts off the way out
+/// once the thing is taken.
+pub const DOOR_SIZE: u32 = 2;
+pub const CUTOFF_SIZE: u32 = 2;
+/// A crew that has fought this long and still stands calls the next room.
+pub const ALARM_SECONDS: f64 = 6.0;
+/// A crew is in a fight while the hero it is after is this near (m).
+pub const FIGHT_REACH: f64 = 30.0;
+/// The boss breaks off below this share of its health, for this long.
+pub const BOSS_BREAKS: f32 = 0.4;
+pub const BOSS_RUN_SECONDS: f64 = 9.0;
+/// Out of the building by this much (m), the thing is safe.
+pub const OUT_MARGIN: f64 = 3.0;
 /// Things an evidence case hides: one, a real object.
 pub const CLUES: usize = 1;
 /// A hero this near a clue can search it (m), for this long (s).
@@ -76,9 +103,21 @@ pub const FREE_SECONDS: f64 = 2.0;
 pub const GUARDED: u8 = 0;
 pub const READY: u8 = 1;
 pub const DONE: u8 = 2;
+/// A thing still locked in its safe: break the safe open first.
+pub const LOCKED: u8 = 3;
+/// A gang's safe: half its width and depth (m), its height, and how far
+/// in front of its door its body (what heroes aim at) is.
+pub const SAFE_HALF: glam::DVec2 = glam::DVec2::new(0.55, 0.42);
+pub const SAFE_HEIGHT: f64 = 1.5;
+pub const SAFE_FRONT: f64 = 0.14;
+/// An opened safe of a closed case is taken away once no hero is within
+/// this of it (m).
+pub const SAFE_GONE: f64 = 90.0;
 /// Bystander numbers of hostages (apart from incidents' and street
 /// crimes'): this bit, the case's number and the hostage's.
 pub(crate) const HOSTAGE_IDS: u32 = 0x4000_0000;
+/// The one who thanks the heroes outside a hideout (in a hostage's place).
+pub(crate) const OWNER: u32 = 15;
 /// Heroes this near the building share the reward (m) ...
 pub const REWARD: f64 = 150.0;
 /// ... this share of what their next level takes.
@@ -253,6 +292,19 @@ pub struct Missions {
     pub opened: u16,
     /// Most cases open at once.
     pub limit: usize,
+    /// The crimes on the board: each until its tick, unless taken.
+    slots: Vec<Slot>,
+    /// The highest crime number put on the board so far.
+    issued: u16,
+    /// Crimes that went off the board untaken, and the last one's place.
+    missed: u16,
+    lost: String,
+    /// Streets made rough by a crime nobody took: where, until which tick
+    /// (taken by the server for [`crate::incidents`]).
+    pub emboldened: Vec<(glam::DVec2, u64)>,
+    /// Safes of closed cases, standing until nobody is near.
+    left: Vec<running::Safe>,
+    now: u64,
     last_sent: BTreeMap<u16, ToClient>,
     board_sent: Option<ToClient>,
     news: Vec<ToClient>,
@@ -271,12 +323,36 @@ impl Default for Missions {
             closed: 0,
             opened: 0,
             limit: OPEN_LIMIT,
+            slots: Vec::new(),
+            issued: 0,
+            missed: 0,
+            lost: String::new(),
+            emboldened: Vec::new(),
+            left: Vec::new(),
+            now: 0,
             last_sent: BTreeMap::new(),
             board_sent: None,
             news: Vec::new(),
             last_book: CaseBook::default(),
         }
     }
+}
+
+/// The rooms a gang can hold in each building of `floors`.
+fn room_counts(floors: &Floors) -> Vec<u8> {
+    floors
+        .buildings
+        .iter()
+        .map(|b| running::gang_rooms(b).len().min(255) as u8)
+        .collect()
+}
+
+/// A crime on the board.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Slot {
+    number: u16,
+    /// It goes off the board at this tick if nobody took it.
+    until: u64,
 }
 
 /// Hero Hall's contact hero (the cases keep clear of her).
@@ -324,6 +400,7 @@ impl Missions {
             places: Some(Arc::new(Places {
                 town: Some(world.clone()),
                 area: Some(area),
+                rooms: room_counts(&floors),
                 floors,
                 names,
                 hideouts,
@@ -339,6 +416,7 @@ impl Missions {
         let n = floors.buildings.len();
         Missions {
             places: Some(Arc::new(Places {
+                rooms: room_counts(&floors),
                 floors,
                 names: vec!["test hall".to_string(); n],
                 hideouts: (0..n).collect(),
@@ -463,6 +541,8 @@ impl Missions {
             steps,
             crime: Default::default(),
             extra: 0,
+            size: 2,
+            hot: false,
         };
         self.cases
             .push(Running::new(number, plan, 0, places.floors.clone()));
@@ -508,8 +588,7 @@ impl Missions {
             return;
         };
         for number in std::mem::take(&mut self.requests) {
-            let on_board = number as u32 > self.closed as u32
-                && number as u32 <= self.closed as u32 + board::BOARD as u32;
+            let on_board = self.slots.iter().any(|s| s.number == number);
             if !on_board || self.cases.len() >= self.limit {
                 continue;
             }
@@ -533,6 +612,49 @@ impl Missions {
         }
     }
 
+    /// Once a second: crimes nobody took go off the board when their time
+    /// is up (the streets round their hideout are rough for a while), and
+    /// new ones come up.
+    fn turn_board(&mut self, tick: u64) {
+        let Some(places) = self.places.clone() else {
+            return;
+        };
+        let ticks = |s: f64| (s * crate::TICK_HZ as f64) as u64;
+        let open: Vec<u16> = self.cases.iter().map(|r| r.number).collect();
+        let (stay, gone): (Vec<Slot>, Vec<Slot>) = std::mem::take(&mut self.slots)
+            .into_iter()
+            .partition(|s| tick < s.until || open.contains(&s.number));
+        self.slots = stay;
+        for s in gone {
+            let Some(c) = board::crime(&places, self.seed, s.number) else {
+                continue;
+            };
+            let site = sites::building_site(&places, c.building);
+            self.missed = self.missed.wrapping_add(1);
+            self.lost = places.names.get(c.building).cloned().unwrap_or_default();
+            self.emboldened.push((
+                glam::DVec2::new(site.at.x, site.at.z),
+                tick + ticks(board::EMBOLDENED_SECONDS),
+            ));
+        }
+        self.emboldened.retain(|e| tick < e.1);
+        while self.slots.len() < board::BOARD && self.issued < u16::MAX {
+            let number = self.issued + 1;
+            let Some(c) = board::crime(&places, self.seed, number) else {
+                break;
+            };
+            self.issued = number;
+            // A crime already open (from the host's file) is not offered.
+            if open.contains(&number) {
+                continue;
+            }
+            self.slots.push(Slot {
+                number,
+                until: tick + ticks(board::life(self.seed, number, c.hot)),
+            });
+        }
+    }
+
     /// A case in the list, in the order of its number.
     fn insert(&mut self, r: Running) {
         let at = self
@@ -550,12 +672,16 @@ impl Missions {
                 crimes: Vec::new(),
                 limit: self.limit.min(255) as u8,
                 open: 0,
+                missed: 0,
+                lost: String::new(),
             };
         };
         let team = world.resource::<Fights>().team_level;
-        let crimes = (1..=board::BOARD as u32)
-            .filter_map(|i| {
-                let number = u16::try_from(self.closed as u32 + i).ok()?;
+        let crimes = self
+            .slots
+            .iter()
+            .filter_map(|slot| {
+                let number = slot.number;
                 let c = board::crime(places, self.seed, number)?;
                 let case = self.cases.iter().find(|r| r.number == number);
                 let gang =
@@ -573,6 +699,15 @@ impl Missions {
                     job: c.job.code(),
                     gang: gang as u8,
                     level: team.saturating_add(c.extra),
+                    size: c.size,
+                    hot: c.hot,
+                    // Whole minutes left, rounded up (a taken one stays).
+                    minutes: if case.is_some() {
+                        255
+                    } else {
+                        let left = slot.until.saturating_sub(self.now);
+                        left.div_ceil(60 * crate::TICK_HZ as u64).min(254) as u8
+                    },
                     at: site.at.as_vec3().to_array(),
                     name,
                     taken: case.is_some()
@@ -587,6 +722,8 @@ impl Missions {
             crimes,
             limit: self.limit.min(255) as u8,
             open: self.cases.len().min(255) as u8,
+            missed: self.missed,
+            lost: self.lost.clone(),
         }
     }
 
@@ -597,6 +734,10 @@ impl Missions {
         if !self.available() {
             return;
         }
+        self.now = tick;
+        if tick.is_multiple_of(crate::TICK_HZ as u64) || self.slots.is_empty() {
+            self.turn_board(tick);
+        }
         self.open_requested(world);
         let heroes = heroes(world);
         if heroes.is_empty() {
@@ -606,6 +747,14 @@ impl Missions {
             r.search(world, tick, &heroes);
         }
         if tick.is_multiple_of(crate::TICK_HZ as u64) {
+            // Safes of closed cases go once nobody is there to see it.
+            let (stay, go): (Vec<_>, Vec<_>) = std::mem::take(&mut self.left)
+                .into_iter()
+                .partition(|s| heroes.iter().any(|h| h.at.distance(s.at) < SAFE_GONE));
+            self.left = stay;
+            for s in go {
+                s.remove(world);
+            }
             self.keep_book(world);
             let mut done = Vec::new();
             for (k, r) in self.cases.iter_mut().enumerate() {
@@ -623,6 +772,17 @@ impl Missions {
             }
         }
         self.tell(world);
+    }
+
+    /// Every safe standing in a hideout, as solids: heroes and villains
+    /// walk round them (what is drawn is what collides).
+    pub fn safe_solids(&self) -> Vec<crate::collision::Solid> {
+        self.cases
+            .iter()
+            .flat_map(|r| r.safes())
+            .chain(self.left.iter())
+            .map(|s| s.solid())
+            .collect()
     }
 
     /// The cases in the host's file: a book that is new to us (the host
@@ -682,6 +842,9 @@ impl Missions {
         }
         self.opened = book.opened;
         self.closed = book.closed;
+        // The board starts afresh after what was handed out.
+        self.slots.clear();
+        self.issued = book.opened;
         if book.world == self.seed {
             if let Some(places) = self.places.clone() {
                 for c in &book.open {
@@ -707,10 +870,16 @@ impl Missions {
             world,
             heroes,
             r.site().at,
-            REWARD_SHARE,
+            r.share(),
             r.site().building.is_some(),
         );
-        r.leave(world);
+        if r.is_hideout() {
+            let safes = r.wrap_up(world, self.now);
+            self.left.extend(safes);
+        } else {
+            r.leave(world);
+        }
+        self.slots.retain(|s| s.number != r.number);
         self.closed = self.closed.wrapping_add(1);
         let mut news = r.news(world);
         if let ToClient::Case { stage, .. } = &mut news {
@@ -737,6 +906,8 @@ impl Missions {
                 held: 0,
                 crime: 0,
                 level: 0,
+                size: 0,
+                alarms: 0,
             });
         }
     }

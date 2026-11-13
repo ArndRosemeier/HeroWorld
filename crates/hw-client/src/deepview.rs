@@ -175,6 +175,13 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
             VoidKind::Ruin => ruin_room(&mut inner, v, &other),
             VoidKind::Lair => lab_room(&mut inner, v, &other),
             VoidKind::Shaft | VoidKind::Passage => {
+                let near: Vec<&Void> = t
+                    .voids
+                    .iter()
+                    .enumerate()
+                    .filter(|&(j, _)| j != i)
+                    .map(|(_, o)| o)
+                    .collect();
                 uv::lining_of(
                     &mut inner,
                     v,
@@ -184,6 +191,7 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
                             j < i && (o.floor_at(mid) - f).abs() < 0.6 && o.kind != VoidKind::Shaft
                         })
                     },
+                    &near,
                     other,
                 );
                 let c = v.world((v.min + v.max) * 0.5);
@@ -203,6 +211,7 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
     // The stairs between the layers.
     for l in &t.lifts {
         uv::spiral_stair(&mut inner, &l.spiral);
+        glows.extend(uv::stair_lamps(&l.spiral));
         if l.rail {
             // Up through a floor: paving and a rail round the hole.
             uv::collar_on(&mut inner, l.spiral.c, l.spiral.dir, |_| l.top);
@@ -274,8 +283,9 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
     for e in &t.entrances {
         let glow_col = entrance_glow(e.kind);
         uv::spiral_stair(&mut inner, &e.spiral);
+        glows.extend(uv::stair_lamps(&e.spiral));
         glows.push(Glow {
-            pos: DVec3::new(e.pos.x, e.bottom + 2.6, e.pos.y),
+            pos: uv::foot_lamp(&e.spiral),
             color: glow_col,
             strength: 6.0,
             range: 10.0,

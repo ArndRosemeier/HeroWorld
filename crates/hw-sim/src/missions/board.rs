@@ -17,6 +17,22 @@ use hw_core::Seed;
 /// Crimes on the board at once.
 pub const BOARD: usize = 10;
 
+/// A crime stays on the board about this long (s): from half to one and a
+/// half times it, by its number; a hot one half of that.
+pub const LIFE_SECONDS: f64 = 20.0 * 60.0;
+/// One crime in this many is a hot tip, and what it pays on top.
+pub const HOT_CHANCE: f64 = 1.0 / 6.0;
+pub const HOT_BONUS: f64 = 0.5;
+/// A crime nobody took makes the streets round its hideout rough for this
+/// long (s): street crime is as common there as round a gang's hangout.
+pub const EMBOLDENED_SECONDS: f64 = 10.0 * 60.0;
+
+/// How long crime `number` stays on the board (s).
+pub fn life(seed: u64, number: u16, hot: bool) -> f64 {
+    let f = Seed(seed).child("life").child(number as u64).rng().unit();
+    LIFE_SECONDS * (0.5 + f) * if hot { 0.5 } else { 1.0 }
+}
+
 /// What the gang is up to in its hideout: it decides the symbol, the words
 /// and the thing to find.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -87,6 +103,11 @@ pub struct Crime {
     pub job: CaseKind,
     /// Levels the gangsters stand over the team (0 to 2).
     pub extra: u8,
+    /// How big the hideout is: 0 small, 1 middling, 2 big (never bigger
+    /// than its building has rooms for).
+    pub size: u8,
+    /// A hot tip: it pays [`HOT_BONUS`] more and is gone twice as soon.
+    pub hot: bool,
     /// The hideout, by index in the route maps ([`Places::floors`]).
     pub building: usize,
 }
@@ -104,12 +125,25 @@ pub fn crime(places: &Places, seed: u64, number: u16) -> Option<Crime> {
     } else {
         CaseKind::Evidence
     };
+    let extra = rng.index(3) as u8;
+    let building = places.hideouts[(number as usize - 1) % n];
+    // Besides the boss's room.
+    let spare = places
+        .rooms
+        .get(building)
+        .map_or(0, |r| r.saturating_sub(1)) as usize;
+    let fits = (0..3u8)
+        .rev()
+        .find(|&s| s == 0 || spare >= super::rooms_of(s) - 1)
+        .unwrap_or(0);
     Some(Crime {
         number,
         kind,
         job,
-        extra: rng.index(3) as u8,
-        building: places.hideouts[(number as usize - 1) % n],
+        extra,
+        size: (rng.index(3) as u8).min(fits),
+        hot: rng.chance(HOT_CHANCE),
+        building,
     })
 }
 

@@ -713,6 +713,7 @@ Numbers at level 1; health and damage scale with the villain's level like a hero
 | Mutant Bulwark | Lab | Minion | 52 | 7 every 2.2 s | 2.4 m | 8 | A brute with a big brass atom shield on its left arm. Aimed blows (bolts, beams) from more than 3.5 m in front mostly clang off the shield (a quarter gets through); blasts, holds and anything from close by or from the side get through. Get close, or go round it. |
 | Lab Grenadier | Lab | Minion | 32 | 11 every 4.2 s | 18 m | 7 | Olive overalls and a leather helmet. Lobs a fizzing bomb where you stand: a red ring shows where, and it bursts 1.9 s later (2.6 m round). Step out of the ring. |
 | Lab Orderly | Lab | Minion | 30 | 5 every 2.6 s | 20 m | 7 | Mint overalls, white gloves. Every 4 s it patches up a hurt friend within 14 m (14 health at level 1, a green beam); in between it shoots. Take it out first. |
+| Safe | – | Locked | 200 | – | – | 10 | A gang's safe with a hideout case's thing in it. Tab to it and break it open; it stays where it stands. |
 | Weak point | – | Part | 240 | – | – | 25 | A breakable part of a robot: the colossus's knees and cannon, the sentry's dish. Tab to it. |
 
 Brutes, bulwarks, grenadiers, orderlies, technicians, Jackets and gunsels are knocked down by knockback powers; the sentry,
@@ -845,38 +846,72 @@ at Atomic Annie (she keeps the hall's steps and no longer hands anything out):
   icons: **Crime-o-Vision**, Case files (J), Crime scanner (the visor, T), City map (M) and
   Hero powers (B). It takes the pointer; Y or the sputnik button closes it.
 - **Crime-o-Vision** (`police.rs`): a glassy overlay whose opacity wavers like a bad picture
-  tube (with a rolling band and the odd glitch; steady with reduced motion). It lists the next
-  **10 crimes** nearest first. Each row has the crime's **symbol** (payroll robbery: money
+  tube (with a rolling band and the odd glitch; steady with reduced motion). It lists the
+  **10 crimes** on the board, nearest first. Each row has the crime's **symbol** (payroll robbery: money
   sack; counterfeit ring: banknotes; smuggling den: crate; stolen prototype: ray gun; art
   theft: framed painting; protection racket: ledger), its title and the hideout's name ("Old
   hotel on Juniper Street"), the **job** with an icon (**arrest the boss**: handcuffs, **find
   the thing**: magnifier), the **gang** (a coloured dot and its short name), the gangsters'
   **level** (the team's level plus 0-2; green when easy, gold on par, orange and red when tough)
+  the hideout's **size** (one, two or three little houses lit: DEN, HIDEOUT, FORTRESS)
+  the **minutes** it stays on the board (red from 3 down), a pulsing **HOT TIP** flag,
   and the **distance** from the hero. **TAKE** opens the case (FULL when 3 are open, ON IT when
   taken). The radio's heading and compass then follow it.
 - **The board** (`missions/board.rs`): crime number *n* is a pure function of the world's seed
-  and *n* (which hideout, what crime, which job, how many levels over the team). The board shows
-  crimes *closed+1 .. closed+10*, so closing a case slides it along. The gang is picked from
-  those that come out at the team's level. Hideouts are the town's **buildings of halls** with 2+
-  floors and at least 12 m a side: every tenement, one shop-and-office block in six (works keep their machines).
-  A town of seed 3 has about 85.
+  and *n* (which hideout, what crime, which job, how many levels over the team, its size,
+  whether it is a hot tip). The board holds **10 crimes**; each stays **10 to 30 minutes**
+  (`LIFE_SECONDS` 20 min, times 0.5-1.5 by its number), a **hot tip** (one in six) half as long,
+  and the next number takes its place when it is closed or its time is up. A crime that is
+  taken stays until its case closes. A **hot tip pays half as much again**. A crime **nobody
+  took** makes the streets within 450 m of its hideout **rough for 10 minutes**: street crime is
+  as common there as round a gang's hangout (`EMBOLDENED_SECONDS`), and the radio says so. The
+  gang is picked from those that come out at the team's level. Hideouts are the exception among
+  the town's **buildings of halls** (2+ floors, at least 12 m a side): **one tenement in four,
+  one shop-and-office block in six** (works keep their machines); the rest are homes and shops
+  with their own furniture. A hideout shows from the street: its **ground-floor windows are
+  boarded up** (planks nailed across, no light behind them), and where cars may park in front of
+  it, **the gang's car** stands at the kerb (0.267): a long black Cruiser under a blood-red roof,
+  a paint no other car wears (`GANG_PAINT`; about 4 hideouts in 10 have the kerb for one). It is
+  a parked car like any other: solid, and it can be thrown.
 
 The team can have up to **3 cases open** at once (`OPEN_LIMIT`; nothing else assumes a number),
 never two in one building. Cases are numbered with the crime's number and each is against one of
 five gangs (the Doctor's sentries, Jackets or Syndicate, sky pirates, the Iron Legion, the
 Zorrak; the last two only from their levels on).
 
-**A hideout case is one step in one building**, one of two jobs:
-- **Arrest the boss** (takeover): the gang holds up to **6 rooms** (halls, boardrooms, lobbies,
-  shops, concourses, at least 8 m a side; a flat's living rooms, kitchens and bedrooms, 4.5 m),
-  spread over the floors, **3 villains a room** for one hero and one more for each friend. The
-  **boss** waits on the top floor with 3 guards, **1 level over the gang's**. Beating the boss
-  closes the case.
-- **Find the thing** (evidence): the same gang, plus **one real object** the crime is about
-  (a strongbox of cash, printing plates, a crate with a glowing canister, the prototype in its
-  case, a painting propped up, a ledger), lying in a far corner of a room on a high floor. It
-  has a small glint of its own (a lit seal, a glowing coil) and sparkles lightly; hold **E**
-  within 2.8 m for 3 s to take it. That closes the case.
+**A hideout case is one step in one building**, in three beats: the lookouts at the door, the
+rooms, and a finale that depends on the job.
+
+- **Size** (`board.rs`, `SIZE_ROOMS`): a **den** holds 2 rooms, a **hideout** 4, a **fortress** 6,
+  besides the boss's room (never more than the building has: rooms are halls, boardrooms,
+  lobbies, shops and concourses at least 8 m a side, and a flat's rooms and back rooms at least
+  3.8 m). **3 villains a room** for one hero and one more for each friend. In a town of seed 3
+  (20 000 people): 39 dens, 38 hideouts, 10 fortresses.
+- **Lookouts**: **2** stand at the way in (`DOOR_SIZE`).
+- **The alarm** (`ALARM_SECONDS`): a crew that has fought a hero for **6 s** and still stands
+  shouts for help, and the **nearest crew that has heard nothing** comes along. One room, not a
+  chain: a crew that was called does not call on, and the boss's guard never leaves the boss. A
+  room taken down inside 6 s calls nobody.
+- **Arrest the boss** (takeover): the **boss** (named in the case file and on the radio) waits
+  on the top floor with 3 guards, **1 level over the gang's**. Below **40 %** health it **breaks
+  off once**: for up to 9 s it fights nobody and runs through the building, down the stairs if
+  need be, to the crew still standing that is farthest away (with none left: to the way out),
+  and that crew takes the hero on (`BOSS_BREAKS`, `BOSS_RUN_SECONDS`, `Enemy::flee_until`). There
+  it turns to fight again. Beating the boss closes the case.
+- **Find the thing** (evidence): **one real object** the crime is about (a strongbox of cash,
+  printing plates, a crate with a glowing canister, the prototype in its case, a painting
+  propped up, a ledger), **locked in the gang's safe** in a far corner of a room on a high
+  floor. The safe (0.267) is a real thing: 1.1 m wide, 1.5 m high, solid, square to the walls,
+  its door towards the room's crew. It is a target like a villain (**Tab** or click it, name
+  "Safe", rank "Locked", **200 health** at level 1 and 60 % more per extra hero, 10 karma) that
+  never fights back and is never carried off: **break it open** with any attack, from in front of
+  its door. When it gives, the door hangs open, the thing shows inside, and **the noise calls the
+  nearest crew that has heard nothing** (as a room's alarm does). The thing is also **guarded by
+  its room's crew**: it cannot be taken while they stand. Then hold **E** within 2.8 m for 3 s.
+  An opened safe stays where it stands until no hero is within 90 m (`SAFE_GONE`). Taking it
+  **raises the whole gang**: everyone still standing, the boss and its guard too, comes for the
+  hero, and a crew of **2** cuts off the way out at the door (`CUTOFF_SIZE`). The case closes
+  when the hero who took it is **3 m outside the building** (or nobody is left to stop them).
 - **Hideouts are furnished like hideouts** (`Fit::Hideout`): cots with rumpled blankets,
   card tables with chips and cards, safes, planning boards with a pinned map, photos and red
   string, oil drums and crates, besides the room's own furniture.
@@ -899,8 +934,13 @@ In a building:
   follow you through doors and up stairs by the building's route map (see Villain AI).
 - The gang moves in when a hero comes within **90 m** of the place (on the flat), and leaves if
   no hero is within **250 m** for **30 s** (the case stays; it comes back when you do).
-- **Reward**: every hero within 150 m gets **40 %** of the karma their next level takes when
-  the case closes.
+- **The ending**: when a hideout case closes, whoever of the gang still stands **gives up**
+  (down and cuffed, no karma: the police drones take them in), and **someone waits outside the
+  door to thank the heroes** (the thing's owner, a neighbour), then walks off.
+- **Reward**: every hero within 150 m gets a share of the karma their next level takes when
+  the case closes: **15 %** for a den, **25 %** for a hideout, **40 %** for a fortress, and a
+  tenth more of that for each level the gang stands over the team (`share_of`); half as much
+  again for a hot tip.
 
 **Adding to cases** (the hooks): a new crime is a `CrimeKind` value (its words, symbol in
 `police::crime_icon`, the thing in `pieces::evidence`); a new kind of place is a `Place` value, a
@@ -1345,9 +1385,15 @@ thread near the works. Views: `HW_VIEW=works`, `worksline`, `worksdock`, `worksh
 
 - **Utility tunnels** under the main roads: concrete, pipes, a glowing Aether conduit along
   the ceiling. Entered through **spiral stairs** in Googie pavilions on the pavements (look
-  for the glowing atom signs): a 1 m wide ring of stone steps round a pillar, 16 steps and
+  for the glowing atom signs): a 1 m wide ring of terrazzo steps round a pillar, 16 steps and
   3.2 m of depth to a turn, a rail round the hole on three sides, the way in on the fourth.
-  You walk down (and back up); the foot opens into the passage to the tunnel.
+  You walk down (and back up); the foot opens into the passage to the tunnel. Lawns, grass
+  and pavements leave the hole and its paved apron (2.4 m round it) open
+  (`TownWorld::street_holes`). Steps have chrome nosing and a smooth underside; a solid
+  chrome balustrade (0.95 m) runs on the open side from a rail's height below the street
+  down to a metre above the floor, a brass handrail on the pillar, and an Aether strip
+  2.2 m over the steps lights the way (one lamp a turn and two at the foot). The same stair
+  serves every deep shaft. Views: `HW_VIEW=lift`, `stairtop`, `stairs`, `stairfoot`.
 - **Molehaven**, the mole people's town in a cavern 27 m down under the mole drill
   (`hw-gen/src/urban/molehaven.rs`, drawn by `hw-client/src/molehavenview.rs`). Two ways in,
   both walked: **Molehaven's gate**, beside the drill's plinth (stone piers with brass bands
@@ -1371,7 +1417,8 @@ thread near the works. Views: `HW_VIEW=works`, `worksline`, `worksdock`, `worksh
   (a carved mole idol, candles, a glow pool) and **cottages** round a yard. Everything that
   stands down there is solid (`MolehavenLayout::footprints`) and keeps clear of the ways in.
   Short, pale mole folk in goggles keep the stalls, run errands, stroll round the well and
-  chat in the side chambers. Views: `HW_VIEW=molehaven`, `market`, `moleroom`, `molegate`,
+  chat in the side chambers. The first side chamber has the **stair down to the Deeps**, a
+  railed hole in its floor. Views: `HW_VIEW=molehaven`, `market`, `moleroom`, `molegate`,
   `molesign`, `moleramp`.
 - **The mole drill** (`hw-gen/src/urban/drillrig.rs`, `hw-client/src/drillview.rs`), right
   over Molehaven's great hall (the cavern is planned under it; its bore comes down over the
