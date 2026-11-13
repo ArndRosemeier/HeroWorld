@@ -808,6 +808,16 @@ impl Soundscape {
                 }
                 AlarmKind::Collapse | AlarmKind::Explosion => ("scream_crowd_1", 0.9, 90.0),
                 AlarmKind::Warning => continue,
+                // A cruiser coming down: its siren, for a moment.
+                AlarmKind::Police => {
+                    self.later.push(Later {
+                        at: s.now,
+                        clip: "siren",
+                        pos: at + Vec3::Y * 12.0,
+                        seconds: 7.0,
+                    });
+                    continue;
+                }
             };
             if let Some(c) = self.bank.get(clip, s.now) {
                 world.play_sound(&c, PlaySound::at(at).volume(vol).range(6.0, range));

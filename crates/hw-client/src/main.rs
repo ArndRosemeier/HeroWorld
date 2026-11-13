@@ -567,6 +567,10 @@ fn main() -> EngineResult<()> {
             }
             // The ambulance medic at rescues.
             p.request(Who::Medic, 0);
+            // The police's officers.
+            for k in 0..hw_sim::police::LOOKS {
+                p.request(Who::Officer(k), 0);
+            }
             // `HW_VIEW=act`: the street acts' people at once (in play they
             // are asked for when an act first comes near).
             if view == "act" {
@@ -617,6 +621,7 @@ fn main() -> EngineResult<()> {
     let mut fight = FightView::new();
     let mut robots = RobotView::new();
     let mut safes = hw_client::safeview::SafeView::default();
+    let mut police_view = hw_client::policeview::PoliceView::default();
     let mut safe_shown = false;
     let mut radio = hw_client::radioview::Radio::default();
     // The police visor: marks the radio's calls in front of the hero's eyes.
@@ -3886,13 +3891,18 @@ fn main() -> EngineResult<()> {
                     }
                     continue;
                 }
-                // Machines are drawn from their parts (`robotview`).
-                if h.kind.is_robot() {
+                // Machines are drawn from their parts (`robotview`), a
+                // police cruiser by `policeview`.
+                if h.kind.is_robot() || h.kind == hw_net::EntityKind::PoliceCar {
                     continue;
                 }
                 let feet = Vec3::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32);
                 let villain = h.kind.is_enemy();
-                let bystander = h.kind == hw_net::EntityKind::Bystander;
+                // An officer walks and stands as the townsfolk do.
+                let bystander = matches!(
+                    h.kind,
+                    hw_net::EntityKind::Bystander | hw_net::EntityKind::Officer
+                );
                 // The mutant alpha is a brute a head and a half taller.
                 let size = if h.kind == hw_net::EntityKind::Alpha {
                     1.35
@@ -3970,6 +3980,10 @@ fn main() -> EngineResult<()> {
                     // A townsperson in a crime: one of the citizens' looks.
                     hw_net::EntityKind::Bystander => {
                         Who::Citizen(own_look.unwrap_or(h.id.0) % hw_sim::citizens::LOOKS)
+                    }
+                    // A police officer.
+                    hw_net::EntityKind::Officer => {
+                        Who::Officer(h.mount.map_or(0, |m| m.1) % hw_sim::police::LOOKS)
                     }
                     // One of Hero Hall's own heroes.
                     hw_net::EntityKind::NpcHero => Who::NpcHero(h.mount.map_or(0, |m| m.1)),
@@ -4240,6 +4254,7 @@ fn main() -> EngineResult<()> {
             robots.update(world, &heroes, frame.dt)?;
             // The hideouts' safes, and where they stand for the things in them.
             safes.update(world, &heroes)?;
+            police_view.update(world, &heroes, frame.dt)?;
             cases.safes = heroes
                 .iter()
                 .filter(|e| e.kind == hw_net::EntityKind::Safe)
@@ -4261,6 +4276,51 @@ fn main() -> EngineResult<()> {
                         .atan()
                         .to_degrees();
                     fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
+            // `HW_VIEW=police` (with `HW_POLICE=<s>`): the cruiser called to
+            // the hero, from in front of its nose (`HW_POLICE_CAM="side,up,
+            // ahead"` in metres moves the camera; `HW_POLICE_AT=officer`
+            // looks at the first officer instead, from 2.5 m).
+            if view == "police" {
+                let car = heroes
+                    .iter()
+                    .find(|e| e.kind == hw_net::EntityKind::PoliceCar);
+                let officer = heroes
+                    .iter()
+                    .find(|e| e.kind == hw_net::EntityKind::Officer)
+                    .filter(|_| std::env::var("HW_POLICE_AT").as_deref() == Ok("officer"));
+                if let Some(c) = car {
+                    let cam: Vec<f32> = std::env::var("HW_POLICE_CAM")
+                        .ok()
+                        .map(|v| v.split(',').filter_map(|n| n.parse().ok()).collect())
+                        .filter(|v: &Vec<f32>| v.len() == 3)
+                        .unwrap_or(vec![4.6, 1.9, 6.4]);
+                    let turn = glam::Quat::from_array(c.rot);
+                    let at = Vec3::from_array([c.pos[0] as f32, c.pos[1] as f32, c.pos[2] as f32]);
+                    let (eye, look) = match officer {
+                        Some(o) => {
+                            let p = Vec3::from_array([
+                                o.pos[0] as f32,
+                                o.pos[1] as f32,
+                                o.pos[2] as f32,
+                            ]);
+                            let face = glam::Quat::from_array(o.rot) * Vec3::Z;
+                            (
+                                p + face * 2.3 + Vec3::Y * 1.55 + face.cross(Vec3::Y) * 0.8,
+                                p + Vec3::Y * 1.35,
+                            )
+                        }
+                        None => (
+                            at + turn * Vec3::new(cam[0], cam[1], cam[2]),
+                            at + turn * Vec3::new(0.0, 0.75, 0.5),
+                        ),
+                    };
+                    let d = look - eye;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((eye.x, eye.y, eye.z), d.x.atan2(d.z).to_degrees(), pitch);
                 }
             }
             // `HW_VIEW=safe`: a hideout's safe shut and broken open (the
@@ -4655,6 +4715,7 @@ fn main() -> EngineResult<()> {
                     movers.extend(airships.solids_near(&[me], game_time));
                     movers.extend(story.statue_solids(&generated.world));
                     movers.extend(hw_client::safeview::solids(&heroes));
+                    movers.extend(hw_sim::police::solids_of(&heroes));
                     if let Some(l) = extras.lifts.as_ref() {
                         movers.extend(l.lifts().solids_near(&[me], 25.0, game_time));
                     }

@@ -2003,16 +2003,25 @@ impl FightView {
         if self.hats.contains_key(&e) {
             return;
         }
-        let Some((frame, bowl)) = crate::factionview::headgear(kind) else {
-            return;
+        // An officer's cap, or an invader's helmet (frame and bowl).
+        let (meshes, at) = if kind == EntityKind::Officer {
+            let (x, y, z) = crate::policeview::CAP_AT;
+            (
+                vec![crate::policeview::cap()],
+                Place::new(x, y, z)
+                    .with_pitch_deg(crate::policeview::CAP_TIP)
+                    .with_scale(crate::policeview::CAP_SIZE),
+            )
+        } else {
+            let Some((frame, bowl)) = crate::factionview::headgear(kind) else {
+                return;
+            };
+            (vec![frame, bowl], Place::new(0.0, 0.0, 0.0))
         };
         let mut worn = Vec::new();
-        for mesh in [frame, bowl] {
+        for mesh in meshes {
             if let Ok(h) = world.place(mesh, Place::new(0.0, 0.0, 0.0)) {
-                if world
-                    .attach_to_bone(h, e, "head", Place::new(0.0, 0.0, 0.0))
-                    .is_ok()
-                {
+                if world.attach_to_bone(h, e, "head", at).is_ok() {
                     worn.push(h);
                 } else {
                     world.despawn(h);

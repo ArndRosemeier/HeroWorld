@@ -778,6 +778,8 @@ fn a_closed_hideout_gives_up_and_someone_says_thanks() {
         .collect();
     assert_eq!(thanks.len(), 1, "one to say thanks");
     assert!(!b.holds(thanks[0], 0.0), "outside the building");
+    // The police are called to the door: a cruiser sets out.
+    assert_eq!(sim.police.out(), 1, "a cruiser for the hideout");
     // The police drones take them all in.
     let mut left = TICK_HZ * 240;
     let people = |sim: &mut Sim| sim.enemies().iter().any(|e| e.1 != EnemyKind::Safe);

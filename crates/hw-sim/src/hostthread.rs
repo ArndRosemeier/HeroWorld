@@ -370,6 +370,9 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
     // `hideout:<n>@thing`: the hero is put beside the thing to find once
     // the gang stands (screenshots).
     let mut thing_case: Option<u16> = None;
+    // `HW_POLICE=<s>`: that many seconds in, a cruiser is called to where
+    // the hero stands and comes straight down (screenshots).
+    let mut police_at: Option<f64> = std::env::var("HW_POLICE").ok().and_then(|v| v.parse().ok());
     let mut busy = Duration::ZERO;
     let mut ticks = 0u32;
     let mut players: Option<BTreeMap<PlayerId, PlayerInfo>> = None;
@@ -391,6 +394,20 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
                 }
                 if let Some(n) = colossus_break {
                     host.sim.break_colossus(n);
+                }
+                if police_at.is_some_and(|s| host.sim.tick as f64 * crate::DT >= s) {
+                    let me_at = host
+                        .sim
+                        .snapshot()
+                        .iter()
+                        .find(|e| e.kind == hw_net::EntityKind::Hero && e.owner == Some(me))
+                        .map(|e| glam::DVec3::from_array(e.pos));
+                    if let Some(at) = me_at {
+                        police_at = None;
+                        host.sim.police.quick = true;
+                        // The hero stands in the door.
+                        host.sim.call_police(at, glam::DVec2::X);
+                    }
                 }
                 if let Some(n) = thing_case {
                     let sim = &mut host.sim;

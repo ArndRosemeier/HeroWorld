@@ -340,6 +340,11 @@ pub enum EntityKind {
     /// A gang's safe, the thing a case is after locked in it: broken open
     /// (`Status::Down`) it stands with its door hanging.
     Safe,
+    /// A Sky Patrol cruiser: the police's flying car. `grounded` says its
+    /// canopy is open.
+    PoliceCar,
+    /// A police officer (their look rides on `mount`).
+    Officer,
 }
 
 impl EntityKind {
@@ -375,6 +380,8 @@ impl EntityKind {
             EntityKind::Grabber => 27,
             EntityKind::Overlord => 28,
             EntityKind::Safe => 29,
+            EntityKind::PoliceCar => 30,
+            EntityKind::Officer => 31,
         }
     }
 
@@ -410,6 +417,8 @@ impl EntityKind {
             27 => Ok(EntityKind::Grabber),
             28 => Ok(EntityKind::Overlord),
             29 => Ok(EntityKind::Safe),
+            30 => Ok(EntityKind::PoliceCar),
+            31 => Ok(EntityKind::Officer),
             _ => Err(WireError),
         }
     }

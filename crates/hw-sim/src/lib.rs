@@ -29,6 +29,7 @@ pub mod missions;
 pub mod nav;
 pub mod npcheroes;
 pub mod physics;
+pub mod police;
 pub mod powers;
 pub mod predict;
 pub mod progress;
@@ -682,6 +683,8 @@ pub struct Sim {
     pub street: props::PropDamage,
     /// Taxi stands and the taxis flying fares (see [`taxi`]).
     pub taxis: taxi::Taxis,
+    /// The police's cruisers out on calls (see [`police`]).
+    pub police: police::Police,
     /// The Aether Tube's capsules (see [`tube`]).
     pub tubes: tube::Tubes,
     /// The moving traffic and the cars wrecked in it (see [`wrecks`]).
@@ -756,6 +759,7 @@ impl Sim {
                 .collect();
         }
         sim.taxis = taxi::Taxis::new(town.area.clone());
+        sim.police = police::Police::new(town.area.clone());
         sim.tubes = tube::Tubes::new(town.world.clone());
         sim.rockets = rocket::pads(&town.world);
         sim.lifts = lifts::Lifts::new(&town.world);
@@ -920,6 +924,7 @@ impl Sim {
         let centre = (area.lo + area.hi) * 0.5;
         self.wrecks.set_traffic(traffic, centre);
         self.taxis.set_town(area.clone());
+        self.police.set_town(area.clone());
         self.incidents.set_town(area.clone());
         self.world.resource_mut::<combat::Fights>().area = Some(combat::Skyline(area.clone()));
         self.crimes.set_area(area.clone());
@@ -1064,6 +1069,7 @@ impl Sim {
             damage: Damage::default(),
             street: props::PropDamage::default(),
             taxis: taxi::Taxis::default(),
+            police: police::Police::default(),
             tubes: tube::Tubes::default(),
             wrecks: wrecks::Wrecks::default(),
             incidents: incidents::Incidents::default(),
@@ -1316,6 +1322,24 @@ impl Sim {
         self.lap("srv story+missions us", &mut t);
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
+        // A hideout case closed: the police come for the gang.
+        for (door, out) in std::mem::take(&mut self.missions.police_calls) {
+            self.call_police(door, out);
+        }
+        let heroes_at: Vec<DVec3> = self
+            .world
+            .query::<(&Motion, &Hero)>()
+            .iter(&self.world)
+            .map(|(m, _)| m.0.pos)
+            .collect();
+        police::step(
+            &mut self.world,
+            &mut self.police,
+            &solids,
+            &mut self.alarms,
+            &heroes_at,
+            self.tick,
+        );
         tube::step(&mut self.world, &mut self.tubes, self.tick, DT);
         self.alarms.step(self.tick);
         self.lap("srv taxi+tube+alarms us", &mut t);
@@ -1375,6 +1399,7 @@ impl Sim {
         movers.extend(self.airships.solids_near(&heroes, now));
         movers.extend(self.story.statue_solids());
         movers.extend(self.missions.safe_solids());
+        movers.extend(self.police.solids(&self.world));
         movers.extend(self.lifts.solids_near(&heroes, 25.0, now));
         self.lap("srv movers us", &mut t);
         if let Some(t) = self.wrecks.traffic.as_mut() {
@@ -2395,6 +2420,22 @@ impl Sim {
         );
     }
 
+    /// Calls the police to the door at `door` (feet), which looks out
+    /// along `out`: a cruiser lands near it and its officers stand guard
+    /// (see [`police`]).
+    pub fn call_police(&mut self, door: DVec3, out: DVec2) {
+        let solids = self.solids();
+        // It lands on nobody: not a hero, not someone who came to say
+        // thanks.
+        let people: Vec<DVec3> = self
+            .world
+            .query_filtered::<&Motion, Or<(With<Hero>, With<incidents::Bystander>)>>()
+            .iter(&self.world)
+            .map(|m| m.0.pos)
+            .collect();
+        self.police.call(&solids, door, out, &people, self.tick);
+    }
+
     /// Every replicated entity with the tick it last changed, sorted by ID.
     pub fn replicated(&mut self) -> Vec<(EntityState, u64)> {
         let mut out: Vec<(EntityState, u64)> = self
@@ -2409,6 +2450,7 @@ impl Sim {
                     Option<&Enemy>,
                     Option<&Drone>,
                     Option<&CombatView>,
+                    (Option<&police::Cruiser>, Option<&police::Officer>),
                 ),
                 (
                     &LastChange,
@@ -2427,7 +2469,7 @@ impl Sim {
                     m,
                     h,
                     o,
-                    (prop, enemy, drone, view),
+                    (prop, enemy, drone, view, (cruiser, officer)),
                     (c, fare, mount, bystander, rider, npc, sidekick),
                 )| {
                     (
@@ -2437,6 +2479,10 @@ impl Sim {
                                 EntityKind::Crate
                             } else if fare.is_some() {
                                 EntityKind::Taxi
+                            } else if cruiser.is_some() {
+                                EntityKind::PoliceCar
+                            } else if officer.is_some() {
+                                EntityKind::Officer
                             } else if rider.is_some() {
                                 EntityKind::Capsule
                             } else if let Some(e) = enemy {
@@ -2472,7 +2518,8 @@ impl Sim {
                                 // or police (0).
                                 .or(drone.map(|d| (d.carry, d.medical as u8)))
                                 .or(enemy.and_then(|e| e.look).map(|l| (n.0, l)))
-                                .or(bystander.and_then(|b| b.look).map(|l| (n.0, l))),
+                                .or(bystander.and_then(|b| b.look).map(|l| (n.0, l)))
+                                .or(officer.map(|o| (n.0, o.look))),
                         },
                         c.0,
                     )

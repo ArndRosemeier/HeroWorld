@@ -125,6 +125,10 @@ pub enum Who {
     Statue(u64),
     /// The ambulance medic at rescues: all in white.
     Medic,
+    /// A police officer, one of [`hw_sim::police::LOOKS`]: navy uniform,
+    /// white gloves, a gold badge (the peaked cap is hung on the head,
+    /// see [`crate::policeview::cap`]).
+    Officer(u8),
     /// One of the street life's performers (see `hw_sim::streetlife`):
     /// the act and which of its performers (the dancers are two).
     Street(hw_sim::streetlife::Act, u8),
@@ -985,6 +989,54 @@ pub fn sidekick(builder: &CharacterBuilder, theme: u8) -> CharacterConfig {
 
 /// The ambulance medic: a white tunic suit under a white coat, white
 /// gloves and shoes.
+/// A police officer of the Sky Patrol: a navy shirt and tie, navy
+/// trousers, black riding boots, white gloves, a black belt with a gold
+/// buckle and a gold star on the chest. Look 0 is a man, 1 a woman; hair
+/// short or pinned up, to sit under the cap.
+pub fn officer(builder: &CharacterBuilder, look: u8) -> actors_generator::CharacterConfig {
+    let seed = name_seed(&format!("sky patrol officer {look}"));
+    let mut c = golden_age(builder.catalog(), seed, false);
+    let catalog = builder.catalog();
+    let keep = |list: &[&str]| -> Vec<String> {
+        list.iter()
+            .filter(|g| catalog.garments.iter().any(|x| x.id == **g))
+            .map(|g| g.to_string())
+            .collect()
+    };
+    let woman = look % 2 == 1;
+    c.body.gender = if woman { 0.0 } else { 1.0 };
+    c.body.age_years = if woman { 31.0 } else { 42.0 };
+    c.body.muscle = 0.6;
+    c.body.weight = 0.5;
+    c.beard = "none".into();
+    c.hair = Some(
+        if woman {
+            "hair-bob-blunt"
+        } else {
+            "hair-short-slick"
+        }
+        .into(),
+    );
+    c.outfit = keep(&[
+        "shirt-tie",
+        "dress-trousers",
+        "riding-boots",
+        "gloves-short",
+    ]);
+    for (g, hex) in [
+        ("shirt-tie", "#3558a8"),
+        ("dress-trousers", "#1b2a52"),
+        ("riding-boots", "#121214"),
+        ("gloves-short", "#f2f2ee"),
+    ] {
+        c.garment_colors.insert(g.to_string(), hex.to_string());
+    }
+    c.costume.belt = "buckle".into();
+    c.costume.belt_color = "#141416".into();
+    c.costume.buckle_color = "#d8b04a".into();
+    c
+}
+
 pub fn medic(builder: &CharacterBuilder) -> actors_generator::CharacterConfig {
     let seed = name_seed("ambulance medic");
     let mut c = golden_age(builder.catalog(), seed, false);
@@ -1835,6 +1887,7 @@ pub fn build_sharing(
         Who::NpcHero(i) => (true, 7_000 + *i as u32),
         Who::Sidekick(theme) => (false, 9_000 + *theme as u32),
         Who::Medic => (false, 9_500),
+        Who::Officer(k) => (false, 9_600 + *k as u32),
         Who::Street(act, k) => (false, name_seed(&format!("street {act:?} {k}"))),
         Who::Guest(k) => (false, name_seed(&format!("club guest {k}"))),
     };
@@ -1842,7 +1895,7 @@ pub fn build_sharing(
     if matches!(who, Who::Sidekick(_)) {
         allowed.races = Some(Flags::List(vec!["human".into(), "robot".into()]));
     }
-    if matches!(who, Who::Street(..) | Who::Guest(_)) {
+    if matches!(who, Who::Street(..) | Who::Guest(_) | Who::Officer(_)) {
         // Costumes (a dinner jacket, an aviator's cap): picked by hand,
         // all of the era, from the whole wardrobe.
         allowed.clothing = None;
@@ -1859,6 +1912,7 @@ pub fn build_sharing(
         (Who::NpcHero(i), _) => npc_hero(builder, *i),
         (Who::Sidekick(theme), _) => sidekick(builder, *theme),
         (Who::Medic, _) => medic(builder),
+        (Who::Officer(k), _) => officer(builder, *k),
         (Who::Street(act, k), _) => street(builder, *act, *k, rseed),
         (Who::Guest(k), _) => guest(builder, *k, rseed),
         (Who::Citizen(look), _) if *look >= hw_sim::citizens::LOOKS => {
@@ -1872,7 +1926,7 @@ pub fn build_sharing(
         Who::Hero(_) | Who::Look(_) | Who::NpcHero(_) | Who::Statue(_) => HERO_CLIPS,
         Who::Villain(..) => VILLAIN_CLIPS,
         Who::Sidekick(_) => SIDEKICK_CLIPS,
-        Who::Citizen(_) | Who::Medic => CITIZEN_CLIPS,
+        Who::Citizen(_) | Who::Medic | Who::Officer(_) => CITIZEN_CLIPS,
         Who::Street(..) | Who::Guest(_) => STREET_CLIPS,
     };
     let options = BuildOptions {

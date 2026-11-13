@@ -38,6 +38,10 @@ fn model(name: &str, lod: Lod, paint: u8) -> Mesh {
         "hover" => car_into(&mut b, CarModel::Hover, paint, lod, true),
         "taxi" => taxi_into(&mut b, lod, true),
         "taxi_open" => taxi_into(&mut b, lod, false),
+        "cap" => return hw_client::policeview::cap(),
+        n if n.starts_with("officer") => {}
+        "patrol" => hw_client::carmesh::patrol_into(&mut b, lod, true),
+        "patrol_open" => hw_client::carmesh::patrol_into(&mut b, lod, false),
         "cruiser_open" => car_shell_into(&mut b, CarModel::Cruiser, paint, lod, true),
         "bubble_open" => car_shell_into(&mut b, CarModel::Bubble, paint, lod, true),
         "hover_open" => car_shell_into(&mut b, CarModel::Hover, paint, lod, true),
@@ -172,6 +176,42 @@ fn main() -> EngineResult<()> {
                     world.place(beam, Place::new(x, lens, 0.0))?;
                 }
             }
+            // `HW_SHOW=officer` (or `officer1`): a police officer with their
+            // cap on; `HW_CAP="x,y,z,tip,size"` moves the cap, for fitting it.
+            if let Some(k) = show.strip_prefix("officer") {
+                use hw_client::people::{packs_dir, People, Who};
+                let look: u8 = k.parse().unwrap_or(0);
+                let dir = packs_dir().expect("the Actors packs (assets/packs)");
+                let people = People::start(dir);
+                people.request(Who::Officer(look), 0);
+                let built = people.wait(1).pop().expect("an officer");
+                let e = world.spawn_animated_shared(
+                    built.model,
+                    Place::new(0.0, 0.0, 0.0).with_yaw_deg(env_f("HW_TURN", 0.0)),
+                )?;
+                world.play_animation(e, &std::env::var("HW_CLIP").unwrap_or("idle".into()))?;
+                let (x, y, z) = hw_client::policeview::CAP_AT;
+                let at: Vec<f32> = std::env::var("HW_CAP")
+                    .ok()
+                    .map(|v| v.split(',').filter_map(|n| n.parse().ok()).collect())
+                    .filter(|v: &Vec<f32>| v.len() == 5)
+                    .unwrap_or(vec![
+                        x,
+                        y,
+                        z,
+                        hw_client::policeview::CAP_TIP,
+                        hw_client::policeview::CAP_SIZE,
+                    ]);
+                let cap = world.place(hw_client::policeview::cap(), Place::new(0.0, 0.0, 0.0))?;
+                world.attach_to_bone(
+                    cap,
+                    e,
+                    "head",
+                    Place::new(at[0], at[1], at[2])
+                        .with_pitch_deg(at[3])
+                        .with_scale(at[4]),
+                )?;
+            }
             world.spawn(Shape::box_at(
                 (0.0, -0.05, 0.0),
                 (60.0, 0.1, 60.0),
@@ -183,6 +223,15 @@ fn main() -> EngineResult<()> {
             let doors: Vec<Door> = match show.as_str() {
                 "taxi_open" => {
                     let (mesh, hinge, axis) = hw_client::carmesh::taxi_door(lod);
+                    vec![Door {
+                        mesh,
+                        hinge,
+                        axis,
+                        open: 0.9,
+                    }]
+                }
+                "patrol_open" => {
+                    let (mesh, hinge, axis) = hw_client::carmesh::patrol_door(lod);
                     vec![Door {
                         mesh,
                         hinge,

@@ -31,10 +31,13 @@ pub enum AlarmKind {
     /// A car crash: the street is blocked by the wrecks (refreshed while
     /// the rescue lasts).
     Crash,
+    /// A police cruiser standing in the street (refreshed while it
+    /// stands): cars keep off the road round it and wait.
+    Police,
 }
 
 impl AlarmKind {
-    pub const ALL: [AlarmKind; 7] = [
+    pub const ALL: [AlarmKind; 8] = [
         AlarmKind::Mugging,
         AlarmKind::Robbery,
         AlarmKind::Warning,
@@ -42,6 +45,7 @@ impl AlarmKind {
         AlarmKind::Collapse,
         AlarmKind::Explosion,
         AlarmKind::Crash,
+        AlarmKind::Police,
     ];
 
     pub fn code(self) -> u8 {
@@ -64,6 +68,7 @@ impl AlarmKind {
             AlarmKind::Explosion => 70.0,
             // People keep a few steps back and look.
             AlarmKind::Crash => 8.0,
+            AlarmKind::Police => 6.0,
         }
     }
 
@@ -77,6 +82,7 @@ impl AlarmKind {
             AlarmKind::Explosion => 35.0,
             // The wrecks fill the street: cars wait short of them.
             AlarmKind::Crash => 9.0,
+            AlarmKind::Police => 9.0,
         }
     }
 
@@ -85,6 +91,8 @@ impl AlarmKind {
     pub fn blocks_road(self) -> f64 {
         match self {
             AlarmKind::Crash => 6.0,
+            // The cruiser, and room for its officers to walk round it.
+            AlarmKind::Police => 6.0,
             _ => 0.0,
         }
     }
@@ -93,6 +101,7 @@ impl AlarmKind {
     pub fn lasts(self) -> f64 {
         match self {
             AlarmKind::Warning => 6.0,
+            AlarmKind::Police => 4.0,
             AlarmKind::Fight | AlarmKind::Crash => 10.0,
             AlarmKind::Explosion => 20.0,
             AlarmKind::Collapse => 30.0,
@@ -102,7 +111,10 @@ impl AlarmKind {
 
     /// Whether people run from it (else they back off and watch).
     pub fn frightens(self) -> bool {
-        !matches!(self, AlarmKind::Warning | AlarmKind::Crash)
+        !matches!(
+            self,
+            AlarmKind::Warning | AlarmKind::Crash | AlarmKind::Police
+        )
     }
 }
 

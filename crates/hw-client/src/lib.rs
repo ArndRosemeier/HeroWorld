@@ -58,6 +58,7 @@ pub mod molehavenview;
 pub mod nightlights;
 pub mod people;
 pub mod police;
+pub mod policeview;
 pub mod poses;
 pub mod powerfx;
 pub mod powersview;

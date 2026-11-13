@@ -717,7 +717,7 @@ shows where you stand.
 | Faction | Who | Toward a new hero | Notes |
 | --- | --- | --- | --- |
 | Townsfolk | everyone on the pavements | Friendly (50) | Heroes cannot target them. |
-| City Patrol | the law | Friendly (50) | No units in the game yet; police drones are its face. |
+| City Patrol | the law | Friendly (50) | Police drones, and (0.272) Sky Patrol cruisers with two officers that come to a closed hideout case. They do not fight yet. |
 | The Doctor's Lab | the mad scientist's mutants, technicians and robots | Unfriendly (−40) | Hates the Patrol and the Syndicate. |
 | Chrome Jackets | greaser street gang | Unfriendly (−30) | At war with the Syndicate. |
 | Velvet Syndicate | pinstriped gunsels, organised crime | Neutral (−10) | Keeps the peace when it suits business. |
@@ -989,6 +989,26 @@ In a building:
 - **The ending**: when a hideout case closes, whoever of the gang still stands **gives up**
   (down and cuffed, no karma: the police drones take them in), and **someone waits outside the
   door to thank the heroes** (the thing's owner, a neighbour), then walks off.
+- **The police come** (0.272, `hw-sim/src/police.rs`): 2 s after the case closes a **Sky Patrol
+  cruiser** sets out: a black and white flying car with a red beacon, gold stars, twin fins and
+  chrome skids. It flies in above the roofs from 220 m off (42 m/s), sinks straight down (7 m/s)
+  and **lands by the door**: in the street as a car would stand (the near lane first, then the
+  middle of the road), else on open ground in front of the house. The place is looked for a
+  couple of candidates a tick, never all in one tick: the whole 5.5 x 2.8 m box open, on ground
+  no steeper than 30 % and even to 12 cm, in no building, under an open sky, and with a clear
+  walk for each officer. It stands tipped as the ground lies. While it comes down and stands,
+  an alarm of the kind `Police` keeps cars **off the road within 6 m** and waiting **9 m** off,
+  on every machine. A cruiser standing still is **solid** (`cruiser_solid`, the box its model is
+  built in). The **canopy swings up** (1.2 s) and **two officers** get out, one each side, walk
+  (1.5 m/s) to **posts either side of the door** and stand guard facing the street for **40 s**;
+  then they walk back, get in, the canopy shuts and the cruiser climbs away. Where nobody can
+  stand by the door, or no ground is free, it **hovers 9 m over the door for 25 s** and nobody
+  gets out. In the test town 76 of 87 hideouts have a place to land. One cruiser per place;
+  with no hero within 320 m the police are gone at once. They do not fight, cannot be targeted
+  and are not saved.
+- **Officers** are Actors people (`people::officer`, two looks: a man, a woman): navy shirt and
+  tie, navy trousers, black riding boots, white gloves, a gold buckle, and a **peaked cap** with
+  a gold badge and cord hung on the head (`policeview::cap`).
 - **Reward**: every hero within 150 m gets a share of the karma their next level takes when
   the case closes: **15 %** for a den, **25 %** for a hideout, **40 %** for a fortress, and a
   tenth more of that for each level the gang stands over the team (`share_of`); half as much
@@ -1872,6 +1892,7 @@ run, or put them in a `.bat`.
 | `HW_VIEW=crime` | With `HW_CRIME`: the nearest such crime, the street clock jumped into it (`HW_CRIME_AT`: 0 crooks arrive, 1 deed done, 2 leaving; default 0.6). |
 | `HW_VIEW=getaway` | With `HW_INCIDENT` and `HW_TIMEOUT`: follows the crooks making off. |
 | `HW_VISOR=1` | The police visor stays down; `HW_VISOR=0.4` freezes it part way in (screenshots). |
+| `HW_POLICE=s` | s seconds in, a Sky Patrol cruiser is called to where the hero stands and sets down at once (screenshots; frame 360 has the officers out); `HW_VIEW=police` looks at it (`HW_POLICE_CAM="side,up,ahead"`, `HW_POLICE_AT=officer` for the first officer). |
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
 | `HW_CASE=<job>[@<place>]` | Cases open at once, the hero at the first (a little way off in the open; at the way down underground); with `HW_VIEW=hero`. Jobs `takeover`, `evidence`, `hostages`, `crew`; places `building` (default, one to a building), `street`, `plaza`, `tunnel`, `station`, `grotto`, `ruin`, `lair`. Comma-separated for several (`hostages,crew@street`); `chain` is a whole case as Annie plans it. |
 | `HW_CASEFILE=case\|doctor\|closed` | The case file open on that tab (screenshots). |

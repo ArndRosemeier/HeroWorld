@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.272 (2026-11-13)
+
+- The police have a car and officers. When a hideout case closes, a Sky Patrol cruiser comes down out of the sky with its siren going: a black and white flying car with twin fins, gold stars, chrome skids and a turning red beacon. It lands in the street by the door, and the cars wait for it.
+- Its canopy swings up and two officers in navy uniforms, white gloves and peaked caps get out, stand guard either side of the door for a while, then get back in and fly off.
+- The cruiser is solid: you walk round it. Where there is no room to land it hovers over the door instead.
+- Everyone playing together needs this version.
+
 ## 0.271 (2026-11-13)
 
 - Nothing new in play: a test switch (`HW_CARRY=1`) that makes every villain carry an augment, for looking at the gems and the drops.

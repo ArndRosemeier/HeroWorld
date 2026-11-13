@@ -869,7 +869,14 @@ impl Running {
     /// thing's owner, a neighbour). The case lets go of its groups.
     /// Its safes stay where they stand: they are handed back, to be taken
     /// away once nobody is near.
-    pub(crate) fn wrap_up(&mut self, world: &mut World, tick: u64) -> Vec<Safe> {
+    /// Also where the police are called to: the door, and the way it
+    /// looks out.
+    pub(crate) fn wrap_up(
+        &mut self,
+        world: &mut World,
+        tick: u64,
+    ) -> (Vec<Safe>, Option<(DVec3, DVec2)>) {
+        let mut police = None;
         let spots: Vec<usize> = self.groups_mut().map(|r| r.spot).collect();
         for (en, mut f) in world
             .query::<(&combat::Enemy, &mut Fighter)>()
@@ -885,6 +892,8 @@ impl Running {
         if let (Some(at), Some(k)) = (self.way_in, self.site().building) {
             let b = &self.floors.buildings[k];
             let out = DVec2::new(at.x - b.pos.x, at.z - b.pos.y).normalize_or(DVec2::X);
+            // The front door looks square out of the house front.
+            police = Some((at, if out.dot(b.dir) > 0.5 { b.dir } else { out }));
             let solids = world.resource::<crate::Solids>().0.clone();
             let stand = (2..7).find_map(|m| {
                 let p = at + DVec3::new(out.x, 0.0, out.y) * (m as f64 * 1.5);
@@ -902,7 +911,7 @@ impl Running {
         self.door = None;
         self.cutoff = None;
         self.clues.clear();
-        safes
+        (safes, police)
     }
 
     /// Heroes holding the help key at a clue, or by a hostage whose

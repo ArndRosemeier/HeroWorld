@@ -18,10 +18,12 @@ use hw_gen::urban::props::CarModel;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
 mod bus;
+mod patrol;
 pub use bus::{
     bus_door_leaf, bus_door_leaves, bus_into, bus_roof_over, bus_seats, BUS_DOORS, BUS_FLOOR,
     BUS_HALF_LEN, BUS_LIVERY, BUS_WHEELS,
 };
+pub use patrol::{patrol_beacon, patrol_door, patrol_into, PATROL_BLOCK};
 
 /// How much detail a level carries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

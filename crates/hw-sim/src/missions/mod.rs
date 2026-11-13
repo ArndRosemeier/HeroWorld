@@ -304,6 +304,9 @@ pub struct Missions {
     pub emboldened: Vec<(glam::DVec2, u64)>,
     /// Safes of closed cases, standing until nobody is near.
     left: Vec<running::Safe>,
+    /// Doors the police are called to (and the way each looks out), for
+    /// the server to take: a hideout case just closed there.
+    pub police_calls: Vec<(glam::DVec3, glam::DVec2)>,
     now: u64,
     last_sent: BTreeMap<u16, ToClient>,
     board_sent: Option<ToClient>,
@@ -329,6 +332,7 @@ impl Default for Missions {
             lost: String::new(),
             emboldened: Vec::new(),
             left: Vec::new(),
+            police_calls: Vec::new(),
             now: 0,
             last_sent: BTreeMap::new(),
             board_sent: None,
@@ -895,8 +899,9 @@ impl Missions {
             .collect();
         world.resource_mut::<Fights>().drops.extend(finds);
         if r.is_hideout() {
-            let safes = r.wrap_up(world, self.now);
+            let (safes, police) = r.wrap_up(world, self.now);
             self.left.extend(safes);
+            self.police_calls.extend(police);
         } else {
             r.leave(world);
         }
