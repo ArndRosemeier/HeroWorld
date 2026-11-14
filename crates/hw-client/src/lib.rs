@@ -42,6 +42,8 @@ pub mod hallfurniture;
 pub mod hallsinside;
 pub mod harbourmesh;
 pub mod harbourview;
+pub mod heroslots;
+pub mod heroslotsview;
 pub mod heroview;
 pub mod hitch;
 pub mod hospitalmesh;

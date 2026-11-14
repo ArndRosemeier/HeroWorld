@@ -21,6 +21,8 @@ mod fun;
 
 use crate::citybuild::{size_of, City, SIZES};
 use crate::creator::Creator;
+use crate::heroslots::{self, Summary};
+use crate::heroslotsview::{self, Action as SlotAction};
 use crate::profile::{clean_name, Profile};
 use actors_generator::{CharacterCatalog, CharacterConfig};
 use engine::anim::AnimatedModel;
@@ -79,6 +81,8 @@ pub enum Choice {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Panel {
     None,
+    /// The twenty hero slots.
+    Heroes,
     NewHero,
     Friends,
     Settings,
@@ -140,6 +144,13 @@ pub struct Title {
     still: bool,
     panel: Panel,
     new_name: String,
+    /// What the hero cards show (refreshed when something changes), the
+    /// card under the pointer, the slot a delete waits to be confirmed
+    /// for, and the empty slot a new hero is being made in.
+    slots: Vec<Option<Summary>>,
+    slot_hover: Option<usize>,
+    confirm_delete: Option<usize>,
+    new_slot: Option<usize>,
     /// The city window, while open: the seed as typed and the size picked.
     city_window: Option<(String, usize, f32)>,
     join_code: String,
@@ -206,6 +217,10 @@ impl Title {
         let still = profile.reduced_motion;
         let mut title = Self {
             new_name: profile.name.clone(),
+            slots: Profile::slots(),
+            slot_hover: None,
+            confirm_delete: None,
+            new_slot: None,
             city_window: None,
             still,
             profile,
@@ -215,6 +230,8 @@ impl Title {
             // HW_TITLE_PANEL opens a panel at start (for screenshots).
             panel: match std::env::var("HW_TITLE_PANEL").as_deref() {
                 Ok("new") => Panel::NewHero,
+                Ok("heroes") => Panel::Heroes,
+                Ok("delete") => Panel::Heroes,
                 Ok("friends") => Panel::Friends,
                 Ok("settings") => Panel::Settings,
                 _ => Panel::None,
@@ -247,6 +264,10 @@ impl Title {
         // HW_TITLE_PANEL=city opens the city window (for screenshots).
         if std::env::var("HW_TITLE_PANEL").as_deref() == Ok("city") {
             title.open_city_window();
+        }
+        // HW_TITLE_PANEL=delete asks to delete the played hero (screenshots).
+        if std::env::var("HW_TITLE_PANEL").as_deref() == Ok("delete") {
+            title.confirm_delete = title.profile.slot;
         }
         title
     }
@@ -311,7 +332,7 @@ impl Title {
         }
         // A hero from before the creator: the clothes the game dressed
         // them in by name, worked out once.
-        if self.profile.look.is_none() {
+        if self.profile.look.is_none() && self.profile.slot.is_some() {
             self.profile.look = Some(self.current_look(&catalog));
         }
         self.catalog = Some(catalog);
@@ -330,6 +351,8 @@ impl Title {
     fn shown_look(&self) -> Option<CharacterConfig> {
         match (&self.creator, &self.catalog) {
             (Some((c, _)), _) => Some(c.look()),
+            // No hero picked: nobody stands on the pedestal.
+            (None, Some(_)) if self.profile.slot.is_none() => None,
             (None, Some(cat)) => Some(self.current_look(cat)),
             _ => None,
         }
@@ -632,6 +655,7 @@ impl Title {
             }
             if let Some(c) = choice.take() {
                 if c == Choice::Quit {
+                    heroslots::exit_watchdog();
                     world.request_exit();
                 } else if ready || matches!(c, Choice::City(_)) {
                     // A new city starts building at once: that is what OK means.
@@ -807,11 +831,16 @@ impl Title {
                 let (main_label, main_sub) = if played {
                     ("Continue", format!("{} in {city}", self.profile.name))
                 } else {
-                    ("Play", format!("as {} in {city}", self.profile.name))
+                    ("Play", format!("pick a hero, then {city}"))
                 };
+                let made = self.slots.iter().flatten().count();
                 let buttons: [(&str, Option<String>, bool); 7] = [
                     (main_label, Some(main_sub), true),
-                    ("New hero", None, false),
+                    (
+                        "Heroes",
+                        Some(format!("{made} of {} slots", heroslots::SLOTS)),
+                        false,
+                    ),
                     ("Your city", None, false),
                     ("Play with friends", None, false),
                     ("Settings", None, false),
@@ -852,8 +881,23 @@ impl Title {
                             *p = if *p == to { Panel::None } else { to };
                         };
                         match i {
-                            0 => choice = Some(Choice::Continue),
-                            1 => toggle(&mut self.panel, Panel::NewHero),
+                            0 if played => choice = Some(Choice::Continue),
+                            // No hero picked yet: the slots (or, with none
+                            // made, a new hero) come first.
+                            0 => {
+                                if made == 0 {
+                                    self.begin_new_hero(Profile::free_slot());
+                                } else {
+                                    self.open_heroes();
+                                }
+                            }
+                            1 => {
+                                if self.panel == Panel::Heroes {
+                                    self.panel = Panel::None;
+                                } else {
+                                    self.open_heroes();
+                                }
+                            }
                             2 => self.open_city_window(),
                             3 => toggle(&mut self.panel, Panel::Friends),
                             4 => toggle(&mut self.panel, Panel::Settings),
@@ -896,8 +940,13 @@ impl Title {
                 // The open panel, to the right of the buttons.
                 let panel_pos = pos2(column.right() + bw * 0.12, column.top());
                 if self.panel != Panel::None {
-                    if let Some(c) = self.side_panel(ctx, panel_pos, sfx) {
-                        choice = Some(c);
+                    let c = if self.panel == Panel::Heroes {
+                        self.heroes_panel(ctx, panel_pos, sfx)
+                    } else {
+                        self.side_panel(ctx, panel_pos, sfx)
+                    };
+                    if c.is_some() {
+                        choice = c;
                     }
                 }
             });
@@ -941,7 +990,11 @@ impl Title {
         if let Some(c) = self.city_modal(ctx, sfx) {
             choice = Some(c);
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) && self.city_window.is_none() {
+        self.delete_modal(ctx, sfx);
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape))
+            && self.city_window.is_none()
+            && self.confirm_delete.is_none()
+        {
             self.panel = Panel::None;
         }
         choice
@@ -1122,6 +1175,7 @@ impl Title {
         let (creator, existing) = self.creator.as_mut()?;
         let existing = *existing;
         let mut close = false;
+        let mut start: Option<(String, CharacterConfig)> = None;
         egui::Area::new(egui::Id::new("creator card"))
             .fixed_pos(pos2(left.min(40.0), top))
             .order(egui::Order::Foreground)
@@ -1200,10 +1254,7 @@ impl Title {
                                     .fill(HERO_RED),
                                 );
                                 if go.clicked() {
-                                    choice = Some(Choice::NewHero {
-                                        name,
-                                        look: Some(Box::new(creator.look())),
-                                    });
+                                    start = Some((name, creator.look()));
                                 }
                             }
                         });
@@ -1251,6 +1302,9 @@ impl Title {
                     );
                 });
         }
+        if let Some((name, look)) = start {
+            choice = self.new_hero(name, Some(look));
+        }
         if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.creator = None;
         }
@@ -1282,9 +1336,16 @@ impl Title {
                         match self.panel {
                             Panel::NewHero => {
                                 heading(ui, "New hero");
+                                if let Some(slot) = self.new_slot {
+                                    ui.label(
+                                        egui::RichText::new(format!("In slot {}", slot + 1))
+                                            .color(crate::uikit::DIM),
+                                    );
+                                }
                                 ui.label("Everyone starts as a normal person. What do they call you?");
                                 ui.add(
                                     egui::TextEdit::singleline(&mut self.new_name)
+                                        .hint_text("Hero name")
                                         .font(FontId::proportional(20.0))
                                         .desired_width(f32::INFINITY),
                                 );
@@ -1304,7 +1365,7 @@ impl Title {
                                         .add_enabled(ok, egui::Button::new("Start the adventure"))
                                         .clicked()
                                     {
-                                        choice = Some(Choice::NewHero { name, look: None });
+                                        choice = self.new_hero(name, None);
                                     }
                                 } else if let Some(cat) = self.catalog.clone() {
                                     if ui
@@ -1372,11 +1433,226 @@ impl Title {
                                     self.panel = Panel::None;
                                 }
                             }
-                            Panel::None => {}
+                            Panel::Heroes | Panel::None => {}
                         }
                     });
             });
         choice
+    }
+
+    /// Opens the hero slots, with what is on disk now.
+    fn open_heroes(&mut self) {
+        self.slots = Profile::slots();
+        self.panel = Panel::Heroes;
+    }
+
+    /// Starts making a hero in `slot` (a free one when None): the New hero
+    /// card asks the name, then the creator.
+    fn begin_new_hero(&mut self, slot: Option<usize>) {
+        self.slots = Profile::slots();
+        match slot {
+            Some(s) if self.slots[s].is_none() => {
+                self.new_slot = Some(s);
+                self.new_name.clear();
+                self.panel = Panel::NewHero;
+            }
+            _ => {
+                self.status = Some((
+                    format!(
+                        "All {} slots are taken: delete a hero to make room.",
+                        heroslots::SLOTS
+                    ),
+                    true,
+                ));
+                self.panel = Panel::Heroes;
+            }
+        }
+    }
+
+    /// The new hero is made: they take their slot (and are saved there at
+    /// once), and the game starts with them.
+    fn new_hero(&mut self, name: String, look: Option<CharacterConfig>) -> Option<Choice> {
+        let slot = self.new_slot.or_else(Profile::free_slot)?;
+        if !self.profile.start_new(slot, &name, look.clone()) {
+            self.status = Some(("That slot is taken.".into(), true));
+            return None;
+        }
+        self.profile.save();
+        self.new_slot = None;
+        self.slots = Profile::slots();
+        Some(Choice::NewHero {
+            name: self.profile.name.clone(),
+            look: look.map(Box::new),
+        })
+    }
+
+    /// The twenty hero cards, in a cream comic card like the others.
+    fn heroes_panel(
+        &mut self,
+        ctx: &egui::Context,
+        pos: Pos2,
+        sfx: &mut Vec<Sfx>,
+    ) -> Option<Choice> {
+        let mut choice = None;
+        let mut action = SlotAction::None;
+        let screen = ctx.screen_rect();
+        let size = heroslotsview::grid_size();
+        // Low screens: the card slides up to fit.
+        let pos = pos2(
+            pos.x.min((screen.width() - size.x - 60.0).max(10.0)),
+            pos.y.min((screen.height() - size.y - 130.0).max(10.0)),
+        );
+        let made = self.slots.iter().flatten().count();
+        let now = heroslots::now_secs();
+        let mut hover = self.slot_hover;
+        egui::Area::new(egui::Id::new("title heroes"))
+            .fixed_pos(pos)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                comic_card_style(ui);
+                egui::Frame::new()
+                    .fill(CREAM)
+                    .stroke(Stroke::new(3.0_f32, NAVY))
+                    .corner_radius(14.0)
+                    .inner_margin(egui::Margin::same(18))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("Your heroes")
+                                    .font(FontId::new(26.0, ui_family()))
+                                    .color(HERO_RED),
+                            );
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{made} of {} slots · saved by themselves",
+                                            heroslots::SLOTS
+                                        ))
+                                        .color(NAVY),
+                                    );
+                                },
+                            );
+                        });
+                        ui.add_space(6.0);
+                        action = heroslotsview::grid(
+                            ui,
+                            &self.slots,
+                            self.profile.slot,
+                            now,
+                            &mut hover,
+                        );
+                    });
+            });
+        if hover != self.slot_hover {
+            if hover.is_some() {
+                sfx.push(Sfx::Hover);
+            }
+            self.slot_hover = hover;
+        }
+        match action {
+            SlotAction::None => {}
+            SlotAction::Select(slot) | SlotAction::Play(slot) => {
+                sfx.push(Sfx::Click);
+                if self.profile.slot != Some(slot) && self.profile.select(slot) {
+                    // Remembered at once: picking is saving.
+                    self.profile.save();
+                }
+                if matches!(action, SlotAction::Play(_)) {
+                    choice = Some(Choice::Continue);
+                }
+            }
+            SlotAction::New(slot) => {
+                sfx.push(Sfx::Click);
+                self.begin_new_hero(Some(slot));
+            }
+            SlotAction::Delete(slot) => {
+                sfx.push(Sfx::Click);
+                self.confirm_delete = Some(slot);
+            }
+        }
+        choice
+    }
+
+    /// "Delete this hero for good?": the one step that cannot be undone asks
+    /// first.
+    fn delete_modal(&mut self, ctx: &egui::Context, sfx: &mut Vec<Sfx>) {
+        let Some(slot) = self.confirm_delete else {
+            return;
+        };
+        let Some(s) = self.slots.get(slot).and_then(|s| s.clone()) else {
+            self.confirm_delete = None;
+            return;
+        };
+        let screen = ctx.screen_rect();
+        // The cards behind do not hear clicks while this is up.
+        egui::Area::new(egui::Id::new("delete backdrop"))
+            .fixed_pos(screen.min)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.allocate_rect(screen, Sense::click_and_drag());
+                ui.painter()
+                    .rect_filled(screen, 0.0, Color32::from_black_alpha(150));
+            });
+        let (mut keep, mut gone) = (ctx.input(|i| i.key_pressed(egui::Key::Escape)), false);
+        egui::Area::new(egui::Id::new("delete card"))
+            .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+            .order(egui::Order::Tooltip)
+            .show(ctx, |ui| {
+                comic_card_style(ui);
+                egui::Frame::new()
+                    .fill(CREAM)
+                    .stroke(Stroke::new(3.0_f32, HERO_RED))
+                    .corner_radius(14.0)
+                    .inner_margin(egui::Margin::same(22))
+                    .show(ui, |ui| {
+                        ui.set_width(380.0);
+                        ui.horizontal(|ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::hover());
+                            heroslotsview::origin_icon(ui.painter(), s.origin, r.center(), 20.0);
+                            ui.label(
+                                egui::RichText::new(format!("Delete {}?", s.name))
+                                    .font(FontId::new(26.0, ui_family()))
+                                    .color(HERO_RED),
+                            );
+                        });
+                        ui.add_space(4.0);
+                        let level = s.level.map_or(String::new(), |l| format!("Level {l}. "));
+                        ui.label(format!(
+                            "{level}Their powers, augments, standings and looks go with them, for good. This cannot be undone."
+                        ));
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new("Delete for good").color(CREAM),
+                                    )
+                                    .fill(HERO_RED),
+                                )
+                                .clicked()
+                            {
+                                gone = true;
+                            }
+                            if ui.button("Keep them").clicked() {
+                                keep = true;
+                            }
+                        });
+                    });
+            });
+        if gone {
+            sfx.push(Sfx::Click);
+            // Settings changed on this card go first, then the hero goes.
+            self.profile.save();
+            Profile::delete_slot(slot);
+            self.profile = Profile::load();
+            self.slots = Profile::slots();
+            self.confirm_delete = None;
+            self.status = Some((format!("{} is gone.", s.name), false));
+        } else if keep {
+            self.confirm_delete = None;
+        }
     }
 }
 

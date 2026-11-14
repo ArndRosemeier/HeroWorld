@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.324 (2026-11-15)
+
+- Twenty hero slots, like an online game. "Heroes" on the title shows them as cards: pick one to play, click a plus to make a new hero, use the bin (it asks first) to delete one. Your hero is saved all the time, by itself, so there is no save button and Ctrl-C or a crash cannot cost you progress. Your old hero is in slot 1.
+- Quitting from the menu saves your hero first and can no longer leave the game hanging in the terminal.
+
 ## 0.323 (2026-11-14)
 
 - Tall halls are no longer washed out on the upper floors: every level has its own light at a normal height instead of one huge lamp under the roof that burnt out the galleries beside it.

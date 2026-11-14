@@ -375,32 +375,39 @@ fn autorun_dir(keys: Vec3, ahead: Vec3) -> Vec3 {
     (ahead + aside).normalize_or_zero()
 }
 
-/// Keeps the hero's looks in the profile on this PC.
+/// The saves below only queue the change: a saving thread writes it (see
+/// `heroslots`), so none of them can hitch a frame.
+///
+/// Keeps the hero's looks in the played hero's slot on this PC.
 fn save_look(look: &actors_generator::CharacterConfig) {
-    let mut p = Profile::load();
-    p.look = Some(look.clone());
-    p.save();
+    Profile::update(|p| p.look = Some(look.clone()));
 }
 
 /// Keeps the hero file in the profile on this PC.
+///
+/// Lifetime karma only ever grows, so a sheet with less than the file has
+/// (a default sheet that arrived before the host had ours) never replaces it.
 fn save_hero(hero: Option<hw_net::Sheet>) {
-    let mut p = Profile::load();
-    p.hero = hero;
-    p.save();
+    Profile::update(|p| {
+        let kept = p.hero.as_ref().map_or(0, |h| h.lifetime);
+        match &hero {
+            Some(h) if h.lifetime < kept => eprintln!(
+                "Not saving a hero with less karma ({}) than the file has ({kept})",
+                h.lifetime
+            ),
+            _ => p.hero = hero,
+        }
+    });
 }
 
 /// Keeps the cabinet of closed cases in the profile on this PC.
 fn save_cabinet(cabinet: &[hw_client::missionview::Filed]) {
-    let mut p = Profile::load();
-    p.cabinet = cabinet.to_vec();
-    p.save();
+    Profile::update(|p| p.cabinet = cabinet.to_vec());
 }
 
 /// Keeps the power tray in the profile on this PC.
 fn save_tray(tray: &hw_client::tray::Tray) {
-    let mut p = Profile::load();
-    p.tray = tray.clone();
-    p.save();
+    Profile::update(|p| p.tray = tray.clone());
 }
 
 fn main() -> EngineResult<()> {
@@ -2646,6 +2653,24 @@ fn main() -> EngineResult<()> {
                     None
                 };
                 hw_client::hitch::mark("title choice");
+                // The hero picked on the title (any of the twenty slots) is
+                // the one played: take their name, file, tray and cabinet.
+                if matches!(
+                    choice,
+                    Some(Choice::Continue | Choice::Host | Choice::Join(_))
+                ) {
+                    t.profile.ensure_hero();
+                    if std::env::var_os("HW_NAME").is_none() {
+                        name = t.profile.name.clone();
+                    }
+                    if cheat_level.is_none() && cheat_story.is_none() {
+                        hero_file = t.profile.hero.clone();
+                        my_sheet = hero_file.clone().unwrap_or_else(hw_sim::progress::starter);
+                    }
+                    powers.tray = t.profile.tray.clone();
+                    cases.filed = t.profile.cabinet.clone();
+                    cabinet_saved = cases.filed.clone();
+                }
                 match choice {
                     Some(Choice::Continue) => {
                         if want_world(mine, Waiting::Single).is_some() {
@@ -2672,13 +2697,17 @@ fn main() -> EngineResult<()> {
                             builds.want(city, live);
                         }
                     }
-                    Some(Choice::NewHero { name: n, look }) => {
+                    Some(Choice::NewHero { name: n, .. }) => {
                         name = n;
                         t.profile.name = name.clone();
-                        t.profile.look = look.map(|l| *l);
-                        // A new hero picks an origin first.
-                        t.profile.hero = None;
+                        // A new hero picks an origin first, and starts with
+                        // an empty tray and cabinet. (The title made their
+                        // slot: see `Title::new_hero`.)
+                        powers.tray = t.profile.tray.clone();
+                        cases.filed = t.profile.cabinet.clone();
+                        cabinet_saved = cases.filed.clone();
                         hero_file = None;
+                        my_sheet = hw_sim::progress::starter();
                         if want_world(mine, Waiting::Single).is_some() {
                             session = Some(
                                 Session::single(
@@ -2731,6 +2760,7 @@ fn main() -> EngineResult<()> {
                     hero_cam.yaw = yaw;
                     music_fade_at = Some(frame.time + 20.0);
                     t.profile.played = true;
+                    t.profile.last_played = hw_client::heroslots::now_secs();
                     t.profile.seed = world_seed;
                     t.profile.people = world_people;
                     // Nothing else is wanted now.
@@ -2825,7 +2855,16 @@ fn main() -> EngineResult<()> {
             menu.hosting = open_at.is_some() || session.room_code().is_some();
             match menu.show(&frame.ui, world) {
                 hw_client::settings::MenuExit::Stay => {}
-                hw_client::settings::MenuExit::Quit => world.request_exit(),
+                hw_client::settings::MenuExit::Quit => {
+                    // The hero is on disk before the window closes.
+                    if sheet_dirty && !cheated {
+                        save_hero(hero_file.clone());
+                    }
+                    save_tray(&powers.tray);
+                    save_cabinet(&cases.filed);
+                    hw_client::heroslots::exit_watchdog();
+                    world.request_exit();
+                }
                 hw_client::settings::MenuExit::Title => {
                     // Everything the hero owns goes to disk first. The
                     // window then closes, which stops every worker and the
@@ -2838,6 +2877,7 @@ fn main() -> EngineResult<()> {
                     save_tray(&powers.tray);
                     save_cabinet(&cases.filed);
                     hw_client::hitch::event("back to the title screen");
+                    hw_client::heroslots::exit_watchdog();
                     RESTART_AT_TITLE.store(true, std::sync::atomic::Ordering::SeqCst);
                     world.request_exit();
                 }
@@ -4878,7 +4918,14 @@ fn main() -> EngineResult<()> {
                     powers.level_up(after);
                     power_pose_until = frame.time + POWER_POSE_SECONDS;
                 }
-                if hero_file.as_ref() == Some(&s) {
+                // Synced once the host has our hero: the very sheet we sent,
+                // or the same origin with at least as much karma (the host
+                // may tidy a sheet, and a file that never matched would
+                // never be saved again).
+                let ours = |f: &hw_net::Sheet| {
+                    f.origin == s.origin && s.lifetime >= f.lifetime && f.lifetime > 0
+                };
+                if hero_file.as_ref() == Some(&s) || hero_file.as_ref().is_some_and(ours) {
                     sheet_synced = true;
                 }
                 if sheet_synced && !cheated {
@@ -6111,6 +6158,9 @@ fn main() -> EngineResult<()> {
     if let Err(e) = &run {
         hw_client::crash::engine_error(e);
     }
+    // Whatever the saving thread still holds goes to disk before the end (and
+    // before a restart reads it).
+    Profile::flush();
     if run.is_ok() && RESTART_AT_TITLE.load(std::sync::atomic::Ordering::SeqCst) {
         restart_at_title();
     }

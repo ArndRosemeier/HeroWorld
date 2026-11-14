@@ -38,7 +38,7 @@ See section 14.
 ### Title screen (`hw-client/src/title.rs`)
 
 The town at golden hour, a camera drifting round the Aether Spire, flying taxis crossing,
-golden HEROWORLD letters. Buttons: **Play / Continue**, **New hero**, **Your city**,
+golden HEROWORLD letters. Buttons: **Play / Continue** (the hero picked), **Heroes** (the twenty slots), **Your city**,
 **Play with friends** (host your world, or join by room code), **Settings**, **What's new**,
 **Quit**. The town builds behind the title with a loading bar; pressing Play early starts the
 moment it is ready.
@@ -93,12 +93,24 @@ the last run is pointed out once on the title.
   (a small one) has no Jackets: everyone starts at the centre. A hero placed by a view or
   the debug menu before their hero file arrives stays where they were put.
 
-### What the PC remembers (`profile.rs`)
+### Hero slots and what the PC remembers (`heroslots.rs`, `profile.rs`)
 
-A small JSON file (`%APPDATA%\HeroWorld` on Windows, `~/.config/heroworld` elsewhere):
-name, world seed, the hero file (karma, lifetime karma, origin, element, powers,
-faction regard), looks, volumes, picture and mouse settings. The hero is always
-kept on the player's own PC; joining a friend brings your hero into their world.
+MMO style: **twenty hero slots** (title: **Heroes**), no save button and no save game. Each
+card shows the origin's icon, the level on a star, the name and when the hero was last
+played. Click a card to pick that hero (the pick is remembered), double-click or the green
+play button to go; an empty card (a plus) makes a new hero in that slot (name, creator,
+origin); the bin on the picked card asks "Delete for good?" first. The first run with an
+old single-hero profile moves that hero into slot 1.
+
+Everything a hero owns (name, looks, karma, powers, augments, standings, cases, tray,
+cabinet) is saved **on every change**, never only at the end: `hero-NN.json` under
+`heroes/` in the settings folder (`%APPDATA%\HeroWorld` on Windows, `~/.config/heroworld`
+elsewhere). One saving thread writes it (the game thread only hands over text, so saving
+cannot hitch), each write is atomic (temp file, sync, rename, old file kept as `.bak`), a
+broken file falls back to its `.bak` and is never overwritten, and lifetime karma on disk
+never goes down. The settings (world, volumes, picture, mouse, voice, the slot played)
+are in `profile.json`. Quitting saves, and if shutting down hangs, a watchdog flushes and
+ends the process after 6 s. A joiner brings their own picked hero into a friend's world.
 
 The game client keeps **no world save** between runs in single player: damage, broken
 props and the clock start fresh each time (the town repairs itself anyway). The dedicated
