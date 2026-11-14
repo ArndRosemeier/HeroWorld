@@ -130,74 +130,113 @@ impl Team {
             return;
         }
         let mut picked = None;
-        egui::Area::new(egui::Id::new("team frame"))
-            .anchor(egui::Align2::LEFT_CENTER, egui::vec2(10.0, -60.0))
-            .order(egui::Order::Middle)
-            .show(ctx, |ui| {
-                ui.set_width(150.0);
-                for (n, m) in self.list.iter().enumerate() {
-                    let chosen = m.id.is_some() && m.id == self.ally;
-                    let (rect, resp) =
-                        ui.allocate_exact_size(egui::vec2(150.0, 34.0), egui::Sense::click());
-                    let p = ui.painter();
-                    let fill = egui::Color32::from_black_alpha(if chosen { 190 } else { 130 });
-                    p.rect_filled(rect, 4.0, fill);
-                    if chosen || resp.hovered() {
-                        let col = if chosen {
-                            m.colour()
-                        } else {
-                            egui::Color32::GRAY
-                        };
-                        p.rect_stroke(
-                            rect,
-                            4.0,
-                            egui::Stroke::new(if chosen { 2.0_f32 } else { 1.0 }, col),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-                    let key = if n < 4 {
-                        format!("F{} ", n + 1)
+        let screen = ctx.screen_rect();
+        let frame = egui::Frame::new()
+            .fill(crate::uikit::with_alpha(crate::uikit::NAVY, 0.72))
+            .stroke(egui::Stroke::new(
+                1.5_f32,
+                crate::uikit::with_alpha(crate::uikit::GOLD, 0.6),
+            ))
+            .corner_radius(crate::googie::leaf(12))
+            .inner_margin(egui::Margin::symmetric(8, 6));
+        let rows = self.list.len() as f32;
+        let hint = egui::vec2(170.0, 22.0 + rows * 37.0);
+        // Movable and sizeable like the chat; saved as a share of the window.
+        let resp = crate::layout::window_free(
+            ctx,
+            egui::Window::new("team frame"),
+            "team",
+            egui::pos2(screen.left() + 10.0, screen.center().y - hint.y / 2.0),
+            hint,
+        )
+        .title_bar(false)
+        .resizable(true)
+        .collapsible(false)
+        .frame(frame)
+        .default_size(crate::layout::size_of("team").unwrap_or(hint))
+        .min_size(egui::vec2(120.0, 60.0))
+        .show(ctx, |ui| {
+            ui.label(
+                egui::RichText::new("TEAM")
+                    .size(11.0)
+                    .strong()
+                    .color(crate::uikit::GOLD),
+            );
+            for (n, m) in self.list.iter().enumerate() {
+                let w = ui.available_width().max(60.0);
+                let chosen = m.id.is_some() && m.id == self.ally;
+                let (rect, resp) =
+                    ui.allocate_exact_size(egui::vec2(w, 34.0), egui::Sense::click());
+                let p = ui.painter();
+                let fill = egui::Color32::from_black_alpha(if chosen { 190 } else { 110 });
+                p.rect_filled(rect, 4.0, fill);
+                if chosen || resp.hovered() {
+                    let col = if chosen {
+                        m.colour()
                     } else {
-                        String::new()
+                        egui::Color32::GRAY
                     };
-                    p.text(
-                        rect.left_top() + egui::vec2(6.0, 4.0),
-                        egui::Align2::LEFT_TOP,
-                        format!("{key}{}", m.name),
-                        egui::FontId::proportional(14.0),
-                        m.colour(),
+                    p.rect_stroke(
+                        rect,
+                        4.0,
+                        egui::Stroke::new(if chosen { 2.0_f32 } else { 1.0 }, col),
+                        egui::StrokeKind::Inside,
                     );
-                    let bar = egui::Rect::from_min_size(
-                        rect.left_bottom() + egui::vec2(6.0, -11.0),
-                        egui::vec2(138.0, 6.0),
-                    );
-                    p.rect_filled(bar, 2.0, egui::Color32::from_black_alpha(200));
-                    let f = if m.down { 0.0 } else { m.health as f32 / 100.0 };
-                    let fill = egui::Color32::from_rgb(
-                        (230.0 * (1.0 - f) + 60.0) as u8,
-                        (200.0 * f + 40.0) as u8,
-                        60,
-                    );
-                    p.rect_filled(
-                        egui::Rect::from_min_size(bar.min, egui::vec2(bar.width() * f, 6.0)),
-                        2.0,
-                        fill,
-                    );
-                    if m.down {
-                        p.text(
-                            bar.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "DOWN",
-                            egui::FontId::proportional(9.0),
-                            egui::Color32::WHITE,
-                        );
-                    }
-                    if resp.clicked() {
-                        picked = m.id;
-                    }
-                    ui.add_space(3.0);
                 }
-            });
+                let key = if n < 4 {
+                    format!("F{} ", n + 1)
+                } else {
+                    String::new()
+                };
+                p.text(
+                    rect.left_top() + egui::vec2(6.0, 4.0),
+                    egui::Align2::LEFT_TOP,
+                    format!("{key}{}", m.name),
+                    egui::FontId::proportional(14.0),
+                    m.colour(),
+                );
+                // Hit points: the server's 0..=255 scale as a share of full.
+                let f = if m.down {
+                    0.0
+                } else {
+                    (m.health as f32 / 255.0).clamp(0.0, 1.0)
+                };
+                let bar = egui::Rect::from_min_size(
+                    rect.left_bottom() + egui::vec2(6.0, -12.0),
+                    egui::vec2((w - 12.0).max(10.0), 8.0),
+                );
+                p.rect_filled(bar, 2.0, egui::Color32::from_black_alpha(200));
+                let fill = egui::Color32::from_rgb(
+                    (230.0 * (1.0 - f) + 40.0).min(255.0) as u8,
+                    (190.0 * f + 40.0) as u8,
+                    50,
+                );
+                p.rect_filled(
+                    egui::Rect::from_min_size(bar.min, egui::vec2(bar.width() * f, bar.height())),
+                    2.0,
+                    fill,
+                );
+                let label = if m.down {
+                    "DOWN".to_string()
+                } else {
+                    format!("{}%", (f * 100.0).round() as u32)
+                };
+                p.text(
+                    bar.center(),
+                    egui::Align2::CENTER_CENTER,
+                    label,
+                    egui::FontId::proportional(9.0),
+                    egui::Color32::WHITE,
+                );
+                if resp.clicked() {
+                    picked = m.id;
+                }
+                ui.add_space(3.0);
+            }
+        });
+        if let Some(r) = resp {
+            crate::layout::remember(ctx, "team", r.response.rect, false, true);
+        }
         if let Some(id) = picked {
             self.pick(id);
         }

@@ -1906,7 +1906,7 @@ on the way. Rides are free.
     Herobots teal. The host tells each joined player every other hero's position once a second
     (`ToClient::Mates`), so they show beyond the 500 m of the world updates; `Session::team`.
   - **Friendly target** (`team.rs`, `InputState.ally`): click a teammate in the world, click their row in
-    the team frame (left, names and health, DOWN when down), or press F1-F4 (heroes in name order). Ally
+    the team frame (a movable, resizable pane like the chat, default left; names, hit-point bars with a percentage, DOWN when down), or press F1-F4 (heroes in name order). Ally
     powers (heal, shield, revive: `Delivery::Allies`) then also reach that hero from up to
     `ALLY_REACH` (40 m) away, beyond the power's own radius; without a pick they reach friends inside the
     radius as before. Tab stays villains-only. Herobots pick the most hurt hero within 35 m each tick.

@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.308 (2026-11-14)
+
+- The team frame is a real pane now: drag it anywhere, resize it by its edge, and it keeps its place. Its bars show each hero's actual hit points (with a percentage) and fit inside the pane.
+
 ## 0.307 (2026-11-14)
 
 - The city's shore is now the planet's real coast: bays, headlands and islets instead of a straight line, and the city's hills are the planet's hills, so town and country join without a seam.
