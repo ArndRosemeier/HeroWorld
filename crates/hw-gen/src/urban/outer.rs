@@ -11,7 +11,6 @@
 //! water stands at the sea's level as before.
 
 use super::land::{smooth, River};
-use crate::planet::PlanetPatch;
 use crate::water::segment_distance;
 use glam::DVec2;
 use hw_core::{det, Seed};
@@ -45,6 +44,10 @@ const NOTCH: f64 = 12.0;
 const SILL_DEPTH: f64 = 0.35;
 /// Banks reach at most this far from the water (m).
 const FAR_BANK: f64 = 900.0;
+/// A canyon through a mesa: flat ground this far from the water (m), and the
+/// walls at their full height this far.
+const CANYON_FLOOR: f64 = 45.0;
+const CANYON_RIM: f64 = 190.0;
 
 /// The rivers of a town on a planet, each from its head in the hills down
 /// through the town, with what is needed to cut their beds.
@@ -88,10 +91,16 @@ struct Near {
 }
 
 impl OuterRivers {
-    /// Carry the town's `rivers` (upstream end first) on over the planet.
-    /// `half` is the half-width of the town's own land, where the water
-    /// stays at sea level.
-    pub fn new(seed: Seed, rivers: &[River], planet: &PlanetPatch, relief: f64, half: f64) -> Self {
+    /// Carry the town's `rivers` (upstream end first) on over the country,
+    /// whose height at a point is `ground`. `half` is the half-width of the
+    /// town's own land, where the water stays at sea level.
+    pub fn new(
+        seed: Seed,
+        rivers: &[River],
+        ground: &dyn Fn(DVec2) -> f64,
+        relief: f64,
+        half: f64,
+    ) -> Self {
         let rise = 120.0 + relief * 500.0;
         let mut out = OuterRivers {
             rivers: Vec::new(),
@@ -133,7 +142,7 @@ impl OuterRivers {
                     if q.length() <= p.length() {
                         continue;
                     }
-                    let cost = planet.ground(q) + (k * k) as f64 * 0.4;
+                    let cost = ground(q) + (k * k) as f64 * 0.4;
                     if best.is_none_or(|b| cost < b.0) {
                         best = Some((cost, a));
                     }
@@ -142,7 +151,7 @@ impl OuterRivers {
                 heading = a;
                 p += det::dir2(a) * STEP;
                 s += STEP;
-                let g = planet.ground(p);
+                let g = ground(p);
                 if !(0.0..HEAD_GROUND).contains(&g) || g < highest - OVER_THE_DIVIDE {
                     break;
                 }
@@ -185,7 +194,10 @@ impl OuterRivers {
                         // Widest in the middle, the river's own width at both ends.
                         let u = (j - k) as f64 / (e - k) as f64;
                         let bulge = det::sin(u * std::f64::consts::PI);
-                        *w += extra * bulge * bulge;
+                        // And never so wide so soon that its round end
+                        // would reach past the pool's own, into the next.
+                        let ends = (j - k).min(e - j) as f64 * STEP;
+                        *w += (extra * bulge * bulge).min(1.2 * ends);
                     }
                 }
                 k = e + 1;
@@ -275,6 +287,15 @@ impl OuterRivers {
         best
     }
 
+    /// How much of a mesa stands at `p`: none by a river, all of it
+    /// [`CANYON_RIM`] from the water. Rivers run on the valley floor; where
+    /// a tableland lies across one, it is cut back from the water and the
+    /// river runs through it in a canyon.
+    pub fn canyon(&self, p: DVec2) -> f64 {
+        self.near(p)
+            .map_or(1.0, |n| smooth(CANYON_FLOOR, CANYON_RIM, n.edge))
+    }
+
     /// The planet's `ground` at `p` with the rivers' beds and banks cut into it.
     pub fn carve(&self, p: DVec2, ground: f64) -> f64 {
         let Some(n) = self.near(p) else {
@@ -358,7 +379,7 @@ impl OuterRivers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planet::{choose_home, PlanetMap};
+    use crate::planet::{choose_home, PlanetMap, PlanetPatch};
     use crate::urban::{params::TownParams, world::TownWorld};
     use hw_core::Seed;
 
@@ -435,8 +456,12 @@ mod tests {
                     }
                     let shore = (r.widths[k] + (r.widths[k + 1] - r.widths[k]) * 0.25) * 0.5;
                     for side in [across, -across] {
-                        // A bank stands right beside the water.
-                        let bank = town.ground(q + side * (shore + 15.0));
+                        // A bank stands right beside the water. (Where a
+                        // lake narrows to the river again its round end
+                        // reaches up to 60 m wider than the width here.)
+                        let bank = (0..7)
+                            .map(|i| town.ground(q + side * (shore + 15.0 + 10.0 * i as f64)))
+                            .fold(f64::MIN, f64::max);
                         assert!(
                             bank > level + 1.0,
                             "seed {seed}: no bank by the pool at {q}: {bank} m, water at {level}"

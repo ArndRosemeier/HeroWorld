@@ -62,7 +62,13 @@ pub struct Globe {
     n_aether: Noise3,
     /// Where sea level lies in the land value (calibrated).
     sea: f64,
+    /// The home, when its country is to be mesa country whatever the planet
+    /// made of it ([`Self::set_home_mesas`]).
+    home_mesas: Option<DVec3>,
 }
+
+/// How far from the home its mesa country reaches in full (m).
+const HOME_MESAS: f64 = 70_000.0;
 
 impl Globe {
     /// The planet of `seed`, Earth-sized, with about [`LAND_SHARE`] of land.
@@ -115,6 +121,7 @@ impl Globe {
             n_drama: Noise3::new(seed.child("drama")),
             n_aether: Noise3::new(seed.child("aether")),
             sea: 0.0,
+            home_mesas: None,
         };
         g.calibrate(&mut seed.child("calibrate").rng());
         g
@@ -199,6 +206,34 @@ impl Globe {
     /// Height above sea level (m) at the unit vector `u`, with detail down to
     /// about `finest_m` metres. Below zero is the sea floor.
     pub fn elevation(&self, u: DVec3, finest_m: f64) -> f64 {
+        self.elevation_parts(u, finest_m).1
+    }
+
+    /// How much the land at `u` is mesa country, 0 (none) to 1: tablelands
+    /// that rise in stacked tiers over a valley floor.
+    pub fn mesa(&self, u: DVec3) -> f64 {
+        let own = smooth(
+            -0.02,
+            0.3,
+            self.n_drama.fbm(u.x * 4.2, u.y * 4.2, u.z * 4.2, 3),
+        );
+        let home = self.home_mesas.map_or(0.0, |h| {
+            1.0 - smooth(HOME_MESAS, HOME_MESAS * 1.8, (u - h).length() * self.radius)
+        });
+        own.max(home)
+    }
+
+    /// Makes the country within [`HOME_MESAS`] of `home` (a unit vector) mesa
+    /// country, fading out beyond. For the globe a home patch reads its
+    /// ground from; the planet's map keeps the planet as it was made.
+    pub fn set_home_mesas(&mut self, home: DVec3) {
+        self.home_mesas = Some(home);
+    }
+
+    /// [`Self::elevation`] twice: the land without its mesas (the valley
+    /// floor carried on under them), and the land as it stands. They differ
+    /// only in mesa country ([`Self::mesa`]).
+    pub fn elevation_parts(&self, u: DVec3, finest_m: f64) -> (f64, f64) {
         let t = self.tectonics(u);
         let s = self.land_value(u, &t) - self.sea;
         let octaves = |base_m: f64| -> u32 {
@@ -285,19 +320,8 @@ impl Globe {
             .n_old
             .ridged(u.x * 5.0, u.y * 5.0, u.z * 5.0, octaves(1_270_000.0));
         h += 1600.0 * smooth(0.1, 0.5, s) * old * old;
-        // Drama: tiered mesas with sheer cliffs, and canyons that cut deep.
+        // Drama: canyons that cut deep.
         if h > 150.0 {
-            let region = smooth(
-                0.1,
-                0.55,
-                self.n_drama.fbm(u.x * 4.2, u.y * 4.2, u.z * 4.2, 3),
-            );
-            if region > 0.0 {
-                let step = 280.0;
-                let (tier, frac) = ((h / step).floor(), (h / step).fract());
-                let stepped = (tier + smooth(0.72, 0.98, frac)) * step;
-                h += (stepped - h) * region * 0.9;
-            }
             let zone = smooth(
                 -0.1,
                 0.45,
@@ -311,7 +335,37 @@ impl Globe {
                     .abs();
             h -= 800.0 * smooth(0.9, 0.99, line) * zone * smooth(0.1, 0.4, s);
         }
-        h.clamp(-11_000.0, MAX_HEIGHT)
+        let low = h.clamp(-11_000.0, MAX_HEIGHT);
+        // Drama: mesa country. Tablelands stand over the valley floor in
+        // stacked tiers, each a flat top ringed by a sheer cliff, the higher
+        // ones set back on the lower; small ones stand alone as buttes.
+        // (On land that stands clear of the sea: the shore stays a shore.)
+        let mesa = if low > 4.0 { self.mesa(u) } else { 0.0 };
+        if mesa > 0.0 {
+            // Where the tablelands are: nested shapes a few km across, with
+            // more floor in some parts of the country and more table in others.
+            let shape = self.n_drama.fbm(
+                u.x * 1150.0 + 9.0,
+                u.y * 1150.0 - 4.0,
+                u.z * 1150.0,
+                octaves(5_500.0),
+            );
+            let spread = self
+                .n_hill
+                .fbm(u.x * 210.0, u.y * 210.0 + 7.0, u.z * 210.0, 3);
+            let x =
+                ((shape + 0.15 * spread + 0.08) * 14.0).clamp(0.0, 5.0) * smooth(4.0, 16.0, low);
+            let tier = x.floor() + smooth(0.93, 1.0, x.fract());
+            if tier > 0.0 {
+                // Each tier stands taller than the one below: 77, 198, 363,
+                // 572, 825 m above the sea, as level beds of rock do, plus a
+                // little of the land's own shape. The tops are nearly flat.
+                // Land that stands higher than a tier keeps its own height.
+                let table = h * (1.0 - 0.85 * tier.min(1.0)) + 55.0 * tier + 22.0 * tier * tier;
+                h += (table.max(h) - h) * mesa;
+            }
+        }
+        (low, h.clamp(-11_000.0, MAX_HEIGHT))
     }
 
     /// What is truly three-dimensional at `p` (metres from the planet's
@@ -447,9 +501,12 @@ mod tests {
         let mut rng = Seed(9).rng();
         for _ in 0..200 {
             let u = random_unit(&mut rng);
-            let coarse = g.elevation(u, 50_000.0);
-            let fine = g.elevation(u, 50.0);
+            // The land under the mesas: they are detail themselves, a few
+            // km across, and stand no higher than their top tier.
+            let coarse = g.elevation_parts(u, 50_000.0).0;
+            let (fine, tables) = g.elevation_parts(u, 50.0);
             assert!((coarse - fine).abs() < 250.0, "{coarse} vs {fine}");
+            assert!((0.0..=830.0).contains(&(tables - fine)), "{fine} {tables}");
         }
         // Across the date line and over the pole the height is continuous.
         for u in [DVec3::Y, DVec3::NEG_Y, DVec3::Z, DVec3::NEG_Z] {

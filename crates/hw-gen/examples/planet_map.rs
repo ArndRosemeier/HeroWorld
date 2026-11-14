@@ -420,13 +420,14 @@ fn home_view(map: &PlanetMap, seed: u64, path: &str) {
     let patch = std::sync::Arc::new(PlanetPatch::new(map, choose_home(map)));
     let ll = hw_core::LatLon::from_dir(choose_home(map));
     println!(
-        "home at {:.1}°N {:.1}°E: {:?}, seaward {:?}, relief {:.2}, river {:.0} m wide",
+        "home at {:.1}°N {:.1}°E: {:?}, seaward {:?}, relief {:.2}, river {:.0} m wide, mesa country {:.2}",
         ll.lat.to_degrees(),
         ll.lon.to_degrees(),
         patch.site.site,
         patch.site.seaward.map(|a| a.to_degrees().round()),
         patch.site.relief,
-        patch.site.river_width
+        patch.site.river_width,
+        patch.mesa()
     );
     if let Some(a) = patch.site.seaward {
         let d = det::dir2(a);

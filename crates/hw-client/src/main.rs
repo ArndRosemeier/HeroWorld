@@ -1784,6 +1784,47 @@ fn main() -> EngineResult<()> {
                 )
             }
         }
+        "mesas" | "canyon" => {
+            // The tablelands round the town: from over its edge towards the
+            // side where most of them stand, or from low over the river
+            // where it runs through one.
+            let w = &generated.world;
+            let table = |p: DVec2| w.planet().map_or(0.0, |pl| pl.ground(p) - pl.lowland(p));
+            let gorge = w.outer_rivers().and_then(|o| {
+                let (r, levels) = o.rivers.first().zip(o.levels.first())?;
+                let k = (1..r.pts.len()).rev().find(|k| {
+                    let p = r.pts[*k];
+                    // Past the town's edge, where the tables stand in full.
+                    p.x.abs().max(p.y.abs()) > w.half() + 1500.0 && table(p) > 150.0
+                })?;
+                Some((r.pts[k], r.pts[k - 1], levels[k]))
+            });
+            match gorge {
+                Some((at, up, level)) if view == "canyon" => {
+                    let d = up - at;
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    FlyCamera::new((at.x as f32, level as f32 + 12.0, at.y as f32), yaw, 6.0)
+                }
+                _ => {
+                    let tables = |d: DVec2| {
+                        (0..12)
+                            .map(|k| table(d * (w.half() + 1200.0 + k as f64 * 500.0)).min(400.0))
+                            .sum::<f64>()
+                    };
+                    let d = (0..48)
+                        .map(|k| hw_core::det::dir2(k as f64 / 48.0 * std::f64::consts::TAU))
+                        .max_by(|a, b| tables(*a).total_cmp(&tables(*b)))
+                        .expect("48 directions");
+                    let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                    let p = d * (w.half() - 600.0);
+                    FlyCamera::new(
+                        (p.x as f32, ground(p) as f32 + 160.0, p.y as f32),
+                        yaw,
+                        -3.0,
+                    )
+                }
+            }
+        }
         "falls" | "cascade" | "headwater" => {
             // The river above the town: its lowest fall from close by, the
             // flight of falls from further down the valley, or the pool at

@@ -4,11 +4,12 @@
 //! [`choose_home`] looks over the planet map for a temperate river mouth
 //! (the start region is meant to be ordinary, with the Aether at its
 //! lightest). [`PlanetPatch`] then gives the planet's ground in local metres
-//! (x east, z south, as the town uses) with the curve of the planet in it,
+//! (x east, z south, as the town uses), flat like its sea,
 //! and says what the place is like: its coast, its river, its relief.
 
 use super::globe::Globe;
 use super::map::PlanetMap;
+use crate::urban::land::smooth;
 use crate::urban::params::Site;
 use glam::{DVec2, DVec3};
 use hw_core::{det, LatLon, LocalFrame, Planet, PlanetPos};
@@ -22,7 +23,14 @@ pub fn choose_home(map: &PlanetMap) -> DVec3 {
     let mut best: Option<(f64, usize)> = None;
     for strict in [true, false] {
         for c in 0..cells {
-            let (h, t, r) = (map.elev[c], map.temp[c], map.rain[c]);
+            let (t, r) = (map.temp[c], map.rain[c]);
+            // The valley floor's height: in mesa country a cell's own height
+            // may be a table's.
+            let h = map.elev[c].min(
+                map.globe
+                    .elevation_parts(map.centers[c].as_dvec3(), 1000.0)
+                    .0 as f32,
+            );
             let y = map.centers[c].y.abs();
             if h <= 2.0 || h > 150.0 || y > 0.8 {
                 continue;
@@ -50,19 +58,26 @@ pub fn choose_home(map: &PlanetMap) -> DVec3 {
             let up = map.centers[c].as_dvec3();
             let east = DVec3::Y.cross(up).normalize_or(DVec3::X);
             let north = up.cross(east);
-            let peak = (0..32)
+            let ring: Vec<(f64, f64)> = (0..48)
                 .map(|k| {
-                    let a = (k / 2) as f64 / 16.0 * std::f64::consts::TAU;
-                    let far = if k % 2 == 0 { 15_000.0 } else { 30_000.0 };
+                    let a = (k / 3) as f64 / 16.0 * std::f64::consts::TAU;
+                    let far = [15_000.0, 30_000.0, 7_000.0][k % 3];
                     let (s, co) = det::sin_cos(a);
                     let dir =
                         (up + (east * co + north * s) * (far / map.globe.radius())).normalize();
-                    map.globe.elevation(dir, 1000.0)
+                    map.globe.elevation_parts(dir, 1000.0)
                 })
-                .fold(0.0, f64::max);
+                .collect();
+            let peak = ring.iter().map(|h| h.1).fold(0.0, f64::max);
+            // A mainland shore, not an islet: land on a third of those rings.
+            let land = ring.iter().filter(|h| h.0 > 2.0).count();
+            let islet = land < 16;
+            // And the sea proper beside it, not a lagoon on a low plain.
+            let lagoon = ring.iter().filter(|h| h.1 < -8.0).count() < 5;
             let score = (flow as f64).ln() - 4.0 * aether - (t as f64 - 12.0).abs() * 0.1
                 + peak.min(3000.0) / 400.0
-                - if peak < 1000.0 { 3.0 } else { 0.0 };
+                - if peak < 1000.0 { 3.0 } else { 0.0 }
+                - if islet || lagoon { 30.0 } else { 0.0 };
             if best.is_none_or(|(s, bc)| score > s || (score == s && c < bc)) {
                 best = Some((score, c));
             }
@@ -145,8 +160,12 @@ impl PlanetPatch {
             radius: map.globe.radius(),
         };
         let frame_at = |u: DVec3| LocalFrame::at(PlanetPos::at(&planet, LatLon::from_dir(u), 0.0));
+        // The home stands in mesa country (Arnd 2026-11-14), whatever the
+        // planet has there: tablelands in stacked tiers around the town.
+        let mut globe = map.globe.clone();
+        globe.set_home_mesas(at);
         let mut patch = PlanetPatch {
-            globe: map.globe.clone(),
+            globe,
             frame: frame_at(at),
             planet,
             site: PatchSite {
@@ -160,6 +179,34 @@ impl PlanetPatch {
             },
             climate: Vec::new(),
         };
+        // Start at the river's mouth: where the line from this cell to the
+        // sea cell its river runs into meets the shore. (Cells are tens of
+        // km across; a cell's centre may be far inland.)
+        let cell = map.grid.cell_of(at) as usize;
+        let down = map.flow_to[cell];
+        if down != u32::MAX && map.elev[cell] > 0.0 && map.elev[down as usize] <= 0.0 {
+            let sea = map.centers[down as usize].as_dvec3();
+            let wet = |f: f64| {
+                map.globe
+                    .elevation(at.lerp(sea, f).normalize(), GROUND_DETAIL)
+                    < 0.0
+            };
+            // The first shore on the way, not an island's further out.
+            let first = (1..=64)
+                .map(|i| i as f64 / 64.0)
+                .find(|f| wet(*f))
+                .unwrap_or(1.0);
+            let (mut lo, mut hi) = (first - 1.0 / 64.0, first);
+            for _ in 0..10 {
+                let mid = 0.5 * (lo + hi);
+                if wet(mid) {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            patch.frame = frame_at(at.lerp(sea, lo).normalize());
+        }
         // Stand where the real coast is a few hundred metres off, so the
         // town's sea is the planet's sea.
         let local = patch.coast_spot();
@@ -168,7 +215,7 @@ impl PlanetPatch {
             .to_planet(DVec3::new(local.x, 0.0, local.y))
             .up();
         patch.frame = frame_at(moved);
-        patch.site = patch.describe(map, moved);
+        patch.site = patch.describe(map, at);
         patch.climate = patch.read_climate(map);
         patch
     }
@@ -221,8 +268,7 @@ impl PlanetPatch {
     /// dry and towards the snow; trees stop well below it.
     pub fn cover(&self, p: DVec2, height: f64) -> Cover {
         let (sea_temp, rain) = self.climate(p);
-        let drop = self.frame.ground_drop(&self.planet, p.length());
-        let real = height + drop;
+        let real = height;
         let temp = sea_temp - LAPSE * real.max(0.0);
         // Snow lies where the year's mean is below -1 °C.
         let snow_real = (sea_temp + 1.0) / LAPSE;
@@ -236,18 +282,21 @@ impl PlanetPatch {
         let below_trees = 1.0 - step(snow_real - 1500.0, snow_real - 1000.0, real);
         Cover {
             green: wet * below_scree,
-            snow_line: snow_real - drop,
+            snow_line: snow_real,
             trees: biome.tree_cover() * below_trees,
             temp,
         }
     }
 
     /// Is `p` in the sea proper, looking along `d`: under water here and
-    /// still under water 1.5 and 3 km further out (not a pond or a creek)?
+    /// still under water 1.5, 3, 6 and 10 km further out (not a pond, a creek
+    /// or a lagoon)?
     fn open_sea(&self, p: DVec2, d: DVec2) -> bool {
         self.ground(p) < 0.0
-            && self.ground(p + d * 1500.0) < -3.0
-            && self.ground(p + d * 3000.0) < -3.0
+            && self.ground(p + d * 1500.0) < -1.5
+            && self.ground(p + d * 3000.0) < -1.5
+            && self.ground(p + d * 6000.0) < -1.5
+            && self.ground(p + d * 10_000.0) < -1.5
     }
 
     /// Distance to the sea along the nearest of sixteen rays from `p`
@@ -269,41 +318,96 @@ impl PlanetPatch {
         best
     }
 
-    /// Ground height (m above sea level) at local `p`, with the planet's
-    /// curve: the ground falls away from the tangent plane by `d² / 2R`.
+    /// Ground height (m above sea level) at local `p`. The planet's curve
+    /// is left out: the sea is drawn flat to the horizon, and ground that
+    /// fell away by `d² / 2R` (31 m at 20 km) sank low country under it.
     pub fn ground(&self, p: DVec2) -> f64 {
+        self.ground_parts(p).1
+    }
+
+    /// The ground at `p` without the mesas that stand on it: the valley
+    /// floor carried on under them. A town is planned on this, and the mesas
+    /// keep clear of it.
+    pub fn lowland(&self, p: DVec2) -> f64 {
+        self.ground_parts(p).0
+    }
+
+    /// [`Self::lowland`] and [`Self::ground`] at once.
+    pub fn ground_parts(&self, p: DVec2) -> (f64, f64) {
         let at = self.frame.to_planet(DVec3::new(p.x, 0.0, p.y));
-        let drop = self.frame.ground_drop(&self.planet, p.length());
-        self.globe.elevation(at.up(), GROUND_DETAIL) - drop
+        self.globe.elevation_parts(at.up(), GROUND_DETAIL)
+    }
+
+    /// How much this country is mesa country, 0 to 1 ([`Globe::mesa`]).
+    pub fn mesa(&self) -> f64 {
+        self.globe.mesa(self.frame.to_planet(DVec3::ZERO).up())
     }
 
     /// A spot on low dry land whose coast lies about 700 m away: found by
     /// walking out from the patch's origin until the sea, then back again.
+    /// Of the shores found, the one with the best country behind it: land
+    /// rather than an islet, tablelands in sight, and not too far to walk.
     fn coast_spot(&self) -> DVec2 {
-        let mut nearest: Option<(f64, DVec2)> = None;
+        let mut best: Option<(f64, DVec2)> = None;
         for k in 0..32 {
             let d = det::dir2(k as f64 / 32.0 * std::f64::consts::TAU);
-            for i in 1..=120 {
+            let mut dry = true;
+            for i in 1..=280 {
                 let t = 250.0 * i as f64;
-                if self.open_sea(d * t, d) {
-                    if nearest.is_none_or(|n| t < n.0) {
-                        // Refine the shore along the ray, then step 700 m inland.
-                        let (mut lo, mut hi) = (t - 250.0, t);
-                        for _ in 0..8 {
-                            let mid = 0.5 * (lo + hi);
-                            if self.ground(d * mid) < 0.0 {
-                                hi = mid;
-                            } else {
-                                lo = mid;
-                            }
-                        }
-                        nearest = Some((t, d * (hi - 700.0).max(0.0)));
+                // Only where land ends: water met further out, past a
+                // shallow or an island, is not this country's shore.
+                let was_dry = std::mem::replace(&mut dry, self.ground(d * t) >= 0.0);
+                if dry || !was_dry || !self.open_sea(d * t, d) {
+                    continue;
+                }
+                // Refine the shore along the ray, then step 700 m inland.
+                let (mut lo, mut hi) = (t - 250.0, t);
+                for _ in 0..8 {
+                    let mid = 0.5 * (lo + hi);
+                    if self.ground(d * mid) < 0.0 {
+                        hi = mid;
+                    } else {
+                        lo = mid;
                     }
-                    break;
+                }
+                let spot = d * (hi - 700.0).max(0.0);
+                let score = self.country(spot) - t / 6_000.0;
+                if best.is_none_or(|b| score > b.0) {
+                    best = Some((score, spot));
+                }
+                break;
+            }
+        }
+        let mut spot = best.map_or(DVec2::ZERO, |b| b.1);
+        // The shore may be nearer on another side: back off from that too.
+        for _ in 0..3 {
+            match self.sea_from(spot) {
+                Some((t, d)) if t < 600.0 => spot -= d * (700.0 - t),
+                _ => break,
+            }
+        }
+        spot
+    }
+
+    /// How good the country around local `p` is for a town among mesas:
+    /// the share of land within 12 km (an islet scores badly), and the share
+    /// of that land that stands on tables, the higher tiers counted again.
+    fn country(&self, p: DVec2) -> f64 {
+        let (mut land, mut tables) = (0.0, 0.0);
+        for i in 0..12 {
+            for j in 0..12 {
+                let q = p + DVec2::new(i as f64 - 5.5, j as f64 - 5.5) * 2000.0;
+                let at = self.frame.to_planet(DVec3::new(q.x, 0.0, q.y));
+                let (low, full) = self.globe.elevation_parts(at.up(), 1000.0);
+                if low > 2.0 {
+                    land += 1.0;
+                    let rise = full - low;
+                    tables += smooth(20.0, 60.0, rise) + smooth(120.0, 200.0, rise);
                 }
             }
         }
-        nearest.map_or(DVec2::ZERO, |n| n.1)
+        let share = land / 144.0;
+        4.0 * smooth(0.1, 0.45, share) + 6.0 * (tables / land.max(1.0)).min(0.6)
     }
 
     fn describe(&self, map: &PlanetMap, at: DVec3) -> PatchSite {
@@ -337,7 +441,7 @@ impl PlanetPatch {
         let samples: Vec<f64> = (0..24)
             .map(|k| {
                 let a = k as f64 / 24.0 * std::f64::consts::TAU;
-                self.ground(det::dir2(a) * 3000.0)
+                self.lowland(det::dir2(a) * 3000.0)
             })
             .collect();
         let mean = samples.iter().sum::<f64>() / samples.len() as f64;
@@ -382,7 +486,6 @@ mod tests {
             let (a, b) = (patch.ground(p), patch.ground(p + DVec2::new(1.0, 0.0)));
             assert!((a - b).abs() < 5.0, "{a} vs {b}");
         }
-        // The planet curves away: 30 km out is lower than the plane by its drop.
         assert!(patch.site.relief > 0.0);
         // The home is green low country; high up there is scree, then snow,
         // and no trees.
@@ -423,12 +526,18 @@ mod tests {
         // 25 m steps: the ground never jumps.
         for k in 0..8 {
             let d = det::dir2(k as f64 / 8.0 * std::f64::consts::TAU);
-            let mut last = town.ground(DVec2::ZERO);
+            // (The cliffs of the mesas beyond the town are meant to jump:
+            // the walk counts the steps between points on the valley floor.)
+            let on_table = |p: DVec2| patch.ground(p) > patch.lowland(p);
+            let mut last = Some(town.ground(DVec2::ZERO));
             let mut worst: f64 = 0.0;
             let mut t = 25.0;
             while t < half * 2.5 {
-                let g = town.ground(d * t);
-                worst = worst.max((g - last).abs());
+                let p = d * t;
+                let g = (!on_table(p)).then(|| town.ground(p));
+                if let (Some(a), Some(b)) = (last, g) {
+                    worst = worst.max((a - b).abs());
+                }
                 last = g;
                 t += 25.0;
             }
@@ -436,6 +545,73 @@ mod tests {
             // Far out it is the planet's ground.
             let far = d * (half * 2.5);
             assert_eq!(town.ground(far), patch.ground(far));
+        }
+    }
+
+    #[test]
+    fn the_home_stands_among_mesas_in_stacked_tiers() {
+        use crate::urban::{params::TownParams, world::TownWorld};
+        for seed in [1, 2, 3] {
+            let seed = Seed(seed);
+            let map = PlanetMap::build(seed, 96);
+            let patch = std::sync::Arc::new(PlanetPatch::new(&map, choose_home(&map)));
+            assert_eq!(patch.mesa(), 1.0);
+            assert_eq!(patch.site.site, Site::Estuary, "{seed:?}");
+            // Within 15 km of the town: how high the land stands over the
+            // valley floor.
+            let mut rises = Vec::new();
+            for i in 0..100 {
+                for j in 0..100 {
+                    let p = DVec2::new(i as f64 - 49.5, j as f64 - 49.5) * 300.0;
+                    let (low, full) = patch.ground_parts(p);
+                    assert!(full >= low);
+                    if low > 0.0 {
+                        rises.push(full - low);
+                    }
+                }
+            }
+            let share = |lo: f64, hi: f64| {
+                rises.iter().filter(|r| (lo..hi).contains(*r)).count() as f64 / rises.len() as f64
+            };
+            // A good part of the land is tables, and a good part is floor.
+            let tables = share(30.0, 1e9);
+            assert!(
+                (0.1..=0.7).contains(&tables),
+                "{seed:?}: tables on {tables}"
+            );
+            // Stacked: a first, a second and a third tier are all there.
+            let tiers = [share(50.0, 120.0), share(150.0, 260.0), share(300.0, 1e9)];
+            assert!(
+                tiers.iter().all(|t| *t > 0.004),
+                "{seed:?}: tiers {tiers:?}"
+            );
+            // With cliffs between them: most of the tables' land is level,
+            // between the floor and the first tier there is little.
+            assert!(
+                share(5.0, 50.0) < tables * 0.5,
+                "{seed:?}: slopes, not cliffs"
+            );
+
+            // The town itself stands on the floor, clear of the tables.
+            let params = TownParams::on_planet(seed, 20_000.0, &patch);
+            let town = TownWorld::generate_on_or_stop(
+                seed,
+                params,
+                Some(patch.clone()),
+                &hw_core::Cancel::new(),
+            )
+            .expect("not cancelled");
+            let half = town.half();
+            for i in 0..40 {
+                for j in 0..40 {
+                    let p = DVec2::new(i as f64 - 19.5, j as f64 - 19.5) * (half / 20.0);
+                    let g = town.ground(p);
+                    assert!(
+                        g < patch.lowland(p).max(100.0) + 60.0,
+                        "{seed:?}: the town climbs a table at {p}: {g} m"
+                    );
+                }
+            }
         }
     }
 }

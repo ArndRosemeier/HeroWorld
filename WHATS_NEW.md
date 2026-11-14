@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.318 (2026-11-14)
+
+- The city now stands in mesa country: tablelands rise around it in stacked tiers, flat tops one above the other with sheer cliffs between, up to 800 m high.
+- Rivers run through the tablelands in canyons.
+- The city always lies at a real river mouth by the open sea, never by a lagoon or on an islet, and low country far away no longer sinks under the sea.
+- The world of every seed is new again: old places have moved.
+
 ## 0.317 (2026-11-14)
 
 - Rivers now climb into the country: beyond the town a river rises pool by pool, and the water really runs over the falls between them. Gentle land gives long pools and small falls, steep land a cascade in a gorge.

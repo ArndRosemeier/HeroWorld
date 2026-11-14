@@ -195,6 +195,27 @@ fn cells(lo: DVec2, hi: DVec2) -> impl Iterator<Item = (i64, i64)> {
     (a.0..=b.0).flat_map(move |x| (a.1..=b.1).map(move |y| (x, y)))
 }
 
+/// How much of a mesa stands at `p` by a town whose own land reaches `half`
+/// from its centre: the tablelands stand clear of the town. It is planned
+/// on the valley floor, and they rise from its edge outwards, to their full
+/// height [`MESA_CLEAR`] further on.
+fn mesa_share(half: f64, p: DVec2) -> f64 {
+    let edge = p.x.abs().max(p.y.abs());
+    if edge <= half {
+        return 0.0;
+    }
+    // Not a square pit: the foot of the tables lies nearer on some sides
+    // than on others.
+    let a = hw_core::det::atan2(p.y, p.x);
+    let clear = MESA_CLEAR
+        * (1.0 + 0.5 * hw_core::det::sin(3.0 * a + 1.3) + 0.3 * hw_core::det::sin(7.0 * a));
+    super::land::smooth(half, half + clear, edge)
+}
+
+/// How far beyond a town's edge the mesas reach their full height (m), give
+/// or take: a fifth of it on some sides, nearly twice on others.
+const MESA_CLEAR: f64 = 800.0;
+
 impl TownWorld {
     pub fn generate(seed: Seed, params: TownParams) -> TownWorld {
         Self::generate_or_stop(seed, params, &Cancel::new()).expect("nobody can cancel this")
@@ -248,12 +269,14 @@ impl TownWorld {
             }
         }
         let outer = planet.as_ref().map(|pl| {
+            let half = terrain.half();
             super::outer::OuterRivers::new(
                 seed,
                 &town.land.rivers,
-                pl,
+                // Rivers run on the valley floor, under the mesas.
+                &|p| pl.lowland(p),
                 town.params.relief,
-                terrain.half(),
+                half,
             )
         });
         let mut out = TownWorld {
@@ -359,11 +382,27 @@ impl TownWorld {
         if w <= 0.0 {
             town
         } else {
-            let mut wild = planet.ground(p);
+            // The valley floor with the rivers cut into it, and on it the
+            // mesas, clear of the town and of the rivers (canyons).
+            let (low, full) = planet.ground_parts(p);
+            let mut wild = low;
+            let mut mesa = if full > low {
+                (full - low) * mesa_share(self.terrain.half(), p)
+            } else {
+                0.0
+            };
             if let Some(outer) = &self.outer {
                 wild = outer.carve(p, wild);
+                if mesa > 0.0 {
+                    mesa *= outer.canyon(p);
+                }
             }
-            town + (wild - town) * w
+            wild += mesa;
+            if w >= 1.0 {
+                wild
+            } else {
+                town + (wild - town) * w
+            }
         }
     }
 

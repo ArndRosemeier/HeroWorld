@@ -227,7 +227,8 @@ impl Land {
             let (w, origin) = (cover.w, cover.origin);
             crate::planet::grid::par_map(cover.w * cover.h, |k| {
                 let q = origin + DVec2::new((k % w) as f64 + 0.5, (k / w) as f64 + 0.5) * cell;
-                planet.ground(q) as f32
+                // The valley floor: the mesas stand clear of the town.
+                planet.lowland(q) as f32
             })
         });
         if let Some(ground) = &planet_ground {
