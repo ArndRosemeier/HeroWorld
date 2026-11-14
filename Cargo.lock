@@ -192,7 +192,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
  "x11rb",
 ]
 
@@ -352,7 +352,7 @@ dependencies = [
  "spin",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -970,7 +970,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1282,7 +1282,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1695,7 +1695,7 @@ dependencies = [
  "log",
  "presser",
  "thiserror 1.0.69",
- "windows 0.54.0",
+ "windows 0.58.0",
 ]
 
 [[package]]
@@ -3475,7 +3475,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3570,7 +3570,7 @@ checksum = "609c5606d9d357b26e4ee1a7a01beac396628d0fa01ebbade2a09cefb88e65af"
 dependencies = [
  "fastrand",
  "tempfile",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4054,7 +4054,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4713,7 +4713,7 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 [[package]]
 name = "wgpu"
 version = "25.0.2"
-source = "git+https://github.com/ArndRosemeier/Engine?branch=main#289fd2b597fe47e3a088ba168495fc15e0f5a343"
+source = "git+https://github.com/ArndRosemeier/Engine?branch=main#47609fe69380f47e4d978bd83c51be53b616a6ea"
 dependencies = [
  "arrayvec",
  "bitflags 2.13.2",
@@ -4740,7 +4740,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "25.0.2"
-source = "git+https://github.com/ArndRosemeier/Engine?branch=main#289fd2b597fe47e3a088ba168495fc15e0f5a343"
+source = "git+https://github.com/ArndRosemeier/Engine?branch=main#47609fe69380f47e4d978bd83c51be53b616a6ea"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -4904,7 +4904,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
