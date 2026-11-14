@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.302 (2026-11-14)
+
+- Wibbets leap. Between two perches that are near each other (a lamp post and the next tree, a bench and its post) they crouch, spring across in an arc and land on the other one, instead of climbing down and running over.
+
 ## 0.301 (2026-11-14)
 
 - An augment a villain drops now goes to one hero of the team, picked at random with the same chance for everyone. Heroes who heal or shield get as many as those who deal the damage.

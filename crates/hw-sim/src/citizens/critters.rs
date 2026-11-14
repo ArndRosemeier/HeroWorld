@@ -126,6 +126,13 @@ const WIBBET_HALF: f64 = 0.17;
 /// A wibbet's round: it picks a place, goes there and rests, a few seconds
 /// of it (s). They are restless.
 const ROUND: f64 = 24.0;
+/// Two places up things this near each other (m, in plan) are got between
+/// by a leap, when nothing stands in the way.
+const LEAP: f64 = 6.0;
+/// How fast a wibbet flies through a leap (m/s), and how long it crouches
+/// before it (s).
+const LEAP_SPEED: f64 = 5.5;
+const CROUCH: f64 = 0.25;
 /// How fast a wibbet climbs a post (m/s) and how long a hop takes (s).
 const CLIMB: f64 = 2.0;
 const HOP: f64 = 0.45;
@@ -215,6 +222,25 @@ impl PropGrid {
     }
 }
 
+/// Can a wibbet leap from stop `a` to stop `b`: both up something, near
+/// each other, and nothing standing between (but the two things they are
+/// on, near their ends)?
+fn leapable(props: &PropGrid, a: &Stop, b: &Stop) -> bool {
+    if a.rest == Rest::Ground || b.rest == Rest::Ground {
+        return false;
+    }
+    let d = a.at.distance(b.at);
+    if !(0.8..=LEAP).contains(&d) {
+        return false;
+    }
+    let n = (d / 0.1).ceil() as usize;
+    (0..=n).all(|i| {
+        let u = i as f64 / n as f64;
+        let near_end = u * d < 0.7 || (1.0 - u) * d < 0.7;
+        near_end || props.clearance(a.at.lerp(b.at, u)) >= WIBBET_HALF
+    })
+}
+
 /// How a wibbet rests at a stop.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Rest {
@@ -251,6 +277,8 @@ struct Troop {
     stops: Vec<Stop>,
     /// The ones up a post or on top of something (indices into `stops`).
     high: Vec<usize>,
+    /// `leaps[i][j]`: stop `i` to stop `j` is one leap.
+    leaps: Vec<Vec<bool>>,
     size: u32,
     seed: Seed,
 }
@@ -510,11 +538,19 @@ impl Citizens {
             return None;
         }
         let size = (rng.range_int(2, 5) as usize).min(high.len()) as u32;
+        let leaps = (0..stops.len())
+            .map(|i| {
+                (0..stops.len())
+                    .map(|j| i != j && leapable(props, &stops[i], &stops[j]))
+                    .collect()
+            })
+            .collect();
         Some(Troop {
             road,
             side,
             stops,
             high,
+            leaps,
             size,
             seed,
         })
@@ -523,7 +559,7 @@ impl Citizens {
     /// The stop wibbet `m` of a troop makes for in round `k`: the troop
     /// picks a place, and each of them takes one of the places nearest it
     /// (no two the same).
-    fn stop_of(&self, t: &Troop, m: u32, k: i64) -> Stop {
+    fn stop_of(&self, t: &Troop, m: u32, k: i64) -> usize {
         let rk = t.seed.child("focus").child(k as u64);
         // Nearly always one of the places up things; now and then the pavement.
         let up = rk.child("up").unit() >= GROUND_ROUNDS;
@@ -532,7 +568,11 @@ impl Citizens {
         let focus = (rk.0 % n as u64) as usize;
         let first = focus.saturating_sub(size / 2).min(n - size);
         let i = first + (m as usize + k.rem_euclid(size as i64) as usize) % size;
-        t.stops[if up { t.high[i] } else { i }]
+        if up {
+            t.high[i]
+        } else {
+            i
+        }
     }
 
     /// One of a troop's wibbets at `time`.
@@ -554,7 +594,8 @@ impl Citizens {
         let t = time + rng.range(0.0, ROUND);
         let k = (t / ROUND).floor() as i64;
         let since = t - k as f64 * ROUND;
-        let (a, b) = (self.stop_of(troop, m, k - 1), self.stop_of(troop, m, k));
+        let (ia, ib) = (self.stop_of(troop, m, k - 1), self.stop_of(troop, m, k));
+        let (a, b) = (troop.stops[ia], troop.stops[ib]);
         let ks = seed.child(k as u64);
         let wait = ks.child("wait").unit() * 2.5;
         let sits = ks.child("sits").unit() < 0.65;
@@ -586,6 +627,34 @@ impl Citizens {
             // Not off yet (sat as it was the round before), or staying.
             let before = seed.child((k - 1) as u64).child("sits").unit() < 0.65;
             return resting(&a, if a.s == b.s { before } else { sits && before });
+        }
+        // Straight across to a place near by: crouch, leap, land.
+        if troop.leaps[ia][ib] {
+            let (from, to) = (a.at, b.at);
+            let way = (to - from).normalize_or(DVec2::Y);
+            let air = (from.distance(to) / LEAP_SPEED).max(0.45);
+            // How it hangs on a post before it goes.
+            let start = if a.rest == Rest::Cling { 90.0 } else { 0.0 };
+            if x < CROUCH {
+                return make(
+                    from,
+                    a.height,
+                    way,
+                    start * (1.0 - x / CROUCH),
+                    0.0,
+                    Pose::Stay,
+                );
+            }
+            let u = (x - CROUCH) / air;
+            if u < 1.0 {
+                let arc = 0.3 + 0.08 * from.distance(to);
+                let y = a.height + (b.height - a.height) * u + arc * 4.0 * u * (1.0 - u);
+                // Nose up, then down, and up the post it lands on.
+                let land = if b.rest == Rest::Cling { 90.0 } else { 0.0 };
+                let pitch = 25.0 * (1.0 - 2.0 * u) * (1.0 - u) + land * u * u * u;
+                return make(from.lerp(to, u), y, way, pitch, LEAP_SPEED, Pose::Go);
+            }
+            return resting(&b, sits);
         }
         // Down from where it was.
         let down = match a.rest {
@@ -988,6 +1057,13 @@ mod tests {
                 }
             }
         }
+        let leaps: usize = plan
+            .troops
+            .iter()
+            .map(|t| t.leaps.iter().flatten().filter(|&&l| l).count())
+            .sum();
+        println!("{} troops, {leaps} leaps", plan.troops.len());
+        assert!(leaps > 20, "{leaps} places to leap between");
         assert!(cling > 10 && top > 3, "{cling} posts, {top} tops");
     }
 
@@ -1034,6 +1110,6 @@ mod tests {
             f(going) * 100.0
         );
         assert!(f(still) < 0.15, "{:.2} stand on the pavement", f(still));
-        assert!(f(going) > 0.15, "{:.2} under way", f(going));
+        assert!(f(going) > 0.1, "{:.2} under way", f(going));
     }
 }

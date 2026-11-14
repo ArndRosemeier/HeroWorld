@@ -1670,7 +1670,10 @@ the camera: wibbets and drakelets within 150 m, driftbells within 420 m, at most
   ginkgo, birch; under the crown, 1.2 to 2.2 m up), or sitting on a bench, bin or hydrant. One
   round in ten ends on the pavement itself, sitting up or standing. In the test town about
   70% of their time is spent up something, 18% under way and 11% on the pavement. A wibbet
-  comes down a post head first. Places come from the props' own shapes (`Prop::perch`), so a
+  Between two places up things that are within 6 m of each other with nothing standing in
+  between (a lamp post and the next tree, a bench and its post) it does not go down at all: it
+  crouches for a quarter of a second and **leaps** across in an arc at 5.5 m/s, nose up then
+  down, and lands on the post or the seat. Otherwise it comes down a post head first. Places come from the props' own shapes (`Prop::perch`), so a
   wibbet sits on what is drawn, and its way keeps clear of every prop.
 - **They come close.** A wibbet on the pavement (standing or trotting) within 7.5 m of a hero who stands
   about (slower than 1.6 m/s) trots over, stops 1.25 m away and sits up to look at them for
