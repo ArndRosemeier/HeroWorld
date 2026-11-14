@@ -1736,6 +1736,14 @@ pub(crate) fn spawn_group(world: &mut World, tick: u64, spot_index: usize, heroe
     n
 }
 
+/// Takes a spot of a finished call that no villain of is left in (some may
+/// still lie waiting for the drone); the count must be 0 or a late carry-off
+/// would take away from a new group.
+pub fn take_free_spot(free: &mut Vec<usize>, spots: &[Spot]) -> Option<usize> {
+    let k = free.iter().rposition(|&i| spots[i].members == 0)?;
+    Some(free.remove(k))
+}
+
 /// Where a villain of a group whose spot stands at height `near` stands at
 /// `p`: the street, the floor of the tunnel or cavern the spot is down in,
 /// or the floor of the building it is up in (an indoor mission's room).

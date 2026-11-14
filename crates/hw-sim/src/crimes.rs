@@ -164,10 +164,14 @@ impl Crimes {
             .map(|(_, n, m, f)| (n.0, m.0.pos, f.level))
             .collect();
         heroes.sort_by_key(|h| h.0);
+        // Beaten crooks end the crime at once (thanks, karma), checked a
+        // few times a second.
+        if tick.is_multiple_of(6) && !self.taken.is_empty() {
+            self.settle(world, tick, &heroes, alarms);
+        }
         if tick.is_multiple_of(TICK_HZ as u64) {
             self.take_answer();
             self.ask_worker(&life, &heroes, now);
-            self.settle(world, tick, &heroes, alarms);
             self.notice(&heroes, now, tick, alarms);
             let gone = now - 60.0;
             self.over.retain(|_, (until, _)| *until > gone);
@@ -330,7 +334,7 @@ impl Crimes {
         };
         let index = {
             let mut f = world.resource_mut::<Fights>();
-            match self.free.pop() {
+            match combat::take_free_spot(&mut self.free, &f.spots) {
                 Some(i) => {
                     let groups = f.spots[i].groups;
                     f.spots[i] = Spot { groups, ..spot };
@@ -415,8 +419,10 @@ impl Crimes {
     ) {
         let now = tick as f64 * DT;
         let mut ended: Vec<((u64, i64), u8)> = Vec::new();
+        let crooks = incidents::crooks_of(world);
         for (key, t) in self.taken.iter_mut() {
-            let beaten = world.resource::<Fights>().spots[t.spot].members == 0;
+            let beaten = world.resource::<Fights>().spots[t.spot].members == 0
+                || incidents::all_down(&crooks, t.spot);
             if beaten {
                 ended.push((*key, 2));
                 continue;

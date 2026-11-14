@@ -938,18 +938,14 @@ impl Incidents {
         }
         walk_bystanders(world, tick);
         if !tick.is_multiple_of(TICK_HZ as u64) {
+            // The last villain going down ends the call right away (thanks
+            // and karma), not at the next whole second.
+            if tick.is_multiple_of(6) {
+                self.settle_beaten(world, tick);
+            }
             return;
         }
-        let mut heroes: Vec<Seen> = world
-            .query::<(&Hero, &Net, &Motion, &Fighter)>()
-            .iter(world)
-            .map(|(h, n, m, f)| {
-                let afoot = !f.kit.travels(crate::powers::travel::FLY)
-                    && !f.kit.travels(crate::powers::travel::SPEED);
-                (n.0, m.0.pos, f.level, afoot, h.owner)
-            })
-            .collect();
-        heroes.sort_by_key(|h| h.0);
+        let heroes = seen_heroes(world);
         self.got_away(world, &heroes);
         self.settle(world, tick, &heroes);
         for b in std::mem::take(&mut self.collapses) {
@@ -1382,6 +1378,43 @@ impl Incidents {
     }
 
     /// Answered, resolved or timed out.
+    /// Calls whose villains have all just gone down end at once: the
+    /// victim thanks the hero and the karma lands, without waiting for the
+    /// once-a-second pass or for the drone that carries the villains off.
+    fn settle_beaten(&mut self, world: &mut World, tick: u64) {
+        if !self
+            .open
+            .iter()
+            .any(|i| i.spot.is_some() && i.calmed.is_none())
+        {
+            return;
+        }
+        let crooks = crooks_of(world);
+        let ended: Vec<usize> = self
+            .open
+            .iter()
+            .enumerate()
+            .filter(|(_, inc)| {
+                inc.calmed.is_none()
+                    && inc.spot.is_some_and(|i| {
+                        let spot = &world.resource::<Fights>().spots[i];
+                        spot.groups > 0
+                            && (inc.escaped == 0 || inc.caught)
+                            && (spot.members == 0 || all_down(&crooks, i))
+                    })
+            })
+            .map(|(k, _)| k)
+            .collect();
+        if ended.is_empty() {
+            return;
+        }
+        for &k in &ended {
+            self.open[k].state = State::Resolved;
+        }
+        let heroes = seen_heroes(world);
+        self.finish(world, tick, ended, &heroes);
+    }
+
     fn settle(&mut self, world: &mut World, tick: u64, heroes: &[Seen]) {
         // The walking tank moves on: its call follows it.
         let tanks: Vec<(usize, DVec3)> = world
@@ -1424,11 +1457,7 @@ impl Incidents {
         }
         // Where each fight's villains are: (spot, place, beaten: lying
         // down or carried off, so the police have them wherever they are).
-        let crooks: Vec<(usize, DVec3, bool)> = world
-            .query::<(&combat::Enemy, &Motion, &Fighter)>()
-            .iter(world)
-            .map(|(e, m, f)| (e.spot, m.0.pos, !f.fighting()))
-            .collect();
+        let crooks = crooks_of(world);
         let mut ended = Vec::new();
         let (mut making_off, mut caught_up) = (Vec::new(), Vec::new());
         for (k, inc) in self.open.iter_mut().enumerate() {
@@ -1452,7 +1481,9 @@ impl Incidents {
                 Some(i) => {
                     let spot = &world.resource::<Fights>().spots[i];
                     // All gone without a fight is not beaten.
-                    spot.groups > 0 && spot.members == 0 && (inc.escaped == 0 || inc.caught)
+                    spot.groups > 0
+                        && (spot.members == 0 || all_down(&crooks, i))
+                        && (inc.escaped == 0 || inc.caught)
                 }
                 None => inc.left == 0 && inc.hurt.is_none(),
             };
@@ -1528,6 +1559,13 @@ impl Incidents {
         for k in caught_up {
             self.catch_up(world, k);
         }
+        self.finish(world, tick, ended, heroes);
+    }
+
+    /// Closes the calls at `ended` (indices into `open`): bystanders thank
+    /// and leave, a win pays its karma, the spot is freed.
+    fn finish(&mut self, world: &mut World, tick: u64, mut ended: Vec<usize>, heroes: &[Seen]) {
+        ended.sort_unstable();
         for k in ended.into_iter().rev() {
             let inc = self.open.remove(k);
             release_bystanders(world, tick, inc.id);
@@ -2033,7 +2071,7 @@ impl Incidents {
         };
         let index = {
             let mut f = world.resource_mut::<Fights>();
-            match self.free.pop() {
+            match combat::take_free_spot(&mut self.free, &f.spots) {
                 Some(i) => {
                     // Keep the slot's count of groups: it varies the roster.
                     let groups = f.spots[i].groups;
@@ -2186,4 +2224,34 @@ fn medic_spot(town: &Area, solids: &crate::collision::Obstacles, p: DVec2) -> (D
     let (at, along) = pick.map_or((p + DVec2::X * 20.0, DVec2::X), |b| (b.1, b.2));
     let y = solids.ground_at(at).max(GROUND_Y);
     (DVec3::new(at.x, y, at.y), along)
+}
+
+/// Where each villain is, by spot: (spot, place, beaten: lying down or
+/// carried off).
+pub(crate) fn crooks_of(world: &mut World) -> Vec<(usize, DVec3, bool)> {
+    world
+        .query::<(&combat::Enemy, &Motion, &Fighter)>()
+        .iter(world)
+        .map(|(e, m, f)| (e.spot, m.0.pos, !f.fighting()))
+        .collect()
+}
+
+/// Is anyone of the spot's group about, and every one of them down?
+pub(crate) fn all_down(crooks: &[(usize, DVec3, bool)], spot: usize) -> bool {
+    let mut mine = crooks.iter().filter(|c| c.0 == spot).peekable();
+    mine.peek().is_some() && mine.all(|c| c.2)
+}
+
+fn seen_heroes(world: &mut World) -> Vec<Seen> {
+    let mut heroes: Vec<Seen> = world
+        .query::<(&Hero, &Net, &Motion, &Fighter)>()
+        .iter(world)
+        .map(|(h, n, m, f)| {
+            let afoot = !f.kit.travels(crate::powers::travel::FLY)
+                && !f.kit.travels(crate::powers::travel::SPEED);
+            (n.0, m.0.pos, f.level, afoot, h.owner)
+        })
+        .collect();
+    heroes.sort_by_key(|h| h.0);
+    heroes
 }

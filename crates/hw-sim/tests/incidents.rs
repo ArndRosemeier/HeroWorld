@@ -274,9 +274,10 @@ fn a_mugging_has_a_victim_and_the_crooks_turn_on_a_hero_who_steps_in() {
         f.status = Status::Down;
         sim.set_fighter(id, f);
     }
-    // The police drones take them away; then it is over.
+    // Over as the last one drops: thanks and karma at once, not after the
+    // police drones have taken them away.
     let mut thanked = Vec::new();
-    for _ in 0..20 * TICK_HZ {
+    for _ in 0..TICK_HZ / 2 {
         if sim.incidents.open.iter().all(|i| i.id != inc.id) {
             break;
         }
@@ -288,7 +289,10 @@ fn a_mugging_has_a_victim_and_the_crooks_turn_on_a_hero_who_steps_in() {
                 .copied(),
         );
     }
-    assert!(sim.incidents.open.iter().all(|i| i.id != inc.id));
+    assert!(
+        sim.incidents.open.iter().all(|i| i.id != inc.id),
+        "the call is still open half a second after the last crook dropped"
+    );
     // The one they saved thanks the hero standing by, standing still a
     // moment, before walking off.
     sim.step();
