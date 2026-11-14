@@ -359,7 +359,12 @@ impl Session {
                     } else if let ToClient::Mates { mates: list } = m {
                         *mates = list;
                     } else if is_world_news(&m)
-                        || matches!(m, ToClient::Chat { .. } | ToClient::TeamChat { .. })
+                        || matches!(
+                            m,
+                            ToClient::Chat { .. }
+                                | ToClient::TeamChat { .. }
+                                | ToClient::AugmentOffer { .. }
+                        )
                     {
                         // Portals carry our hero when the guess walks into
                         // one, as the server does.
@@ -485,8 +490,14 @@ impl Session {
             let name = self.player_name(owner).unwrap_or_else(|| "Teammate".into());
             out.push(hw_client::minimap::Mate {
                 name,
+                player: owner,
                 pos: glam::DVec3::from_array(e.pos),
                 bot: e.mount.is_some_and(|m| m.1 >= hw_net::HEROBOT_MOUNT),
+                id: Some(e.id),
+                health: e.combat.map_or(100, |c| c.health),
+                down: e
+                    .combat
+                    .is_some_and(|c| c.status != hw_net::Status::Standing),
             });
         }
         let extra: Vec<(PlayerId, [f32; 3])> = match self {
@@ -502,7 +513,11 @@ impl Session {
             out.push(hw_client::minimap::Mate {
                 bot: hw_sim::herobots::slot_of_name(&name).is_some(),
                 name,
+                player: p,
                 pos: glam::DVec3::new(at[0] as f64, at[1] as f64, at[2] as f64),
+                id: None,
+                health: 100,
+                down: false,
             });
         }
         out
@@ -596,6 +611,20 @@ impl Session {
             (Session::Remote { conn, .. }, AugmentAction::Trade { bag }) => {
                 conn.send(ToServer::TradeAugment { bag })
             }
+            (Session::Local { host, .. }, AugmentAction::Give { bag, to }) => {
+                host.post(move |h, me| h.offer_augment(me, bag as usize, to))
+            }
+            (Session::Remote { conn, .. }, AugmentAction::Give { bag, to }) => {
+                conn.send(ToServer::OfferAugment { bag, to })
+            }
+        }
+    }
+
+    /// Answers the augment another player offered us.
+    pub fn answer_offer(&mut self, from: PlayerId, accept: bool) {
+        match self {
+            Session::Local { host, .. } => host.post(move |h, me| h.answer_offer(me, from, accept)),
+            Session::Remote { conn, .. } => conn.send(ToServer::AnswerOffer { from, accept }),
         }
     }
 

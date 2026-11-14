@@ -3591,6 +3591,20 @@ fn make_sounds() -> Sounds {
     }
 }
 
+/// The teammate under the mouse, if the ray meets one of `ids` within
+/// click range (a friendly target is picked the way a villain is).
+pub fn mate_under(all: &[EntityState], ids: &[NetId], from: Vec3, dir: Vec3) -> Option<NetId> {
+    let dir = dir.normalize_or_zero();
+    all.iter()
+        .filter(|e| e.kind == EntityKind::Hero && ids.contains(&e.id))
+        .filter_map(|e| {
+            let t = ray_cylinder(from, dir, pos(e), 0.7, 2.1)?;
+            (t <= CLICK_RANGE).then_some((t, e.id))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, id)| id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

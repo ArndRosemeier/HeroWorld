@@ -603,6 +603,8 @@ pub enum AugmentAction {
     Set { bag: u8, power: PowerId, slot: u8 },
     /// The augment at this place in the bag traded in for karma.
     Trade { bag: u8 },
+    /// The augment at this place in the bag offered to another player.
+    Give { bag: u8, to: hw_net::PlayerId },
 }
 
 /// What is dragged out of the bag: the place in the bag.
@@ -612,6 +614,8 @@ struct BagDrag(usize);
 /// The sockets and the bag in the powers window.
 #[derive(Default)]
 pub struct AugmentUi {
+    /// The other players of the session, to offer an augment to.
+    pub others: Vec<(hw_net::PlayerId, String)>,
     /// The augment picked in the bag (a click), by its place there.
     picked: Option<usize>,
     /// A set that would destroy what is in the socket, waiting for a yes:
@@ -1045,6 +1049,20 @@ impl AugmentUi {
             } else {
                 format!("Trade in · +{karma} karma")
             };
+            if !self.others.is_empty() {
+                ui.menu_button("Give to a teammate", |ui| {
+                    for (p, name) in self.others.clone() {
+                        if ui.button(name).clicked() {
+                            out.push(AugmentAction::Give {
+                                bag: i as u8,
+                                to: p,
+                            });
+                            self.picked = None;
+                            ui.close();
+                        }
+                    }
+                });
+            }
             if ui.button(label).clicked() {
                 // Better than common: asked once more.
                 if grade == Grade::Common || sure {

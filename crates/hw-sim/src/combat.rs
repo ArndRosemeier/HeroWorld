@@ -3530,13 +3530,18 @@ fn allies(
 ) {
     let f = actors[i].f.kit.fields(power);
     let me_id = actors[i].id;
+    // The teammate the hero picked also gets it from further away.
+    let picked = actors[i].hero.and_then(|(_, input)| input.ally);
+    let from = actors[i].body.pos;
     let element = actors[i].f.kit.element.code();
     let heal = f.heal * level_scale(level);
     let buffs =
         f.resist > 0.0 || f.might > 0.0 || f.steadfast > 0.0 || f.execute > 0.0 || f.hide > 0.0;
     for (k, a) in actors.iter_mut().enumerate() {
         let mine = k == i;
-        let friend = a.hero.is_some() && a.body.pos.distance(at) <= f.radius;
+        let friend = a.hero.is_some()
+            && (a.body.pos.distance(at) <= f.radius
+                || (Some(a.id) == picked && a.body.pos.distance(from) <= hw_net::ALLY_REACH));
         if !mine && !friend {
             continue;
         }

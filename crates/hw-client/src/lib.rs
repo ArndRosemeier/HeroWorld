@@ -87,6 +87,7 @@ pub mod streetgear;
 pub mod streetlines;
 pub mod streetview;
 pub mod sweeperview;
+pub mod team;
 pub mod teslaview;
 pub mod tilestream;
 pub mod title;

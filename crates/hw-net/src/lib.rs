@@ -22,7 +22,7 @@ pub use protocol::{
     fizzle, Augment, BoardCrime, CaseBook, CaseStep, ClientMsg, CombatState, EntityKind,
     EntityState, Faction, Fx, FxKind, GateHome, GateView, ImpactKind, InputState, OwnedPower,
     PlayerId, Power, PowerId, SavedCase, ServerMsg, SetAugment, Sheet, Status, ToClient, ToServer,
-    EFFECT_ARMOURED, EFFECT_BURNING, EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_CHARMED,
+    ALLY_REACH, EFFECT_ARMOURED, EFFECT_BURNING, EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_CHARMED,
     EFFECT_CHILLED, EFFECT_CONFUSED, EFFECT_DISARMED, EFFECT_EMPOWERED, EFFECT_ENRAGED,
     EFFECT_FEARED, EFFECT_FROZEN, EFFECT_GRAPPLE, EFFECT_HELD, EFFECT_HIDDEN, EFFECT_KNEELING,
     EFFECT_RALLIED, EFFECT_SHIELD, EFFECT_SPRINT, EFFECT_SUPER_JUMP, EFFECT_SUPER_SPEED,
@@ -36,7 +36,7 @@ pub use transport::{
 pub use voice::{VoiceBox, VoicePacket};
 
 /// Protocol version. Server and client must match exactly to play together.
-pub const PROTOCOL_VERSION: u32 = 58;
+pub const PROTOCOL_VERSION: u32 = 59;
 
 /// Most players in one world.
 pub const MAX_PLAYERS: usize = 10;

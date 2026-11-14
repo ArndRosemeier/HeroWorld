@@ -25,10 +25,18 @@ use std::sync::Arc;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mate {
     pub name: String,
+    /// The player.
+    pub player: hw_net::PlayerId,
     /// Where they stand (town frame).
     pub pos: glam::DVec3,
     /// A Herobot.
     pub bot: bool,
+    /// Their hero's entity, when it is in the mirror (not for a mate beyond
+    /// the interest radius): what a click picks as the friendly target.
+    pub id: Option<hw_core::NetId>,
+    /// Health in percent, and whether they are down.
+    pub health: u8,
+    pub down: bool,
 }
 
 impl Mate {

@@ -620,6 +620,7 @@ fn main() -> EngineResult<()> {
     }
     // The fight: targets, effects, the screen.
     let mut fight = FightView::new();
+    let mut team = hw_client::team::Team::default();
     let mut robots = RobotView::new();
     let mut safes = hw_client::safeview::SafeView::default();
     let mut police_view = hw_client::policeview::PoliceView::default();
@@ -3253,6 +3254,12 @@ fn main() -> EngineResult<()> {
                 let cam = world.camera();
                 let look = (cam.target() - cam.eye()).normalize_or_zero();
                 let alt = frame.ui.ctx().input(|i| i.modifiers.alt);
+                // The friendly target: F1-F4, or a click on a teammate (which
+                // does not also punch).
+                team.keys(frame.ui.ctx());
+                let ally_hit = !on_ui
+                    && input.mouse_clicked(MouseButton::Left)
+                    && team.click(&drawn, click_ray);
                 let f = fight.input(
                     input,
                     me_state,
@@ -3263,10 +3270,11 @@ fn main() -> EngineResult<()> {
                         sheet: Some(&my_sheet),
                         tray: &powers.tray,
                         alt,
-                        click_ray: (!on_ui).then_some(click_ray),
+                        click_ray: (!on_ui && !ally_hit).then_some(click_ray),
                     },
                 );
-                click_picked = (click_picked || f.picked) && input.mouse_down(MouseButton::Left);
+                click_picked =
+                    (click_picked || f.picked || ally_hit) && input.mouse_down(MouseButton::Left);
                 if click_picked {
                     hero_input.smash = false;
                 }
@@ -3350,6 +3358,7 @@ fn main() -> EngineResult<()> {
                     ..f
                 };
                 hero_input.target = f.target;
+                hero_input.ally = team.ally;
                 // `HW_HOLD=1` (screenshots): the help key held down.
                 hero_input.revive = f.revive || hold_help;
                 hero_input.hospital = f.hospital;
@@ -3603,6 +3612,21 @@ fn main() -> EngineResult<()> {
                     };
                     chat.add(hw_client::chat::Channel::Local, &who, text, voice);
                 }
+                if let hw_net::ToClient::AugmentOffer {
+                    from,
+                    augment,
+                    open,
+                } = m
+                {
+                    if *open {
+                        let who = session
+                            .player_name(*from)
+                            .unwrap_or_else(|| "A hero".into());
+                        team.offer = Some((*from, who, *augment));
+                    } else if team.offer.as_ref().is_some_and(|(f, _, _)| f == from) {
+                        team.offer = None;
+                    }
+                }
                 if let hw_net::ToClient::TeamChat { from, text } = m {
                     let who = session
                         .player_name(*from)
@@ -3616,7 +3640,9 @@ fn main() -> EngineResult<()> {
                 }
             }
             news.retain(|m| match m {
-                hw_net::ToClient::Chat { .. } | hw_net::ToClient::TeamChat { .. } => false,
+                hw_net::ToClient::Chat { .. }
+                | hw_net::ToClient::TeamChat { .. }
+                | hw_net::ToClient::AugmentOffer { .. } => false,
                 hw_net::ToClient::Story { .. } => {
                     story.hear(m);
                     false
@@ -3878,6 +3904,8 @@ fn main() -> EngineResult<()> {
             let mine = session.my_hero();
             // The other heroes of the session, with names (maps, visor).
             let mates = session.team(&heroes, mine);
+            team.set_mates(&mates);
+            powers.augments.others = mates.iter().map(|m| (m.player, m.name.clone())).collect();
             // Where everyone the server sends is, for the fight's lookups.
             let at_of = |id: hw_core::NetId| {
                 heroes
@@ -5171,6 +5199,10 @@ fn main() -> EngineResult<()> {
                         click_ray: None,
                     },
                 );
+                team.draw(frame.ui.ctx());
+                if let Some((from, accept)) = team.offer_prompt(frame.ui.ctx(), frame.time) {
+                    session.answer_offer(from, accept);
+                }
                 if let Some(c) = moved {
                     powers.tray.apply(c);
                     save_tray(&powers.tray);

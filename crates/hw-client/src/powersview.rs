@@ -89,7 +89,7 @@ pub struct PowersView {
     /// changed here).
     pub tray: Tray,
     /// The sockets and the bag.
-    augments: AugmentUi,
+    pub augments: AugmentUi,
 }
 
 impl Default for PowersView {

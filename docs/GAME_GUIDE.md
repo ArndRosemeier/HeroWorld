@@ -123,6 +123,7 @@ From `settings::CONTROLS` (shown in the game under the menu button → Controls)
 | Mouse wheel | Zoom in / out (all the way in: first person) |
 | Tab | Target the nearest villain in view; again: the next nearest not yet picked, round and round |
 | Left click on a villain | Target that villain, up to 150 m away (Tab reaches 60 m); within punching reach (3 m) it also punches |
+| Left click on a teammate, or F1-F4 | Pick that teammate as your friendly target (the same again lets go); the team frame on the left lists every other hero with a health bar and takes clicks too. Tab never picks a teammate |
 | H | Next to a Herobot on Hero Hall's plaza (or one you woke): wake it, or send it home |
 | Left mouse | Strike |
 | 9 / 0 | Portal Home (mark where your portal leads) / Open Portal (tear it open ahead) |
@@ -403,6 +404,13 @@ Loot. An augment adds a share of **one effect** to **one power**, for good.
   own (`FITS_OWNED`). A hideout case closed gives each hero there a find, never a common
   one. About 20 an hour (`tests/augments.rs` plays it).
 - **The bag** holds 30 (`MAX_BAG`); a drop into a full bag is traded in at once.
+- **Giving one away** (`Host::offer_augment` / `answer_offer`, `ToServer::OfferAugment` / `AnswerOffer`,
+  `ToClient::AugmentOffer`): in the bag, "Give to a teammate" lists the other players (Herobots too).
+  The receiver gets a prompt (Take it / No thanks); the augment stays in the giver's bag until it is
+  taken, one offer at a time per giver (a new one replaces the old). Heroes must stand within 30 m
+  (`TRADE_REACH`), the offer lapses after 60 s or when either player leaves, and a full bag on the
+  receiving side refuses it. Both sides get a line in chat. Herobots always take what they are given.
+  Tests: `hw-sim/tests/allies.rs`.
 - **Trading in** (`trade_value`): karma to spend (it does not raise the level). A common
   one from a level 1 villain gives 48, from level 20 120; a rare one three times, a
   relic ten times that.
@@ -1879,6 +1887,11 @@ on the way. Rides are free.
     big named bracket with the distance (an edge arrow when out of sight). People blue,
     Herobots teal. The host tells each joined player every other hero's position once a second
     (`ToClient::Mates`), so they show beyond the 500 m of the world updates; `Session::team`.
+  - **Friendly target** (`team.rs`, `InputState.ally`): click a teammate in the world, click their row in
+    the team frame (left, names and health, DOWN when down), or press F1-F4 (heroes in name order). Ally
+    powers (heal, shield, revive: `Delivery::Allies`) then also reach that hero from up to
+    `ALLY_REACH` (40 m) away, beyond the power's own radius; without a pick they reach friends inside the
+    radius as before. Tab stays villains-only. Herobots pick the most hurt hero within 35 m each tick.
   - Tests: `hw-sim/tests/herobots.rs` (wake, ten places, home; daily: fights, earns karma,
     the drone flies it to the hospital).
 - Multiplayer has been tested by bots (`tests/soak.rs`: ten bots for an hour) but not yet

@@ -325,6 +325,11 @@ impl Brain {
                         self.incidents.remove(&id);
                     }
                 }
+                // A gift from a player: take it (the bag has room, or the
+                // server says so).
+                ToClient::AugmentOffer {
+                    from, open: true, ..
+                } => conn.send(ToServer::AnswerOffer { from, accept: true }),
                 _ => {}
             }
         }
@@ -495,6 +500,17 @@ impl Brain {
                 .is_some_and(|c| c.status == Status::Standing && c.health < 130)
                 && at(e).distance(pos) < 20.0
         });
+        // The most hurt hero in reach is the friendly target: heals and
+        // shields go to them, as a player would click them.
+        input.ally = heroes
+            .iter()
+            .filter(|e| {
+                e.combat
+                    .is_some_and(|c| c.status == Status::Standing && c.health < 130)
+                    && at(e).distance(pos) < hw_net::ALLY_REACH - 5.0
+            })
+            .min_by_key(|e| (e.combat.map_or(0, |c| c.health), e.id))
+            .map(|e| e.id);
         if let Some(f) = foe {
             self.idle_since = self.ticks;
             self.fight(

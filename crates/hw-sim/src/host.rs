@@ -109,6 +109,22 @@ struct Remote {
     look: LookParts,
 }
 
+/// An augment a player offers another (it stays in the giver's bag until
+/// taken).
+#[derive(Clone, Copy, Debug)]
+struct AugmentOffer {
+    from: PlayerId,
+    to: PlayerId,
+    augment: hw_net::Augment,
+    /// The tick it was made.
+    at: u64,
+}
+
+/// How far apart two heroes may stand to trade, in metres.
+pub const TRADE_REACH: f64 = 30.0;
+/// How long an offer stands, in seconds.
+const OFFER_SECONDS: u64 = 60;
+
 pub struct Host {
     pub sim: Sim,
     socket: Option<ServerSocket>,
@@ -117,6 +133,8 @@ pub struct Host {
     next_player: u16,
     /// World news (damage, impacts) for the player at this machine.
     local_news: Vec<ToClient>,
+    /// Augments one player has offered another, waiting for an answer.
+    offers: Vec<AugmentOffer>,
     /// Fight events since the local player last took them.
     fx: Vec<hw_net::Fx>,
     /// What the server did with power keys, in words (the debug log).
@@ -154,6 +172,7 @@ impl Host {
             remotes: BTreeMap::new(),
             next_player: 1,
             local_news: Vec::new(),
+            offers: Vec::new(),
             fx: Vec::new(),
             power_log: Vec::new(),
             local_sheet: None,
@@ -558,6 +577,8 @@ impl Host {
                 ToServer::TradeAugment { bag } => {
                     let _ = self.sim.trade_augment(player, bag as usize);
                 }
+                ToServer::OfferAugment { bag, to } => self.offer_augment(player, bag as usize, to),
+                ToServer::AnswerOffer { from, accept } => self.answer_offer(player, from, accept),
                 ToServer::Look { part, parts, bytes } => {
                     let whole = self
                         .remotes
@@ -621,6 +642,7 @@ impl Host {
             }
         }
         self.mind_herobots();
+        self.mind_offers();
         self.sim.step();
         self.tell_mates();
         let news = self.sim.take_news();
@@ -895,6 +917,156 @@ impl Host {
                 .map(|(q, at)| (*q, [at.x as f32, at.y as f32, at.z as f32]))
                 .collect();
             r.rel_out.push(ToClient::Mates { mates });
+        }
+    }
+
+    /// What an augment is called in a line of chat.
+    fn augment_words(a: hw_net::Augment) -> String {
+        let name = crate::augments::Effect::of(a).map_or("augment", |e| e.name());
+        format!(
+            "{} {name} augment (+{}%)",
+            crate::augments::Grade::of(a).name().to_lowercase(),
+            a.percent
+        )
+    }
+
+    fn name_of(&self, player: PlayerId) -> String {
+        self.players
+            .get(&player)
+            .map_or_else(|| "another hero".to_string(), |p| p.name.clone())
+    }
+
+    fn stand_apart(&mut self, a: PlayerId, b: PlayerId) -> f64 {
+        let all = self.sim.hero_positions();
+        let at = |p: PlayerId| all.iter().find(|(q, _)| *q == p).map(|(_, v)| *v);
+        match (at(a), at(b)) {
+            (Some(x), Some(y)) => x.distance(y),
+            _ => f64::MAX,
+        }
+    }
+
+    /// `from` offers the augment at `bag` to `to`: it is theirs to take
+    /// within a minute, and meanwhile it stays in the bag. One offer at a
+    /// time per giver; the receiver sees it as a prompt.
+    pub fn offer_augment(&mut self, from: PlayerId, bag: usize, to: PlayerId) {
+        let Some(sheet) = self.sim.sheet(from) else {
+            return;
+        };
+        let Some(&augment) = sheet.bag.get(bag) else {
+            return;
+        };
+        if to == from || !self.players.contains_key(&to) {
+            self.tell_player(from, "There is nobody to give that to.");
+            return;
+        }
+        if self.stand_apart(from, to) > TRADE_REACH {
+            let name = self.name_of(to);
+            self.tell_player(from, &format!("{name} is too far away to trade with."));
+            return;
+        }
+        self.withdraw_offers(|o| o.from == from);
+        self.offers.push(AugmentOffer {
+            from,
+            to,
+            augment,
+            at: self.sim.tick,
+        });
+        let (mine, theirs) = (self.name_of(from), self.name_of(to));
+        let words = Self::augment_words(augment);
+        self.tell_player(from, &format!("You offered {theirs} a {words}."));
+        self.tell_player(to, &format!("{mine} offers you a {words}."));
+        self.tell(
+            to,
+            ToClient::AugmentOffer {
+                from,
+                augment,
+                open: true,
+            },
+        );
+    }
+
+    /// `by` answers the offer `from` made.
+    pub fn answer_offer(&mut self, by: PlayerId, from: PlayerId, accept: bool) {
+        let Some(i) = self
+            .offers
+            .iter()
+            .position(|o| o.from == from && o.to == by)
+        else {
+            return;
+        };
+        let offer = self.offers.remove(i);
+        self.tell(
+            by,
+            ToClient::AugmentOffer {
+                from,
+                augment: offer.augment,
+                open: false,
+            },
+        );
+        let (giver, taker) = (self.name_of(from), self.name_of(by));
+        let words = Self::augment_words(offer.augment);
+        if !accept {
+            self.tell_player(from, &format!("{taker} turned down your {words}."));
+            return;
+        }
+        if self.stand_apart(from, by) > TRADE_REACH {
+            self.tell_player(by, &format!("{giver} is too far away now."));
+            self.tell_player(from, &format!("{taker} is too far away to take it."));
+            return;
+        }
+        match self.sim.pass_augment(from, by, offer.augment) {
+            Ok(()) => {
+                self.tell_player(from, &format!("{taker} took your {words}."));
+                self.tell_player(by, &format!("You took {giver}'s {words}."));
+            }
+            Err(why) => {
+                self.tell_player(from, &format!("The trade with {taker} failed: {why}"));
+                self.tell_player(by, &format!("The trade with {giver} failed: {why}"));
+            }
+        }
+    }
+
+    /// Ends the offers `which` picks, telling their receivers.
+    fn withdraw_offers(&mut self, which: impl Fn(&AugmentOffer) -> bool) {
+        let (gone, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.offers)
+            .into_iter()
+            .partition(&which);
+        self.offers = kept;
+        for o in gone {
+            self.tell(
+                o.to,
+                ToClient::AugmentOffer {
+                    from: o.from,
+                    augment: o.augment,
+                    open: false,
+                },
+            );
+            let words = Self::augment_words(o.augment);
+            self.tell_player(o.from, &format!("Your offer of a {words} ended."));
+        }
+    }
+
+    /// Offers that timed out, or whose players left, end.
+    fn mind_offers(&mut self) {
+        if self.offers.is_empty() {
+            return;
+        }
+        let now = self.sim.tick;
+        let live: Vec<PlayerId> = self.players.keys().copied().collect();
+        self.withdraw_offers(|o| {
+            now.saturating_sub(o.at) > OFFER_SECONDS * TICK_HZ as u64
+                || !live.contains(&o.from)
+                || !live.contains(&o.to)
+        });
+    }
+
+    /// Tells one player a message of its own.
+    fn tell(&mut self, player: PlayerId, msg: ToClient) {
+        match self.remotes.get_mut(&player) {
+            Some(r) => {
+                r.rel_out.push(msg);
+            }
+            None => self.local_news.push(msg),
         }
     }
 

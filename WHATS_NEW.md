@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.300 (2026-11-14)
+
+- Pick a teammate as your friendly target: click them in the world, click their name in the new team frame on the left (names and health bars), or press F1 to F4. Heals, shields and revives then reach them from up to 40 metres away. Tab still picks only villains. Herobots heal whoever is hurt.
+- Give augments to your teammates: open the bag, choose an augment and "Give to a teammate". They get a prompt to take it or turn it down; it only changes bags when they take it.
+
 ## 0.299 (2026-11-14)
 
 - Herobots stay close to the people: they keep within about 6 to 10 metres, only go after villains and trouble near the player they follow, and come straight back if they stray more than 35 metres.

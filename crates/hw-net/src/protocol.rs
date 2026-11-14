@@ -59,7 +59,14 @@ pub struct InputState {
     /// Holding the grapple key: the line of Grapple Swing is out, to where
     /// the hero aims.
     pub grapple: bool,
+    /// The teammate the player has picked (click, F1-F4): heals, shields
+    /// and revives reach this hero within `ALLY_REACH` metres even outside
+    /// the usual radius. Tab never picks one.
+    pub ally: Option<NetId>,
 }
+
+/// How far a picked teammate still receives an ally power, in metres.
+pub const ALLY_REACH: f64 = 40.0;
 
 /// A power in the power trees (see `hw_sim::powers`): a number under
 /// [`POWER_IDS`]; 1 is Strike, everyone's punch.
@@ -1652,6 +1659,13 @@ pub enum ToClient {
     Mates {
         mates: Vec<(PlayerId, [f32; 3])>,
     },
+    /// Another player offers an augment (`open`), or the offer is over
+    /// (taken, refused, withdrawn, or timed out).
+    AugmentOffer {
+        from: PlayerId,
+        augment: Augment,
+        open: bool,
+    },
     /// The host is closing the world; the client should leave.
     SessionEnd {
         reason: String,
@@ -1918,6 +1932,17 @@ pub enum ToServer {
     TradeAugment {
         bag: u8,
     },
+    /// Offer the augment at `bag` to another player (one offer at a time;
+    /// it stays in the bag until they take it).
+    OfferAugment {
+        bag: u8,
+        to: PlayerId,
+    },
+    /// Answer the offer `from` made: take the augment or turn it down.
+    AnswerOffer {
+        from: PlayerId,
+        accept: bool,
+    },
     /// A piece of this player's looks (see [`Look`]), sent on joining.
     Look {
         part: u8,
@@ -1949,6 +1974,7 @@ impl ToClient {
             ToClient::Joined { name, .. } | ToClient::Left { name, .. } => 2 + s(name),
             ToClient::Chat { text, .. } | ToClient::TeamChat { text, .. } => 2 + s(text),
             ToClient::Mates { mates } => 1 + 14 * mates.len().min(MAX_MATES),
+            ToClient::AugmentOffer { .. } => 2 + 3 + 1,
             ToClient::SessionEnd { reason } => s(reason),
             ToClient::Damage { broken, .. } => 8 + 1 + 1 + 4 * broken.len().min(255),
             ToClient::Repaired { .. } => 8,
@@ -2021,6 +2047,15 @@ impl ToClient {
                 for (p, at) in mates.iter().take(MAX_MATES) {
                     w.u16(p.0).f32(at[0]).f32(at[1]).f32(at[2]);
                 }
+            }
+            ToClient::AugmentOffer {
+                from,
+                augment,
+                open,
+            } => {
+                w.u8(28).u16(from.0);
+                augment.write(w);
+                w.u8(*open as u8);
             }
             ToClient::SessionEnd { reason } => {
                 w.u8(4).str(reason);
@@ -2293,6 +2328,11 @@ impl ToClient {
                 text: r.str()?,
             },
             4 => ToClient::SessionEnd { reason: r.str()? },
+            28 => ToClient::AugmentOffer {
+                from: PlayerId(r.u16()?),
+                augment: Augment::read(r)?,
+                open: r.u8()? & 1 != 0,
+            },
             26 => ToClient::TeamChat {
                 from: PlayerId(r.u16()?),
                 text: r.str()?,
@@ -2595,6 +2635,8 @@ impl ToServer {
             ToServer::SetAugment { .. } => 1 + 3,
             ToServer::TradeAugment { .. } => 1 + 1,
             ToServer::Herobot { .. } => 1 + 1,
+            ToServer::OfferAugment { .. } => 1 + 1 + 2,
+            ToServer::AnswerOffer { .. } => 1 + 2 + 1,
         }
     }
 
@@ -2644,6 +2686,12 @@ impl ToServer {
             ToServer::Herobot { slot } => {
                 w.u8(13).u8(*slot);
             }
+            ToServer::OfferAugment { bag, to } => {
+                w.u8(14).u8(*bag).u16(to.0);
+            }
+            ToServer::AnswerOffer { from, accept } => {
+                w.u8(15).u16(from.0).u8(*accept as u8);
+            }
         }
     }
 
@@ -2677,6 +2725,14 @@ impl ToServer {
             },
             11 => ToServer::TradeAugment { bag: r.u8()? },
             12 => ToServer::TeamChat { text: r.str()? },
+            14 => ToServer::OfferAugment {
+                bag: r.u8()?,
+                to: PlayerId(r.u16()?),
+            },
+            15 => ToServer::AnswerOffer {
+                from: PlayerId(r.u16()?),
+                accept: r.u8()? & 1 != 0,
+            },
             13 => ToServer::Herobot { slot: r.u8()? },
             _ => return Err(WireError),
         })
@@ -2781,7 +2837,8 @@ fn write_input(w: &mut Writer, input: &InputState) {
     }
     w.u32(input.target.map_or(0, |t| t.0))
         .u8(input.power)
-        .u8(input.grapple as u8);
+        .u8(input.grapple as u8)
+        .u32(input.ally.map_or(0, |t| t.0));
 }
 
 fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
@@ -2802,6 +2859,10 @@ fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
         return Err(WireError);
     }
     let grapple = r.u8()? & 1 != 0;
+    let ally = match r.u32()? {
+        0 => None,
+        t => Some(NetId(t)),
+    };
     Ok(InputState {
         move_x: x * k,
         move_y: y * k,
@@ -2818,6 +2879,7 @@ fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
         target,
         power,
         grapple,
+        ally,
     })
 }
 
@@ -3218,6 +3280,7 @@ mod tests {
                         hospital: false,
                         power: 4,
                         grapple: true,
+                        ally: Some(NetId(9)),
                     },
                 ],
                 ack_tick: 1234,
@@ -3261,6 +3324,20 @@ mod tests {
                         },
                     ),
                     (12, ToServer::TradeAugment { bag: 29 }),
+                    (
+                        12,
+                        ToServer::OfferAugment {
+                            bag: 3,
+                            to: PlayerId(6),
+                        },
+                    ),
+                    (
+                        12,
+                        ToServer::AnswerOffer {
+                            from: PlayerId(2),
+                            accept: true,
+                        },
+                    ),
                     (
                         13,
                         ToServer::TeamChat {
@@ -3597,6 +3674,25 @@ mod tests {
                 (PlayerId(2), [1.0, 2.0, 3.0]),
                 (PlayerId(5), [-4.5, 0.0, 9.0]),
             ],
+        };
+        let one = ServerMsg::Update {
+            tick: 0,
+            ack: 0,
+            rel_ack: 0,
+            reliable: vec![(7, m.clone())],
+            entities: Vec::new(),
+            removed: Vec::new(),
+        };
+        assert_eq!(one.encode().len(), UPDATE_HEADER_BYTES + 4 + m.wire_size());
+        assert_eq!(ServerMsg::decode(&one.encode()).unwrap(), one);
+        let m = ToClient::AugmentOffer {
+            from: PlayerId(4),
+            augment: Augment {
+                effect: 3,
+                percent: 12,
+                grade: 1,
+            },
+            open: true,
         };
         let one = ServerMsg::Update {
             tick: 0,

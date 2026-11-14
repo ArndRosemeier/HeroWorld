@@ -2177,6 +2177,32 @@ impl Sim {
         result
     }
 
+    /// Moves `augment` from `from`'s bag into `to`'s (a trade between
+    /// players). It must still be in the giver's bag and the taker's bag
+    /// must have room; nothing changes otherwise.
+    pub fn pass_augment(
+        &mut self,
+        from: PlayerId,
+        to: PlayerId,
+        augment: hw_net::Augment,
+    ) -> Result<(), &'static str> {
+        let giver = self.sheet(from).ok_or("they are not in the world")?;
+        let taker = self.sheet(to).ok_or("they are not in the world")?;
+        let at = giver
+            .bag
+            .iter()
+            .position(|a| *a == augment)
+            .ok_or("it is no longer in the bag")?;
+        if taker.bag.len() >= hw_net::MAX_BAG {
+            return Err("the bag is full");
+        }
+        self.change_sheet(from, |s| {
+            s.bag.remove(at);
+        });
+        self.change_sheet(to, |s| s.bag.push(augment));
+        Ok(())
+    }
+
     /// Puts `augment` into `owner`'s bag (the debug menu, tests): traded
     /// in at once if the bag is full.
     pub fn give_augment(&mut self, owner: PlayerId, augment: hw_net::Augment) {

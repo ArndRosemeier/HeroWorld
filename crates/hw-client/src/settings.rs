@@ -221,6 +221,7 @@ pub const CONTROLS: &[(&str, &str)] = &[
     ("3 to 6", "Your other powers"),
     ("B", "Powers and karma"),
     ("E", "Open or shut a door"),
+    ("Click a teammate, F1-F4", "Pick a teammate as your friendly target (heals reach them)"),
     ("H", "Wake a Herobot beside you (or send it home)"),
     ("E (hold)", "Revive a downed teammate"),
     ("H", "Call the medical drone when you are down"),
