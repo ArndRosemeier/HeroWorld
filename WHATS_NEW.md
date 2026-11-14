@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.285 (2026-11-14)
+
+- Every roof is solid now. Pitched and hipped roofs, mansards, domes, the Googie swoop, the factory sawtooth, tower crowns, taxi pads, parapets and the corner towers' caps used to be only drawn: you and the cars could fly or walk right through them. Their solid shape follows what is drawn, slope by slope.
+- A test draws every kind of roof and probes it from just under its surface, so a roof can't lose its collision again.
+
 ## 0.284 (2026-11-14)
 
 - The balconies and bridges of a gang's den are no longer bare. Behind every balcony's rail the gang has piled sandbags, crates and oil drums to crouch behind, and their pin boards, safes and cabinets stand against the wall; bridges have sandbags along both rails.

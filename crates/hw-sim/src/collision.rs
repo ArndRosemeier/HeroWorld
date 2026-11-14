@@ -118,6 +118,9 @@ struct Collider {
     plinth: Option<f64>,
     lo: DVec2,
     hi: DVec2,
+    /// How far `lo` and `hi` lie outside the ground corners, so a roof
+    /// that overhangs the site is found.
+    margin: f64,
     solids: OnceLock<Arc<[Solid]>>,
     /// A damaged building's solids instead of the plan's (see
     /// [`crate::destruction`]).
@@ -170,13 +173,19 @@ impl std::ops::Deref for SolidSet<'_> {
 
 impl Collider {
     fn new(site: Option<BuildingSite>, base: f64, lo: DVec2, hi: DVec2) -> Self {
+        // A roof reaches past the walls; the box where bodies look for the
+        // building holds it too.
+        let margin = site
+            .as_ref()
+            .map_or(0.0, |s| hw_gen::roofsolid::overhang(&s.look()));
         Self {
             plan: OnceLock::new(),
             site,
             base,
             plinth: None,
-            lo,
-            hi,
+            lo: lo - DVec2::splat(margin),
+            hi: hi + DVec2::splat(margin),
+            margin,
             solids: OnceLock::new(),
             damage: RwLock::new(None),
             version: AtomicU64::new(0),
@@ -505,7 +514,8 @@ impl TownSolids {
             for (id, b) in q.buildings_with_ids() {
                 let corners = b.site.corners();
                 let (a, z) = (lo_of(&corners), hi_of(&corners));
-                if !inside(a, z) {
+                let m = DVec2::splat(hw_gen::roofsolid::overhang(&b.site.look()));
+                if !inside(a - m, z + m) {
                     continue;
                 }
                 colliders.push((
@@ -984,7 +994,8 @@ impl Obstacles {
     /// Building `i`'s ground box (lowest and highest x, z corners), without
     /// making its plan.
     pub fn building_bounds(&self, i: ColliderId) -> Option<(DVec2, DVec2)> {
-        self.find(i).map(|c| (c.lo, c.hi))
+        self.find(i)
+            .map(|c| (c.lo + DVec2::splat(c.margin), c.hi - DVec2::splat(c.margin)))
     }
 
     /// A fixed collider by id.
@@ -1587,7 +1598,7 @@ fn hi_of(c: &[DVec2]) -> DVec2 {
 }
 
 /// The solids of one building, from its plan.
-pub(crate) fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
+pub fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
     let site = &plan.site;
     let mut out = Vec::new();
     let mut push = |r: Rect, y0: f64, y1: f64| {
@@ -1603,8 +1614,25 @@ pub(crate) fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
             });
         }
     };
+    // From building (x, z) into the town's frame; spiral steps stand at
+    // their own angles.
+    let in_town = |shape: &Footprint| -> Vec<Solid> {
+        let turn = |v: DVec2| site.along * v.x + site.inward * v.y;
+        solids_of(shape)
+            .into_iter()
+            .map(|s| Solid {
+                origin: site.origin + turn(s.origin),
+                along: turn(s.along),
+                inward: turn(s.inward),
+                y0: base + s.y0,
+                y1: base + s.y1,
+                ..s
+            })
+            .collect()
+    };
     // A building of halls: the very parts it is drawn from (floors, walls
-    // round their doorways, stairs step by step, rails, columns, shafts).
+    // round their doorways, stairs step by step, rails, columns, shafts),
+    // and the roof on top of them.
     if let Some(parts) = plan.solids() {
         // But the lifts' landing doors, which open and shut with their
         // cars (`crate::lifts`).
@@ -1613,19 +1641,10 @@ pub(crate) fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
             .iter()
             .filter(|p| p.part != hw_gen::layout::solid::Part::LiftDoor)
             .map(|p| p.shape)
-            .chain(furniture.iter().filter_map(|i| i.footprint()));
+            .chain(furniture.iter().filter_map(|i| i.footprint()))
+            .chain(plan.roof_footprints());
         for shape in shapes {
-            // From building (x, z) into the town's frame; spiral steps
-            // stand at their own angles.
-            let turn = |v: DVec2| site.along * v.x + site.inward * v.y;
-            out.extend(solids_of(&shape).into_iter().map(|s| Solid {
-                origin: site.origin + turn(s.origin),
-                along: turn(s.along),
-                inward: turn(s.inward),
-                y0: base + s.y0,
-                y1: base + s.y1,
-                ..s
-            }));
+            out.extend(in_town(&shape));
         }
         return out;
     }
@@ -1703,6 +1722,10 @@ pub(crate) fn building_solids(plan: &BuildingPlan, base: f64) -> Vec<Solid> {
         if k + 1 == n {
             push(f.outline, y + f.height - SLAB, y + f.height);
         }
+    }
+    // The roof: decks, parapets and whatever the look puts on top.
+    for shape in plan.roof_footprints() {
+        out.extend(in_town(&shape));
     }
     out
 }

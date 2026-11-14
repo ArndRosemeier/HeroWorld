@@ -1109,6 +1109,28 @@ impl Damage {
                 );
             }
         }
+        // The roof (pitched, domed, crowned) stays drawn and solid until a
+        // collapse takes the building down with it.
+        if d.state.collapse().is_none() {
+            if let Some((plan, base)) = solids.building(i) {
+                let site = &plan.site;
+                let turn = |v: DVec2| site.along * v.x + site.inward * v.y;
+                for shape in plan.roof_footprints() {
+                    out.extend(
+                        crate::collision::solids_of(&shape)
+                            .into_iter()
+                            .map(|s| Solid {
+                                origin: site.origin + turn(s.origin),
+                                along: turn(s.along),
+                                inward: turn(s.inward),
+                                y0: base + s.y0,
+                                y1: base + s.y1,
+                                ..s
+                            }),
+                    );
+                }
+            }
+        }
         solids.set_damage(i, Some(out));
     }
 
