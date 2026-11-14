@@ -71,7 +71,7 @@ fn files(s: Species) -> (&'static str, [&'static str; 3]) {
 /// A species' clips: standing, going, and the poses it can be held in.
 fn clips(s: Species) -> (&'static str, &'static str, &'static [&'static str], f32) {
     match s {
-        Species::Wibbet => ("Idle", "Walk", &["Sit", "Beg"], 1.4),
+        Species::Wibbet => ("Idle", "Walk", &["Sit", "Beg"], 1.8),
         Species::Drakelet => ("Hover", "Fly", &["Sit"], 1.4),
         Species::Driftbell => ("Drift", "Swim", &[], 0.55),
     }

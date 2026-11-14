@@ -112,18 +112,22 @@ const WING_ROOM: f64 = 0.5;
 /// How big a drakelet is drawn (as modelled, its wings span a metre).
 const DRAKELET_SIZE: f64 = 0.85;
 
+/// Of a hundred rounds, this many end on the pavement itself: they would
+/// rather be up something.
+const GROUND_ROUNDS: f64 = 0.1;
 /// Troops of wibbets per metre of pavement (one side of a street).
-const TROOPS_PER_M: f64 = 1.0 / 260.0;
+const TROOPS_PER_M: f64 = 1.0 / 45.0;
 /// A troop's stretch of pavement reaches this far either way from its home.
-const TROOP_REACH: f64 = 21.0;
+const TROOP_REACH: f64 = 16.0;
 /// How far from the walkers' line the wibbets' lane runs, towards the kerb.
 const LANE: f64 = 0.55;
 /// Half a wibbet's width, and how near it passes to anything standing.
 const WIBBET_HALF: f64 = 0.17;
-/// A wibbet's round: it picks a place, goes there and rests (s).
-const ROUND: f64 = 38.0;
+/// A wibbet's round: it picks a place, goes there and rests, a few seconds
+/// of it (s). They are restless.
+const ROUND: f64 = 24.0;
 /// How fast a wibbet climbs a post (m/s) and how long a hop takes (s).
-const CLIMB: f64 = 1.5;
+const CLIMB: f64 = 2.0;
 const HOP: f64 = 0.45;
 
 /// Driftbells float this high over the street, at least and at most:
@@ -245,6 +249,8 @@ struct Troop {
     side: f64,
     /// Its places, in order along the street.
     stops: Vec<Stop>,
+    /// The ones up a post or on top of something (indices into `stops`).
+    high: Vec<usize>,
     size: u32,
     seed: Seed,
 }
@@ -321,9 +327,13 @@ impl Citizens {
                 let mut rng = s.rng();
                 let n = (len * TROOPS_PER_M + rng.unit()).floor() as usize;
                 for k in 0..n {
-                    let home = rng.range(0.0, len);
-                    let ts = s.child(k);
                     let near = perches.get(&(road, side > 0.0));
+                    // A troop lives where there is something to climb.
+                    let Some(&(at, _)) = near.and_then(|n| n.get(rng.index(n.len().max(1)))) else {
+                        continue;
+                    };
+                    let home = (at + rng.range(-4.0, 4.0)).clamp(0.0, len);
+                    let ts = s.child(k);
                     if let Some(t) = self.troop(&props, road, side, home, near, ts) {
                         by_road.entry(road).or_default().push(troops.len() as u32);
                         troops.push(t);
@@ -491,15 +501,20 @@ impl Citizens {
                 stops.push(stop);
             }
         }
-        if stops.len() < 2 {
+        stops.sort_by(|a, b| a.s.total_cmp(&b.s));
+        let high: Vec<usize> = (0..stops.len())
+            .filter(|&i| stops[i].rest != Rest::Ground)
+            .collect();
+        // Only where there are two or more places up things to go to.
+        if high.len() < 2 {
             return None;
         }
-        stops.sort_by(|a, b| a.s.total_cmp(&b.s));
-        let size = (rng.range_int(2, 5) as usize).min(stops.len()) as u32;
+        let size = (rng.range_int(2, 5) as usize).min(high.len()) as u32;
         Some(Troop {
             road,
             side,
             stops,
+            high,
             size,
             seed,
         })
@@ -509,11 +524,15 @@ impl Citizens {
     /// picks a place, and each of them takes one of the places nearest it
     /// (no two the same).
     fn stop_of(&self, t: &Troop, m: u32, k: i64) -> Stop {
-        let n = t.stops.len();
-        let size = t.size as usize;
-        let focus = (t.seed.child("focus").child(k as u64).0 % n as u64) as usize;
+        let rk = t.seed.child("focus").child(k as u64);
+        // Nearly always one of the places up things; now and then the pavement.
+        let up = rk.child("up").unit() >= GROUND_ROUNDS;
+        let n = if up { t.high.len() } else { t.stops.len() };
+        let size = (t.size as usize).min(n);
+        let focus = (rk.0 % n as u64) as usize;
         let first = focus.saturating_sub(size / 2).min(n - size);
-        t.stops[first + (m as usize + k.rem_euclid(size as i64) as usize) % size]
+        let i = first + (m as usize + k.rem_euclid(size as i64) as usize) % size;
+        t.stops[if up { t.high[i] } else { i }]
     }
 
     /// One of a troop's wibbets at `time`.
@@ -531,13 +550,13 @@ impl Citizens {
             rng.index(3) as u8
         };
         let size = rng.range(0.82, 1.08);
-        let run = rng.range(2.2, 3.0);
+        let run = rng.range(2.6, 3.6);
         let t = time + rng.range(0.0, ROUND);
         let k = (t / ROUND).floor() as i64;
         let since = t - k as f64 * ROUND;
         let (a, b) = (self.stop_of(troop, m, k - 1), self.stop_of(troop, m, k));
         let ks = seed.child(k as u64);
-        let wait = ks.child("wait").unit() * 9.0;
+        let wait = ks.child("wait").unit() * 2.5;
         let sits = ks.child("sits").unit() < 0.65;
         let ground = |p: DVec2| self.world.surface(p);
         let make = |p: DVec2, y: f64, facing: DVec2, pitch: f64, speed: f64, pose: Pose| {
@@ -552,7 +571,8 @@ impl Citizens {
                 pose,
                 size,
                 owner: None,
-                on_ground: y == 0.0 && speed == 0.0,
+                // On the pavement and not on a post: where a hero can meet it.
+                on_ground: y == 0.0 && pitch == 0.0,
             })
         };
         let resting = |s: &Stop, sits: bool| match s.rest {
@@ -952,13 +972,14 @@ mod tests {
         let (mut cling, mut top) = (0, 0);
         for t in &plan.troops {
             assert!(t.size as usize <= t.stops.len() && t.size >= 2);
+            assert!(t.high.iter().all(|&i| t.stops[i].rest != Rest::Ground));
             for s in &t.stops {
                 match s.rest {
                     Rest::Ground => assert_eq!(s.height, 0.0),
                     Rest::Cling => {
                         cling += 1;
                         assert!(plan.props.clearance(s.at) < 0.12, "clings to thin air");
-                        assert!(s.height > 0.9 && s.height < 5.0);
+                        assert!(s.height > 0.5 && s.height < 5.0);
                     }
                     Rest::Top => {
                         top += 1;
@@ -967,6 +988,52 @@ mod tests {
                 }
             }
         }
-        assert!(cling > 10 && top > 10, "{cling} posts, {top} tops");
+        assert!(cling > 10 && top > 3, "{cling} posts, {top} tops");
+    }
+
+    #[test]
+    fn wibbets_are_up_things_and_on_the_move() {
+        // Over a long time most of them are up a post or on something, or
+        // under way; they rarely just stand on the pavement.
+        let c = town();
+        let p = c.world.spawn_line().0;
+        let ids: Vec<u64> = c
+            .critters_near(p, 450.0, 300.0, 2000)
+            .into_iter()
+            .filter(|x| x.species == Species::Wibbet)
+            .map(|x| x.id)
+            .collect();
+        println!(
+            "{} wibbets near the start, {} troops in all",
+            ids.len(),
+            c.critter_plan().troops.len()
+        );
+        assert!(ids.len() > 20, "{} wibbets", ids.len());
+        let (mut still, mut up, mut going, mut all) = (0, 0, 0, 0);
+        for &id in &ids {
+            for i in 0..(6.0 * ROUND / 0.5) as usize {
+                let Some(a) = c.critter(id, 300.0 + i as f64 * 0.5) else {
+                    continue;
+                };
+                all += 1;
+                let high = a.pos.y - c.world.surface(flat(a.pos)) > 0.05;
+                if a.speed > 0.0 {
+                    going += 1;
+                } else if high {
+                    up += 1;
+                } else {
+                    still += 1;
+                }
+            }
+        }
+        let f = |n: i32| n as f64 / all as f64;
+        println!(
+            "wibbets: {:.0}% still on the pavement, {:.0}% up something, {:.0}% under way",
+            f(still) * 100.0,
+            f(up) * 100.0,
+            f(going) * 100.0
+        );
+        assert!(f(still) < 0.15, "{:.2} stand on the pavement", f(still));
+        assert!(f(going) > 0.15, "{:.2} under way", f(going));
     }
 }

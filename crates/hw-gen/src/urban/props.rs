@@ -542,6 +542,25 @@ impl Prop {
                 low: 1.0 * s,
                 high: 2.1 * s,
             },
+            // The bare trunks of the street trees, under their crowns (the
+            // trunk's radius at about 1.5 m, measured on Engine's models;
+            // oaks, pines, cypresses and palms are branched or leafy to the
+            // ground and are left out).
+            PropKind::Tree(sp, _) => {
+                let radius = match sp {
+                    Species::Plane => 0.31,
+                    Species::Linden => 0.28,
+                    Species::Maple | Species::Ginkgo => 0.22,
+                    Species::Chestnut => 0.36,
+                    Species::Birch => 0.13,
+                    _ => return None,
+                };
+                Perch::Cling {
+                    radius: radius * s,
+                    low: 1.2 * s,
+                    high: 2.2 * s,
+                }
+            }
             PropKind::Bin => Perch::Top {
                 x: 0.0,
                 z: 0.0,

@@ -1643,14 +1643,18 @@ the camera: wibbets and drakelets within 150 m, driftbells within 420 m, at most
 
 - **Wibbets**: big-eyed climbers the size of a cat, not quite monkeys, with round ears, a
   ringed tail and two feelers with glowing tips; teal, coral or lilac. They live in troops of
-  two to four along a stretch of pavement (about one troop per 260 m of pavement side, in the
-  bright town only, where the pavement is at least 1.3 m wide). Each wibbet does rounds of
-  38 s between the troop's stops: it trots there along the kerb side of the pavement, runs up
-  a lamp post or an advertising pillar and clings there, hops onto a bench, bin or hydrant and
-  sits, or sits up on the pavement. It comes down a post head first. Stops come from the
-  props' own shapes (`Prop::perch`), so a wibbet sits on what is drawn, and its way keeps
-  clear of every prop.
-- **They come close.** A wibbet sitting on the pavement within 7.5 m of a hero who stands
+  two to four, only where two or more things stand to climb along a stretch of pavement (about
+  one attempt per 45 m of pavement side, in the bright town only, pavement at least 1.3 m
+  wide, a troop's stretch 16 m either way). They are restless: a round is 24 s, of which a
+  wibbet trots for a few seconds (2.6 to 3.6 m/s), then it runs up or hops onto its next
+  place and stays. Nine rounds in ten end up something: **clinging to a lamp post, an
+  advertising pillar or the bare trunk of a street tree** (plane, linden, maple, chestnut,
+  ginkgo, birch; under the crown, 1.2 to 2.2 m up), or sitting on a bench, bin or hydrant. One
+  round in ten ends on the pavement itself, sitting up or standing. In the test town about
+  70% of their time is spent up something, 18% under way and 11% on the pavement. A wibbet
+  comes down a post head first. Places come from the props' own shapes (`Prop::perch`), so a
+  wibbet sits on what is drawn, and its way keeps clear of every prop.
+- **They come close.** A wibbet on the pavement (standing or trotting) within 7.5 m of a hero who stands
   about (slower than 1.6 m/s) trots over, stops 1.25 m away and sits up to look at them for
   up to 9 s, then goes back to its round (it waits 25 s before it comes again). It leaves at
   once if the hero walks off or strides at it, and never comes while there is trouble near.

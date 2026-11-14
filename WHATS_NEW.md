@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.295 (2026-11-14)
+
+- Wibbets are livelier. They rarely stand about on the pavement any more: they run up lamp posts, advertising pillars and the bare trunks of the street trees, hop onto benches, bins and hydrants, and are off to their next perch every few seconds.
+- There are more troops of them, and they live only where there is something to climb.
+
 ## 0.294 (2026-11-14)
 
 - Rampaging mutants and escaped lab technicians smash up the street again: they used to wander about their spot instead of walking up to the lamp or bench they meant to break.
