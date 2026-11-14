@@ -143,7 +143,7 @@ From `settings::CONTROLS` (shown in the game under the menu button → Controls)
 | K | Knock nearby townspeople over (a ragdoll test, still in the game) |
 | Escape | Frees a locked mouse and closes the open window; it no longer opens the menu |
 | Alt+Enter | Window or fullscreen (borderless); the chat and the mouse stay as they were |
-| Menu button (round, top right under the version; Alt frees the mouse to click it) | Menu: back, settings, controls, arrange the screen, back to the title screen (asks first when hosting), quit. A draggable, resizable HUD piece (`menu` in `ui_layout.json`) |
+| Menu button (round, top right under the police computer icon; Alt frees the mouse to click it) | Menu: back, settings, controls, arrange the screen, back to the title screen (asks first when hosting), quit. A draggable, resizable HUD piece (`menu` in `ui_layout.json`) |
 
 On foot the hero steps up and down ledges up to 0.45 m (`collision::STEP`) without
 leaving the ground, so slopes, kerbs and stairs never count as a fall; a bigger drop

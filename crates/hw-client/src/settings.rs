@@ -324,9 +324,9 @@ impl GameMenu {
         use crate::uikit::{with_alpha, CREAM, DEEP, GOLD, NAVY};
         let size = 46.0;
         let screen = ctx.screen_rect();
-        // Under the version plate, top right.
+        // Top right, under the police computer's icon (62..120).
         let rect = egui::Rect::from_min_size(
-            egui::pos2(screen.right() - 10.0 - size, 58.0),
+            egui::pos2(screen.right() - 10.0 - size, 128.0),
             egui::vec2(size, size),
         );
         let id = egui::Id::new("menu button");

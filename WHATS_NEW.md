@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.297 (2026-11-14)
+
+- The menu button moved down under the police computer's icon: it sat behind it and could not be clicked.
+
 ## 0.296 (2026-11-14)
 
 - Raised doorways can be entered: walking into a ledge up to about a metre high (a door whose sill stands above the street, a plinth, a low wall) now makes your hero climb it with a quick scramble, so you no longer need a jump. Taller ledges are still walls, and the super jump is unchanged.
