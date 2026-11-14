@@ -516,7 +516,14 @@ fn tube_shell(
         }
         // The walkway: a ribbed metal plate.
         let w = (SHELL * SHELL - AXIS * AXIS).sqrt();
-        b.surf = Surf::Metal;
+        // Matt deck plates, not a polished metal sheet (which read as black
+        // water): two-tone plates with a dark seam between them.
+        b.surf = Surf::Plain;
+        let deck = if (look as usize + i).is_multiple_of(2) {
+            rgb(104, 102, 98)
+        } else {
+            rgb(92, 92, 90)
+        };
         b.quad(
             [
                 point(x0, PI, w),
@@ -526,9 +533,18 @@ fn tube_shell(
             ]
             .map(|p| p - DVec3::Y * (AXIS - 0.02)),
             DVec3::Y,
-            rgb(96, 98, 104),
+            deck,
         );
-        b.surf = Surf::Plain;
+        let seam = |x: f64| {
+            [
+                point(x, PI, w),
+                point(x + 0.06, PI, w),
+                point(x + 0.06, 0.0, w),
+                point(x, 0.0, w),
+            ]
+            .map(|p| p - DVec3::Y * (AXIS - 0.03))
+        };
+        b.quad(seam(x0), DVec3::Y, rgb(40, 40, 42));
     }
     // Brass ribs every four metres.
     let ribs = (len / 4.0).floor() as usize;
@@ -878,7 +894,7 @@ fn ruin_room(b: &mut MeshBuilder, v: &Void, other: &dyn Fn(DVec3) -> bool) {
 /// floor panels, a ceiling with ducts.
 /// An industrial lamp: a rod from the ceiling at `ceiling`, a green enamel
 /// shade and a glowing bulb at `at`.
-fn hanging_lamp(b: &mut MeshBuilder, at: DVec3, ceiling: f64) {
+pub(crate) fn hanging_lamp(b: &mut MeshBuilder, at: DVec3, ceiling: f64) {
     let top = at + DVec3::Y * 0.45;
     if ceiling > top.y {
         uv::tube(

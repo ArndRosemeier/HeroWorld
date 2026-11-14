@@ -75,6 +75,7 @@ pub mod rocketmesh;
 pub mod rocketview;
 pub mod safeview;
 pub mod settings;
+pub mod sewerview;
 pub mod signalview;
 pub mod skins;
 pub mod skyline;

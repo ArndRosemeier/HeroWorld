@@ -207,6 +207,13 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
             lining(&mut b, u, i, town);
             if v.kind == VoidKind::Tunnel {
                 tunnel_fittings(&mut b, u, i);
+                crate::sewerview::tunnel_stream(&mut b, u, i);
+            }
+        }
+        for r in &u.rooms {
+            let v = &u.voids[r.void];
+            if chunk_of(v.world((v.min + v.max) * 0.5)) == k {
+                crate::sewerview::room(&mut b, u, r, &mut out.glows);
             }
         }
         for l in u
@@ -244,7 +251,7 @@ pub(crate) fn v3(p: DVec2, y: f64) -> DVec3 {
 }
 
 /// Is `p` in the open space of a void other than `i`?
-fn open_elsewhere(u: &Underground, i: usize, p: DVec3) -> bool {
+pub(crate) fn open_elsewhere(u: &Underground, i: usize, p: DVec3) -> bool {
     u.at(DVec2::new(p.x, p.z))
         .any(|(j, v)| j != i && v.contains(p))
 }

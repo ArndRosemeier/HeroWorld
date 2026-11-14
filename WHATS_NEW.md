@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.292 (2026-11-14)
+
+- The utility tunnels are no longer just empty pipes. Behind doors in their walls you now find pump halls with a great pump drum and a glowing control desk, workers' rooms with lockers, a stove and a tool rack, and smugglers' dens with crates, barrels, a camp bed and a strongbox.
+- A murky, dull stream runs down the tunnels now (no more glassy look), with kerbs and scum.
+- The Aether Tube's walkway is matt plated metal instead of a black mirror that looked like water.
+
 ## 0.291 (2026-11-14)
 
 - Stopping a mugging, a hold-up or any other street crime now pays off at once: the moment the last crook goes down, the person you saved thanks you and the karma lands. No more ten-second wait for the police drones.

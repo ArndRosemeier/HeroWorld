@@ -47,6 +47,7 @@ pub mod quarter;
 mod roadgrid;
 pub mod roads;
 pub mod robotworks;
+pub mod sewer;
 pub mod spiral;
 pub mod streets;
 pub mod surface;

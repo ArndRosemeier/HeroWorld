@@ -172,6 +172,8 @@ pub struct Underground {
     pub lamps: Vec<DVec3>,
     /// Signposts on the streets round Molehaven's gate, pointing to it.
     pub signs: Vec<Signpost>,
+    /// Pump halls, workers' rooms and dens off the tunnels.
+    pub rooms: Vec<super::sewer::Room>,
     grid: BTreeMap<(i64, i64), Vec<u32>>,
 }
 
@@ -674,6 +676,8 @@ pub fn plan_underground(w: &TownWorld) -> Underground {
             ramp_sign,
         });
     }
+    u.index();
+    u.rooms = super::sewer::plan_rooms(w, &mut u, tunnels, &|v| roofed(w, v));
     u.index();
     u
 }

@@ -755,6 +755,7 @@ impl Obstacles {
             if let Some(l) = hw_gen::urban::underground::molehaven_layout(u) {
                 parts.extend(l.footprints());
             }
+            parts.extend(u.rooms.iter().flat_map(|r| r.footprints()));
             let mut cells: BTreeMap<(i64, i64), Vec<Solid>> = BTreeMap::new();
             for f in &parts {
                 let c = f.at();
@@ -2247,6 +2248,8 @@ mod tests {
         }
         let layout = hw_gen::urban::underground::molehaven_layout(u).expect("Molehaven");
         mole.extend(layout.footprints());
+        // The pump halls, workers' rooms and dens off the tunnels.
+        mole.extend(u.rooms.iter().flat_map(|r| r.footprints()));
         assert!(mole.len() > 100, "{} Molehaven parts", mole.len());
         for f in &mole {
             let c = f.at();
