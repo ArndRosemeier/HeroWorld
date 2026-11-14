@@ -12,7 +12,6 @@ Newest first. Every build pushed to `main` adds 0.001 to the version (in
 
 - The chat window has a Team tab. Click it, press Enter and type: everyone in your session reads it, however far away they are, and the tab shows how many new lines wait for you.
 
-
 ## 0.275 (2026-11-14)
 
 - The mouse now looks around by itself, with the pointer hidden, like most action games: no right button needed. Hold Alt whenever you want the pointer back for a click.
