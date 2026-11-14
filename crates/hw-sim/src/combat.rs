@@ -1235,6 +1235,37 @@ impl Spot {
     }
 }
 
+/// Of the drops of one tick, what is handed out: a villain's augment goes
+/// to ONE of the heroes who were there when it was beaten, picked by a
+/// roll that gives each the same chance, whoever dealt the damage (a
+/// healer or a shielder gets as many as a blaster); finds stay every
+/// hero's own. The roll is made from the tick and the villain, so it is
+/// the same on every run.
+pub fn one_hero_each(drops: Vec<Drop>, tick: u64) -> Vec<Drop> {
+    let mut out: Vec<Drop> = Vec::with_capacity(drops.len());
+    let mut done: Vec<NetId> = Vec::new();
+    for d in &drops {
+        if d.carried.is_none() {
+            out.push(*d);
+            continue;
+        }
+        if done.contains(&d.from) {
+            continue;
+        }
+        done.push(d.from);
+        let mut there: Vec<&Drop> = drops
+            .iter()
+            .filter(|o| o.from == d.from && o.carried.is_some())
+            .collect();
+        there.sort_by_key(|o| o.hero.0);
+        there.dedup_by_key(|o| o.hero.0);
+        let roll = crate::augments::Dice::for_drop(tick, d.from.0, u32::MAX).roll();
+        let i = ((roll * there.len() as f64) as usize).min(there.len() - 1);
+        out.push(*there[i]);
+    }
+    out
+}
+
 /// An augment a hero may get: for a villain beaten, or a find (see
 /// [`crate::augments::roll`]; the simulation rolls it and hands it over).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -5714,6 +5745,50 @@ fn regenerate(actors: &mut [Actor], tick: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A villain's augment goes to one hero of those there, each as often
+    /// as the next; a find stays every hero's own.
+    #[test]
+    fn a_carried_augment_drops_for_one_hero_and_each_is_as_likely() {
+        let carried = Some(hw_net::Augment {
+            effect: 0,
+            percent: 15,
+            grade: 1,
+        });
+        let heroes = [NetId(7), NetId(8), NetId(9)];
+        let drop = |hero: NetId, from: u32, carried| Drop {
+            hero,
+            from: NetId(from),
+            at: DVec3::ZERO,
+            carried,
+            level: 5,
+        };
+        let mut got = [0usize; 3];
+        for tick in 0..300u64 {
+            // Ten villains beaten this tick, all three heroes there; and
+            // a find for each hero.
+            let mut drops = Vec::new();
+            for v in 100..110 {
+                drops.extend(heroes.iter().map(|h| drop(*h, v, carried)));
+            }
+            drops.extend(heroes.iter().map(|h| drop(*h, h.0, None)));
+            let out = one_hero_each(drops.clone(), tick);
+            assert_eq!(out, one_hero_each(drops, tick), "the same every run");
+            assert_eq!(out.iter().filter(|d| d.carried.is_none()).count(), 3);
+            for v in 100..110 {
+                let to: Vec<&Drop> = out.iter().filter(|d| d.from == NetId(v)).collect();
+                assert_eq!(to.len(), 1, "one hero per villain");
+                got[heroes.iter().position(|h| *h == to[0].hero).unwrap()] += 1;
+            }
+        }
+        // 3000 drops: about 1000 each.
+        for n in got {
+            assert!((900..1100).contains(&n), "{got:?}");
+        }
+        // Alone, every one is the hero's.
+        let alone = one_hero_each(vec![drop(heroes[0], 100, carried)], 1);
+        assert_eq!(alone.len(), 1);
+    }
 
     #[test]
     fn rosters_are_mixed_and_repeatable() {

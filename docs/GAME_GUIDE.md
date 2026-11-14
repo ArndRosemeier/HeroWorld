@@ -399,8 +399,11 @@ Loot. An augment adds a share of **one effect** to **one power**, for good.
 - **Where they come from:** some villains carry one from the moment they appear
   (`carry`, `DROP_CHANCE`: 2.3% of minions, 1 in 5 lieutenants, every boss; a boss's is
   rare or better 7 times in 10). A carrier shows a gem over its head in the grade's
-  colour (copper, blue, gold) and has that many percent more health. Every hero who
-  helped beat it gets their own copy, with their own effect: 7 in 10 fit a power they
+  colour (copper, blue, gold) and has that many percent more health. It drops for ONE
+  hero of those within reach when it is beaten (players and Herobots), picked by a roll
+  that gives each the same chance, whoever dealt the damage (`combat::one_hero_each`):
+  a healer gets as many as a blaster, and a team of three gets a third each of what one
+  hero alone would. The effect is rolled for that hero: 7 in 10 fit a power they
   own (`FITS_OWNED`). A hideout case closed gives each hero there a find, never a common
   one. About 20 an hour (`tests/augments.rs` plays it).
 - **The bag** holds 30 (`MAX_BAG`); a drop into a full bag is traded in at once.
@@ -410,6 +413,10 @@ Loot. An augment adds a share of **one effect** to **one power**, for good.
   taken, one offer at a time per giver (a new one replaces the old). Heroes must stand within 30 m
   (`TRADE_REACH`), the offer lapses after 60 s or when either player leaves, and a full bag on the
   receiving side refuses it. Both sides get a line in chat. Herobots always take what they are given.
+  A Herobot sets what fits its own powers; what fits none of them it offers to the nearest
+  player within 24 m, one at a time (`herobot::bag_step`). Only what nobody took within the
+  offer's minute is traded in for karma (or, with no player near, once its bag holds more
+  than 22).
   Tests: `hw-sim/tests/allies.rs`.
 - **Trading in** (`trade_value`): karma to spend (it does not raise the level). A common
   one from a level 1 villain gives 48, from level 20 120; a rare one three times, a

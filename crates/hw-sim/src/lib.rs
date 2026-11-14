@@ -2336,7 +2336,9 @@ impl Sim {
 
     /// Rolls the augments heroes may get for this tick's beaten villains
     /// and finds, and puts them into their bags (a full bag trades one in
-    /// at once): each hero their own roll, nobody takes another's.
+    /// at once). What a villain carried goes to one hero of those who
+    /// were there, each as likely as the next ([`combat::one_hero_each`]);
+    /// a find is every hero's own.
     fn hand_out_drops(&mut self) {
         let drops = self.world.resource::<Fights>().drops.clone();
         if drops.is_empty() {
@@ -2344,7 +2346,7 @@ impl Sim {
         }
         let tick = self.tick;
         let mut fx = Vec::new();
-        for d in drops {
+        for d in combat::one_hero_each(drops, tick) {
             for (n, mut p, m) in self
                 .world
                 .query::<(&Net, &mut Progress, &Motion)>()

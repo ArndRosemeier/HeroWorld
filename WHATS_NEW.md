@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.301 (2026-11-14)
+
+- An augment a villain drops now goes to one hero of the team, picked at random with the same chance for everyone. Heroes who heal or shield get as many as those who deal the damage.
+- Herobots offer you every augment they cannot use themselves. Take it or say no thanks; what nobody takes they trade in.
+
 ## 0.300 (2026-11-14)
 
 - Pick a teammate as your friendly target: click them in the world, click their name in the new team frame on the left (names and health bars), or press F1 to F4. Heals, shields and revives then reach them from up to 40 metres away. Tab still picks only villains. Herobots heal whoever is hurt.
