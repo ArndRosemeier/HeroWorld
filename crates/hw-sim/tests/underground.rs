@@ -121,42 +121,18 @@ fn down_the_stairs_through_the_tunnels_and_up_again() {
         .find(|v| v.kind == VoidKind::Tunnel && v.covers(q, 0.2))
         .expect("in a tunnel");
     assert!(p.y < town.world.ground(q) - 5.0, "not under ground");
-    // Onto the tunnel's centre line first (the passage may come out
-    // against its wall), then along it.
-    let lx = (q - tunnel.origin)
-        .dot(tunnel.along)
-        .clamp(1.0, tunnel.max.x - 1.0);
-    let mid = tunnel.origin + tunnel.along * lx;
-    for _ in 0..40 {
-        let p = sim.position(hero).unwrap();
-        let d = mid - DVec2::new(p.x, p.z);
-        if d.length() < 0.3 {
-            break;
-        }
-        run(
-            &mut sim,
-            me,
-            walk(d.normalize() * 0.4),
-            1.0 / TICK_HZ as f64,
-        );
-    }
-    let q = {
-        let p = sim.position(hero).unwrap();
-        DVec2::new(p.x, p.z)
+    // Along the tunnel, the way with more of it ahead (the passage can
+    // come out near one end of a short tunnel).
+    let lx = (q - tunnel.origin).dot(tunnel.along);
+    let heading = if tunnel.max.x - lx >= lx - tunnel.min.x {
+        tunnel.along
+    } else {
+        -tunnel.along
     };
-    // Along the tunnel, whichever way is open from where the passage
-    // came out (it may come out against one end).
-    run(&mut sim, me, walk(tunnel.along), 4.0);
-    let mut p2 = sim.position(hero).unwrap();
-    if DVec2::new(p2.x, p2.z).distance(q) <= 8.0 {
-        run(&mut sim, me, walk(-tunnel.along), 6.0);
-        p2 = sim.position(hero).unwrap();
-    }
+    run(&mut sim, me, walk(heading), 4.0);
+    let p2 = sim.position(hero).unwrap();
     let q2 = DVec2::new(p2.x, p2.z);
-    assert!(
-        q2.distance(q) > 8.0 || tunnel.max.x - tunnel.min.x < 12.0,
-        "stuck in the tunnel"
-    );
+    assert!(q2.distance(q) > 8.0, "stuck in the tunnel");
     assert!(
         u.voids.iter().any(|v| v.covers(q2, 0.5)),
         "walked into the rock"
@@ -438,4 +414,41 @@ fn up_and_down_molehavens_stair_at_a_real_pace() {
             p.y
         );
     }
+}
+
+/// A tunnel's side is slid along, not stuck to: a hero pressed against it
+/// and walking on slantwise keeps going along the tunnel.
+#[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
+fn a_tunnel_wall_is_slid_along() {
+    let town = GeneratedTown::generate(Seed(1), 40_000.0);
+    let mut sim = Sim::for_town(Seed(1), &town);
+    let me = PlayerId(1);
+    let hero = sim.spawn_hero(me, sim.spawn_point(1));
+    let u = town.world.underground().clone();
+    let t = u
+        .voids
+        .iter()
+        .find(|v| v.kind == VoidKind::Tunnel && v.max.x - v.min.x > 20.0 && v.max.y > 2.0)
+        .expect("a tunnel");
+    let side = t.along.perp();
+    let at = |x: f64, y: f64| t.origin + t.along * x + side * y;
+    let start = at(t.min.x + 4.0, 1.9);
+    let floor = t.floor_at(start);
+    put(&mut sim, hero, DVec3::new(start.x, floor + 0.1, start.y));
+    run(&mut sim, me, InputState::default(), 0.5);
+    // Along the tunnel and a third of the way into its wall.
+    let way = (t.along + side * 0.35).normalize();
+    run(&mut sim, me, walk(way), 1.0);
+    let p = sim.position(hero).unwrap();
+    let went = (DVec2::new(p.x, p.z) - start).dot(t.along);
+    assert!(
+        went > 8.0,
+        "stuck to the wall: only {went:.1} m along the tunnel"
+    );
+    let across = (DVec2::new(p.x, p.z) - t.origin).dot(side);
+    assert!(
+        across.abs() < t.max.y + 0.05,
+        "went into the rock: {across:.2}"
+    );
 }

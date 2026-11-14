@@ -668,6 +668,22 @@ pub struct Body {
     pub grounded: bool,
 }
 
+/// Eight directions to look for a bank in (a fixed table: no trigonometry
+/// in the server's rules).
+const BANK_PROBES: [DVec2; 8] = {
+    const H: f64 = std::f64::consts::FRAC_1_SQRT_2;
+    [
+        DVec2::new(1.0, 0.0),
+        DVec2::new(H, H),
+        DVec2::new(0.0, 1.0),
+        DVec2::new(-H, H),
+        DVec2::new(-1.0, 0.0),
+        DVec2::new(-H, -H),
+        DVec2::new(0.0, -1.0),
+        DVec2::new(H, -H),
+    ]
+};
+
 /// Radius and height of a person.
 pub const BODY_RADIUS: f64 = 0.4;
 pub const BODY_HEIGHT: f64 = 1.8;
@@ -1533,11 +1549,47 @@ impl Obstacles {
             }
             // Quay walls: the bank stands too high to step onto from the water.
             let q = DVec2::new(next.x, next.z);
-            if self.ground_for(q, body.pos.y.max(next.y)) > body.pos.y.max(next.y) + step {
-                next.x = body.pos.x;
-                next.z = body.pos.z;
-                body.vel.x = 0.0;
-                body.vel.z = 0.0;
+            let ref_y = body.pos.y.max(next.y);
+            let bank = |at: DVec2| self.ground_for(at, ref_y) > ref_y + step;
+            if bank(q) {
+                // The bank is a wall: slide along it (the move less its
+                // part into the wall, the wall's direction found from
+                // which way the bank lies round the spot) instead of
+                // stopping dead, or a body pressed to a tunnel's side
+                // could never walk along it.
+                let (from, mv) = (
+                    DVec2::new(body.pos.x, body.pos.z),
+                    q - DVec2::new(body.pos.x, body.pos.z),
+                );
+                let mut n = DVec2::ZERO;
+                for d in BANK_PROBES {
+                    if bank(from + d * 0.3) || bank(q + d * 0.3) {
+                        n += d;
+                    }
+                }
+                let n = n.normalize_or_zero();
+                let slid = mv - n * mv.dot(n).max(0.0);
+                // A body at the wall's very edge slides along it with a
+                // little room to spare (the edge itself is the bank's
+                // side, so a move exactly along it would still end on it).
+                let to = [0.0, 0.03, 0.1]
+                    .into_iter()
+                    .map(|back| from + slid - n * back)
+                    .find(|t| n != DVec2::ZERO && slid.length() > 1e-9 && !bank(*t));
+                if let Some(to) = to {
+                    next.x = to.x;
+                    next.z = to.y;
+                    let into = body.vel.x * n.x + body.vel.z * n.y;
+                    if into > 0.0 {
+                        body.vel.x -= n.x * into;
+                        body.vel.z -= n.y * into;
+                    }
+                } else {
+                    next.x = body.pos.x;
+                    next.z = body.pos.z;
+                    body.vel.x = 0.0;
+                    body.vel.z = 0.0;
+                }
             }
             // Ceilings stop a rising body.
             if body.vel.y > 0.0 {
