@@ -31,7 +31,7 @@ fn main() -> std::io::Result<()> {
     let ticks: Option<u64> = env("HW_TICKS");
     let save: Option<PathBuf> = std::env::var_os("HW_SAVE").map(PathBuf::from);
     let people = env("HW_POP").unwrap_or(hw_sim::DEFAULT_POPULATION);
-    let town = hw_sim::GeneratedTown::generate(Seed(seed), people);
+    let town = hw_sim::GeneratedTown::generate_on_planet(Seed(seed), people);
     let mut host = Host::with_sim(hw_sim::Sim::for_town(Seed(seed), &town));
     match &save {
         Some(path) if path.exists() => {

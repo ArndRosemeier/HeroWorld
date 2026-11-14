@@ -407,5 +407,97 @@ fn main() {
         let img = render(&map, Layer::Biome, finest, size, size, &dir, &project);
         img.save(&format!("{prefix}-globe{k}.png"));
     }
+    home_view(&map, seed, &format!("{prefix}-home.png"));
     println!("maps written to {prefix}-*.png in {:.2?}", t0.elapsed());
+}
+
+/// The home region: the first town on the planet, 60 km across, with the
+/// town's own land blending into the planet's ground. Water blue, land by
+/// height with relief shading; the planned land's edge is drawn in red.
+fn home_view(map: &PlanetMap, seed: u64, path: &str) {
+    use hw_gen::planet::{choose_home, PlanetPatch};
+    use hw_gen::urban::{params::TownParams, world::TownWorld};
+    let patch = std::sync::Arc::new(PlanetPatch::new(map, choose_home(map)));
+    let ll = hw_core::LatLon::from_dir(choose_home(map));
+    println!(
+        "home at {:.1}°N {:.1}°E: {:?}, seaward {:?}, relief {:.2}, river {:.0} m wide",
+        ll.lat.to_degrees(),
+        ll.lon.to_degrees(),
+        patch.site.site,
+        patch.site.seaward.map(|a| a.to_degrees().round()),
+        patch.site.relief,
+        patch.site.river_width
+    );
+    if let Some(a) = patch.site.seaward {
+        let d = det::dir2(a);
+        let line: Vec<String> = (0..12)
+            .map(|k| format!("{:.0}", patch.ground(d * (k as f64 * 300.0))))
+            .collect();
+        println!(
+            "coast distance {:?}; ground every 300 m seaward: {}",
+            patch.site.coast_distance,
+            line.join(" ")
+        );
+    }
+    let params = TownParams::on_planet(Seed(seed), 20_000.0, &patch.site);
+    let town =
+        TownWorld::generate_on_or_stop(Seed(seed), params, Some(patch), &hw_core::Cancel::new())
+            .expect("town");
+    let (size, half_view) = (1000usize, 30_000.0f64);
+    let m = 2.0 * half_view / size as f64;
+    let heights: Vec<f64> = hw_gen::planet::grid::par_map(size * size, |i| {
+        let (x, y) = (i % size, i / size);
+        town.ground(glam::DVec2::new(
+            (x as f64 + 0.5) * m - half_view,
+            (y as f64 + 0.5) * m - half_view,
+        ))
+    });
+    let mut img = Image::new(size, size);
+    for y in 0..size {
+        for x in 0..size {
+            let h = heights[y * size + x];
+            let (xp, yp) = ((x + 1).min(size - 1), (y + 1).min(size - 1));
+            let slope = (heights[yp * size + xp]
+                - heights[y.saturating_sub(1) * size + x.saturating_sub(1)])
+                / (2.0 * m)
+                * 6.0;
+            let lit = (1.0 - slope).clamp(0.6, 1.4);
+            let c = if h <= 0.0 {
+                ramp(
+                    &[
+                        (-400.0, [20, 50, 110]),
+                        (-5.0, [50, 110, 170]),
+                        (0.0, [90, 160, 200]),
+                    ],
+                    h,
+                )
+            } else {
+                shade(
+                    ramp(
+                        &[
+                            (0.0, [190, 180, 120]),
+                            (3.0, [90, 150, 70]),
+                            (150.0, [70, 130, 60]),
+                            (600.0, [150, 130, 90]),
+                            (1500.0, [210, 210, 215]),
+                        ],
+                        h,
+                    ),
+                    lit,
+                )
+            };
+            img.put(x as i64, y as i64, c);
+        }
+    }
+    let half = town.half();
+    let (lo, hi) = (
+        ((-half + half_view) / m) as i64,
+        ((half + half_view) / m) as i64,
+    );
+    for k in lo..=hi {
+        for (a, b) in [(k, lo), (k, hi), (lo, k), (hi, k)] {
+            img.put(a, b, [230, 40, 40]);
+        }
+    }
+    img.save(path);
 }

@@ -167,10 +167,11 @@ impl Land {
             sea.push(square);
             sea.push(ring);
         } else if p.site.is_coastal() {
-            let out = det::dir2(sea_angle);
+            let out = det::dir2(p.seaward.unwrap_or(sea_angle));
             seaward = Some(out);
             let along = out.perp();
-            let d0 = s * rng.range(0.2, 0.5) + 80.0;
+            let d0 = rng.range(0.2, 0.5) * s + 80.0;
+            let d0 = p.coast_distance.unwrap_or(d0);
             // A bay: headlands reach out to either side of the town.
             let (bay_depth, bay_w) = if p.site == Site::Bay {
                 (
@@ -236,6 +237,8 @@ impl Land {
                     None => det::dir2(rng.range(0.0, std::f64::consts::TAU)),
                 },
             };
+            // The planet may fix which way the river runs.
+            let flow = p.flow.map_or(flow, det::dir2);
             let w = p.river_width;
             // The town grew beside the river, not in it.
             let side = flow.perp() * if rng.chance(0.5) { 1.0 } else { -1.0 };

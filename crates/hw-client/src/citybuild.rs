@@ -200,7 +200,7 @@ impl CityBuilds {
             .name("city plan".into())
             .spawn(move || {
                 engine::parallel::background_thread();
-                let r = GeneratedTown::generate_or_stop(Seed(city.seed), city.people, &c);
+                let r = GeneratedTown::generate_on_planet_or_stop(Seed(city.seed), city.people, &c);
                 // Cancelled while finishing: free it here, not on the game's thread.
                 let r = match r {
                     Ok(town) if c.is_cancelled() => {

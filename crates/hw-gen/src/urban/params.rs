@@ -104,6 +104,15 @@ pub struct TownParams {
     pub rivers: u8,
     /// Width of the main river (m).
     pub river_width: f64,
+    /// Direction out to sea (radians, 0 = east, towards +z = south positive),
+    /// for a coastal site; `None` lets the town pick. The planet fixes it.
+    pub seaward: Option<f64>,
+    /// How far the coast lies from the town's centre (m), for a coastal
+    /// site; `None` lets the town pick. The planet fixes it.
+    pub coast_distance: Option<f64>,
+    /// Direction the main river flows, same convention; `None` lets the
+    /// town pick. The planet fixes it.
+    pub flow: Option<f64>,
 
     /// Directions (radians, 0 = east, towards +z = south positive) of the
     /// roads to neighbouring places. Empty: the town picks its own. The
@@ -249,6 +258,9 @@ impl TownParams {
             relief,
             rivers,
             river_width,
+            seaward: None,
+            coast_distance: None,
+            flow: None,
             links: Vec::new(),
             population: pop,
             founding,
@@ -262,6 +274,24 @@ impl TownParams {
             green,
             dystopia,
         }
+    }
+
+    /// The parameters of a town on the planet: the sampled ones, with the
+    /// setting (site, relief, river, which way the sea lies) taken from the
+    /// planet's ground at the place.
+    pub fn on_planet(seed: Seed, population: f64, at: &crate::planet::PatchSite) -> TownParams {
+        let mut p = TownParams::sample(seed, population);
+        p.site = at.site;
+        p.relief = at.relief;
+        p.rivers = at.rivers;
+        p.river_width = at.river_width;
+        p.seaward = at.seaward;
+        p.coast_distance = at.coast_distance;
+        p.flow = at.flow;
+        if !at.site.is_coastal() && p.founding == Founding::Port {
+            p.founding = Founding::Village;
+        }
+        p
     }
 
     /// Built-up area (m²) the population needs.

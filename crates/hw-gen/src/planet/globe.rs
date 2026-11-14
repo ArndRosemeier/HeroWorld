@@ -220,6 +220,15 @@ impl Globe {
             .fbm(u.x * 38.0, u.y * 38.0, u.z * 38.0, octaves(168_000.0));
         h += (250.0 + 900.0 * smooth(0.1, 0.8, s)) * hills * shore_gate;
 
+        // Hills and valleys at the scale of a walk: ridges a few km apart.
+        let lumps = self.n_hill.ridged(
+            u.x * 700.0 + 11.0,
+            u.y * 700.0,
+            u.z * 700.0,
+            octaves(9_100.0),
+        );
+        h += (60.0 + 260.0 * smooth(0.05, 0.5, s)) * (lumps - 0.35) * shore_gate;
+
         // Mountain belts where plates close.
         let ridge = self
             .n_ridge

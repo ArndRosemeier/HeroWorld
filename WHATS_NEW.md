@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.306 (2026-11-14)
+
+- Your city now stands on the planet. It is found at a real river mouth on a temperate coast, with a mountain range in sight, and the land around the city is the planet's own: hills, valleys and coast carry on to the horizon, curving away with the round world. The city's sea lies the way the real coast does. Worlds from older builds look different.
+
 ## 0.305 (2026-11-14)
 
 - The planet got wilder, behind the scenes: much taller mountain ranges, stepped mesas with sheer cliffs, deep canyons, and Aether running through the land in glowing lines. Sixteen one-of-a-kind wonders (a floating mountain, a sky-high waterfall, a glass desert and more) are placed far apart. Floating rock and caves are defined too. You will meet them in a coming build.

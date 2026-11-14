@@ -290,6 +290,35 @@ pub struct GeneratedTown {
     pub obstacles: Arc<Obstacles>,
 }
 
+/// The planet's home place for `seed`: found once (a coarse map of the
+/// planet is solved and dropped at once) and kept, so a stand-in hamlet and
+/// the real city, or a rebuild, all stand in the same place.
+fn home_patch(seed: Seed) -> Arc<hw_gen::planet::PlanetPatch> {
+    use std::sync::Mutex;
+    static HOMES: Mutex<Vec<(u64, Arc<hw_gen::planet::PlanetPatch>)>> = Mutex::new(Vec::new());
+    if let Some((_, p)) = HOMES
+        .lock()
+        .expect("homes")
+        .iter()
+        .find(|(s, _)| *s == seed.0)
+    {
+        return p.clone();
+    }
+    let map = hw_gen::planet::PlanetMap::build(seed, 192);
+    let patch = Arc::new(hw_gen::planet::PlanetPatch::new(
+        &map,
+        hw_gen::planet::choose_home(&map),
+    ));
+    drop(map);
+    let mut homes = HOMES.lock().expect("homes");
+    homes.retain(|(s, _)| *s != seed.0);
+    homes.push((seed.0, patch.clone()));
+    // A few seeds at most (a joined world, a title city): keep the newest.
+    let excess = homes.len().saturating_sub(4);
+    homes.drain(..excess);
+    patch
+}
+
 impl GeneratedTown {
     /// The town of `seed` with about `population` people.
     pub fn generate(seed: Seed, population: f64) -> Self {
@@ -309,6 +338,37 @@ impl GeneratedTown {
             TownParams::sample(seed, population),
             cancel,
         )?);
+        Self::around(world, cancel)
+    }
+
+    /// The town of `seed` standing on its planet: at the planet's temperate
+    /// river mouth, with the planet's ground all round it.
+    pub fn generate_on_planet(seed: Seed, population: f64) -> Self {
+        Self::generate_on_planet_or_stop(seed, population, &Cancel::new())
+            .expect("nobody can cancel this")
+    }
+
+    /// [`GeneratedTown::generate_on_planet`] that gives up between its steps
+    /// once `cancel` is set.
+    pub fn generate_on_planet_or_stop(
+        seed: Seed,
+        population: f64,
+        cancel: &Cancel,
+    ) -> Result<Self, Cancelled> {
+        cancel.stage("Shaping the planet", 0.0, 0.05);
+        let patch = home_patch(seed);
+        cancel.check()?;
+        let params = TownParams::on_planet(seed, population, &patch.site);
+        let world = Arc::new(TownWorld::generate_on_or_stop(
+            seed,
+            params,
+            Some(patch),
+            cancel,
+        )?);
+        Self::around(world, cancel)
+    }
+
+    fn around(world: Arc<TownWorld>, cancel: &Cancel) -> Result<Self, Cancelled> {
         cancel.check()?;
         cancel.stage("Finding the way in", 0.2, 0.2);
         let w = world.clone();

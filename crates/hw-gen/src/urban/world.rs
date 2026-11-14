@@ -158,6 +158,9 @@ pub struct TownWorld {
     deep: Deep,
     /// Ground heights, river beds and sea floor included.
     terrain: Grid<f32>,
+    /// The planet's ground beyond the town's land, if the town stands on a
+    /// planet (see [`TownWorld::generate_on_or_stop`]).
+    planet: Option<Arc<crate::planet::PlanetPatch>>,
     /// Bounding boxes of the town's pieces, and the pieces by grid cell.
     piece_boxes: Vec<(DVec2, DVec2)>,
     piece_grid: BTreeMap<(i64, i64), Vec<u32>>,
@@ -202,6 +205,18 @@ impl TownWorld {
         params: TownParams,
         cancel: &Cancel,
     ) -> Result<TownWorld, Cancelled> {
+        Self::generate_on_or_stop(seed, params, None, cancel)
+    }
+
+    /// The town on a planet: its land is the town's own near the centre and
+    /// fades into the planet's ground towards the edge of the planned land
+    /// and beyond, so the town never ends at a wall of flat plain.
+    pub fn generate_on_or_stop(
+        seed: Seed,
+        params: TownParams,
+        planet: Option<Arc<crate::planet::PlanetPatch>>,
+        cancel: &Cancel,
+    ) -> Result<TownWorld, Cancelled> {
         let town = Town::generate_or_stop(seed, params, cancel)?;
         cancel.check()?;
         let land = &town.land;
@@ -233,6 +248,7 @@ impl TownWorld {
             landmarks: Vec::new(),
             deep: Deep::new(),
             terrain,
+            planet,
             piece_boxes,
             piece_grid,
             main_grid: BTreeMap::new(),
@@ -315,7 +331,24 @@ impl TownWorld {
 
     /// Ground height at a point (below [`WATER_LEVEL`] under water).
     pub fn ground(&self, p: DVec2) -> f64 {
-        self.terrain.sample(p)
+        let town = self.terrain.sample(p);
+        let Some(planet) = &self.planet else {
+            return town;
+        };
+        // The town's own land to 72% of the way to the edge, the planet's
+        // beyond it, a smooth blend between.
+        let edge = p.x.abs().max(p.y.abs()) / self.terrain.half();
+        let w = super::land::smooth(0.72, 1.0, edge);
+        if w <= 0.0 {
+            town
+        } else {
+            town + (planet.ground(p) - town) * w
+        }
+    }
+
+    /// The planet this town stands on, if any.
+    pub fn planet(&self) -> Option<&Arc<crate::planet::PlanetPatch>> {
+        self.planet.as_ref()
     }
 
     /// Height of a road surface at a point: the ground, lifted a little,

@@ -453,7 +453,7 @@ fn main() -> EngineResult<()> {
         match std::env::var("HW_JOIN") {
             Ok(addr) if !title_mode => {
                 let (mut session, seed, people) = Session::join(&addr, &name).map_err(io)?;
-                let generated = GeneratedTown::generate(Seed(seed), people);
+                let generated = GeneratedTown::generate_on_planet(Seed(seed), people);
                 session.attach_town(&generated);
                 (Some(session), generated, seed, people)
             }
@@ -461,7 +461,7 @@ fn main() -> EngineResult<()> {
                 let seed = Seed(env_num("HW_SEED").unwrap_or(profile.seed));
                 if title_mode && people > hw_sim::DEFAULT_POPULATION {
                     let small = hw_client::citybuild::SIZES[0].people;
-                    let generated = GeneratedTown::generate(seed, small);
+                    let generated = GeneratedTown::generate_on_planet(seed, small);
                     let live = City {
                         seed: seed.0,
                         people: small,
@@ -476,7 +476,7 @@ fn main() -> EngineResult<()> {
                     stand_in = true;
                     (None, generated, seed.0, small)
                 } else {
-                    let generated = GeneratedTown::generate(seed, people);
+                    let generated = GeneratedTown::generate_on_planet(seed, people);
                     let open = std::env::var_os("HW_HOST").is_some();
                     let session = if title_mode {
                         None
