@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.286 (2026-11-14)
+
+- start.bat starts again on Windows (its lines ended the wrong way for Windows' command window, which cut a word in half).
+
 ## 0.285 (2026-11-14)
 
 - Every roof is solid now. Pitched and hipped roofs, mansards, domes, the Googie swoop, the factory sawtooth, tower crowns, taxi pads, parapets and the corner towers' caps used to be only drawn: you and the cars could fly or walk right through them. Their solid shape follows what is drawn, slope by slope.
@@ -35,10 +39,6 @@ Newest first. Every build pushed to `main` adds 0.001 to the version (in
 - A few citizens have a pet drakelet: a little dragon with a collar that flies on its lead, ahead of its owner and round them when they stop.
 - Driftbells, glowing bells with long trailing arms, float in twos and threes high over the wide streets.
 - All of them come in three colours, and every player sees the same animals in the same places.
-
-## 0.281 (2026-11-14)
-
-- start.bat starts again on Windows (its lines ended the wrong way for Windows' command window, which cut a word in half).
 
 ## 0.280 (2026-11-14)
 
