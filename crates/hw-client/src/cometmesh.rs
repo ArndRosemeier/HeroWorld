@@ -819,11 +819,20 @@ fn column(
 /// Where the ceiling lamps hang, in the landmark's frame: (the saucer's
 /// middle, its radius, the length of its rod, its height over the floor).
 fn lamp_spots(plan: &Layout) -> Vec<(DVec3, f64, f64, f64)> {
+    lamp_spots_in(plan)
+        .into_iter()
+        .map(|(_, hang, r, drop, over)| (hang, r, drop, over))
+        .collect()
+}
+
+/// [`lamp_spots`] with the index of the space each hangs in.
+fn lamp_spots_in(plan: &Layout) -> Vec<(usize, DVec3, f64, f64, f64)> {
     let mut out = Vec::new();
-    for s in plan
+    for (si, s) in plan
         .spaces
         .iter()
-        .filter(|s| s.within.is_none() && s.kind != SpaceKind::Shaft)
+        .enumerate()
+        .filter(|(_, s)| s.within.is_none() && s.kind != SpaceKind::Shaft)
     {
         let size = s.rect.size();
         // The ceiling: the slab of the floor above, or the roof.
@@ -844,6 +853,7 @@ fn lamp_spots(plan: &Layout) -> Vec<(DVec3, f64, f64, f64)> {
                     + size * DVec2::new((i as f64 + 0.5) / nx as f64, (j as f64 + 0.5) / nz as f64);
                 let q = comet::point_to_local(plan.size, p);
                 out.push((
+                    si,
                     DVec3::new(q.x, ceil - drop, q.y),
                     r,
                     drop,
@@ -900,16 +910,52 @@ pub struct CometLights {
 const HALLS_REACH: f64 = 140.0;
 const HALLS_STEP: f32 = 30.0;
 
-/// A ceiling lamp's light. `over`: its height over the floor; a lamp high
-/// up in a tall hall shines as much brighter as it takes to light the
-/// floor like a low one does.
-fn lamp_light(at: DVec3, over: f64) -> Lamp {
-    let k = (over / 4.6).max(1.0);
+/// How high over the floor it lights (m): a room's own light. Where a hall
+/// is taller than this, every level in it gets lights at this height over
+/// its own floor, rather than one very strong lamp under the roof: that one
+/// lit the floor like a low lamp but burnt out the galleries near it
+/// (inverse square: ten times nearer is a hundred times brighter).
+const LIGHT_OVER: f64 = 4.6;
+
+/// The lights that go with the saucers: for each, the point in the layout's
+/// frame. One per saucer in a room of an ordinary height; in a taller hall
+/// one for each level (its floor, and every gallery, bridge or landing
+/// over it) at [`LIGHT_OVER`] above that level, or as high as the room
+/// above it allows.
+fn light_spots(plan: &Layout) -> Vec<DVec3> {
+    let mut out = Vec::new();
+    for (si, hang, _, _, _) in lamp_spots_in(plan) {
+        let s = &plan.spaces[si];
+        let mut levels = vec![s.y];
+        for t in &plan.spaces {
+            if t.kind != SpaceKind::Shaft
+                && t.y > s.y + 1.0
+                && t.y < s.top() - 2.5
+                && t.rect.overlap(&s.rect) > 1.0
+            {
+                levels.push(t.y);
+            }
+        }
+        levels.sort_by(f64::total_cmp);
+        levels.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+        // The saucer's own height bounds the topmost level.
+        let top = hang.y;
+        for (i, &y) in levels.iter().enumerate() {
+            let above = levels.get(i + 1).copied().unwrap_or(top);
+            let at = (y + LIGHT_OVER).min(above - 0.4).max(y + 1.0);
+            out.push(DVec3::new(hang.x, at, hang.z));
+        }
+    }
+    out
+}
+
+/// A ceiling lamp's light, `at` in the town's frame.
+fn lamp_light(at: DVec3) -> Lamp {
     Lamp::point(
-        Vec3::new(at.x as f32, (at.y - 0.4) as f32, at.z as f32),
+        Vec3::new(at.x as f32, at.y as f32, at.z as f32),
         rgb(255, 232, 196),
-        (5.0 * k * k).min(60.0) as f32,
-        (13.0 * k).min(48.0) as f32,
+        5.0,
+        13.0,
     )
 }
 
@@ -926,9 +972,9 @@ impl CometLights {
             let Some(plan) = comet::layout(l) else {
                 continue;
             };
-            for (hang, _, _, over) in lamp_spots(&plan) {
+            for hang in light_spots(&plan) {
                 let p = l.to_plan(DVec2::new(hang.x, hang.z));
-                spots.push(lamp_light(DVec3::new(p.x, l.base + hang.y, p.y), over));
+                spots.push(lamp_light(DVec3::new(p.x, l.base + hang.y, p.y)));
             }
         }
         Self {
@@ -960,11 +1006,11 @@ impl CometLights {
                     continue;
                 }
                 let Some(plan) = s.layout() else { continue };
-                for (hang, _, _, over) in lamp_spots(&plan) {
+                for hang in light_spots(&plan) {
                     // Back from the landmark frame to the layout's.
                     let p = comet::point_to_local(plan.size, DVec2::new(hang.x, hang.z));
                     let at = s.to_city(DVec3::new(p.x, b.base + hang.y, p.y));
-                    self.halls.push(lamp_light(at, over));
+                    self.halls.push(lamp_light(at));
                 }
             }
         }
@@ -1525,5 +1571,46 @@ mod tests {
             }
         }
         assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    /// A light never hangs far over the floor nearest under it: a lamp high
+    /// in a tall hall lit the galleries beside it a hundred times brighter
+    /// than the floor, and burnt the upper floors out (0.322).
+    #[test]
+    fn lights_stay_near_the_floor_they_light() {
+        use hw_core::Seed;
+        let size = DVec2::new(14.0, 30.0);
+        let mut tested = 0;
+        for seed in 1..40u64 {
+            for storeys in 3..=4 {
+                let Some(plan) = hw_gen::layout::den::plan(Seed(seed), size, storeys) else {
+                    continue;
+                };
+                for at in light_spots(&plan) {
+                    tested += 1;
+                    // The floors of the room it hangs in: its own and every
+                    // level over it. The nearest one under the light.
+                    let local = comet::point_to_local(plan.size, DVec2::new(at.x, at.z));
+                    let floor = plan
+                        .spaces
+                        .iter()
+                        .filter(|s| s.within.is_none() && s.rect.contains_point(local))
+                        .flat_map(|s| {
+                            plan.spaces
+                                .iter()
+                                .filter(move |t| t.rect.overlap(&s.rect) > 1.0)
+                                .map(|t| t.y)
+                        })
+                        .filter(|y| *y <= at.y)
+                        .fold(f64::NEG_INFINITY, f64::max);
+                    assert!(
+                        floor.is_finite() && at.y - floor <= LIGHT_OVER + 0.01,
+                        "seed {seed}: a light {:.1} m over its floor",
+                        at.y - floor
+                    );
+                }
+            }
+        }
+        assert!(tested > 50, "only {tested} lights");
     }
 }

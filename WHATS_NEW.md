@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.323 (2026-11-14)
+
+- Tall halls are no longer washed out on the upper floors: every level has its own light at a normal height instead of one huge lamp under the roof that burnt out the galleries beside it.
+
 ## 0.322 (2026-11-14)
 
 - The city has a harbour: a long stone mole out into the sea with granite quays, warehouses, three big portal cranes, a harbour master's tower with a flying-saucer cab, and a breakwater with a flashing red light at its head.
