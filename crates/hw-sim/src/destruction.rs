@@ -24,7 +24,7 @@
 
 use crate::collision::{Obstacles, Solid, INNER_WALL, OUTER_WALL, SLAB};
 use engine::building::{
-    Building, BuildingPlan as Breakable, Element, ElementBits, ElementId, ElementKind,
+    Building, BuildingPlan as Breakable, Collapse, Element, ElementBits, ElementId, ElementKind,
     Floor as BreakableFloor,
 };
 use engine::color::Color;
@@ -704,6 +704,65 @@ fn add_columns(out: &mut Vec<Piece>, plan: &BuildingPlan, m: f32) {
     }
 }
 
+/// Which pieces of furniture have lost what they stood on: their storey
+/// came down in a collapse, or every floor slab under them is gone. The
+/// same bits give the same answer on the server (collision) and in every
+/// client (what falls). `frame` turns Engine's element space into the
+/// building's, where the items stand. A piece with no slab under it at all
+/// (the ground floor, a stair landing) stays.
+pub fn furniture_lost(
+    items: &[hw_gen::layout::furnish::Item],
+    elements: &[Element],
+    gone: &ElementBits,
+    frame: &Frame,
+    collapse: Option<Collapse>,
+) -> Vec<bool> {
+    // Slab tops are within this of the floor height they carry (m).
+    const REACH: f64 = 0.4;
+    let fell_from = collapse.map_or(f64::INFINITY, |c| c.base_y as f64);
+    // (min x, min z, max x, max z, top, standing) of every slab tile.
+    let mut slabs: Vec<(f64, f64, f64, f64, f64, bool)> = Vec::new();
+    for (k, e) in elements.iter().enumerate() {
+        if e.kind != ElementKind::Slab {
+            continue;
+        }
+        let c = frame.from_engine(e.center);
+        let h = e.half.as_dvec3();
+        slabs.push((
+            c.x - h.x,
+            c.z - h.z,
+            c.x + h.x,
+            c.z + h.z,
+            c.y + h.y,
+            !gone.get(k),
+        ));
+    }
+    items
+        .iter()
+        .map(|it| {
+            if it.y >= fell_from - 1e-3 {
+                return true;
+            }
+            let mut under = false;
+            for s in &slabs {
+                if (s.4 - it.y).abs() > REACH
+                    || it.at.x < s.0 - 0.05
+                    || it.at.x > s.2 + 0.05
+                    || it.at.y < s.1 - 0.05
+                    || it.at.y > s.3 + 0.05
+                {
+                    continue;
+                }
+                if s.5 {
+                    return false;
+                }
+                under = true;
+            }
+            under
+        })
+        .collect()
+}
+
 fn slab_like(k: ElementKind) -> bool {
     matches!(k, ElementKind::Slab | ElementKind::Roof)
 }
@@ -1083,18 +1142,18 @@ impl Damage {
             }
         }
         // The furniture of a building of halls stays where it stands (it
-        // is drawn on its own), below where a collapse starts.
+        // is drawn on its own) while its floor does.
         if let Some((halls, base)) = solids.building(i).filter(|(p, _)| p.layout.is_some()) {
-            let fell_from = d
-                .state
-                .collapse()
-                .map_or(f64::INFINITY, |c| c.base_y as f64);
             let site = &halls.site;
             let turn = |v: DVec2| site.along * v.x + site.inward * v.y;
-            for shape in halls.furniture().iter().filter_map(|i| i.footprint()) {
-                if shape.span().0 >= fell_from - 1e-3 {
-                    continue;
-                }
+            let items = halls.furniture();
+            let lost = furniture_lost(&items, plan.elements(), &gone, &f, d.state.collapse());
+            for (shape, _) in items
+                .iter()
+                .zip(&lost)
+                .filter(|(_, &l)| !l)
+                .filter_map(|(it, l)| it.footprint().map(|s| (s, l)))
+            {
                 out.extend(
                     crate::collision::solids_of(&shape)
                         .into_iter()

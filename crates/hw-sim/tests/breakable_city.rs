@@ -411,3 +411,46 @@ fn buildings_of_halls_break_along_what_stands_in_them() {
         assert!(change.collapse.is_some(), "{k}: it stands on nothing");
     }
 }
+
+#[test]
+fn furniture_falls_with_the_floor_it_stands_on_and_comes_back_with_it() {
+    use engine::building::{ElementId, ElementKind};
+    for k in 0..6u64 {
+        let site = halls_site(k);
+        let plan = hw_gen::building::BuildingPlan::generate(&site);
+        let items = plan.furniture();
+        assert!(!items.is_empty(), "{k}: furniture");
+        let frame = Frame::of(&plan.site, 0.0);
+        let pieces = destruction::pieces(&plan);
+        let bp = Arc::new(destruction::breakable(&plan, &pieces, &frame, |_, _, _| None).unwrap());
+        let mut b = Building::new(bp.clone());
+        // Whole: everything stands.
+        let lost = destruction::furniture_lost(&items, bp.elements(), &b.gone(), &frame, None);
+        assert!(
+            lost.iter().all(|l| !l),
+            "{k}: furniture lost from a whole building"
+        );
+        // Every slab above the ground floor broken: what stood on one is
+        // lost, what stood on the ground is not.
+        let slabs: Vec<ElementId> = (0..bp.len())
+            .filter(|&i| bp.elements()[i].kind == ElementKind::Slab && pieces[i].min.y > 0.5)
+            .map(|i| ElementId(i as u32))
+            .collect();
+        assert!(!slabs.is_empty(), "{k}: upper floors");
+        b.break_elements(&slabs);
+        let lost =
+            destruction::furniture_lost(&items, bp.elements(), &b.gone(), &frame, b.collapse());
+        let upper = items.iter().filter(|it| it.y > 0.5).count();
+        let n = lost.iter().filter(|&&l| l).count();
+        assert!(upper > 0 && n > 0, "{k}: {n} lost of {upper} upstairs");
+        for (it, l) in items.iter().zip(&lost) {
+            if it.y < 0.5 {
+                assert!(!l, "{k}: ground furniture lost");
+            }
+        }
+        // Repaired (nothing broken): all back.
+        let b = Building::new(bp.clone());
+        let lost = destruction::furniture_lost(&items, bp.elements(), &b.gone(), &frame, None);
+        assert!(lost.iter().all(|l| !l), "{k}: not back after repair");
+    }
+}

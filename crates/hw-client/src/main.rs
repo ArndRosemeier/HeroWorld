@@ -2900,7 +2900,9 @@ fn main() -> EngineResult<()> {
             }
             {
                 let eye = world.camera().eye();
-                extras.hall_furniture.update(world, &town.world, eye)?;
+                extras
+                    .hall_furniture
+                    .update(world, &town.world, eye, frame.dt)?;
                 extras
                     .hall_insides
                     .update(world, &town.world, eye, &|i| town.is_hidden(i));
@@ -3857,9 +3859,14 @@ fn main() -> EngineResult<()> {
             if let Some(v) = extras.props.as_mut() {
                 v.flush(world)?;
             }
-            damage
-                .get_or_insert_with(|| DamageView::new(joined))
-                .news(world, &mut town, &solids, news);
+            {
+                let view = damage.get_or_insert_with(|| DamageView::new(joined));
+                view.news(world, &mut town, &solids, news);
+                let eye = world.camera().eye();
+                extras
+                    .hall_furniture
+                    .news(&town.world, eye, view.take_furniture());
+            }
 
             hw_client::hitch::mark("people built");
             // People finished on the worker thread (HW_WAIT_PEOPLE=1 waits

@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.310 (2026-11-14)
+
+- When a building collapses or its floors break, the furniture on those floors no longer hangs in mid-air: it falls with the floor, tumbles into the rubble, and comes back with the building when it repairs itself.
+
 ## 0.309 (2026-11-14)
 
 - No more getting stuck on the underground stairs, Molehaven's included: the stair rails are now too high to climb, so running down a stair no longer lifts your hero up onto the balustrade and out into the rock beside the shaft. The street rail round each stair hole is higher too.

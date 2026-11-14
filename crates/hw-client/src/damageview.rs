@@ -14,6 +14,7 @@
 
 use crate::buildingmesh::{exterior, Detail};
 use crate::citymesh::MeshBuilder;
+use crate::hallfurniture::{Change, News};
 use crate::townmesh::TownView;
 use engine::building::{BuildingPlan as Breakable, ElementBits, ElementKind};
 use engine::decals::{Decal, DecalKind};
@@ -40,6 +41,10 @@ pub struct DamageView {
     /// A joined client's copy of the damage, for collision (None in single
     /// player, where the server's is shared).
     mirror: Option<Damage>,
+    /// Frames of the buildings drawn breakable (to place their furniture).
+    frames: BTreeMap<u64, Frame>,
+    /// What the furniture should hear of: taken once a frame.
+    furniture: Vec<News>,
 }
 
 /// A building's breakable look on its way from a worker thread.
@@ -68,7 +73,32 @@ impl DamageView {
             shown: BTreeMap::new(),
             making: BTreeMap::new(),
             mirror: joined.then(Damage::default),
+            frames: BTreeMap::new(),
+            furniture: Vec::new(),
         }
+    }
+
+    /// The news for the furniture since the last call.
+    pub fn take_furniture(&mut self) -> Vec<News> {
+        std::mem::take(&mut self.furniture)
+    }
+
+    /// Tells the furniture of building `i`'s state: what it stands on now.
+    fn note_furniture(&mut self, world: &World, i: u64, animate: bool) {
+        let (Some((id, bp)), Some(&frame)) = (self.shown.get(&i), self.frames.get(&i)) else {
+            return;
+        };
+        let Some(state) = world.building(*id) else {
+            return;
+        };
+        self.furniture.push(News::Changed(Change {
+            building: i,
+            plan: bp.clone(),
+            gone: state.gone(),
+            collapse: state.collapse(),
+            frame,
+            animate,
+        }));
     }
 
     /// Buildings drawn breakable now.
@@ -112,6 +142,8 @@ impl DamageView {
                     }
                     self.broken.remove(&i);
                     self.making.remove(&i);
+                    self.frames.remove(&i);
+                    self.furniture.push(News::Repaired(i));
                     if let Some((e, _)) = self.shown.remove(&i) {
                         world.despawn(e);
                     }
@@ -187,7 +219,9 @@ impl DamageView {
                 bits.set(k as usize, true);
             }
         }
-        world.apply_building_state(*id, &bits, animate)?;
+        let id = *id;
+        world.apply_building_state(id, &bits, animate)?;
+        self.note_furniture(world, i, animate);
         Ok(())
     }
 
@@ -218,6 +252,7 @@ impl DamageView {
                 let id = world.spawn_building(bp.clone(), place)?;
                 world.set_name(id, format!("broken building {i}"));
                 self.shown.insert(i, (id, bp));
+                self.frames.insert(i, frame);
                 town.set_hidden(world, i, true);
                 // (No obstacles needed: the building is shown now.)
                 let (id, bp) = &self.shown[&i];
@@ -229,8 +264,9 @@ impl DamageView {
                 }
                 world.apply_building_state(*id, &bits, animate)
             });
-            if let Err(e) = put {
-                println!("Could not show the damage of building {i}: {e}");
+            match put {
+                Ok(_) => self.note_furniture(world, i, animate),
+                Err(e) => println!("Could not show the damage of building {i}: {e}"),
             }
         }
     }
@@ -241,6 +277,8 @@ impl DamageView {
             world.despawn(e);
         }
         self.making.clear();
+        self.frames.clear();
+        self.furniture.clear();
         self.broken.clear();
         if let Some(m) = self.mirror.as_mut() {
             *m = Damage::default();
