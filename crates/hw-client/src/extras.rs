@@ -58,6 +58,7 @@ pub struct TownExtras {
     pub props: Option<PropView>,
     pub under: Option<UndergroundView>,
     pub deep: Option<crate::deepview::DeepView>,
+    pub rats: crate::ratview::RatView,
     pub dystopia: Option<crate::dystopiaview::DystopiaView>,
     /// The airship mooring mast and its liner.
     pub mast: Option<crate::mastview::MastView>,
@@ -423,6 +424,7 @@ fn assemble(
         // first update.
         under: Some(UndergroundView::new(town.clone())),
         deep: Some(crate::deepview::DeepView::new(town.clone())),
+        rats: Default::default(),
         drill: Some(crate::drillview::DrillView::new(town)),
         dystopia: Some(crate::dystopiaview::DystopiaView::new(town)),
         mast: Some(crate::mastview::MastView::new(town)),

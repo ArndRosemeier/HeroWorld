@@ -69,6 +69,7 @@ pub mod profile;
 pub mod propmesh;
 pub mod propview;
 pub mod radioview;
+pub mod ratview;
 pub mod riderview;
 pub mod robotview;
 pub mod rocketmesh;

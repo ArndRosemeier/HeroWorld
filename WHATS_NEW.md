@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.313 (2026-11-14)
+
+- Rats scurry along the walls of the utility tunnels: short runs, a pause to sniff, and back again. Look for their red eyes in the dark.
+
 ## 0.312 (2026-11-14)
 
 - The rooms off the utility tunnels now have people in them: workers in the pump halls and workers' rooms, and smugglers guarding their dens. Some walk a short round.

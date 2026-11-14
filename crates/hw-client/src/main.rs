@@ -2919,6 +2919,13 @@ fn main() -> EngineResult<()> {
             if let Some(deep) = extras.deep.as_mut() {
                 deep.update(world, world.camera().eye(), &generated.world)?;
             }
+            hw_client::hitch::mark("rats");
+            extras.rats.update(
+                world,
+                world.camera().eye(),
+                session.time(tick_clock.frac()),
+                &generated.world,
+            )?;
             hw_client::hitch::mark("grass");
             if let Some(g) = extras.grass.as_mut() {
                 g.update(world, world.camera().eye())?;
