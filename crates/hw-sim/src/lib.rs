@@ -535,13 +535,29 @@ fn swing_step(body: &mut Body, input: InputState, solids: &Obstacles, anchor: DV
 pub const WALL_CLIMB: f64 = 9.0;
 
 /// One tick of a hero's movement with flight allowed (tests and tools).
+///
+/// (Not for a hero's own walking: this one is what villains walk with, and
+/// they do not scramble up ledges, see [`step_moving`].)
 pub fn step_hero(body: &mut Body, input: InputState, solids: &Obstacles) {
-    step_moving(body, input, solids, Moves::FLYER);
+    step_with(body, input, solids, Moves::FLYER, false);
 }
 
 /// One tick of a hero's movement with what their powers allow. The server
 /// and client prediction both run exactly this, so they agree.
-pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, moves: Moves) {
+///
+/// Heroes (and their sidekicks) climb ledges up to a metre when they walk
+/// into them, so a raised doorway can be entered (`Obstacles::walk_body`).
+pub fn step_moving(body: &mut Body, input: InputState, solids: &Obstacles, moves: Moves) {
+    step_with(body, input, solids, moves, true);
+}
+
+fn step_with(
+    body: &mut Body,
+    mut input: InputState,
+    solids: &Obstacles,
+    moves: Moves,
+    climb: bool,
+) {
     input.fly &= moves.fly;
     let [swift, soar, leap, height] = moves.boosts;
     if input.fly {
@@ -639,7 +655,12 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
     {
         body.vel.y = body.vel.y.max(WALL_CLIMB);
     }
-    solids.move_body(body, DT);
+    // On foot: ledges up to a metre are climbed (a raised doorway).
+    if climb {
+        solids.walk_body(body, DT);
+    } else {
+        solids.move_body(body, DT);
+    }
 }
 
 /// Flight: no gravity; the velocity turns toward where the hero steers

@@ -673,6 +673,14 @@ pub const BODY_RADIUS: f64 = 0.4;
 pub const BODY_HEIGHT: f64 = 1.8;
 /// Ledges lower than this are stepped onto.
 pub const STEP: f64 = 0.45;
+/// Ledges up to this high are climbed by a body that walks into them
+/// ([`Obstacles::walk_body`]): a raised doorway's sill, a plinth, a low wall.
+pub const STEP_UP: f64 = 1.0;
+/// How fast a body climbs onto such a ledge (m/s): a quick scramble, not a
+/// jump and not a teleport.
+pub const CLIMB_SPEED: f64 = 6.0;
+/// Rises smaller than this (kerbs, stair treads) are taken in one tick.
+const CLIMB_FROM: f64 = 0.2;
 /// Thickness of floor slabs, outside walls and inside walls.
 pub const SLAB: f64 = 0.3;
 pub const OUTER_WALL: f64 = 0.3;
@@ -1405,9 +1413,15 @@ impl Obstacles {
 
     /// Height of whatever is under `p` (x, z) no higher than `max_y`.
     pub fn floor_under(&self, p: DVec2, max_y: f64) -> f64 {
-        let mut best = self.ground_for(p, max_y - STEP);
+        self.floor_under_by(p, max_y, STEP)
+    }
+
+    /// [`Obstacles::floor_under`] with `step` as the ledge height that
+    /// counts as stepped onto (`max_y` is the highest floor reached).
+    fn floor_under_by(&self, p: DVec2, max_y: f64, step: f64) -> f64 {
+        let mut best = self.ground_for(p, max_y - step);
         for s in self
-            .near_at(p, 0.0, max_y - STEP)
+            .near_at(p, 0.0, max_y - step)
             .iter()
             .flat_map(|x| x.iter())
         {
@@ -1422,7 +1436,7 @@ impl Obstacles {
 
     /// Pushes a body standing at `pos` out of every wall it overlaps; returns
     /// the corrected position and the outward normals of walls it touched.
-    fn push_out(&self, mut pos: DVec3) -> (DVec3, Vec<DVec2>) {
+    fn push_out(&self, mut pos: DVec3, step: f64) -> (DVec3, Vec<DVec2>) {
         let mut normals = Vec::new();
         // A few passes settle corners between neighbouring boxes.
         for _ in 0..3 {
@@ -1433,7 +1447,7 @@ impl Obstacles {
                 // standing on top of it (or stepping up onto it), and it is not a
                 // ceiling just above the head (handled in move_body).
                 if pos.y + BODY_HEIGHT <= s.y0
-                    || pos.y >= s.y1 - STEP
+                    || pos.y >= s.y1 - step
                     || s.y0 > pos.y + BODY_HEIGHT - 0.6
                 {
                     continue;
@@ -1483,6 +1497,21 @@ impl Obstacles {
     /// as it steps up the same height: it only leaves the ground where the
     /// ground really drops away. Clear `grounded` first to move freely (flight).
     pub fn move_body(&self, body: &mut Body, dt: f64) {
+        self.advance(body, dt, false);
+    }
+
+    /// [`Obstacles::move_body`] for a person on foot (a hero): walking into
+    /// a ledge up to [`STEP_UP`] high climbs onto it at [`CLIMB_SPEED`]
+    /// instead of stopping there, so a doorway raised off the street can be
+    /// entered. Only a body that stands on something and is not rising
+    /// climbs: a falling or jumping one meets walls as before, and a ledge
+    /// is only climbed where the body's own spot stands on it, so a facade
+    /// with a ledge higher than [`STEP_UP`] above the next one is no ladder.
+    pub fn walk_body(&self, body: &mut Body, dt: f64) {
+        self.advance(body, dt, true);
+    }
+
+    fn advance(&self, body: &mut Body, dt: f64, can_climb: bool) {
         // Sub-steps keep fast bodies from passing through thin walls.
         let travel = body.vel.length() * dt;
         let steps = ((travel / (BODY_RADIUS * 0.8)).ceil() as usize).clamp(1, 32);
@@ -1491,7 +1520,9 @@ impl Obstacles {
         body.grounded = false;
         for _ in 0..steps {
             let mut next = body.pos + body.vel * h;
-            let (pushed, normals) = self.push_out(next);
+            let climbing = can_climb && on_ground && body.vel.y <= 0.0;
+            let step = if climbing { STEP_UP } else { STEP };
+            let (pushed, normals) = self.push_out(next, step);
             next = pushed;
             for n in normals {
                 let n3 = DVec3::new(n.x, 0.0, n.y);
@@ -1502,7 +1533,7 @@ impl Obstacles {
             }
             // Quay walls: the bank stands too high to step onto from the water.
             let q = DVec2::new(next.x, next.z);
-            if self.ground_for(q, body.pos.y.max(next.y)) > body.pos.y.max(next.y) + STEP {
+            if self.ground_for(q, body.pos.y.max(next.y)) > body.pos.y.max(next.y) + step {
                 next.x = body.pos.x;
                 next.z = body.pos.z;
                 body.vel.x = 0.0;
@@ -1533,13 +1564,23 @@ impl Obstacles {
                 }
             }
             // Land on whatever is below, stepping up small ledges.
-            let floor = self.floor_under(DVec2::new(next.x, next.z), next.y.max(body.pos.y) + STEP);
+            let floor = self.floor_under_by(
+                DVec2::new(next.x, next.z),
+                next.y.max(body.pos.y) + step,
+                step,
+            );
             // Stepping down: still on the ground if it is no more than a
             // step below the feet.
             let step_down = on_ground && body.vel.y <= 0.0 && next.y - floor <= STEP;
             on_ground = next.y <= floor || step_down;
             if on_ground {
                 next.y = floor;
+                // A real ledge is climbed, not jumped: rise at a set speed
+                // (the feet stay on the ground for the prediction and
+                // animation; walls still push the body out meanwhile).
+                if climbing && floor - body.pos.y > CLIMB_FROM {
+                    next.y = (body.pos.y + CLIMB_SPEED * h).min(floor);
+                }
                 body.vel.y = body.vel.y.max(0.0);
                 body.grounded = true;
             }
@@ -2181,6 +2222,188 @@ mod tests {
             }
         }
         assert!(flights > 40, "{flights} flights climbed");
+    }
+
+    /// A hero on foot holding `move_x` for `ticks` ticks (the movement code the
+    /// game runs).
+    fn walk_east(o: &Obstacles, b: &mut Body, ticks: usize) -> f64 {
+        let input = hw_net::InputState {
+            move_x: 1.0,
+            ..Default::default()
+        };
+        let mut top = b.pos.y;
+        for _ in 0..ticks {
+            crate::step_moving(b, input, o, crate::Moves::ON_FOOT);
+            top = top.max(b.pos.y);
+        }
+        top
+    }
+
+    fn sill_world(sill: f64) -> Obstacles {
+        // A floor slab `sill` high with a wall on it: a doorway in the wall,
+        // a wall along the same line elsewhere.
+        let mut o = Obstacles::flat(0.0);
+        let solid = |min: DVec2, max: DVec2, y0: f64, y1: f64| Solid {
+            origin: DVec2::ZERO,
+            along: DVec2::X,
+            inward: DVec2::Y,
+            min,
+            max,
+            y0,
+            y1,
+        };
+        o.add(solid(
+            DVec2::new(0.0, -10.0),
+            DVec2::new(10.0, 10.0),
+            0.0,
+            sill,
+        ));
+        for (z0, z1) in [(-10.0, -1.0), (1.0, 10.0)] {
+            o.add(solid(
+                DVec2::new(0.0, z0),
+                DVec2::new(0.3, z1),
+                sill,
+                sill + 3.0,
+            ));
+        }
+        o
+    }
+
+    /// A doorway whose sill stands up to a metre off the street can be
+    /// walked into: the hero climbs it, not in one jump.
+    #[test]
+    fn a_hero_walks_up_into_a_raised_doorway() {
+        for sill in [0.2, 0.5, 0.8, 0.95] {
+            let o = sill_world(sill);
+            let mut b = Body {
+                pos: DVec3::new(-3.0, 0.0, 0.0),
+                grounded: true,
+                ..Body::default()
+            };
+            let input = hw_net::InputState {
+                move_x: 1.0,
+                ..Default::default()
+            };
+            let mut worst_rise = 0.0f64;
+            for _ in 0..40 {
+                let y = b.pos.y;
+                crate::step_moving(&mut b, input, &o, crate::Moves::ON_FOOT);
+                worst_rise = worst_rise.max(b.pos.y - y);
+                assert!(b.grounded || b.pos.y == y, "left the ground at the sill");
+            }
+            assert!(b.pos.x > 4.0, "sill {sill}: stopped at x {}", b.pos.x);
+            assert!((b.pos.y - sill).abs() < 1e-9, "sill {sill}: y {}", b.pos.y);
+            if sill > 0.5 {
+                // A scramble, not a teleport.
+                assert!(
+                    worst_rise <= CLIMB_SPEED * crate::DT + 1e-6,
+                    "sill {sill}: rose {worst_rise} m in a tick"
+                );
+            }
+        }
+    }
+
+    /// Higher than a metre is still a wall, and a body in the air, or the
+    /// world's own `move_body`, does not step up.
+    #[test]
+    fn a_ledge_higher_than_a_metre_stays_a_wall() {
+        let o = sill_world(1.3);
+        let mut b = Body {
+            pos: DVec3::new(-3.0, 0.0, 0.0),
+            grounded: true,
+            ..Body::default()
+        };
+        let top = walk_east(&o, &mut b, 90);
+        assert!(b.pos.x < 0.0 && top < 0.01, "climbed 1.3 m: {:?}", b.pos);
+    }
+
+    /// Stepping up a ledge must not make a facade a ladder. From every side
+    /// of a good number of buildings (on slopes too, on their plinths), a
+    /// hero who runs at the wall is never higher, while outside its walls,
+    /// than the plinth or one step (what a doorway needs). Inside, the hero
+    /// may climb the building's own stairs.
+    #[test]
+    fn walking_at_facades_does_not_climb_them() {
+        use hw_core::Seed;
+        use hw_gen::urban::world::TownWorld;
+        use hw_gen::urban::TownParams;
+        let w = Arc::new(TownWorld::generate(
+            Seed(2),
+            TownParams::sample(Seed(2), 20_000.0),
+        ));
+        let (mut tried, mut raised) = (0, 0);
+        let mut worst = (0.0f64, String::new());
+        for (_, b) in w.everything().buildings.into_iter().step_by(7).take(40) {
+            let s = &b.site;
+            let plan = BuildingPlan::generate(s);
+            let mut o = Obstacles::flat(b.low);
+            o.add_all(building_solids(&plan, b.base));
+            if b.base > b.low {
+                o.add(Solid {
+                    origin: s.origin,
+                    along: s.along,
+                    inward: s.inward,
+                    min: DVec2::ZERO,
+                    max: s.size,
+                    y0: b.low,
+                    y1: b.base,
+                });
+            }
+            let centre = s.origin + s.along * (s.size.x * 0.5) + s.inward * (s.size.y * 0.5);
+            let half = s.size.x.hypot(s.size.y) * 0.5;
+            // Outside the walls: no higher than the plinth, or one step up
+            // from the ground where there is none (or it is too high).
+            let limit = b.base.max(b.low + STEP_UP) + 0.05;
+            let outside = |p: DVec3| {
+                let d = DVec2::new(p.x, p.z) - s.origin;
+                let (x, z) = (d.dot(s.along), d.dot(s.inward));
+                !(0.0..=s.size.x).contains(&x) || !(0.0..=s.size.y).contains(&z)
+            };
+            for k in 0..24 {
+                let dir = hw_core::det::dir2(std::f64::consts::TAU * k as f64 / 24.0);
+                // Start well outside, on the ground, facing the middle.
+                let from = centre + dir * (half + 2.5);
+                let mut body = Body {
+                    pos: DVec3::new(from.x, b.low, from.y),
+                    grounded: true,
+                    ..Body::default()
+                };
+                if o.solid_at(body.pos + DVec3::Y) {
+                    continue;
+                }
+                let go = -dir;
+                let input = hw_net::InputState {
+                    move_x: go.x as f32,
+                    move_z: go.y as f32,
+                    ..Default::default()
+                };
+                let mut top = body.pos.y;
+                for _ in 0..120 {
+                    crate::step_moving(&mut body, input, &o, crate::Moves::ON_FOOT);
+                    if outside(body.pos) {
+                        top = top.max(body.pos.y);
+                    }
+                    if body.pos.y > b.low + 0.05 {
+                        raised += 1;
+                        break;
+                    }
+                }
+                tried += 1;
+                let over = top - limit;
+                if over > worst.0 {
+                    worst = (
+                        over,
+                        format!(
+                            "building at {:?}: reached {top:.2} m outside its walls, limit {limit:.2} m, ground {:.2}",
+                            s.origin, b.low
+                        ),
+                    );
+                }
+            }
+        }
+        eprintln!("tried {tried}, raised {raised}, worst over entry {worst:?}");
+        assert!(tried > 200, "{tried} runs");
+        assert!(worst.0 <= 0.0, "a facade was climbed: {}", worst.1);
     }
 
     /// What the town draws is what stops a body: every prop's solid parts,

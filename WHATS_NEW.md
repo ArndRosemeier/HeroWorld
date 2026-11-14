@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.296 (2026-11-14)
+
+- Raised doorways can be entered: walking into a ledge up to about a metre high (a door whose sill stands above the street, a plinth, a low wall) now makes your hero climb it with a quick scramble, so you no longer need a jump. Taller ledges are still walls, and the super jump is unchanged.
+
 ## 0.295 (2026-11-14)
 
 - Wibbets are livelier. They rarely stand about on the pavement any more: they run up lamp posts, advertising pillars and the bare trunks of the street trees, hop onto benches, bins and hydrants, and are off to their next perch every few seconds.

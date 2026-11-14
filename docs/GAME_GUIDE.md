@@ -147,7 +147,10 @@ From `settings::CONTROLS` (shown in the game under the menu button → Controls)
 
 On foot the hero steps up and down ledges up to 0.45 m (`collision::STEP`) without
 leaving the ground, so slopes, kerbs and stairs never count as a fall; a bigger drop
-does. The fall pose shows only after 0.15 s off the ground (`heroview::AIR_GRACE`),
+does. Walking into a higher ledge, up to 1 m (`collision::STEP_UP`), climbs it at 6 m/s
+(`CLIMB_SPEED`, `Obstacles::walk_body`; a raised doorway sill, a plinth, a low wall): only
+for a hero standing on something and not rising, so a jump or fall meets walls as before.
+The fall pose shows only after 0.15 s off the ground (`heroview::AIR_GRACE`),
 a jump at once.
 
 **The power tray** (`hw-client/src/tray.rs`): twenty slots at the bottom of the screen, 1 to 0
