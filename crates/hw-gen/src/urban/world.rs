@@ -416,6 +416,16 @@ impl TownWorld {
             .map_or(WATER_LEVEL, |o| o.water_level(p).max(WATER_LEVEL))
     }
 
+    /// The water standing at `p`, if any: its level where the ground lies
+    /// under it (sea, river, lake), `None` on dry land. What the water on
+    /// screen is filled from: with a level given everywhere, every stair
+    /// well and shaft open to the sky was filled up to the sea's level and
+    /// ran down into the tunnels and Molehaven (0.318 and before).
+    pub fn water_at(&self, p: DVec2) -> Option<f64> {
+        let level = self.water_level(p);
+        (self.ground(p) < level).then_some(level)
+    }
+
     /// The town's rivers from their heads in the hills, if it stands on a planet.
     pub fn outer_rivers(&self) -> Option<&super::outer::OuterRivers> {
         self.outer.as_ref()
@@ -1255,6 +1265,40 @@ mod tests {
         }
         let (p, _) = tw.spawn_line();
         assert!(tw.ground(p) > WATER_LEVEL);
+    }
+
+    /// Arnd 2026-11-14: Molehaven stood completely under water. The water
+    /// was filled to the sea's level wherever something lay open below it,
+    /// so every stair well down ran full. Water stands only where the
+    /// ground is under it: none at any way down, none on a street.
+    #[test]
+    fn no_water_stands_on_dry_land_or_at_a_way_down() {
+        let tw = TownWorld::generate(Seed(3), TownParams::sample(Seed(3), 20_000.0));
+        let u = tw.underground();
+        assert!(u.entrances.iter().any(|e| e.molehaven));
+        for e in &u.entrances {
+            // The shaft and the ground round its head.
+            for k in 0..16 {
+                let d = hw_core::det::dir2(k as f64 / 16.0 * std::f64::consts::TAU);
+                for r in [0.0, 3.0, 8.0] {
+                    let p = e.pos + d * r;
+                    assert_eq!(tw.water_at(p), None, "water at the way down {}", e.name);
+                }
+            }
+        }
+        let (p, _) = tw.spawn_line();
+        assert_eq!(tw.water_at(p), None);
+        // And the town's water is still there.
+        let h = tw.half();
+        let mut wet = 0;
+        for k in 0..8100 {
+            let p = DVec2::new((k % 90) as f64 - 44.5, (k / 90) as f64 - 44.5) * (h / 45.0);
+            if let Some(l) = tw.water_at(p) {
+                assert!(tw.ground(p) < l);
+                wet += 1;
+            }
+        }
+        assert!(wet > 0, "no water anywhere in the town");
     }
 
     /// The skyline shows the very buildings the quarters hold, ids and all,

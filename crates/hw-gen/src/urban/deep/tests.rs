@@ -394,3 +394,58 @@ fn the_tube_has_nooks_ways_up_and_people() {
         );
     }
 }
+
+/// Arnd 2026-11-14: at the foot of a deep stair the rock was missing and
+/// the city showed from below. The rock was made a fixed depth under the
+/// ground, and on the planet's relief the caves hang deeper than that.
+/// Now the world says how deep it is carved under any column, so the rock
+/// reaches every void on every seed.
+#[test]
+#[ignore = "daily (slow blocker): scripts/check.sh --daily, and CI's first run of the day"]
+fn the_rock_is_known_to_reach_under_every_void() {
+    use crate::planet::{choose_home, PlanetMap, PlanetPatch};
+    for seed in [1u64, 2] {
+        let s = Seed(seed);
+        let map = PlanetMap::build(s, 96);
+        let patch = std::sync::Arc::new(PlanetPatch::new(&map, choose_home(&map)));
+        let params = TownParams::on_planet(s, 20_000.0, &patch);
+        let w = TownWorld::generate_on_or_stop(s, params, None, &hw_core::Cancel::new())
+            .expect("not cancelled");
+        let mut voids: Vec<Void> = w.core_underground().voids.clone();
+        for k in tiles_round(&w, 900.0) {
+            voids.extend(w.deep_tile(k).voids.iter().cloned());
+        }
+        assert!(voids.len() > 100);
+        // The old fixed depth did not reach them all (or this test is idle).
+        let mut beyond = 0;
+        for v in &voids {
+            let floor = v.floor[0].min(v.floor[1]);
+            for a in 0..=4 {
+                for b in 0..=4 {
+                    let l = v.min + (v.max - v.min) * DVec2::new(a as f64 / 4.0, b as f64 / 4.0);
+                    let p = v.world(l);
+                    // The 32 m column of rock the point is in.
+                    let lo = (p / 32.0).floor() * 32.0;
+                    let deep = w
+                        .carved_below(lo, lo + DVec2::splat(32.0))
+                        .unwrap_or_else(|| {
+                            panic!("seed {seed}: nothing carved under {:?}", v.kind)
+                        });
+                    assert!(
+                        deep <= floor - 1.5,
+                        "seed {seed}: rock to {deep}, {:?} floor at {floor}",
+                        v.kind
+                    );
+                    beyond += (w.ground(p) - floor > VOXEL_DEPTH) as usize;
+                }
+            }
+        }
+        assert!(
+            beyond > 0 || seed == 1,
+            "seed {seed}: no void lies deeper than the old reach"
+        );
+        // Whole rock far from the town.
+        let far = DVec2::splat(w.half() * 3.0);
+        assert_eq!(w.carved_below(far, far + DVec2::splat(32.0)), None);
+    }
+}

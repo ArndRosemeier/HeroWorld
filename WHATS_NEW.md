@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.319 (2026-11-14)
+
+- Molehaven and the tunnels no longer fill with water: water now stands only where the ground really lies under it (sea, rivers, lakes), not in every stair well below sea level.
+- The Deeps are closed again: at the foot of a deep stair the rock could be missing, with the city showing from below. The rock now always reaches as deep as the caves do, on every world.
+
 ## 0.318 (2026-11-14)
 
 - The city now stands in mesa country: tablelands rise around it in stacked tiers, flat tops one above the other with sheer cliffs between, up to 800 m high.

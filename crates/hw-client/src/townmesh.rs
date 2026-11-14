@@ -100,6 +100,14 @@ impl WorldGenerator for TownGround {
         crate::deepview::density(self.world(), p, ground)
     }
 
+    /// How far down the underground reaches here: Engine makes the rock
+    /// that deep, whatever the land above does.
+    fn carved_below(&self, min: glam::Vec2, max: glam::Vec2) -> Option<f32> {
+        self.town
+            .carved_below(min.as_dvec2(), max.as_dvec2())
+            .map(|y| y as f32)
+    }
+
     /// The sea, the town's own water and the lowest reach of its rivers stand
     /// at [`WATER_LEVEL`]: Engine's far sea at that height is all of it to the
     /// horizon, wherever the ground dips below it.
@@ -108,9 +116,14 @@ impl WorldGenerator for TownGround {
     }
 
     /// Beyond the town a river climbs in pools, each at its own level
-    /// (`TownWorld::water_level`); everything else is at the sea's.
+    /// (`TownWorld::water_level`); everything else is at the sea's. Only
+    /// where water really stands: on dry land there is none, so nothing
+    /// below the sea's level fills up (stair wells, shafts, the tunnels and
+    /// Molehaven under them).
     fn water_level(&self, x: f32, z: f32) -> Option<f32> {
-        Some(self.town.water_level(DVec2::new(x as f64, z as f64)) as f32)
+        self.town
+            .water_at(DVec2::new(x as f64, z as f64))
+            .map(|l| l as f32)
     }
 
     /// The springs at the heads of the rivers, so their falls keep running.

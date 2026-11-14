@@ -806,6 +806,30 @@ impl TownWorld {
         out
     }
 
+    /// The lowest floor of anything carved under the rectangle `lo`..`hi`
+    /// (shallow underground and deep tiles), a little below it for the
+    /// carving itself; `None` where the rock is whole. The rock on screen
+    /// is made down to this, so a cave has its walls however high the land
+    /// stands over it.
+    pub fn carved_below(&self, lo: DVec2, hi: DVec2) -> Option<f64> {
+        let mid = (lo + hi) * 0.5;
+        // The carving reaches a few metres past a void's rectangle.
+        let r = (hi - lo).length() * 0.5 + 4.0;
+        let low = |v: &Void| v.floor[0].min(v.floor[1]);
+        let u = self.core_underground();
+        let mut lowest = u
+            .near(mid, r)
+            .into_iter()
+            .map(|i| low(&u.voids[i]))
+            .fold(f64::INFINITY, f64::min);
+        for t in self.deep_near(mid, r) {
+            for i in t.near(mid, r) {
+                lowest = lowest.min(low(&t.voids[i]));
+            }
+        }
+        lowest.is_finite().then_some(lowest - 2.0)
+    }
+
     /// Does tile `k` lie on the planned land?
     pub fn deep_in_land(&self, k: TileKey) -> bool {
         let c = tile_centre(k);
