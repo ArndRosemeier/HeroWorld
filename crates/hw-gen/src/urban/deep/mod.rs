@@ -512,6 +512,10 @@ pub struct Deep {
     net: OnceLock<TubeNet>,
     lair: OnceLock<Option<lair::LairSite>>,
     cache: Mutex<Cache>,
+    /// Where the ways up planned with each tile come out on the street
+    /// (worked out alone, without planning the tile; one short list per
+    /// tile the tube runs through).
+    exits: Mutex<BTreeMap<TileKey, Arc<Vec<DVec2>>>>,
 }
 
 #[derive(Default)]
@@ -541,6 +545,7 @@ impl Deep {
             net: OnceLock::new(),
             lair: OnceLock::new(),
             cache: Mutex::new(Cache::default()),
+            exits: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -567,6 +572,8 @@ pub struct StreetHole {
     /// Half the side of the open shaft, and of the paved apron round it.
     pub hole: f64,
     pub apron: f64,
+    /// The stair down the shaft.
+    pub spiral: Spiral,
 }
 
 impl StreetHole {
@@ -596,6 +603,7 @@ impl TownWorld {
                 door: e.door,
                 hole: SHAFT_HALF,
                 apron: SHAFT_HALF + APRON,
+                spiral: e.spiral,
             })
             .collect();
         // A way up can stand a little outside the tile that plans it.
@@ -624,6 +632,7 @@ impl TownWorld {
                         door: e.door,
                         hole: SHAFT_HALF,
                         apron,
+                        spiral: e.spiral,
                     });
                 }
             }
@@ -724,15 +733,56 @@ impl TownWorld {
     }
 
     /// Can the deep underground matter for something at height `y` over
-    /// `p`? Only below the ground, or by a street lift's opening (near a
-    /// station or the lab). Cheap, and plans nothing: ask it before the
-    /// other `deep_` queries on hot paths.
+    /// `p`? Only below the ground, or by a street stair's opening (near a
+    /// station, the lab or a way up from the tube). Cheap, and plans no
+    /// tile: ask it before the other `deep_` queries on hot paths.
     pub fn deep_matters(&self, p: DVec2, y: f64) -> bool {
         y < self.ground(p) - 0.5
             || self.tube().station_within(p, 95.0)
             || self
                 .lair_site()
                 .is_some_and(|l| l.centre.distance(p) < 110.0)
+            || self.tube_exit_near(p, 12.0)
+    }
+
+    /// Does a way up from the tube come out within `r` of `p`? Ways up
+    /// stand at least 150 m from any station, so [`Self::deep_matters`]
+    /// asks this too: without it the street over their stairs stayed
+    /// solid. Works out only the exits of the tiles round `p`, once each.
+    pub fn tube_exit_near(&self, p: DVec2, r: f64) -> bool {
+        // An exit is filed with the tile of its stretch's middle, and
+        // stands within about 60 m of the line.
+        let m = DVec2::splat(r + 160.0);
+        let (a, b) = (tile_of(p - m), tile_of(p + m));
+        let net = self.tube();
+        for x in a.0..=b.0 {
+            for y in a.1..=b.1 {
+                let k = (x, y);
+                if net.stretches_in(k).is_none_or(|s| s.is_empty()) {
+                    continue;
+                }
+                if self.tube_exits(k).iter().any(|e| e.distance(p) <= r) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Where the ways up planned with tile `k` come out (their shafts'
+    /// centres), worked out once.
+    pub fn tube_exits(&self, k: TileKey) -> Arc<Vec<DVec2>> {
+        if let Some(e) = self.deep_state().exits.lock().expect("exits").get(&k) {
+            return e.clone();
+        }
+        let list = Arc::new(nooks::exits_of_tile(self, k));
+        self.deep_state()
+            .exits
+            .lock()
+            .expect("exits")
+            .entry(k)
+            .or_insert(list)
+            .clone()
     }
 
     /// The deep tiles that reach within `r` of `p` (plan).

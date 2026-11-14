@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.278 (2026-11-14)
+
+- The green "Tube exit" stairs can be walked down again: an invisible floor lay over their holes in the street. A new test walks down every street stair in the town.
+
 ## 0.277 (2026-11-14)
 
 - Arrange the screen your way. Escape menu, "Arrange the screen": drag the minimap, compass, power tray, wrist radio and police monitor wherever you like, and drag a piece's corner to make it bigger or smaller. Enter or the green tick finishes; the round red arrow puts everything back. Your layout is kept for next time.

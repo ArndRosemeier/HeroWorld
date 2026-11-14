@@ -12,7 +12,9 @@
 //! other lines, so two tiles' nooks never meet.
 
 use super::tube::{TubeNet, TUBE_HALF, TUBE_HEIGHT};
-use super::{datum, room, run, DeepEntrance, DeepLamp, EntranceKind, Fixture, FixtureKind, Plan};
+use super::{
+    datum, room, run, DeepEntrance, DeepLamp, EntranceKind, Fixture, FixtureKind, Plan, TileKey,
+};
 use crate::urban::spiral::Spiral;
 use crate::urban::underground::{Void, VoidKind, SHAFT_HALF};
 use crate::urban::world::TownWorld;
@@ -243,6 +245,28 @@ fn slot_site(w: &TownWorld, net: &TubeNet, l: usize, s: f64) -> Option<(DVec2, f
         return None;
     }
     Some((p, floor, dir, near_station))
+}
+
+/// Where the ways up planned with tile `k` come out on the street: what
+/// [`plan_tile`] finds for exits, without the rest of the tile.
+pub(super) fn exits_of_tile(w: &TownWorld, k: TileKey) -> Vec<DVec2> {
+    let net = w.tube();
+    let Some(list) = net.stretches_in(k) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for &(l, i) in list {
+        let (l, i) = (l as usize, i as usize);
+        for (slot, s) in net.slots_on(l, i) {
+            if slot_site(w, net, l, s).is_none() {
+                continue;
+            }
+            if let Some(site) = wanted_exit(w, net, l, slot) {
+                out.push(site.c);
+            }
+        }
+    }
+    out
 }
 
 /// What, if anything, slot `slot` of line `l` (at `s` m) holds.
