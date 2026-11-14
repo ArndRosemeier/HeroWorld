@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.309 (2026-11-14)
+
+- No more getting stuck on the underground stairs, Molehaven's included: the stair rails are now too high to climb, so running down a stair no longer lifts your hero up onto the balustrade and out into the rock beside the shaft. The street rail round each stair hole is higher too.
+- Steps are a little taller, so there is a full 2.4 m of head room under the next turn of the stair instead of about 1.9 m.
+- Trees out in the country no longer grow on the steps of a stair.
+
 ## 0.308 (2026-11-14)
 
 - The team frame is a real pane now: drag it anywhere, resize it by its edge, and it keeps its place. Its bars show each hero's actual hit points (with a percentage) and fit inside the pane.
