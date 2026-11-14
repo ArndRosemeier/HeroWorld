@@ -649,6 +649,8 @@ fn main() -> EngineResult<()> {
     let mut chat = hw_client::chat::ChatLog::new();
     // The pointer was locked when the chat line opened: lock it again after.
     let mut chat_relock = false;
+    // Always-on mouselook: when the pointer is pinned and when it is freed.
+    let mut mouselook = hw_client::mouselook::Mouselook::default();
     // What was drawn last frame (for targeting), and a power key pressed
     // but not yet sent with a tick.
     let mut drawn: Vec<hw_net::EntityState> = Vec::new();
@@ -5354,6 +5356,32 @@ fn main() -> EngineResult<()> {
                 // Powers bought or given up take or free their keys.
                 if powers.tray.sync(&my_sheet) {
                     save_tray(&powers.tray);
+                }
+                // Always-on mouselook: decided last, once every window of
+                // this frame is known, so it wins over the pointer frees
+                // and re-pins above. Alt held shows the pointer.
+                let cursor_needed = menu.open
+                    || debug.open
+                    || powers.open
+                    || creating
+                    || hw_sim::powers::Element::from_code(my_sheet.element)
+                        == hw_sim::powers::Element::None
+                    || chat.typing
+                    || taxi_menu
+                    || tube_menu.is_some()
+                    || town_map.open
+                    || case_file.taking_pointer()
+                    || police.taking_pointer()
+                    || frame.ui.ctx().input(|i| i.modifiers.alt);
+                let clicked_in_world = frame.input.mouse_clicked(MouseButton::Left)
+                    && !frame.ui.ctx().is_pointer_over_area();
+                if let Some(lock) = mouselook.update(
+                    menu.mouselook,
+                    cursor_needed,
+                    world.pointer_lock(),
+                    clicked_in_world,
+                ) {
+                    world.set_pointer_lock(lock);
                 }
             }
             drawn = heroes;

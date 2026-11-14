@@ -55,6 +55,7 @@ pub mod menaceview;
 pub mod minimap;
 pub mod missionview;
 pub mod molehavenview;
+pub mod mouselook;
 pub mod nightlights;
 pub mod people;
 pub mod police;

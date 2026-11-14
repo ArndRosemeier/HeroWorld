@@ -171,6 +171,13 @@ pub fn settings_ui(ui: &mut egui::Ui, p: &mut Profile, accent: egui::Color32) ->
         ui.add(egui::Slider::new(&mut p.look_speed, 0.3..=3.0).show_value(false));
     });
     ui.checkbox(&mut p.invert_y, "Invert up and down");
+    ui.checkbox(
+        &mut p.mouselook,
+        "Always look with the mouse (hidden pointer; hold Alt for the pointer)",
+    );
+    if !p.mouselook {
+        ui.label(egui::RichText::new("Off: hold the right mouse button to look around.").weak());
+    }
     changed
 }
 
@@ -193,7 +200,11 @@ fn menu_style(ui: &mut egui::Ui) {
 pub const CONTROLS: &[(&str, &str)] = &[
     (
         "Right mouse (hold) / P",
-        "Look around (P locks the pointer)",
+        "Look around (P locks the pointer); with \"Always look with the mouse\" on, just move the mouse",
+    ),
+    (
+        "Alt (hold)",
+        "Shows the pointer for clicking while the mouse looks around by itself",
     ),
     ("W A S D", "Run"),
     ("R", "Autorun (the mouse steers; S or R stops)"),
@@ -250,6 +261,8 @@ pub struct GameMenu {
     profile: Option<Profile>,
     /// Look speed and up-down sign in use (see [`look`]).
     pub look: (f32, f32),
+    /// Always-on mouselook is chosen (see `mouselook`).
+    pub mouselook: bool,
     /// Set every frame by the game: friends are playing in our world, so
     /// leaving for the title screen asks first.
     pub hosting: bool,
@@ -289,6 +302,7 @@ impl GameMenu {
             page,
             profile: shown.is_some().then(|| p.clone()),
             look: look(p),
+            mouselook: p.mouselook,
             hosting: false,
         }
     }
@@ -298,7 +312,9 @@ impl GameMenu {
     /// of play. Returns what the player chose to leave by, if anything.
     pub fn show(&mut self, ui: &engine::ui::UiFrame, world: &mut World) -> MenuExit {
         let escape = ui.ctx().input(|i| i.key_pressed(egui::Key::Escape));
-        if escape && !self.open && !world.pointer_lock() {
+        // Escape frees a pinned pointer first, unless the pointer is pinned
+        // by the always-on mouselook: then it opens the menu at once.
+        if escape && !self.open && (self.mouselook || !world.pointer_lock()) {
             self.open = true;
             self.page = Page::Main;
             self.profile = Some(Profile::load());
@@ -367,6 +383,7 @@ impl GameMenu {
         });
         self.open = open;
         self.look = look(p);
+        self.mouselook = p.mouselook;
         apply_volumes(world, p);
         if picture {
             apply(world, p);
@@ -384,6 +401,7 @@ impl GameMenu {
             latest.fov = p.fov;
             latest.look_speed = p.look_speed;
             latest.invert_y = p.invert_y;
+            latest.mouselook = p.mouselook;
             latest.save();
             self.profile = None;
         }

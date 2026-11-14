@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.275 (2026-11-14)
+
+- The mouse now looks around by itself, with the pointer hidden, like most action games: no right button needed. Hold Alt whenever you want the pointer back for a click.
+- Windows, menus, the chat line, the map and the police computer free the pointer on their own and pin it again when you close them. Escape still opens the menu.
+- Prefer the old way? Escape, Settings, Mouse: untick "Always look with the mouse", and hold the right button to look.
+
 ## 0.274 (2026-11-13)
 
 - Augments go straight into the power tree: every power you own shows its three sockets inside its box, and you drag an augment from the bag right onto the power. Drop it on an augment already there to replace that one.

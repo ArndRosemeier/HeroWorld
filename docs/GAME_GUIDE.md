@@ -113,7 +113,8 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 
 | Key | What it does |
 | --- | --- |
-| Right mouse (hold) / P | Look around (P locks the pointer) |
+| Mouse | Look around: by default the pointer is hidden and the mouse always looks (Settings, Mouse: "Always look with the mouse"); with that off, hold the right button. P locks the pointer too |
+| Alt (hold) | Shows the pointer for clicking while always-on mouselook is on; windows, menus, chat, map and police computer free it by themselves |
 | W A S D | Run |
 | R | Autorun: the mouse steers, A/D step aside, S or R stops |
 | Space | Jump; climb when flying |
