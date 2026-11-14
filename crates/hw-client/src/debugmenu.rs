@@ -211,11 +211,12 @@ impl DebugMenu {
             return out;
         }
         let mut open = self.open;
-        let resp = crate::layout::window(
+        let resp = crate::layout::window_free(
+            ctx,
             egui::Window::new("Debug  (Ctrl+Shift+F12)"),
             "debug menu",
-            egui::Align2::LEFT_TOP,
             egui::pos2(16.0, 60.0),
+            egui::vec2(460.0, 560.0),
         )
         .id(egui::Id::new("debug menu"))
         .open(&mut open)
@@ -258,13 +259,7 @@ impl DebugMenu {
             });
         });
         if let Some(r) = &resp {
-            crate::layout::remember(
-                ctx,
-                "debug menu",
-                egui::Align2::LEFT_TOP,
-                r.response.rect,
-                true,
-            );
+            crate::layout::remember(ctx, "debug menu", r.response.rect, false, true);
         }
         self.open = open;
         out

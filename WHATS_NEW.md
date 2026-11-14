@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.288 (2026-11-14)
+
+- Screen layout fixes: the corner handle now really resizes the minimap and the other pieces (it used to just drag them). The chat's lower edge now stays put when you drag it down, and windows and HUD pieces are remembered as a share of the screen, so the chat stays at the bottom when the window is resized or maximised.
+
 ## 0.287 (2026-11-14)
 
 - start.bat installs CMake (needed once for the voice codec) by itself when it is missing: no commands to type.

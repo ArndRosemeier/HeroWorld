@@ -224,10 +224,10 @@ impl PowersView {
         let mut open = self.open;
         crate::googie::window(
             ctx,
-            crate::layout::window(
+            crate::layout::window_centered(
+                ctx,
                 egui::Window::new("Powers"),
                 "Powers",
-                egui::Align2::CENTER_CENTER,
                 ctx.screen_rect().center() + egui::vec2(0.0, -20.0),
             )
             .collapsible(false)

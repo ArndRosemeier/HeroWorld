@@ -262,11 +262,12 @@ impl ChatLog {
             .corner_radius(crate::googie::leaf(16))
             .inner_margin(egui::Margin::symmetric(10, 7));
         // Where the player left it last time, else bottom left beside the tray.
-        let resp = crate::layout::window(
+        let resp = crate::layout::window_free(
+            ctx,
             egui::Window::new("chat"),
             "chat",
-            egui::Align2::LEFT_BOTTOM,
-            egui::pos2(screen.left() + 10.0, screen.bottom() - bottom),
+            egui::pos2(screen.left() + 10.0, screen.bottom() - bottom - 160.0),
+            egui::vec2(width, 160.0),
         )
         .title_bar(false)
         .resizable(true)
@@ -359,13 +360,7 @@ impl ChatLog {
             }
         });
         if let Some(r) = &resp {
-            crate::layout::remember(
-                ctx,
-                "chat",
-                egui::Align2::LEFT_BOTTOM,
-                r.response.rect,
-                true,
-            );
+            crate::layout::remember(ctx, "chat", r.response.rect, false, true);
         }
         if close {
             self.stop_typing();

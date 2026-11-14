@@ -156,10 +156,10 @@ impl Police {
         let mut out = Vec::new();
         if self.desktop {
             let mut open = true;
-            let win = crate::layout::window(
+            let win = crate::layout::window_centered(
+                ctx,
                 egui::Window::new("police desktop"),
                 "Police computer",
-                Align2::CENTER_CENTER,
                 ctx.screen_rect().center(),
             )
             .resizable(false)

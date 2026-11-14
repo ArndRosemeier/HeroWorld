@@ -213,7 +213,7 @@ impl Minimap {
         // about its bottom right corner, so growing it fills the corner.
         let box_ = egui::Rect::from_center_size(home, egui::vec2(RADIUS + 8.0, RADIUS + 8.0) * 2.0);
         let anchor = box_.right_bottom();
-        let tf = crate::layout::transform(LAYOUT_KEY, anchor);
+        let tf = crate::layout::transform(ctx, LAYOUT_KEY, anchor);
         let centre = tf.mul_pos(home);
         let radius = RADIUS * tf.scaling;
         crate::layout::overlay(ctx, LAYOUT_KEY, "Minimap", anchor, box_);
