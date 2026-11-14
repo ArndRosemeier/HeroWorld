@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.314 (2026-11-14)
+
+- Heroes no longer get stuck against the side of a tunnel (or a river bank): pressing into a wall at a slant now slides you along it instead of stopping you dead.
+
 ## 0.313 (2026-11-14)
 
 - Rats scurry along the walls of the utility tunnels: short runs, a pause to sniff, and back again. Look for their red eyes in the dark.
