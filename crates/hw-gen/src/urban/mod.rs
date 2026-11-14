@@ -40,6 +40,7 @@ pub mod lines;
 pub mod mast;
 pub mod menace;
 pub mod molehaven;
+pub mod outer;
 pub mod params;
 pub mod plots;
 pub mod props;

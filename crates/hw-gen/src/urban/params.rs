@@ -104,6 +104,9 @@ pub struct TownParams {
     pub rivers: u8,
     /// Width of the main river (m).
     pub river_width: f64,
+    /// The planet's ground here, if the town stands on a planet: the land
+    /// takes its coast and its heights from it.
+    pub planet: Option<std::sync::Arc<crate::planet::PlanetPatch>>,
     /// Direction out to sea (radians, 0 = east, towards +z = south positive),
     /// for a coastal site; `None` lets the town pick. The planet fixes it.
     pub seaward: Option<f64>,
@@ -258,6 +261,7 @@ impl TownParams {
             relief,
             rivers,
             river_width,
+            planet: None,
             seaward: None,
             coast_distance: None,
             flow: None,
@@ -279,15 +283,22 @@ impl TownParams {
     /// The parameters of a town on the planet: the sampled ones, with the
     /// setting (site, relief, river, which way the sea lies) taken from the
     /// planet's ground at the place.
-    pub fn on_planet(seed: Seed, population: f64, at: &crate::planet::PatchSite) -> TownParams {
+    pub fn on_planet(
+        seed: Seed,
+        population: f64,
+        patch: &std::sync::Arc<crate::planet::PlanetPatch>,
+    ) -> TownParams {
+        let at = &patch.site;
         let mut p = TownParams::sample(seed, population);
+        p.planet = Some(patch.clone());
         p.site = at.site;
         p.relief = at.relief;
         p.rivers = at.rivers;
         p.river_width = at.river_width;
         p.seaward = at.seaward;
         p.coast_distance = at.coast_distance;
-        p.flow = at.flow;
+        // By the sea the river runs to the sea; inland, the way the planet says.
+        p.flow = if at.site.is_coastal() { None } else { at.flow };
         if !at.site.is_coastal() && p.founding == Founding::Port {
             p.founding = Founding::Village;
         }

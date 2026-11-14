@@ -358,7 +358,7 @@ impl GeneratedTown {
         cancel.stage("Shaping the planet", 0.0, 0.05);
         let patch = home_patch(seed);
         cancel.check()?;
-        let params = TownParams::on_planet(seed, population, &patch.site);
+        let params = TownParams::on_planet(seed, population, &patch);
         let world = Arc::new(TownWorld::generate_on_or_stop(
             seed,
             params,

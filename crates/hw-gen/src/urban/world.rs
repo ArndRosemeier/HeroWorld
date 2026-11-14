@@ -161,6 +161,8 @@ pub struct TownWorld {
     /// The planet's ground beyond the town's land, if the town stands on a
     /// planet (see [`TownWorld::generate_on_or_stop`]).
     planet: Option<Arc<crate::planet::PlanetPatch>>,
+    /// The town's rivers carried on over the planet, and their valleys.
+    outer: Option<super::outer::OuterRivers>,
     /// Bounding boxes of the town's pieces, and the pieces by grid cell.
     piece_boxes: Vec<(DVec2, DVec2)>,
     piece_grid: BTreeMap<(i64, i64), Vec<u32>>,
@@ -217,6 +219,11 @@ impl TownWorld {
         planet: Option<Arc<crate::planet::PlanetPatch>>,
         cancel: &Cancel,
     ) -> Result<TownWorld, Cancelled> {
+        let mut params = params;
+        if planet.is_some() {
+            params.planet = planet.clone();
+        }
+        let planet = params.planet.clone();
         let town = Town::generate_or_stop(seed, params, cancel)?;
         cancel.check()?;
         let land = &town.land;
@@ -240,6 +247,9 @@ impl TownWorld {
                 piece_grid.entry(c).or_default().push(i as u32);
             }
         }
+        let outer = planet
+            .as_ref()
+            .map(|pl| super::outer::OuterRivers::new(&town.land.rivers, pl, town.params.relief));
         let mut out = TownWorld {
             seed,
             town,
@@ -248,6 +258,7 @@ impl TownWorld {
             landmarks: Vec::new(),
             deep: Deep::new(),
             terrain,
+            outer,
             planet,
             piece_boxes,
             piece_grid,
@@ -342,8 +353,17 @@ impl TownWorld {
         if w <= 0.0 {
             town
         } else {
-            town + (planet.ground(p) - town) * w
+            let mut wild = planet.ground(p);
+            if let Some(outer) = &self.outer {
+                wild = outer.carve(p, wild);
+            }
+            town + (wild - town) * w
         }
+    }
+
+    /// The town's rivers from their heads in the hills, if it stands on a planet.
+    pub fn outer_rivers(&self) -> Option<&super::outer::OuterRivers> {
+        self.outer.as_ref()
     }
 
     /// The planet this town stands on, if any.

@@ -107,6 +107,13 @@ pub struct PlanetPatch {
     pub site: PatchSite,
 }
 
+impl PartialEq for PlanetPatch {
+    /// Two patches of one planet are the same when they stand in the same place.
+    fn eq(&self, other: &Self) -> bool {
+        self.frame == other.frame && self.planet == other.planet && self.site == other.site
+    }
+}
+
 impl PlanetPatch {
     /// The patch at `at` (a unit vector); `map` tells what the place is like.
     pub fn new(map: &PlanetMap, at: DVec3) -> Self {
@@ -140,6 +147,14 @@ impl PlanetPatch {
         patch
     }
 
+    /// Is `p` in the sea proper, looking along `d`: under water here and
+    /// still under water 1.5 and 3 km further out (not a pond or a creek)?
+    fn open_sea(&self, p: DVec2, d: DVec2) -> bool {
+        self.ground(p) < 0.0
+            && self.ground(p + d * 1500.0) < -3.0
+            && self.ground(p + d * 3000.0) < -3.0
+    }
+
     /// Distance to the sea along the nearest of sixteen rays from `p`
     /// (m), and the direction; `None` if there is no sea within 3 km.
     fn sea_from(&self, p: DVec2) -> Option<(f64, DVec2)> {
@@ -148,7 +163,7 @@ impl PlanetPatch {
             let d = det::dir2(k as f64 / 16.0 * std::f64::consts::TAU);
             for i in 1..=20 {
                 let t = 150.0 * i as f64;
-                if self.ground(p + d * t) < 0.0 {
+                if self.open_sea(p + d * t, d) {
                     if best.is_none_or(|b| t < b.0) {
                         best = Some((t, d));
                     }
@@ -175,7 +190,7 @@ impl PlanetPatch {
             let d = det::dir2(k as f64 / 32.0 * std::f64::consts::TAU);
             for i in 1..=120 {
                 let t = 250.0 * i as f64;
-                if self.ground(d * t) < 0.0 {
+                if self.open_sea(d * t, d) {
                     if nearest.is_none_or(|n| t < n.0) {
                         // Refine the shore along the ray, then step 700 m inland.
                         let (mut lo, mut hi) = (t - 250.0, t);
@@ -282,7 +297,7 @@ mod tests {
         let seed = Seed(2);
         let map = PlanetMap::build(seed, 96);
         let patch = std::sync::Arc::new(PlanetPatch::new(&map, choose_home(&map)));
-        let params = TownParams::on_planet(seed, 20_000.0, &patch.site);
+        let params = TownParams::on_planet(seed, 20_000.0, &patch);
         assert_eq!(params.site, patch.site.site);
         let town = TownWorld::generate_on_or_stop(
             seed,

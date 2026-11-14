@@ -221,7 +221,38 @@ impl Land {
                     .collect(),
             );
         }
-        fill_rings(&mut cover, &sea, Cover::Sea);
+        // On a planet the sea is the planet's: every cell whose ground lies
+        // below sea level, so the town's shore is the real, ragged coast.
+        let planet_ground: Option<Vec<f32>> = p.planet.as_ref().map(|planet| {
+            let (w, origin) = (cover.w, cover.origin);
+            crate::planet::grid::par_map(cover.w * cover.h, |k| {
+                let q = origin + DVec2::new((k % w) as f64 + 0.5, (k / w) as f64 + 0.5) * cell;
+                planet.ground(q) as f32
+            })
+        });
+        if let Some(ground) = &planet_ground {
+            let mut any = false;
+            for (k, g) in ground.iter().enumerate() {
+                if *g < 0.0 {
+                    cover.data[k] = Cover::Sea;
+                    any = true;
+                }
+            }
+            // The rings only say "there is a sea" here; the raster is the truth.
+            sea.clear();
+            if any {
+                sea.push(vec![
+                    DVec2::new(-far, -far),
+                    DVec2::new(far, -far),
+                    DVec2::new(far, far),
+                    DVec2::new(-far, far),
+                ]);
+            } else {
+                seaward = None;
+            }
+        } else {
+            fill_rings(&mut cover, &sea, Cover::Sea);
+        }
         fill_rings(&mut cover, &lakes, Cover::Lake);
 
         // --- Rivers.
@@ -336,7 +367,11 @@ impl Land {
                     n
                 };
                 let m = n * 0.6 + rough * 0.4;
-                let mut h = amp * m * m;
+                let mut h = match &planet_ground {
+                    // The planet's own hills.
+                    Some(ground) => (ground[j * cover.w + i] as f64).max(0.0),
+                    None => amp * m * m,
+                };
                 if let Some((axis, vw)) = valley_axis {
                     // Valley sides climbing away from the axis.
                     let d = axis.perp_dot(q).abs();
@@ -353,7 +388,13 @@ impl Land {
                 }
                 // Banks a little above the water, rising to the hills.
                 let d = *to_water.at(i, j) as f64;
-                let rise = smooth(0.0, 120.0 + p.relief * 500.0, d);
+                // (On a planet's higher ground the sides are no steeper than 1 in 3.)
+                let reach = (120.0 + p.relief * 500.0).max(if planet_ground.is_some() {
+                    3.0 * h
+                } else {
+                    0.0
+                });
+                let rise = smooth(0.0, reach, d);
                 h = 1.0 + 2.0 * smooth(0.0, 40.0, d) + h * rise;
                 height.set(i, j, h as f32);
             }

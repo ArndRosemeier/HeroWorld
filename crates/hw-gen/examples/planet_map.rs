@@ -439,7 +439,7 @@ fn home_view(map: &PlanetMap, seed: u64, path: &str) {
             line.join(" ")
         );
     }
-    let params = TownParams::on_planet(Seed(seed), 20_000.0, &patch.site);
+    let params = TownParams::on_planet(Seed(seed), 20_000.0, &patch);
     let town =
         TownWorld::generate_on_or_stop(Seed(seed), params, Some(patch), &hw_core::Cancel::new())
             .expect("town");
