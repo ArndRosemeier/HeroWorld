@@ -364,6 +364,7 @@ impl Session {
                             ToClient::Chat { .. }
                                 | ToClient::TeamChat { .. }
                                 | ToClient::AugmentOffer { .. }
+                                | ToClient::Swap(_)
                         )
                     {
                         // Portals carry our hero when the guess walks into
@@ -610,6 +611,28 @@ impl Session {
             }
             (Session::Remote { conn, .. }, AugmentAction::Trade { bag }) => {
                 conn.send(ToServer::TradeAugment { bag })
+            }
+            (Session::Local { host, .. }, AugmentAction::SwapOffer { with, give }) => {
+                host.post(move |h, me| h.sim.swap_offer(me, with, give))
+            }
+            (Session::Local { host, .. }, AugmentAction::SwapYes { rev }) => {
+                host.post(move |h, me| h.sim.swap_yes(me, rev))
+            }
+            (Session::Local { host, .. }, AugmentAction::SwapOff) => {
+                host.post(move |h, me| h.sim.swap_off(me))
+            }
+            (Session::Local { host, .. }, AugmentAction::SwapPutBack { augment }) => {
+                host.post(move |h, me| h.sim.swap_put_back(me, augment))
+            }
+            (Session::Remote { conn, .. }, AugmentAction::SwapOffer { with, give }) => {
+                conn.send(ToServer::SwapOffer { with, give })
+            }
+            (Session::Remote { conn, .. }, AugmentAction::SwapYes { rev }) => {
+                conn.send(ToServer::SwapYes { rev })
+            }
+            (Session::Remote { conn, .. }, AugmentAction::SwapOff) => conn.send(ToServer::SwapOff),
+            (Session::Remote { conn, .. }, AugmentAction::SwapPutBack { augment }) => {
+                conn.send(ToServer::SwapPutBack { augment })
             }
             (Session::Local { host, .. }, AugmentAction::Give { bag, to }) => {
                 host.post(move |h, me| h.offer_augment(me, bag as usize, to))
@@ -920,6 +943,37 @@ impl Session {
                         h.sim.set_fighter(id, f);
                     }
                 }
+            });
+        }
+    }
+
+    /// `HW_SWAP=1` (screenshots): a second hero stands beside ours at a
+    /// swap's table, with augments laid down and their yes said. Does
+    /// nothing until our hero has augments in the bag.
+    pub fn debug_swap(&mut self) {
+        if let Session::Local { host, .. } = self {
+            host.post(|h, me| {
+                let other = PlayerId(900);
+                let at = h.sim.hero_positions().into_iter().find(|(p, _)| *p == me);
+                let (Some((_, at)), Some(mine)) = (at, h.sim.sheet(me)) else {
+                    return;
+                };
+                if h.sim.hero_of(other).is_some() || mine.bag.len() < 4 {
+                    return;
+                }
+                let mut theirs = hw_sim::progress::starter();
+                theirs.bag = mine.bag.iter().rev().take(6).copied().collect();
+                let give = theirs.bag.clone();
+                h.sim
+                    .spawn_hero_with(other, at + DVec3::new(2.0, 0.0, 0.0), theirs);
+                // `HW_SWAP=near`: only standing there, to be asked.
+                if std::env::var("HW_SWAP").as_deref() == Ok("near") {
+                    return;
+                }
+                h.sim.swap_offer(other, me, give);
+                h.sim.swap_offer(me, other, mine.bag[..1].to_vec());
+                // Two changes to the table so far: its count is 2.
+                h.sim.swap_yes(other, 2);
             });
         }
     }

@@ -413,14 +413,22 @@ Loot. An augment adds a share of **one effect** to **one power**, for good.
   taken, one offer at a time per giver (a new one replaces the old). Heroes must stand within 30 m
   (`TRADE_REACH`), the offer lapses after 60 s or when either player leaves, and a full bag on the
   receiving side refuses it. Both sides get a line in chat. Herobots always take what they are given.
-  A Herobot sets what fits its own powers; what fits none of them it offers to the nearest
-  player within 24 m, one at a time (`herobot::bag_step`). Only what nobody took within the
-  offer's minute is traded in for karma (or, with no player near, once its bag holds more
-  than 22).
-  Tests: `hw-sim/tests/allies.rs`.
-- **Trading in** (`trade_value`): karma to spend (it does not raise the level). A common
-  one from a level 1 villain gives 48, from level 20 120; a rare one three times, a
-  relic ten times that.
+  A Herobot sets what fits its own powers and keeps the rest in its bag. It never offers
+  anything on its own and trades one in for karma only when its bag is full (`herobot::bag_step`).
+- **Swapping with another hero** (`hw_sim::swaps`): two heroes within 12 m (`REACH`) can swap
+  loose augments. In the powers window (B) a "Swap with <name>" button shows under the bag for
+  every hero near enough. Each lays augments from the bag on a table by dragging them there
+  (up to a whole bag); a click on one of your own takes it back, a click on one of the other
+  hero's puts it back ("not this one"), so a swap can be for a selection. Both see both sides.
+  Nothing changes hands until both press Swap on the same table: any change takes both yeses
+  back, and a yes to a table that has changed since does not count. Then both bags change in
+  one step. A swap ends if either calls it off, leaves, or the two get more than 20 m apart
+  (`LEASH`); it is refused while a bag would have no room. Augments set into sockets are for
+  good and cannot be swapped. A hero has one swap at a time; the other gets a card ("... wants
+  to swap augments, B") while their window is shut.
+- **Swapping with a Herobot:** asked to a swap, a Herobot lays its whole bag on the table (all
+  it could not use itself) and says yes to whatever the player leaves there, with or without
+  anything in return.
 - **Villains keep up** (`combat::villain_growth`): from level 5 on villains have more
   health than a tenth per level, up to 40% more at level 20, and hit harder by half of
   that, to match a hero's augments.
@@ -2037,6 +2045,8 @@ run, or put them in a `.bat`.
 | `HW_ELEMENT=n` | With `HW_LEVEL`: element n (1 Fire, 2 Frost, 3 Energy, 4 Necrotic, 5 Lightning, 6 Psychic). |
 | `HW_AUGMENTS=1` | With `HW_LEVEL`: a bag of augments and a few set (the debug menu has "A bag of augments" too). |
 | `HW_CARRY=1` | Every villain carries an augment (to look at the gems and the drops). |
+| `HW_SWAP=1` | A second hero stands beside yours at a swap's table (with `HW_AUGMENTS=1`); `HW_SWAP=near`: only stands there, to be asked. |
+| `HW_SWAP=1` | A second hero stands beside yours at a swap's table (with `HW_AUGMENTS=1`); `HW_SWAP=near`: only stands there, to be asked. |
 | `HW_FLY=1` | Start flying. |
 | `HW_STORY=n` | Start with n chapters of the Doctor's story done (not saved); `HW_BRIEFED=1` also briefed on the next. `HW_VIEW=statue` looks at the statue (`HW_STORY=7`). Where each chapter plays: `cargo run --release -p hw-sim --example story_places -- <seed> <people>`. |
 | `HW_NAME=...` | Hero name for this run. |

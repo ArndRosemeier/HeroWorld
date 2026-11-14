@@ -427,6 +427,7 @@ fn main() -> EngineResult<()> {
     let mut autorun = false;
     let auto_fight = std::env::var_os("HW_AUTOFIGHT").is_some();
     let carry_all = std::env::var_os("HW_CARRY").is_some();
+    let swap_demo = std::env::var_os("HW_SWAP").is_some();
     // `HW_AUTOFIGHT=17,20` uses those powers in turn (codes, see `Power`;
     // `1` alone keeps the usual round of every power).
     let auto_turn: Vec<u8> = std::env::var("HW_AUTOFIGHT")
@@ -3522,6 +3523,18 @@ fn main() -> EngineResult<()> {
             // Damage: broken buildings, repairs, impacts.
             let joined = session.joined();
             let mut news = session.take_news();
+            // The host's word on a swap of augments goes to the bag.
+            news.retain(|m| {
+                let hw_net::ToClient::Swap(swap) = m else {
+                    return true;
+                };
+                let name = session
+                    .player_name(swap.with)
+                    .unwrap_or_else(|| "Teammate".into());
+                let now = hw_client::uikit::now(frame.ui.ctx());
+                powers.augments().swap_news(swap.clone(), name, now);
+                false
+            });
             if let Some(rx) = &area_job {
                 match rx.try_recv() {
                     Ok((area, next, people, next_stands)) => {
@@ -3906,6 +3919,32 @@ fn main() -> EngineResult<()> {
             let mates = session.team(&heroes, mine);
             team.set_mates(&mates);
             powers.augments.others = mates.iter().map(|m| (m.player, m.name.clone())).collect();
+            // The heroes near enough to swap augments with (Herobots too:
+            // they lay out all they could not use themselves).
+            let near_heroes: Vec<(hw_net::PlayerId, String)> = {
+                let me = heroes.iter().find(|e| Some(e.id) == mine);
+                let near = |e: &&hw_net::EntityState| {
+                    me.is_some_and(|me| {
+                        glam::DVec3::from_array(e.pos).distance(glam::DVec3::from_array(me.pos))
+                            <= hw_sim::swaps::REACH
+                    })
+                };
+                heroes
+                    .iter()
+                    .filter(|e| e.kind == hw_net::EntityKind::Hero && Some(e.id) != mine)
+                    .filter(near)
+                    .filter_map(|e| e.owner)
+                    .map(|p| {
+                        let name = session.player_name(p).unwrap_or_else(|| "Teammate".into());
+                        (p, name)
+                    })
+                    .collect()
+            };
+            powers.augments().set_near(near_heroes);
+            // HW_SWAP=1: a second hero at a swap's table (screenshots).
+            if swap_demo {
+                session.debug_swap();
+            }
             // Where everyone the server sends is, for the fight's lookups.
             let at_of = |id: hw_core::NetId| {
                 heroes

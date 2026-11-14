@@ -113,6 +113,12 @@ impl PowersView {
         }
     }
 
+    /// The sockets, the bag and the swap table (the game tells it who is
+    /// near and what the host says of a swap).
+    pub fn augments(&mut self) -> &mut AugmentUi {
+        &mut self.augments
+    }
+
     /// Our hero reached `level`: the banner.
     pub fn level_up(&mut self, level: u8) {
         self.banner = Some((level, 0.0));
@@ -152,6 +158,7 @@ impl PowersView {
         } else if self.open {
             self.window(ctx, sheet, &mut out);
         }
+        self.augments.swap_card(ctx, self.open && !creating);
         self.banner(ctx, sheet);
         out
     }
@@ -344,6 +351,7 @@ impl PowersView {
                         ui.set_width(augmentview::BAG_WIDTH);
                         let mut asked = Vec::new();
                         self.augments.bag(ui, sheet, &mut asked);
+                        self.augments.swap(ui, sheet, &mut asked);
                         out.extend(asked.into_iter().map(PowerAction::Augment));
                     });
                 });

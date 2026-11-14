@@ -46,6 +46,7 @@ pub mod sidekick;
 pub mod story;
 pub mod streetlife;
 pub mod streets;
+pub mod swaps;
 pub mod taxi;
 pub mod tiers;
 pub mod traffic;
@@ -771,6 +772,8 @@ pub struct Sim {
     pub story: story::Story,
     /// Indoor cases from Hero Hall (see [`missions`]).
     pub missions: missions::Missions,
+    /// Swaps of augments between heroes.
+    pub swaps: swaps::Swaps,
     /// Trouble bystanders notice: they run, stare, cars stop (see
     /// [`alarms`]).
     pub alarms: alarms::Alarms,
@@ -1156,6 +1159,7 @@ impl Sim {
             crimes: crimes::Crimes::default(),
             story: story::Story::default(),
             missions: missions::Missions::default(),
+            swaps: swaps::Swaps::default(),
             alarms: alarms::Alarms::default(),
             crime_alarms: BTreeMap::new(),
             deep: deepspots::DeepSpots::default(),
@@ -1373,6 +1377,7 @@ impl Sim {
         }
         self.lap("srv combat us", &mut t);
         sidekick::step(&mut self.world, self.tick);
+        self.mind_swaps();
         self.lap("srv sidekick us", &mut t);
         npcheroes::step(&mut self.world, self.tick, &self.incidents.open);
         self.lap("srv npcheroes us", &mut t);
@@ -2421,6 +2426,7 @@ impl Sim {
 
     pub fn remove_hero(&mut self, owner: PlayerId) {
         self.fresh.remove(&owner);
+        self.swap_off(owner);
         let found: Vec<Entity> = self
             .world
             .query::<(Entity, &Hero)>()

@@ -184,3 +184,163 @@ fn an_hour_of_fighting_finds_about_twenty_augments() {
     }
     let _ = progress::MAX_LEVEL;
 }
+
+/// Two heroes swap augments: nothing moves until both have said yes to
+/// the same table, and then both bags change in one step.
+#[test]
+fn two_heroes_swap_augments_only_when_both_say_yes_to_the_same_table() {
+    use hw_net::SwapState;
+    let mut sim = arena(5);
+    let (ann, bob) = (PlayerId(1), PlayerId(2));
+    sim.spawn_hero_with(ann, ground(0.0, 0.0), hero_sheet(10, &[ATOMIC_RAY]));
+    sim.spawn_hero_with(bob, ground(3.0, 0.0), hero_sheet(10, &[ATOMIC_RAY]));
+    let damage = augments::make(Effect::Damage, Grade::Common, 10);
+    let hold = augments::make(Effect::Hold, Grade::Rare, 10);
+    let burn = augments::make(Effect::Burn, Grade::Relic, 10);
+    sim.give_augment(ann, damage);
+    sim.give_augment(ann, hold);
+    sim.give_augment(bob, burn);
+    let bag = |sim: &mut Sim, p| sim.sheet(p).unwrap().bag;
+    let last = |sim: &mut Sim, p: PlayerId| {
+        sim.take_swap_news()
+            .into_iter()
+            .rev()
+            .find(|(q, _)| *q == p)
+            .map(|(_, s)| s)
+    };
+
+    // Ann lays one on the table; Bob sees it.
+    sim.swap_offer(ann, bob, vec![damage]);
+    let seen = last(&mut sim, bob).expect("Bob is told");
+    assert_eq!((seen.with, seen.state), (ann, SwapState::Open));
+    assert_eq!(
+        (seen.theirs.clone(), seen.mine.clone()),
+        (vec![damage], vec![])
+    );
+    // What is not in the bag cannot be laid on it.
+    sim.swap_offer(ann, bob, vec![burn]);
+    assert_eq!(last(&mut sim, bob).unwrap().theirs, vec![damage]);
+
+    // Bob says yes; Ann then changes the table: his yes is gone, and a
+    // yes to the old table does not count.
+    let rev = seen.rev;
+    sim.swap_yes(bob, rev);
+    assert!(last(&mut sim, ann).unwrap().their_yes);
+    sim.swap_offer(ann, bob, vec![hold]);
+    let now = last(&mut sim, ann).unwrap();
+    assert!(!now.their_yes && now.rev != rev);
+    sim.swap_yes(ann, rev);
+    sim.swap_yes(bob, rev);
+    assert_eq!(bag(&mut sim, ann), vec![damage, hold], "nothing has moved");
+
+    // Bob lays his own, both say yes to what they see: the bags change.
+    sim.swap_offer(bob, ann, vec![burn]);
+    let rev = last(&mut sim, ann).unwrap().rev;
+    sim.swap_yes(ann, rev);
+    assert_eq!(bag(&mut sim, bob), vec![burn], "one yes moves nothing");
+    sim.swap_yes(bob, rev);
+    assert_eq!(last(&mut sim, ann).unwrap().state, SwapState::Done);
+    assert_eq!(bag(&mut sim, ann), vec![damage, burn]);
+    assert_eq!(bag(&mut sim, bob), vec![hold]);
+    assert_eq!(sim.swaps.open(), 0);
+}
+
+/// A swap needs the two heroes together, one table per hero, and room in
+/// the bags; an augment traded in meanwhile leaves the table.
+#[test]
+fn a_swap_needs_nearness_room_and_what_was_laid_down() {
+    use hw_net::SwapState;
+    let mut sim = arena(6);
+    let (ann, bob, cy) = (PlayerId(1), PlayerId(2), PlayerId(3));
+    sim.spawn_hero_with(ann, ground(0.0, 0.0), hero_sheet(10, &[ATOMIC_RAY]));
+    sim.spawn_hero_with(bob, ground(3.0, 0.0), hero_sheet(10, &[ATOMIC_RAY]));
+    sim.spawn_hero_with(cy, ground(60.0, 0.0), hero_sheet(10, &[ATOMIC_RAY]));
+    let damage = augments::make(Effect::Damage, Grade::Common, 10);
+    let hold = augments::make(Effect::Hold, Grade::Rare, 10);
+    sim.give_augment(ann, damage);
+    sim.give_augment(ann, hold);
+    let state = |sim: &mut Sim, p: PlayerId| {
+        sim.take_swap_news()
+            .into_iter()
+            .rev()
+            .find(|(q, _)| *q == p)
+            .map(|(_, s)| s.state)
+    };
+    // Too far away.
+    sim.swap_offer(ann, cy, vec![damage]);
+    assert_eq!(state(&mut sim, ann), Some(SwapState::Far));
+    assert_eq!(sim.swaps.open(), 0);
+    // Bob is at a table with Ann: Cy cannot have him.
+    sim.swap_offer(ann, bob, vec![damage, hold]);
+    sim.swap_offer(cy, bob, vec![]);
+    assert_eq!(state(&mut sim, cy), Some(SwapState::Busy));
+    // Ann trades one in: it leaves the table, and yeses start over.
+    let rev = {
+        sim.swap_offer(ann, bob, vec![damage, hold]);
+        sim.take_swap_news().last().unwrap().1.rev
+    };
+    sim.swap_yes(bob, rev);
+    sim.trade_augment(ann, 0).unwrap();
+    sim.step();
+    let news = sim.take_swap_news();
+    let told = &news.iter().rev().find(|(q, _)| *q == bob).unwrap().1;
+    assert_eq!(told.theirs, vec![hold]);
+    assert!(!told.my_yes && told.rev != rev);
+    // Bob's bag is full: nothing moves, and both are told why.
+    while sim.sheet(bob).unwrap().bag.len() < MAX_BAG {
+        sim.give_augment(bob, damage);
+    }
+    let rev = told.rev;
+    sim.swap_yes(ann, rev);
+    sim.swap_yes(bob, rev);
+    assert_eq!(state(&mut sim, ann), Some(SwapState::Full));
+    assert_eq!(sim.sheet(ann).unwrap().bag, vec![hold]);
+    // Called off: the table is gone.
+    sim.swap_off(bob);
+    assert_eq!(state(&mut sim, ann), Some(SwapState::Off));
+    assert_eq!(sim.swaps.open(), 0);
+    // A hero who leaves ends their swap.
+    sim.swap_offer(ann, bob, vec![hold]);
+    sim.remove_hero(bob);
+    assert_eq!(state(&mut sim, ann), Some(SwapState::Off));
+}
+
+/// Either hero puts back what they do not want of the other's side; a
+/// Herobot lays out its whole bag when asked and agrees to what is left.
+#[test]
+fn a_swap_can_be_for_a_selection_and_a_herobot_lays_out_its_bag() {
+    use hw_net::SwapState;
+    let mut sim = arena(8);
+    let (ann, bot) = (PlayerId(1), PlayerId(2));
+    sim.spawn_hero_with(ann, ground(0.0, 0.0), hero_sheet(10, &[ATOMIC_RAY]));
+    sim.spawn_hero_with(bot, ground(3.0, 0.0), hero_sheet(10, &[ATOMIC_RAY]));
+    sim.tag_herobot(bot, 0);
+    let damage = augments::make(Effect::Damage, Grade::Common, 10);
+    let hold = augments::make(Effect::Hold, Grade::Rare, 10);
+    let burn = augments::make(Effect::Burn, Grade::Relic, 10);
+    for a in [damage, hold, burn] {
+        sim.give_augment(bot, a);
+    }
+    let last = |sim: &mut Sim, p: PlayerId| {
+        sim.take_swap_news()
+            .into_iter()
+            .rev()
+            .find(|(q, _)| *q == p)
+            .map(|(_, s)| s)
+    };
+    // Ann asks: the robot's whole bag is on the table, and its yes said.
+    sim.swap_offer(ann, bot, vec![]);
+    let seen = last(&mut sim, ann).unwrap();
+    assert_eq!(seen.theirs, vec![damage, hold, burn]);
+    assert!(seen.their_yes && !seen.my_yes);
+    // She wants only the relic: the other two go back.
+    sim.swap_put_back(ann, damage);
+    sim.swap_put_back(ann, hold);
+    let seen = last(&mut sim, ann).unwrap();
+    assert_eq!(seen.theirs, vec![burn]);
+    assert!(seen.their_yes, "the robot agrees to what is left");
+    sim.swap_yes(ann, seen.rev);
+    assert_eq!(last(&mut sim, ann).unwrap().state, SwapState::Done);
+    assert_eq!(sim.sheet(ann).unwrap().bag, vec![burn]);
+    assert_eq!(sim.sheet(bot).unwrap().bag, vec![damage, hold]);
+}

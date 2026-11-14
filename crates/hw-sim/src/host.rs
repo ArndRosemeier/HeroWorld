@@ -579,6 +579,10 @@ impl Host {
                 }
                 ToServer::OfferAugment { bag, to } => self.offer_augment(player, bag as usize, to),
                 ToServer::AnswerOffer { from, accept } => self.answer_offer(player, from, accept),
+                ToServer::SwapOffer { with, give } => self.sim.swap_offer(player, with, give),
+                ToServer::SwapYes { rev } => self.sim.swap_yes(player, rev),
+                ToServer::SwapOff => self.sim.swap_off(player),
+                ToServer::SwapPutBack { augment } => self.sim.swap_put_back(player, augment),
                 ToServer::Look { part, parts, bytes } => {
                     let whole = self
                         .remotes
@@ -660,12 +664,31 @@ impl Host {
             }
             self.power_log.extend(lines.iter().cloned());
         }
+        let here: Vec<PlayerId> = self
+            .players
+            .iter()
+            .filter(|(_, i)| !i.remote)
+            .map(|(p, _)| *p)
+            .collect();
+        let local = |p: PlayerId| here.contains(&p);
+        for (p, swap) in self.sim.take_swap_news() {
+            let msg = ToClient::Swap(swap);
+            match self.remotes.get_mut(&p) {
+                Some(r) => {
+                    r.rel_out.push(msg);
+                }
+                None if local(p) => self.local_news.push(msg),
+                None => {}
+            }
+        }
         for (p, sheet) in self.sim.take_sheets() {
             match self.remotes.get_mut(&p) {
                 Some(r) => {
                     r.rel_out.push(ToClient::Sheet(sheet));
                 }
-                None => self.local_sheet = Some(sheet),
+                None if local(p) => self.local_sheet = Some(sheet),
+                // A hero without a player (tests, screenshots).
+                None => {}
             }
         }
         self.send_updates();

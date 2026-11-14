@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.303 (2026-11-14)
+
+- Heroes can swap augments at a table. Stand next to a teammate, open the powers window (B) and press "Swap with ..." under your bag. Drag augments from your bag onto the table; both of you see both sides.
+- Click one of your own to take it back, or one of the other hero's to say "not this one". Nothing changes hands until you both press Swap on the same table.
+- Herobots no longer offer augments on their own. Ask one for a swap and it lays out everything it could not use; take what you like. They keep their finds until the bag is full.
+- Players need the same version to play together.
+
 ## 0.302 (2026-11-14)
 
 - Wibbets leap. Between two perches that are near each other (a lamp post and the next tree, a bench and its post) they crouch, spring across in an arc and land on the other one, instead of climbing down and running over.

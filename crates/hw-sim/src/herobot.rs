@@ -120,13 +120,6 @@ fn want(d: &powers::PowerDef) -> u64 {
     }
 }
 
-/// Ticks a Herobot waits for a player to take what it offered: the
-/// host's offer lasts a minute, and a little more for the news of it.
-const OFFER_WAIT: u64 = 63 * TICK_HZ as u64;
-/// With this many augments in the bag and no player near to offer them
-/// to, the ones that fit nothing go for karma.
-const BAG_SPARE: usize = hw_net::MAX_BAG - 8;
-
 /// What a Herobot does next with its bag.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum BagStep {
@@ -136,17 +129,11 @@ enum BagStep {
         power: PowerId,
         slot: u8,
     },
-    /// The augment at `bag` fits none of its powers: offered to a player.
-    Offer {
-        bag: usize,
-        to: PlayerId,
-    },
-    /// Nobody took it: traded in.
+    /// The bag is full of what it cannot use: the one at `bag` goes for
+    /// karma, to make room for the next find.
     TradeIn {
         bag: usize,
     },
-    /// What was offered has left the bag: a player took it.
-    Taken,
     Wait,
 }
 
@@ -165,35 +152,20 @@ fn free_socket(sheet: &Sheet, a: hw_net::Augment) -> Option<(PowerId, u8)> {
     })
 }
 
-/// One step with the bag: `offered` is the augment on offer to a player
-/// and since when, `now` the Herobot's tick, `giftee` the nearest player
-/// in reach of an offer.
-fn bag_step(
-    sheet: &Sheet,
-    offered: Option<(hw_net::Augment, u64)>,
-    now: u64,
-    giftee: Option<PlayerId>,
-) -> BagStep {
-    // What fits goes in first.
+/// One step with the bag: what fits a free socket goes in; the rest is
+/// kept for the players (a Herobot never offers it: a player asks for a
+/// swap, and gets the whole bag laid out, see [`crate::swaps`]). Only a
+/// full bag gives one up for karma.
+fn bag_step(sheet: &Sheet) -> BagStep {
     for (bag, a) in sheet.bag.iter().enumerate() {
         if let Some((power, slot)) = free_socket(sheet, *a) {
             return BagStep::Set { bag, power, slot };
         }
     }
-    if let Some((a, since)) = offered {
-        return match sheet.bag.iter().position(|b| *b == a) {
-            None => BagStep::Taken,
-            Some(bag) if now.saturating_sub(since) > OFFER_WAIT => BagStep::TradeIn { bag },
-            Some(_) => BagStep::Wait,
-        };
+    if sheet.bag.len() >= hw_net::MAX_BAG {
+        return BagStep::TradeIn { bag: 0 };
     }
-    // Everything left fits nothing of its own: the first is offered.
-    match (sheet.bag.is_empty(), giftee) {
-        (true, _) => BagStep::Wait,
-        (false, Some(to)) => BagStep::Offer { bag: 0, to },
-        (false, None) if sheet.bag.len() > BAG_SPARE => BagStep::TradeIn { bag: 0 },
-        (false, None) => BagStep::Wait,
-    }
+    BagStep::Wait
 }
 
 /// Spends the karma of `sheet` on powers it can unlock, chosen at random
@@ -291,11 +263,6 @@ pub struct Brain {
     idle_since: u64,
     /// Ticks since we started going home; the farewell once there.
     leaving: Option<u64>,
-    /// The augment on offer to a player (it fits none of our powers), and
-    /// since when.
-    offered: Option<(hw_net::Augment, u64)>,
-    /// The nearest player in reach of an offer.
-    giftee: Option<PlayerId>,
     /// Counters for tests and the log.
     pub fights: u64,
     pub revives: u64,
@@ -330,8 +297,6 @@ impl Brain {
             rot: 0,
             idle_since: 0,
             leaving: None,
-            offered: None,
-            giftee: None,
             fights: 0,
             revives: 0,
             purchases: 0,
@@ -373,7 +338,6 @@ impl Brain {
         self.read_news(conn);
         let world = conn.mirror.states();
         let me = conn.hero().and_then(|h| conn.mirror.get(h));
-        self.giftee = me.as_ref().and_then(|me| nearest_player(me, &world));
         self.shop(conn);
         let input = match me {
             Some(me) => self.decide(player, &me, &world),
@@ -431,29 +395,21 @@ impl Brain {
             conn.send(ToServer::Buy { power: *p });
             self.purchases += 1;
         }
-        // An augment in the bag goes into the first socket it fits. One
-        // that fits nowhere is offered to the nearest player, one at a
-        // time; what nobody took within the offer's minute (or with no
-        // player near and the bag filling up) is traded in for karma.
-        match bag_step(&sheet, self.offered, self.ticks, self.giftee) {
+        // An augment in the bag goes into the first socket it fits. What
+        // fits nowhere stays in the bag for the players to ask for; only
+        // a full bag gives one up for karma.
+        let step = bag_step(&sheet);
+        match step {
             BagStep::Set { bag, power, slot } => conn.send(ToServer::SetAugment {
                 bag: bag as u8,
                 power,
                 slot,
             }),
-            BagStep::Offer { bag, to } => {
-                self.offered = Some((sheet.bag[bag], self.ticks));
-                conn.send(ToServer::OfferAugment { bag: bag as u8, to });
-            }
-            BagStep::TradeIn { bag } => {
-                self.offered = None;
-                conn.send(ToServer::TradeAugment { bag: bag as u8 });
-            }
-            BagStep::Taken => self.offered = None,
+            BagStep::TradeIn { bag } => conn.send(ToServer::TradeAugment { bag: bag as u8 }),
             BagStep::Wait => {}
         }
         // Wait for the server's word before shopping again.
-        if !bought.is_empty() || !sheet.bag.is_empty() {
+        if !bought.is_empty() || step != BagStep::Wait {
             self.buy_wait = self.ticks + TICK_HZ as u64 * 2;
         }
     }
@@ -876,20 +832,6 @@ fn nearest(list: Vec<&EntityState>, pos: DVec3) -> Option<&EntityState> {
         })
 }
 
-/// The nearest player's hero (no Herobot) near enough to `me` for an
-/// offer to reach, with a margin for both walking on.
-fn nearest_player(me: &EntityState, world: &[EntityState]) -> Option<PlayerId> {
-    let pos = DVec3::from_array(me.pos);
-    world
-        .iter()
-        .filter(|e| e.kind == EntityKind::Hero && e.id != me.id)
-        .filter(|e| !e.mount.is_some_and(|m| m.1 >= hw_net::HEROBOT_MOUNT))
-        .filter_map(|e| Some((e.owner?, DVec3::from_array(e.pos).distance(pos))))
-        .filter(|(_, d)| *d <= crate::host::TRADE_REACH * 0.8)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(p, _)| p)
-}
-
 fn flat_distance(a: DVec3, b: DVec3) -> f64 {
     DVec2::new(a.x - b.x, a.z - b.z).length()
 }
@@ -946,14 +888,11 @@ mod bag_tests {
     use super::*;
     use crate::augments::{self, Effect, Grade};
 
-    /// A Herobot sets what fits, offers a player what does not, and
-    /// trades in only what nobody took.
+    /// A Herobot sets what fits and keeps the rest for the players; only
+    /// a full bag gives one up for karma.
     #[test]
-    fn a_herobot_offers_what_it_cannot_fit_before_trading_it_in() {
+    fn a_herobot_keeps_what_it_cannot_fit_until_its_bag_is_full() {
         let mut sheet = make_sheet(60_000, 7);
-        let player = PlayerId(1);
-        // Something that fits one of its powers, and something that fits
-        // none of them.
         let owned: Vec<&powers::PowerDef> = sheet
             .powers
             .iter()
@@ -973,32 +912,14 @@ mod bag_tests {
             augments::make(fit, Grade::Common, 5),
             augments::make(unfit, Grade::Rare, 5),
         );
-        sheet.bag = vec![unfit, fit];
         // What fits goes in first, wherever it lies in the bag.
-        assert!(matches!(
-            bag_step(&sheet, None, 0, Some(player)),
-            BagStep::Set { bag: 1, .. }
-        ));
-        sheet.bag = vec![unfit];
-        // The rest is offered to the player near by...
-        assert_eq!(
-            bag_step(&sheet, None, 10, Some(player)),
-            BagStep::Offer { bag: 0, to: player }
-        );
-        // ...kept while the offer stands, traded in after it has run out.
-        let offered = Some((unfit, 10));
-        assert_eq!(bag_step(&sheet, offered, 100, Some(player)), BagStep::Wait);
-        assert_eq!(
-            bag_step(&sheet, offered, 10 + OFFER_WAIT + 1, Some(player)),
-            BagStep::TradeIn { bag: 0 }
-        );
-        // Taken: it has left the bag.
-        sheet.bag.clear();
-        assert_eq!(bag_step(&sheet, offered, 100, Some(player)), BagStep::Taken);
-        // Nobody near: kept for later, until the bag fills up.
-        sheet.bag = vec![unfit];
-        assert_eq!(bag_step(&sheet, None, 0, None), BagStep::Wait);
-        sheet.bag = vec![unfit; BAG_SPARE + 1];
-        assert_eq!(bag_step(&sheet, None, 0, None), BagStep::TradeIn { bag: 0 });
+        sheet.bag = vec![unfit, fit];
+        assert!(matches!(bag_step(&sheet), BagStep::Set { bag: 1, .. }));
+        // The rest is kept, however much of it...
+        sheet.bag = vec![unfit; hw_net::MAX_BAG - 1];
+        assert_eq!(bag_step(&sheet), BagStep::Wait);
+        // ...until the bag is full: one goes for karma.
+        sheet.bag.push(unfit);
+        assert_eq!(bag_step(&sheet), BagStep::TradeIn { bag: 0 });
     }
 }

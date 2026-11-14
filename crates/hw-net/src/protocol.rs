@@ -616,6 +616,79 @@ pub const MAX_BAG: usize = 30;
 pub const MAX_SET_AUGMENTS: usize = (MAX_POWERS + 4) * SOCKETS;
 /// The strongest an augment can be (percent).
 pub const MAX_AUGMENT_PERCENT: u8 = 100;
+/// Most augments one hero puts into a swap with another hero: a whole
+/// bag.
+pub const SWAP_MOST: usize = MAX_BAG;
+
+/// How a swap of augments between two heroes stands (see
+/// `hw_sim::swaps`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwapState {
+    /// Open: both may still change what they give.
+    Open,
+    /// Both said yes: the augments changed bags.
+    Done,
+    /// One of the two called it off (or left).
+    Off,
+    /// The other hero is swapping with someone else (or cannot swap).
+    Busy,
+    /// The two heroes are too far apart.
+    Far,
+    /// A bag has no room for what it would get.
+    Full,
+}
+
+impl SwapState {
+    pub fn code(self) -> u8 {
+        self as u8
+    }
+
+    pub fn from_code(c: u8) -> Option<Self> {
+        use SwapState::*;
+        [Open, Done, Off, Busy, Far, Full].get(c as usize).copied()
+    }
+}
+
+/// A swap as one of its two heroes sees it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Swap {
+    /// The other hero.
+    pub with: PlayerId,
+    /// Counts up with every change to what is given: a yes names the
+    /// count it was said to, so it never lands on a changed swap.
+    pub rev: u16,
+    pub state: SwapState,
+    /// What this hero gives, and what they get.
+    pub mine: Vec<Augment>,
+    pub theirs: Vec<Augment>,
+    /// Who has said yes.
+    pub my_yes: bool,
+    pub their_yes: bool,
+}
+
+fn write_augments(w: &mut Writer, list: &[Augment]) {
+    let n = list.len().min(SWAP_MOST);
+    w.u8(n as u8);
+    for a in &list[..n] {
+        a.write(w);
+    }
+}
+
+fn read_augments(r: &mut Reader) -> Result<Vec<Augment>, WireError> {
+    let n = r.u8()? as usize;
+    if n > SWAP_MOST {
+        return Err(WireError);
+    }
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        out.push(Augment::read(r)?);
+    }
+    Ok(out)
+}
+
+fn augments_size(list: &[Augment]) -> usize {
+    1 + 3 * list.len().min(SWAP_MOST)
+}
 
 /// A hero's progress: what the hero file on the player's PC holds and the
 /// server plays by (see `hw_sim::progress` for the rules).
@@ -1666,6 +1739,9 @@ pub enum ToClient {
         augment: Augment,
         open: bool,
     },
+    /// How this player's swap of augments with another hero stands (sent
+    /// to both on every change).
+    Swap(Swap),
     /// The host is closing the world; the client should leave.
     SessionEnd {
         reason: String,
@@ -1965,6 +2041,25 @@ pub enum ToServer {
     Herobot {
         slot: u8,
     },
+    /// Swap augments with hero `with`: this is what I give (augments from
+    /// my bag; an empty list opens the swap). Changing it takes back both
+    /// heroes' yes.
+    SwapOffer {
+        with: PlayerId,
+        give: Vec<Augment>,
+    },
+    /// Yes to the swap as it stood at count `rev`. When both have said
+    /// yes, the augments change bags.
+    SwapYes {
+        rev: u16,
+    },
+    /// Call the swap off.
+    SwapOff,
+    /// Take `augment` off the other hero's side of the table: I do not
+    /// want it (it stays theirs).
+    SwapPutBack {
+        augment: Augment,
+    },
 }
 
 impl ToClient {
@@ -1975,6 +2070,7 @@ impl ToClient {
             ToClient::Chat { text, .. } | ToClient::TeamChat { text, .. } => 2 + s(text),
             ToClient::Mates { mates } => 1 + 14 * mates.len().min(MAX_MATES),
             ToClient::AugmentOffer { .. } => 2 + 3 + 1,
+            ToClient::Swap(x) => 2 + 2 + 1 + 1 + augments_size(&x.mine) + augments_size(&x.theirs),
             ToClient::SessionEnd { reason } => s(reason),
             ToClient::Damage { broken, .. } => 8 + 1 + 1 + 4 * broken.len().min(255),
             ToClient::Repaired { .. } => 8,
@@ -2056,6 +2152,12 @@ impl ToClient {
                 w.u8(28).u16(from.0);
                 augment.write(w);
                 w.u8(*open as u8);
+            }
+            ToClient::Swap(x) => {
+                w.u8(29).u16(x.with.0).u16(x.rev).u8(x.state.code());
+                w.u8(x.my_yes as u8 | (x.their_yes as u8) << 1);
+                write_augments(w, &x.mine);
+                write_augments(w, &x.theirs);
             }
             ToClient::SessionEnd { reason } => {
                 w.u8(4).str(reason);
@@ -2348,6 +2450,21 @@ impl ToClient {
                 }
                 ToClient::Mates { mates }
             }
+            29 => {
+                let with = PlayerId(r.u16()?);
+                let rev = r.u16()?;
+                let state = SwapState::from_code(r.u8()?).ok_or(WireError)?;
+                let yes = r.u8()?;
+                ToClient::Swap(Swap {
+                    with,
+                    rev,
+                    state,
+                    my_yes: yes & 1 != 0,
+                    their_yes: yes & 2 != 0,
+                    mine: read_augments(r)?,
+                    theirs: read_augments(r)?,
+                })
+            }
             5 => {
                 let building = r.u64()?;
                 let live = r.bool()?;
@@ -2637,6 +2754,10 @@ impl ToServer {
             ToServer::Herobot { .. } => 1 + 1,
             ToServer::OfferAugment { .. } => 1 + 1 + 2,
             ToServer::AnswerOffer { .. } => 1 + 2 + 1,
+            ToServer::SwapOffer { give, .. } => 1 + 2 + augments_size(give),
+            ToServer::SwapYes { .. } => 1 + 2,
+            ToServer::SwapOff => 1,
+            ToServer::SwapPutBack { .. } => 1 + 3,
         }
     }
 
@@ -2692,6 +2813,20 @@ impl ToServer {
             ToServer::AnswerOffer { from, accept } => {
                 w.u8(15).u16(from.0).u8(*accept as u8);
             }
+            ToServer::SwapOffer { with, give } => {
+                w.u8(16).u16(with.0);
+                write_augments(w, give);
+            }
+            ToServer::SwapYes { rev } => {
+                w.u8(17).u16(*rev);
+            }
+            ToServer::SwapOff => {
+                w.u8(18);
+            }
+            ToServer::SwapPutBack { augment } => {
+                w.u8(19);
+                augment.write(w);
+            }
         }
     }
 
@@ -2734,6 +2869,15 @@ impl ToServer {
                 accept: r.u8()? & 1 != 0,
             },
             13 => ToServer::Herobot { slot: r.u8()? },
+            16 => ToServer::SwapOffer {
+                with: PlayerId(r.u16()?),
+                give: read_augments(r)?,
+            },
+            17 => ToServer::SwapYes { rev: r.u16()? },
+            18 => ToServer::SwapOff,
+            19 => ToServer::SwapPutBack {
+                augment: Augment::read(r)?,
+            },
             _ => return Err(WireError),
         })
     }
@@ -3339,6 +3483,29 @@ mod tests {
                         },
                     ),
                     (
+                        14,
+                        ToServer::SwapOffer {
+                            with: PlayerId(3),
+                            give: vec![Augment {
+                                effect: 2,
+                                percent: 15,
+                                grade: 1,
+                            }],
+                        },
+                    ),
+                    (15, ToServer::SwapYes { rev: 700 }),
+                    (16, ToServer::SwapOff),
+                    (
+                        17,
+                        ToServer::SwapPutBack {
+                            augment: Augment {
+                                effect: 2,
+                                percent: 15,
+                                grade: 1,
+                            },
+                        },
+                    ),
+                    (
                         13,
                         ToServer::TeamChat {
                             text: "on my way".into(),
@@ -3669,6 +3836,30 @@ mod tests {
             removed: Vec::new(),
         };
         assert_eq!(one.encode().len(), UPDATE_HEADER_BYTES + 4 + m.wire_size());
+        let a = Augment {
+            effect: 4,
+            percent: 22,
+            grade: 2,
+        };
+        let m = ToClient::Swap(Swap {
+            with: PlayerId(9),
+            rev: 300,
+            state: SwapState::Full,
+            mine: vec![a, a],
+            theirs: vec![a],
+            my_yes: false,
+            their_yes: true,
+        });
+        let one = ServerMsg::Update {
+            tick: 0,
+            ack: 0,
+            rel_ack: 0,
+            reliable: vec![(7, m.clone())],
+            entities: Vec::new(),
+            removed: Vec::new(),
+        };
+        assert_eq!(one.encode().len(), UPDATE_HEADER_BYTES + 4 + m.wire_size());
+        assert_eq!(ServerMsg::decode(&one.encode()).unwrap(), one);
         let m = ToClient::Mates {
             mates: vec![
                 (PlayerId(2), [1.0, 2.0, 3.0]),
