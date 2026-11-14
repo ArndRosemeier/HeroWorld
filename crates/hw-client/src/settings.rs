@@ -232,7 +232,15 @@ pub const CONTROLS: &[(&str, &str)] = &[
         "Enter or /",
         "Chat: type a line, Enter says it, Escape cancels",
     ),
-    ("Escape", "This menu; frees the mouse when it is locked"),
+    (
+        "Escape",
+        "Frees the mouse when it is locked; closes the open window",
+    ),
+    ("Alt+Enter", "Window or fullscreen"),
+    (
+        "Menu button (top right)",
+        "Settings, controls, arrange the screen, back to the title screen, quit (Alt frees the mouse to click it)",
+    ),
     (
         "Ctrl+Shift+F12",
         "Debug menu: go anywhere, levels, powers, events, time, cut-open view",
@@ -253,7 +261,7 @@ pub fn controls_ui(ui: &mut egui::Ui) {
         });
 }
 
-/// The game's menu (Escape): resume, settings, controls, quit.
+/// The game's menu (the button in the top right corner): resume, settings, controls, quit.
 pub struct GameMenu {
     pub open: bool,
     page: Page,
@@ -308,18 +316,69 @@ impl GameMenu {
         }
     }
 
-    /// Opens on Escape (when the mouse is free: Escape first frees a locked
-    /// mouse), draws the menu and applies what is changed. Call every frame
-    /// of play. Returns what the player chose to leave by, if anything.
-    pub fn show(&mut self, ui: &engine::ui::UiFrame, world: &mut World) -> MenuExit {
-        let escape = ui.ctx().input(|i| i.key_pressed(egui::Key::Escape));
-        // Escape frees a pinned pointer first, unless the pointer is pinned
-        // by the always-on mouselook: then it opens the menu at once.
-        if escape && !self.open && (self.mouselook || !world.pointer_lock()) {
+    /// The menu button, a piece of the screen like the minimap (draggable
+    /// and resizable under "Arrange the screen"): a round Googie badge with
+    /// three bars. Clicking it opens the menu. Escape no longer does: it
+    /// only frees the mouse and closes windows.
+    pub fn button(&mut self, ctx: &egui::Context) {
+        use crate::uikit::{with_alpha, CREAM, DEEP, GOLD, NAVY};
+        let size = 46.0;
+        let screen = ctx.screen_rect();
+        // Under the version plate, top right.
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(screen.right() - 10.0 - size, 58.0),
+            egui::vec2(size, size),
+        );
+        let id = egui::Id::new("menu button");
+        let layer = egui::LayerId::new(egui::Order::Middle, id);
+        let anchor = rect.center_top();
+        crate::layout::apply(ctx, "menu", anchor, &[layer]);
+        crate::layout::overlay(ctx, "menu", "Menu button", anchor, rect);
+        if crate::layout::editing() {
+            return;
+        }
+        let resp = egui::Area::new(id)
+            .order(egui::Order::Middle)
+            .fixed_pos(rect.min)
+            .show(ctx, |ui| {
+                let (r, resp) = ui.allocate_exact_size(rect.size(), egui::Sense::click());
+                let hot = resp.hovered();
+                let c = r.center();
+                let rad = size * 0.5;
+                let p = ui.painter();
+                p.circle_filled(
+                    c + egui::vec2(2.0, 3.0),
+                    rad,
+                    egui::Color32::from_black_alpha(120),
+                );
+                p.circle_filled(c, rad, if hot { NAVY } else { DEEP });
+                p.circle_stroke(c, rad - 1.5, egui::Stroke::new(2.5_f32, GOLD));
+                p.circle_stroke(
+                    c,
+                    rad - 6.0,
+                    egui::Stroke::new(1.0_f32, with_alpha(crate::uikit::AETHER, 0.55)),
+                );
+                // Three bars, the middle one a little shorter.
+                for (dy, half) in [(-7.0_f32, 10.0_f32), (0.0, 7.0), (7.0, 10.0)] {
+                    p.line_segment(
+                        [c + egui::vec2(-half, dy), c + egui::vec2(half, dy)],
+                        egui::Stroke::new(3.0_f32, if hot { GOLD } else { CREAM }),
+                    );
+                }
+                resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text("Menu: settings, controls, back to the title screen, quit")
+            })
+            .inner;
+        if resp.clicked() && !self.open {
             self.open = true;
             self.page = Page::Main;
             self.profile = Some(Profile::load());
         }
+    }
+
+    /// Draws the menu (when open) and applies what is changed. Call every
+    /// frame of play. Returns what the player chose to leave by, if anything.
+    pub fn show(&mut self, ui: &engine::ui::UiFrame, world: &mut World) -> MenuExit {
         let Some(p) = self.profile.as_mut() else {
             return MenuExit::Stay;
         };

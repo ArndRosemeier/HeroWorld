@@ -24,7 +24,8 @@
 //! lanes over the main roads.
 //! N hides or shows the minimap (bottom right; it turns with the camera),
 //! M opens the whole town map.
-//! Escape opens the menu (settings, controls, quit; see `settings.rs`).
+//! The menu button (top right) opens the menu (settings, controls, quit; see
+//! `settings.rs`); Escape only frees the mouse and closes windows.
 //! O switches to a free-flying camera and back. C cuts buildings open
 //! around where you look (F moves the cut there), Z/X pick the floor.
 //!
@@ -654,6 +655,8 @@ fn main() -> EngineResult<()> {
     let mut voice_ui = hw_client::voice::VoiceUi::default();
     // The pointer was locked when the chat line opened: lock it again after.
     let mut chat_relock = false;
+    // The window was out of focus: the click that brings it back is not a punch.
+    let mut focus_click = false;
     // Always-on mouselook: when the pointer is pinned and when it is freed.
     let mut mouselook = hw_client::mouselook::Mouselook::default();
     // What was drawn last frame (for targeting), and a power key pressed
@@ -2152,6 +2155,18 @@ fn main() -> EngineResult<()> {
         move |world, frame| {
             // Notices late frames and writes what went on (see `hitch.rs`).
             let _hitch = hw_client::hitch::begin(world, frame.time);
+            // Alt+Enter: window or fullscreen. The key is taken here, so the
+            // chat's Enter does not see it, and Alt does not free the mouse
+            // for this frame (see `cursor_needed`).
+            let alt_enter = frame.ui.ctx().input_mut(|i| {
+                i.consume_key(
+                    engine::ui::egui::Modifiers::ALT,
+                    engine::ui::egui::Key::Enter,
+                )
+            });
+            if alt_enter {
+                world.set_fullscreen(!world.fullscreen());
+            }
             if hide_hud {
                 // Every layer egui knows of is moved far off screen.
                 use engine::ui::egui::{emath::TSTransform, vec2};
@@ -2600,7 +2615,8 @@ fn main() -> EngineResult<()> {
                 world.set_pointer_lock(true);
                 chat_relock = false;
             }
-            // Escape: the menu (settings, controls, quit).
+            // The menu (settings, controls, quit) opens from its button.
+            menu.button(frame.ui.ctx());
             menu.hosting = open_at.is_some() || session.room_code().is_some();
             match menu.show(&frame.ui, world) {
                 hw_client::settings::MenuExit::Stay => {}
@@ -3149,7 +3165,12 @@ fn main() -> EngineResult<()> {
                 powers.open = !powers.open;
             }
             // Clicks on a window are not punches.
-            let on_ui = frame.ui.ctx().is_pointer_over_area();
+            if !frame.ui.ctx().input(|i| i.focused) {
+                focus_click = true;
+            } else if !input.mouse_down(MouseButton::Left) {
+                focus_click = false;
+            }
+            let on_ui = frame.ui.ctx().is_pointer_over_area() || focus_click;
             if !flying {
                 if input.pressed(Key::V) {
                     if can_fly {
@@ -5444,7 +5465,7 @@ fn main() -> EngineResult<()> {
                     world.set_pointer_lock(false);
                     town_map.relock = true;
                 }
-                // "Arrange the screen" (Escape menu): the pointer is free so
+                // "Arrange the screen" (menu button): the pointer is free so
                 // pieces can be dragged; Done or Enter ends it.
                 hw_client::layout::edit_bar(frame.ui.ctx());
                 town_map.show(
@@ -5621,6 +5642,22 @@ fn main() -> EngineResult<()> {
                 if powers.tray.sync(&my_sheet) {
                     save_tray(&powers.tray);
                 }
+                // Escape frees a pinned mouse (Engine does that) and closes
+                // the open window; it never opens the menu. With a free
+                // pointer Engine would quit on it, so it is told it was
+                // handled (the menu's own modal closes itself first).
+                if frame
+                    .ui
+                    .ctx()
+                    .input(|i| i.key_pressed(engine::ui::egui::Key::Escape))
+                    && !world.pointer_lock()
+                    && !chat.typing
+                {
+                    {
+                        powers.open = false;
+                        world.set_bind_listen(true);
+                    }
+                }
                 // Always-on mouselook: decided last, once every window of
                 // this frame is known, so it wins over the pointer frees
                 // and re-pins above. Alt held shows the pointer.
@@ -5637,7 +5674,7 @@ fn main() -> EngineResult<()> {
                     || town_map.open
                     || case_file.taking_pointer()
                     || police.taking_pointer()
-                    || frame.ui.ctx().input(|i| i.modifiers.alt);
+                    || (frame.ui.ctx().input(|i| i.modifiers.alt) && !alt_enter);
                 let clicked_in_world = frame.input.mouse_clicked(MouseButton::Left)
                     && !frame.ui.ctx().is_pointer_over_area();
                 if let Some(lock) = mouselook.update(
@@ -5750,7 +5787,7 @@ fn main() -> EngineResult<()> {
     run
 }
 
-/// Set by the Escape menu's "Back to the title screen".
+/// Set by the menu button's "Back to the title screen".
 static RESTART_AT_TITLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Starts the game again, as if from the launcher, once this one has

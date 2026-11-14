@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.293 (2026-11-14)
+
+- The menu (settings, controls, back to the title screen, quit) is a round button in the top right corner now, under the version. Escape no longer opens it: it just lets go of the mouse and closes the open window. You can move and resize the button under "Arrange the screen". With the mouse locked, hold Alt to click it.
+- Alt+Enter switches between a window and fullscreen.
+- A click that only brings the game window back into focus no longer punches, and a punch at nobody is silent (no more "nobody close enough to punch").
+
 ## 0.292 (2026-11-14)
 
 - The utility tunnels are no longer just empty pipes. Behind doors in their walls you now find pump halls with a great pump drum and a glowing control desk, workers' rooms with lockers, a stove and a tool rack, and smugglers' dens with crates, barrels, a camp bed and a strongbox.

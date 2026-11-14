@@ -8,7 +8,7 @@
 //!   as a whole by an egui layer transform ([`apply`]): the piece itself
 //!   needs no code for it. Each has a key, an anchor point (the point of
 //!   its own box that stays put when it is scaled) and the player's offset
-//!   and scale. "Arrange the screen" (Escape menu) shows a gold frame
+//!   and scale. "Arrange the screen" (menu button) shows a gold frame
 //!   round each piece: drag it to move, drag its corner to resize
 //!   ([`overlay`]), and a bar with Done and Reset ([`edit_bar`]).
 //! - **Windows** are plain egui windows that can be dragged (and some

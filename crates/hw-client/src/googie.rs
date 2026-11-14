@@ -472,7 +472,7 @@ pub fn window<R>(
     shown.and_then(|s| s.inner)
 }
 
-/// Engine's modal (Escape menu, What's new) as a Googie window: egui's own
+/// Engine's modal (menu button, What's new) as a Googie window: egui's own
 /// frame and Engine's heading are hidden while it is drawn, and `add` gets
 /// the game's style back.
 pub fn modal(

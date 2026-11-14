@@ -109,7 +109,7 @@ for host migration (`hw-sim/src/save.rs`).
 
 ## 3. Controls
 
-From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fightview.rs`:
+From `settings::CONTROLS` (shown in the game under the menu button → Controls) and `fightview.rs`:
 
 | Key | What it does |
 | --- | --- |
@@ -137,11 +137,13 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | J | Case file: open cases (pick which one the radio follows), the Doctor's dossier, the cabinet of closed cases |
 | T | Police visor on or off (a new call switches it on) |
 | N | Minimap on or off |
-| Escape, "Arrange the screen" | Drag the minimap, compass, power tray, radio and police monitor; drag a corner to resize (0.5x to 2.5x); Enter or the tick ends, the red arrow resets. Saved in `ui_layout.json` beside the profile. Chat, powers and police windows are draggable and remembered |
+| Menu button, "Arrange the screen" | Drag the minimap, compass, power tray, radio and police monitor; drag a corner to resize (0.5x to 2.5x); Enter or the tick ends, the red arrow resets. Saved in `ui_layout.json` beside the profile. Chat, powers and police windows are draggable and remembered |
 | O | Free camera |
 | Enter or / | Chat: type a line, Enter says it (in a speech bubble over your head and in the chat window), Escape cancels |
 | K | Knock nearby townspeople over (a ragdoll test, still in the game) |
-| Escape | Menu: back, settings, controls, back to the title screen (asks first when hosting), quit; frees a locked mouse first |
+| Escape | Frees a locked mouse and closes the open window; it no longer opens the menu |
+| Alt+Enter | Window or fullscreen (borderless); the chat and the mouse stay as they were |
+| Menu button (round, top right under the version; Alt frees the mouse to click it) | Menu: back, settings, controls, arrange the screen, back to the title screen (asks first when hosting), quit. A draggable, resizable HUD piece (`menu` in `ui_layout.json`) |
 
 On foot the hero steps up and down ledges up to 0.45 m (`collision::STEP`) without
 leaving the ground, so slopes, kerbs and stairs never count as a fall; a bigger drop
@@ -1882,7 +1884,7 @@ on the way. Rides are free.
   (bottom right: round, turns with the camera so what you look at is up, zooms out as you
   fly higher; marks you, friends, landmarks and radio calls; `minimap.rs`, `mapraster.rs`).
 - **Windows:** powers (B: karma, level, shop, give up, faction standings), map (M), menu
-  (Escape: settings, controls, quit).
+  (the menu button, top right: settings, controls, quit).
 - **Town map** (M, or Escape to close; `townmap.rs`): fills the screen, north up, with the
   minimap's detail from the same tiles: every house when close (closer than about 1.6 m a
   pixel), blocks and streets further out (up to about 4 m a pixel), main roads beyond; parks,
@@ -2053,7 +2055,7 @@ run, or put them in a `.bat`.
 | `HW_TITLE=0` | Skip the title. `HW_TITLE_PANEL=new\|friends\|settings\|creator\|city`, `HW_TITLE_TIME`, `HW_TITLE_AUTOSTART` drive it. |
 | `HW_CREATOR_SECTION`, `HW_CREATOR_DETAILED=1` | Open the creator at a section, in the detailed view. |
 | `HW_CREATOR_CLIP=hover\|fly\|power` | The creator's hero plays that clip (close-ups of the hero's own poses). |
-| `HW_MENU=main\|settings\|controls` | Open the Escape menu. |
+| `HW_MENU=main\|settings\|controls` | Open the menu (button top right). |
 | `HW_WHATS_NEW=1` | Open "What's new". |
 | `HW_HOST=1`, `HW_JOIN=<code or ip:port>` | Host or join without the title. |
 | `HW_NO_UPNP=1` | Do not ask the router to forward the port. |

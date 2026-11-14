@@ -1419,7 +1419,10 @@ impl FightView {
                         self.play(world, |s| &s.hum, at, 0.7, 0.4);
                     }
                     // A power we asked for did not fire: say why.
-                    if on_me && powers::get(PowerId(e.theme)).is_some() {
+                    // A punch at nobody is silent.
+                    let silent =
+                        PowerId(e.theme) == PowerId::STRIKE && e.amount & 0xff == fizzle::NO_TARGET;
+                    if on_me && !silent && powers::get(PowerId(e.theme)).is_some() {
                         let text = fizzle_text(PowerId(e.theme), e.amount & 0xff);
                         self.log_fizzle(&text, e, me, all);
                         self.say(&text);
