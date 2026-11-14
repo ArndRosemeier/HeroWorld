@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.312 (2026-11-14)
+
+- The rooms off the utility tunnels now have people in them: workers in the pump halls and workers' rooms, and smugglers guarding their dens. Some walk a short round.
+- Glowing fungus grows along the tunnel walls, and the tunnel lamps differ: warm, orange, a few red emergency lamps, some weak and dim.
+
 ## 0.311 (2026-11-14)
 
 - A wibbet no longer climbs a lamp post, tree or hydrant that has been knocked down: it drops to the pavement.

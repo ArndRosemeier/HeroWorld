@@ -4743,6 +4743,20 @@ fn main() -> EngineResult<()> {
                             .collect::<Vec<_>>()
                     })
                     .collect();
+                // The workers and smugglers in the rooms off the utility tunnels.
+                for (ri, room) in world_plan.underground().rooms.iter().enumerate() {
+                    for (n, f) in room.folk.iter().enumerate() {
+                        if DVec2::new(f.at.x, f.at.z).distance(eye2) < TUBE_FOLK_SHOWN_M {
+                            // A tile key no deep tile has, one per room.
+                            folk.push(citizens.tube_folk(
+                                (ri as i64, 0x7_FF00),
+                                n as u32,
+                                f,
+                                game_time,
+                            ));
+                        }
+                    }
+                }
                 folk.sort_by(|a, b| {
                     let d = |c: &hw_sim::citizens::Citizen| {
                         DVec2::new(c.pos.x, c.pos.z).distance_squared(eye2)

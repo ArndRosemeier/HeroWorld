@@ -5,6 +5,7 @@
 //! Planned from the tunnels alone (and the seed), never from each other's
 //! drawing, so the same seed digs the same rooms.
 
+use super::deep::Folk;
 use super::footprint::Footprint;
 use super::underground::{Underground, Void, VoidKind, TUNNEL_HALF};
 use super::world::TownWorld;
@@ -92,6 +93,8 @@ pub struct Room {
     /// The tunnel it opens off.
     pub tunnel: usize,
     pub props: Vec<Prop>,
+    /// Who is in it (workers, smugglers), shown while the camera is near.
+    pub folk: Vec<Folk>,
     /// Where its lamp hangs.
     pub lamp: DVec3,
     /// Hung with grease and dust: 0..3.
@@ -311,6 +314,57 @@ pub(crate) fn plan_rooms(
                     look: rng.range_int(0, 3) as u32,
                 });
             }
+            // People: standing at their work, one of them walking a round.
+            let at = |x: f64, y: f64| {
+                let q = passage.world(DVec2::new(x, PASS_LEN + y));
+                DVec3::new(q.x, floor, q.y)
+            };
+            let toward = passage.along.perp();
+            let face = |a: f64| DVec2::from_angle(a).rotate(toward);
+            let folk = match kind {
+                RoomKind::PumpHall => vec![
+                    Folk {
+                        at: at(-3.0, 8.4),
+                        facing: -toward,
+                        to: None,
+                        mole: false,
+                    },
+                    Folk {
+                        at: at(2.6, 2.0),
+                        facing: toward,
+                        to: Some(passage.world(DVec2::new(-2.4, PASS_LEN + 4.0))),
+                        mole: false,
+                    },
+                ],
+                RoomKind::Workers => vec![
+                    Folk {
+                        at: at(1.4, 2.5),
+                        facing: face(0.4),
+                        to: None,
+                        mole: false,
+                    },
+                    Folk {
+                        at: at(-1.0, 4.6),
+                        facing: face(-0.6),
+                        to: None,
+                        mole: false,
+                    },
+                ],
+                RoomKind::Den => vec![
+                    Folk {
+                        at: at(1.0, 3.4),
+                        facing: face(2.8),
+                        to: None,
+                        mole: rng.chance(0.3),
+                    },
+                    Folk {
+                        at: at(0.0, 1.6),
+                        facing: -toward,
+                        to: Some(passage.world(DVec2::new(1.5, PASS_LEN + 5.5))),
+                        mole: false,
+                    },
+                ],
+            };
             let lamp = room.world(DVec2::new(0.0, PASS_LEN + depth * 0.5));
             let lamp = DVec3::new(lamp.x, floor + height - 0.35, lamp.y);
             let vi = u.voids.len();
@@ -324,6 +378,7 @@ pub(crate) fn plan_rooms(
                 passage: vi,
                 tunnel: t,
                 props,
+                folk,
                 lamp,
                 look,
             });

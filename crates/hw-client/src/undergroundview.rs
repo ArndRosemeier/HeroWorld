@@ -227,14 +227,11 @@ pub fn build(town: &TownWorld, key: Key) -> Built {
                 .cavern
                 .as_ref()
                 .is_some_and(|c| (l.y - c.floor).abs() < 4.0);
+            let (warm, strength) = crate::sewerview::tunnel_lamp(*l);
             out.glows.push(Glow {
                 pos: *l,
-                color: if in_cavern {
-                    rgb(150, 120, 255)
-                } else {
-                    rgb(255, 226, 180)
-                },
-                strength: if in_cavern { 9.0 } else { 7.0 },
+                color: if in_cavern { rgb(150, 120, 255) } else { warm },
+                strength: if in_cavern { 9.0 } else { strength },
                 range: if in_cavern { 16.0 } else { 13.0 },
             });
         }

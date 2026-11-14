@@ -24,6 +24,54 @@ fn hash(a: u32, b: u32) -> u32 {
     h ^ (h >> 12)
 }
 
+/// A tunnel lamp's colour and strength: mostly warm, some sodium orange,
+/// a few red emergency lamps, a few weak and dim, so no two stretches match.
+pub fn tunnel_lamp(at: DVec3) -> (Color, f32) {
+    let h = hash(
+        at.x.round() as i32 as u32,
+        (at.z.round() as i32 as u32) ^ 0x51ed,
+    );
+    match h % 20 {
+        0..=11 => (rgb(255, 226, 180), 7.0),
+        12..=14 => (rgb(255, 170, 80), 6.5),
+        15..=16 => (rgb(255, 60, 40), 5.0),
+        17..=18 => (rgb(190, 230, 255), 4.0),
+        _ => (rgb(255, 226, 180), 2.0),
+    }
+}
+
+/// A cluster of glowing fungus at the foot of a wall.
+fn fungus(b: &mut MeshBuilder, base: DVec3, seed: u32) {
+    b.surf = Surf::Plain;
+    let n = 3 + seed % 3;
+    for k in 0..n {
+        let h = hash(seed, k);
+        let o = DVec3::new(
+            ((h & 0xff) as f64 / 255.0 - 0.5) * 0.3,
+            0.0,
+            (((h >> 8) & 0xff) as f64 / 255.0 - 0.5) * 0.3,
+        );
+        let r = 0.05 + ((h >> 16) % 5) as f64 * 0.012;
+        let h_stem = 0.08 + ((h >> 20) % 6) as f64 * 0.02;
+        b.cylinder(
+            base + o,
+            (0.012, 0.012),
+            h_stem,
+            5,
+            false,
+            rgb(150, 160, 140),
+        );
+        b.surf = Surf::Glow;
+        let cap = if seed.is_multiple_of(2) {
+            rgb(110, 255, 190)
+        } else {
+            rgb(160, 150, 255)
+        };
+        b.dome(base + o + DVec3::Y * h_stem, r, 8, 2, cap);
+        b.surf = Surf::Plain;
+    }
+}
+
 fn murk(seed: u32) -> Color {
     // Dull olive-brown with some variation, never shiny.
     let k = (seed % 7) as u8;
@@ -99,6 +147,19 @@ pub fn tunnel_stream(b: &mut MeshBuilder, u: &Underground, i: usize) {
                 },
             );
         }
+    }
+    // Fungus along the foot of the walls, here and there.
+    let half = v.max.y;
+    let mut x = 2.0 + (seed % 7) as f64;
+    while x < len - 1.0 {
+        let h = hash(seed, x as u32 ^ 0xf00d);
+        let s = if h.is_multiple_of(2) { 1.0 } else { -1.0 };
+        let p = v.world(DVec2::new(x, 0.0)) + side * s * (half - 0.2);
+        let base = v3(p, v.floor_at(p) + 0.01);
+        if !open_elsewhere(u, i, base + DVec3::Y * 0.3) && h % 5 < 2 {
+            fungus(b, base, h >> 4);
+        }
+        x += 6.0 + (h % 9) as f64;
     }
     let _ = TUNNEL_HALF;
 }
