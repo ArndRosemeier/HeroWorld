@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.305 (2026-11-14)
+
+- The planet got wilder, behind the scenes: much taller mountain ranges, stepped mesas with sheer cliffs, deep canyons, and Aether running through the land in glowing lines. Sixteen one-of-a-kind wonders (a floating mountain, a sky-high waterfall, a glass desert and more) are placed far apart. Floating rock and caves are defined too. You will meet them in a coming build.
+
 ## 0.304 (2026-11-14)
 
 - The planet has a shape now, behind the scenes: continents and island chains, mountain ranges, climate, rain, rivers, lakes and the kinds of land they make (forest, desert, tundra and more). You will walk on it in a coming build; nothing changes in the game yet.

@@ -111,6 +111,7 @@ enum Layer {
     Biome,
     Rain,
     Height,
+    Aether,
 }
 
 /// Lon/lat (radians) to a unit vector, longitude 0 on +Z, growing to +X.
@@ -143,7 +144,7 @@ fn ramp(stops: &[(f64, [u8; 3])], x: f64) -> [u8; 3] {
 /// Colour of a pixel (unshaded) from the direction and the height there.
 fn base_color(map: &PlanetMap, u: DVec3, h: f64, layer: Layer) -> [u8; 3] {
     let s = map.sample(u);
-    if h <= 0.0 {
+    if h <= 0.0 && layer != Layer::Aether {
         let deep = ramp(
             &[
                 (-6000.0, [10, 28, 70]),
@@ -168,6 +169,16 @@ fn base_color(map: &PlanetMap, u: DVec3, h: f64, layer: Layer) -> [u8; 3] {
                 (4000.0, [20, 40, 120]),
             ],
             s.rain as f64,
+        ),
+        Layer::Aether => ramp(
+            &[
+                (0.0, [20, 20, 60]),
+                (0.3, [60, 50, 140]),
+                (0.6, [150, 70, 200]),
+                (0.85, [255, 150, 230]),
+                (1.0, [255, 255, 255]),
+            ],
+            map.globe.aether(u),
         ),
         Layer::Height => ramp(
             &[
@@ -246,6 +257,24 @@ fn render(
     if layer == Layer::Biome {
         rivers(map, &mut img, project);
     }
+    for wonder in &map.wonders {
+        if let Some((x, y)) = project(wonder.at.as_vec3()) {
+            for (dx, dy) in [
+                (-3, 0),
+                (3, 0),
+                (0, -3),
+                (0, 3),
+                (0, 0),
+                (-2, -2),
+                (2, 2),
+                (-2, 2),
+                (2, -2),
+            ] {
+                img.put(x as i64 + dx, y as i64 + dy, [255, 215, 0]);
+            }
+            img.put(x as i64, y as i64, [200, 0, 0]);
+        }
+    }
     img
 }
 
@@ -270,6 +299,16 @@ fn main() {
         println!(
             "  landmass {k}: {:>10.0} km² around {:>5.1}°N {:>6.1}°E",
             m.area_km2,
+            ll.lat.to_degrees(),
+            ll.lon.to_degrees()
+        );
+    }
+    for w in &map.wonders {
+        let ll = hw_core::LatLon::from_dir(w.at);
+        println!(
+            "  wonder {:<28} {:<18} {:>5.1}°N {:>6.1}°E",
+            w.name,
+            w.kind.label(),
             ll.lat.to_degrees(),
             ll.lon.to_degrees()
         );
@@ -337,6 +376,7 @@ fn main() {
         ("world", Layer::Biome),
         ("rain", Layer::Rain),
         ("height", Layer::Height),
+        ("aether", Layer::Aether),
     ] {
         let img = render(&map, layer, finest, W, H, &equirect_dir, &equirect_xy);
         img.save(&format!("{prefix}-{name}.png"));

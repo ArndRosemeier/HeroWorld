@@ -9,6 +9,7 @@
 use super::biome::{classify, Biome};
 use super::globe::Globe;
 use super::grid::{par_map, Cell, Grid};
+use super::wonders::Wonder;
 use glam::{DVec3, Vec3};
 use hw_core::{det, Noise3, Seed};
 use std::cmp::Reverse;
@@ -66,6 +67,9 @@ pub struct PlanetMap {
     /// Depth of the lake in a basin cell (m), 0 if dry.
     pub lake: Vec<f32>,
     pub biome: Vec<Biome>,
+    /// The planet's wonders.
+    pub wonders: Vec<Wonder>,
+    seed: Seed,
 }
 
 impl PlanetMap {
@@ -92,9 +96,12 @@ impl PlanetMap {
             flow: Vec::new(),
             lake: Vec::new(),
             biome: Vec::new(),
+            wonders: Vec::new(),
+            seed,
         };
         map.solve_rivers();
         map.biome = par_map(map.grid.cells(), |c| map.biome_of(c));
+        map.wonders = super::wonders::place(&map, map.seed);
         map
     }
 
@@ -366,10 +373,16 @@ mod tests {
         assert_eq!(a.flow, b.flow);
         assert!((a.land_share() - 0.30).abs() < 0.08, "{}", a.land_share());
         assert!(a.landmasses().len() >= 2);
-        // Warm at the equator, cold at the poles.
-        let eq = a.sample(DVec3::new(1.0, 0.0, 0.0)).temp;
-        let pole = a.sample(DVec3::Y).temp;
-        assert!(eq > pole + 25.0, "{eq} vs {pole}");
+        // Warm in the tropics, cold near the poles (on average over the cells).
+        let mean = |keep: &dyn Fn(f32) -> bool| {
+            let v: Vec<f32> = (0..a.grid.cells())
+                .filter(|c| keep(a.centers[*c].y.abs()))
+                .map(|c| a.temp[c])
+                .collect();
+            v.iter().sum::<f32>() / v.len() as f32
+        };
+        let (tropics, poles) = (mean(&|y| y < 0.2), mean(&|y| y > 0.9));
+        assert!(tropics > poles + 25.0, "{tropics} vs {poles}");
         // Every river follows the water downhill to the sea or to a lake.
         for c in 0..a.grid.cells() {
             if a.is_sea(c) || a.flow_to[c] == NO_CELL {
@@ -390,5 +403,20 @@ mod tests {
         let dry = a.rain.iter().cloned().fold(f32::MAX, f32::min);
         assert!(wet > 4.0 * dry.max(1.0), "{dry}..{wet}");
         assert!((0..a.grid.cells()).any(|c| a.is_river(c as Cell)));
+        // Wonders are few, far apart and named.
+        assert!(!a.wonders.is_empty() && a.wonders.len() <= 16);
+        for (i, w) in a.wonders.iter().enumerate() {
+            assert!(w.name.starts_with("The "));
+            for v in &a.wonders[i + 1..] {
+                let d = w.at.dot(v.at).clamp(-1.0, 1.0).acos() * a.globe.radius();
+                assert!(
+                    d > crate::planet::wonders::SPACING_M,
+                    "{} and {}",
+                    w.name,
+                    v.name
+                );
+            }
+        }
+        assert_eq!(a.wonders.len(), b.wonders.len());
     }
 }

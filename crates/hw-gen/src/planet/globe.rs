@@ -22,7 +22,7 @@ pub const LAND_SHARE: f64 = 0.30;
 const PLATES: usize = 16;
 
 /// Highest point the shape makes (m); a few tall peaks reach it.
-pub const MAX_HEIGHT: f64 = 9000.0;
+pub const MAX_HEIGHT: f64 = 12_000.0;
 
 #[derive(Clone, Debug)]
 struct Plate {
@@ -58,6 +58,8 @@ pub struct Globe {
     n_hill: Noise3,
     n_ridge: Noise3,
     n_old: Noise3,
+    n_drama: Noise3,
+    n_aether: Noise3,
     /// Where sea level lies in the land value (calibrated).
     sea: f64,
 }
@@ -110,6 +112,8 @@ impl Globe {
             n_hill: Noise3::new(seed.child("hills")),
             n_ridge: Noise3::new(seed.child("ridges")),
             n_old: Noise3::new(seed.child("old")),
+            n_drama: Noise3::new(seed.child("drama")),
+            n_aether: Noise3::new(seed.child("aether")),
             sea: 0.0,
         };
         g.calibrate(&mut seed.child("calibrate").rng());
@@ -203,7 +207,7 @@ impl Globe {
         };
 
         let mut h = if s >= 0.0 {
-            650.0 * smooth(0.0, 0.7, s)
+            900.0 * smooth(0.0, 0.4, s)
         } else {
             -(250.0 * smooth(0.0, 0.1, -s) + 3900.0 * smooth(0.05, 0.5, -s))
         };
@@ -214,15 +218,15 @@ impl Globe {
         let hills = self
             .n_hill
             .fbm(u.x * 38.0, u.y * 38.0, u.z * 38.0, octaves(168_000.0));
-        h += (150.0 + 650.0 * smooth(0.1, 0.8, s)) * hills * shore_gate;
+        h += (250.0 + 900.0 * smooth(0.1, 0.8, s)) * hills * shore_gate;
 
         // Mountain belts where plates close.
         let ridge = self
             .n_ridge
             .ridged(u.x * 12.0, u.y * 12.0, u.z * 12.0, octaves(530_000.0));
         let conv_pos = t.conv.max(0.0);
-        let belt = det::exp(-(t.edge / 350_000.0).powi(2));
-        h += conv_pos * belt * (0.15 + 0.85 * ridge) * 6800.0 * land_gate;
+        let belt = det::exp(-(t.edge / 550_000.0).powi(2));
+        h += conv_pos * belt * (0.15 + 0.85 * ridge) * 9000.0 * land_gate;
         // Island arcs where two sea plates close; a trench beside a coast range.
         if t.both_sea && s < 0.0 {
             let arc = det::exp(-(t.edge / 180_000.0).powi(2));
@@ -243,15 +247,102 @@ impl Globe {
         let chain =
             self.n_ridge
                 .ridged(wv.x * 9.0 + 5.0, wv.y * 9.0, wv.z * 9.0, octaves(710_000.0));
-        let chain = smooth(0.45, 0.95, chain);
-        let massif = 0.5 + 0.5 * self.n_old.fbm(u.x * 2.5, u.y * 2.5, u.z * 2.5, 2);
-        h += 4200.0 * chain * chain * massif * smooth(0.12, 0.5, s);
+        let chain = smooth(0.38, 0.92, chain);
+        let massif = 0.65 + 0.35 * self.n_old.fbm(u.x * 2.5, u.y * 2.5, u.z * 2.5, 2);
+        h += 8200.0 * chain * chain * massif * smooth(0.12, 0.5, s);
         // Old worn ranges inland.
         let old = self
             .n_old
             .ridged(u.x * 5.0, u.y * 5.0, u.z * 5.0, octaves(1_270_000.0));
-        h += 900.0 * smooth(0.1, 0.5, s) * old * old;
+        h += 1600.0 * smooth(0.1, 0.5, s) * old * old;
+        // Drama: tiered mesas with sheer cliffs, and canyons that cut deep.
+        if h > 150.0 {
+            let region = smooth(
+                0.1,
+                0.55,
+                self.n_drama.fbm(u.x * 4.2, u.y * 4.2, u.z * 4.2, 3),
+            );
+            if region > 0.0 {
+                let step = 280.0;
+                let (tier, frac) = ((h / step).floor(), (h / step).fract());
+                let stepped = (tier + smooth(0.72, 0.98, frac)) * step;
+                h += (stepped - h) * region * 0.9;
+            }
+            let zone = smooth(
+                -0.1,
+                0.45,
+                self.n_drama
+                    .fbm(u.x * 3.0 + 4.0, u.y * 3.0, u.z * 3.0 - 2.0, 3),
+            );
+            let line = 1.0
+                - self
+                    .n_drama
+                    .fbm(u.x * 7.0 - 1.0, u.y * 7.0 + 6.0, u.z * 7.0, 3)
+                    .abs();
+            h -= 800.0 * smooth(0.9, 0.99, line) * zone * smooth(0.1, 0.4, s);
+        }
         h.clamp(-11_000.0, MAX_HEIGHT)
+    }
+
+    /// What is truly three-dimensional at `p` (metres from the planet's
+    /// centre), `above_ground` metres over the height-field ground: a density
+    /// to add to the ground's own. Positive is solid rock in the air, negative
+    /// is a hollow cut into the ground.
+    ///
+    /// Floating rocks drift above the ground where the Aether is strong;
+    /// caves honeycomb the ground in rocky country and overhangs bite into
+    /// cliffs. Ground level and the sky stay clear, so it only changes the
+    /// shape near the surface. Meant to feed Engine's `density` hook.
+    pub fn solid(&self, p: DVec3, above_ground: f64) -> f64 {
+        let u = p.normalize_or(DVec3::Y);
+        let aether = self.aether(u);
+        let mut d = 0.0;
+        // Floating rock: islands 60 to 700 m up, strongest in the middle of the band.
+        if aether > 0.5 && (60.0..700.0).contains(&above_ground) {
+            let band =
+                smooth(60.0, 200.0, above_ground) * (1.0 - smooth(450.0, 700.0, above_ground));
+            let n = self.n_drama.fbm(p.x / 260.0, p.y / 260.0, p.z / 260.0, 3);
+            d += band * smooth(0.5, 0.9, aether) * (n - 0.28) * 4.0;
+        }
+        // Caves and overhangs below and just above the surface.
+        if (-400.0..40.0).contains(&above_ground) {
+            let cave = 1.0
+                - self
+                    .n_ridge
+                    .fbm(p.x / 140.0 + 3.0, p.y / 140.0, p.z / 140.0, 2)
+                    .abs();
+            let depth =
+                smooth(-400.0, -10.0, above_ground) * (1.0 - smooth(-10.0, 40.0, above_ground));
+            let rocky = smooth(
+                0.0,
+                0.5,
+                self.n_drama.fbm(u.x * 5.0, u.y * 5.0, u.z * 5.0, 2) + 0.2,
+            );
+            d -= depth * rocky * smooth(0.93, 0.99, cave) * 2.0;
+        }
+        d
+    }
+
+    /// How strongly the Aether wells up here, 0 to 1. It is everywhere in
+    /// small amounts (most of the land lies around 0.2 to 0.5) and gathers
+    /// along thin lines, the ley lines, where it climbs towards 1. Wonders
+    /// are placed where it runs strongest; it tints and bends the land
+    /// around, in ways the layers above decide.
+    pub fn aether(&self, u: DVec3) -> f64 {
+        let n = self.n_aether.fbm(u.x * 2.8, u.y * 2.8, u.z * 2.8, 4);
+        let base = 0.32 + 0.3 * n;
+        let w = DVec3::new(
+            self.n_aether.fbm(u.x * 4.0 + 7.0, u.y * 4.0, u.z * 4.0, 2),
+            self.n_aether.fbm(u.x * 4.0, u.y * 4.0 + 7.0, u.z * 4.0, 2),
+            self.n_aether.fbm(u.x * 4.0, u.y * 4.0, u.z * 4.0 + 7.0, 2),
+        );
+        let p = u + w * 0.15;
+        let line = 1.0
+            - self
+                .n_aether
+                .fbm(p.x * 6.0 + 2.0, p.y * 6.0 - 3.0, p.z * 6.0, 2)
+                .abs();
+        (base + 0.55 * smooth(0.9, 0.99, line)).clamp(0.0, 1.0)
     }
 }
 
@@ -290,6 +381,34 @@ mod tests {
         let share = ha.iter().filter(|h| **h > 0.0).count() as f64 / ha.len() as f64;
         assert!((share - LAND_SHARE).abs() < 0.05, "land share {share}");
         assert!(ha.iter().all(|h| (-11_000.0..=MAX_HEIGHT).contains(h)));
+    }
+
+    #[test]
+    fn solids_float_only_in_strong_aether_and_stay_near_the_surface() {
+        let g = Globe::new(Seed(3));
+        let mut rng = Seed(4).rng();
+        let (mut rock, mut hollow) = (0, 0);
+        for _ in 0..4000 {
+            let u = random_unit(&mut rng);
+            let p = u * g.radius();
+            // Far above the ground and far below it: nothing.
+            assert_eq!(g.solid(p, 3000.0), 0.0);
+            assert_eq!(g.solid(p, -2000.0), 0.0);
+            let a = g.aether(u);
+            for h in [100.0, 250.0, 400.0] {
+                let d = g.solid(p, h);
+                if d > 0.0 {
+                    assert!(a > 0.5, "floating rock in weak aether {a}");
+                    rock += 1;
+                }
+            }
+            for h in [-300.0, -100.0, -30.0] {
+                hollow += (g.solid(p, h) < 0.0) as u32;
+            }
+        }
+        assert!(rock > 0 && hollow > 0, "rock {rock}, hollow {hollow}");
+        let p = DVec3::new(1.0, 2.0, 3.0).normalize() * g.radius() + DVec3::new(5.0, 0.0, 0.0);
+        assert_eq!(g.solid(p, 200.0), g.solid(p, 200.0));
     }
 
     #[test]

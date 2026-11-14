@@ -11,7 +11,8 @@ The plan lives in the [HeroWorld landscape plan](https://claude.ai/artifact/2EUB
    - Rain: moist air carried by the trade winds, westerlies and polar easterlies, picked up over the sea and dropped over rising ground, so windward coasts and mountains are wet and the far side dry. Latitude bands make the equatorial and sub-polar wet belts and the dry subtropics.
    - Rivers and lakes: Priority-Flood fills every basin (so every river reaches the sea), the rain runs off and adds up downhill in m³/s. 60 m³/s makes a river on the map; a basin filled more than 6 m is a lake.
    - Biomes (`planet::biome`): ice, tundra, taiga, steppe, grassland, shrubland, temperate forest, desert, savanna, seasonal forest, rainforest, alpine, plus ocean and lake. `Biome::tree_cover` says how wooded each is.
-4. Next: local detail from this skeleton (river polylines, valley carving, ground in the game) and settlements. See the plan.
+4. **Drama** (Arnd 2026-11-14: the planet should be more dramatic than a real one, light supernatural common, special things rare). `Globe::elevation` has tall ranges (to 12 km), tiered mesas with sheer cliffs and deep canyons. `Globe::aether(unit)` is the Aether field, 0 to 1: most land sits around 0.2 to 0.5 and thin ley lines climb towards 1. `Globe::solid(p, above_ground)` is the truly 3D part (floating rock in strong Aether, caves and overhangs in rocky ground), a density to add to the ground, meant for Engine's `WorldGenerator::density`. `planet::wonders` places 16 named wonders (two of each of 8 kinds, 1700 km apart) where the Aether is strongest and the land suits them. The start region is in a temperate zone and stays close to normal.
+5. Next: local detail from this skeleton (river polylines, valley carving, ground in the game) and settlements. See the plan.
 
 Solving a planet at `n = 512` takes about 3 s on all cores; do it on a worker thread and cache it by seed and `WORLD_VERSION`.
 
