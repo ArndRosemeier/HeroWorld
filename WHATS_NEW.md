@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.320 (2026-11-14)
+
+- New karma slider in the "Your city" window, set when you start a game: from x0.1 (slow) to x10 (fast), normally x1. Everything you earn is multiplied by it: fights, crimes stopped, rescues, missions, and augments traded in.
+- Playing together, the host's setting counts for everyone.
+
 ## 0.319 (2026-11-14)
 
 - Molehaven and the tunnels no longer fill with water: water now stands only where the ground really lies under it (sea, rivers, lakes), not in every stair well below sea level.

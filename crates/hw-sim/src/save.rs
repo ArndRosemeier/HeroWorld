@@ -19,6 +19,9 @@ pub const SAVE_VERSION: u32 = 3;
 pub struct WorldSave {
     pub seed: u64,
     pub town_population: f64,
+    /// The host's karma multiplier (see [`crate::karma_rate`]); a world
+    /// saved before it existed plays at 1.
+    pub karma_rate: f32,
     pub tick: u64,
     pub crates: Vec<PropState>,
     /// Damaged buildings: index and broken elements.
@@ -37,6 +40,7 @@ impl WorldSave {
         let mut out = format!("heroworld-save {SAVE_VERSION}\n");
         out += &format!("seed {}\n", self.seed);
         out += &format!("population {:?}\n", self.town_population);
+        out += &format!("karma_rate {:?}\n", self.karma_rate);
         out += &format!("tick {}\n", self.tick);
         for c in &self.crates {
             out += &format!(
@@ -78,6 +82,7 @@ impl WorldSave {
             ));
         }
         let (mut seed, mut population, mut tick) = (None, None, 0);
+        let mut karma_rate = crate::karma_rate::DEFAULT;
         let mut crates = Vec::new();
         let mut damage = Vec::new();
         let mut props = Vec::new();
@@ -92,6 +97,10 @@ impl WorldSave {
                 "seed" => seed = Some(rest.first().and_then(|v| v.parse().ok()).ok_or_else(bad)?),
                 "population" => {
                     population = Some(rest.first().and_then(|v| v.parse().ok()).ok_or_else(bad)?)
+                }
+                "karma_rate" => {
+                    let v: f32 = rest.first().and_then(|v| v.parse().ok()).ok_or_else(bad)?;
+                    karma_rate = crate::karma_rate::clamp(v);
                 }
                 "tick" => tick = rest.first().and_then(|v| v.parse().ok()).ok_or_else(bad)?,
                 "crate" => {
@@ -134,6 +143,7 @@ impl WorldSave {
         Ok(Self {
             seed: seed.ok_or("the save has no seed")?,
             town_population: population.ok_or("the save has no population")?,
+            karma_rate,
             tick,
             crates,
             damage,
@@ -178,6 +188,7 @@ impl Sim {
         WorldSave {
             seed: self.seed.0,
             town_population: self.town_population,
+            karma_rate: self.karma_rate,
             tick: self.tick,
             crates: crates.into_iter().map(|(_, c)| c).collect(),
             damage: self.damage.broken(),
@@ -201,6 +212,7 @@ impl Sim {
             ));
         }
         self.clear_props();
+        self.karma_rate = save.karma_rate;
         self.tick = self.tick.max(save.tick);
         for c in &save.crates {
             self.spawn_crate(c.pos, c.rot);

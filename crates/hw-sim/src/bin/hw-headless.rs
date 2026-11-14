@@ -32,7 +32,10 @@ fn main() -> std::io::Result<()> {
     let save: Option<PathBuf> = std::env::var_os("HW_SAVE").map(PathBuf::from);
     let people = env("HW_POP").unwrap_or(hw_sim::DEFAULT_POPULATION);
     let town = hw_sim::GeneratedTown::generate_on_planet(Seed(seed), people);
-    let mut host = Host::with_sim(hw_sim::Sim::for_town(Seed(seed), &town));
+    let mut sim = hw_sim::Sim::for_town(Seed(seed), &town);
+    // HW_KARMA: the multiplier on all karma earned (0.1 to 10).
+    sim.set_karma_rate(env("HW_KARMA").unwrap_or(hw_sim::karma_rate::DEFAULT));
+    let mut host = Host::with_sim(sim);
     match &save {
         Some(path) if path.exists() => {
             host.load_world(path)?;

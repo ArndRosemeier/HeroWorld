@@ -26,6 +26,7 @@ pub mod herobots;
 pub mod host;
 pub mod hostthread;
 pub mod incidents;
+pub mod karma_rate;
 pub mod lifts;
 pub mod missions;
 pub mod nav;
@@ -790,6 +791,9 @@ pub struct Sim {
     pub seed: Seed,
     /// Size of the city: sent to joining players with the seed.
     pub town_population: f64,
+    /// Multiplier on every karma a hero earns (the host's setting for the
+    /// whole world; see [`karma_rate`]).
+    pub karma_rate: f32,
     pub tick: u64,
     spawn: (DVec2, DVec2),
     /// Where heroes below [`quarter::ROOKIE_LEVEL`] start: a street near
@@ -859,6 +863,15 @@ pub struct Sim {
     pub airships: airships::Airships,
     /// Doors people walked through, and news of doors opening and shutting.
     pub doors: doors::Doors,
+}
+
+/// An augment traded in gave `karma` at the normal rate: adds what the
+/// world's karma rate makes of it on top. Returns the karma it gave in all.
+fn add_trade_bonus(sheet: &mut Sheet, karma: u32, rate: f32) -> u32 {
+    let total = karma_rate::scale(karma, rate);
+    sheet.karma =
+        (sheet.karma as i64 + total as i64 - karma as i64).clamp(0, u32::MAX as i64) as u32;
+    total
 }
 
 impl Sim {
@@ -1198,6 +1211,7 @@ impl Sim {
             world,
             seed,
             town_population: DEFAULT_POPULATION,
+            karma_rate: karma_rate::DEFAULT,
             tick: 0,
             spawn: (DVec2::ZERO, DVec2::X),
             rookie: None,
@@ -1293,6 +1307,12 @@ impl Sim {
     }
 
     /// Sets the street heroes appear on.
+    /// Sets the world's karma multiplier (the host's choice; kept within
+    /// [`karma_rate::MIN`], [`karma_rate::MAX`]).
+    pub fn set_karma_rate(&mut self, rate: f32) {
+        self.karma_rate = karma_rate::clamp(rate);
+    }
+
     pub fn set_spawn(&mut self, line: (DVec2, DVec2)) {
         self.spawn = line;
         self.world
@@ -2237,8 +2257,11 @@ impl Sim {
         owner: PlayerId,
         bag: usize,
     ) -> Result<u32, augments::SetError> {
+        let rate = self.karma_rate;
         let mut result = Err(augments::SetError::NoSuchAugment);
-        self.change_sheet(owner, |s| result = augments::trade(s, bag));
+        self.change_sheet(owner, |s| {
+            result = augments::trade(s, bag).map(|k| add_trade_bonus(s, k, rate))
+        });
         result
     }
 
@@ -2271,8 +2294,11 @@ impl Sim {
     /// Puts `augment` into `owner`'s bag (the debug menu, tests): traded
     /// in at once if the bag is full.
     pub fn give_augment(&mut self, owner: PlayerId, augment: hw_net::Augment) {
+        let rate = self.karma_rate;
         self.change_sheet(owner, |s| {
-            augments::collect(s, augment);
+            if let Some(k) = augments::collect(s, augment) {
+                add_trade_bonus(s, k, rate);
+            }
         });
     }
 
@@ -2335,7 +2361,7 @@ impl Sim {
 
     /// Pays out the karma fights earned this tick; a hero going up a level
     /// is healed and told.
-    fn pay_karma(&mut self) {
+    pub fn pay_karma(&mut self) {
         // Factions hear who beat their people.
         let deeds = self.world.resource::<Fights>().deeds.clone();
         for d in deeds {
@@ -2369,6 +2395,7 @@ impl Sim {
             return;
         }
         let tick = self.tick;
+        let rate = self.karma_rate;
         let mut fx = Vec::new();
         for r in rewards {
             for (n, mut p, mut fighter, m) in self
@@ -2379,12 +2406,13 @@ impl Sim {
                 if n.0 != r.hero {
                     continue;
                 }
-                let up = progress::earn(&mut p.sheet, r.karma);
+                let karma = karma_rate::scale(r.karma, rate);
+                let up = progress::earn(&mut p.sheet, karma);
                 p.changed = true;
                 let at = m.0.pos + DVec3::Y * 1.2;
-                if r.karma > 0 {
+                if karma > 0 {
                     let mut e = combat_event(tick, FxKind::Karma, n.0, at);
-                    e.amount = r.karma.min(u16::MAX as u32) as u16;
+                    e.amount = karma.min(u16::MAX as u32) as u16;
                     fx.push(e);
                 }
                 if let Some(level) = up {
@@ -2410,6 +2438,7 @@ impl Sim {
             return;
         }
         let tick = self.tick;
+        let rate = self.karma_rate;
         let mut fx = Vec::new();
         for d in combat::one_hero_each(drops, tick) {
             for (n, mut p, m) in self
@@ -2425,7 +2454,8 @@ impl Sim {
                     Some(c) => augments::drop_for(&p.sheet, c, &mut dice),
                     None => augments::find(&p.sheet, d.level, &mut dice),
                 };
-                let traded = augments::collect(&mut p.sheet, a);
+                let traded = augments::collect(&mut p.sheet, a)
+                    .map(|k| add_trade_bonus(&mut p.sheet, k, rate));
                 p.changed = true;
                 let mut e = combat_event(tick, FxKind::Drop, d.from, d.at);
                 e.to = n.0;

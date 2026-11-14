@@ -481,7 +481,10 @@ fn main() -> EngineResult<()> {
                     let session = if title_mode {
                         None
                     } else {
-                        Some(Session::single(seed, &generated, &name, open).map_err(io)?)
+                        Some(
+                            Session::single(seed, &generated, &name, open, profile.karma_rate)
+                                .map_err(io)?,
+                        )
                     };
                     (session, generated, seed.0, people)
                 }
@@ -2561,8 +2564,14 @@ fn main() -> EngineResult<()> {
                     Some(Choice::Continue) => {
                         if want_world(mine, Waiting::Single).is_some() {
                             session = Some(
-                                Session::single(Seed(world_seed), &generated, &name, false)
-                                    .map_err(io)?,
+                                Session::single(
+                                    Seed(world_seed),
+                                    &generated,
+                                    &name,
+                                    false,
+                                    t.profile.karma_rate,
+                                )
+                                .map_err(io)?,
                             );
                         }
                     }
@@ -2586,14 +2595,26 @@ fn main() -> EngineResult<()> {
                         hero_file = None;
                         if want_world(mine, Waiting::Single).is_some() {
                             session = Some(
-                                Session::single(Seed(world_seed), &generated, &name, false)
-                                    .map_err(io)?,
+                                Session::single(
+                                    Seed(world_seed),
+                                    &generated,
+                                    &name,
+                                    false,
+                                    t.profile.karma_rate,
+                                )
+                                .map_err(io)?,
                             );
                         }
                     }
                     Some(Choice::Host) => {
                         if want_world(mine, Waiting::Host).is_some() {
-                            match Session::single(Seed(world_seed), &generated, &name, true) {
+                            match Session::single(
+                                Seed(world_seed),
+                                &generated,
+                                &name,
+                                true,
+                                t.profile.karma_rate,
+                            ) {
                                 Ok(s) => session = Some(s),
                                 Err(e) => {
                                     t.status =

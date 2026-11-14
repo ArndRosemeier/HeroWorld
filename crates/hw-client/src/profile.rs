@@ -18,6 +18,9 @@ pub struct Profile {
     /// live in its city (picked in the title's city window).
     pub seed: u64,
     pub people: f64,
+    /// Multiplier on all karma earned (0.1 to 10), picked in the same
+    /// window; the host's value counts for everyone in a shared world.
+    pub karma_rate: f32,
     /// True once you have played a hero: the title then offers Continue.
     pub played: bool,
     /// Music and effect volumes, 0..1.
@@ -60,6 +63,7 @@ impl Default for Profile {
             name: "Hero".into(),
             seed: 1,
             people: hw_sim::DEFAULT_POPULATION,
+            karma_rate: hw_sim::karma_rate::DEFAULT,
             played: false,
             music: 0.8,
             sounds: 0.9,
@@ -125,6 +129,9 @@ impl Profile {
                 .as_f64()
                 .filter(|p| p.is_finite())
                 .map_or(d.people, |p| p.clamp(10.0, 1e8)),
+            karma_rate: v["karma_rate"]
+                .as_f64()
+                .map_or(d.karma_rate, |x| hw_sim::karma_rate::clamp(x as f32)),
             played: v["played"].as_bool().unwrap_or(d.played),
             music: f("music", d.music),
             sounds: f("sounds", d.sounds),
@@ -162,6 +169,7 @@ impl Profile {
             "name": self.name,
             "seed": self.seed,
             "people": self.people,
+            "karma_rate": self.karma_rate,
             "played": self.played,
             "music": self.music,
             "sounds": self.sounds,
@@ -388,6 +396,7 @@ mod tests {
             name: "Captain Comet".into(),
             seed: 42,
             people: 1_000_000.0,
+            karma_rate: 2.5,
             played: true,
             music: 0.25,
             sounds: 0.5,
@@ -433,6 +442,11 @@ mod tests {
         assert_eq!(q.music, 1.0);
         assert_eq!(q.seed, 1);
         assert_eq!(q.people, hw_sim::DEFAULT_POPULATION);
+        assert_eq!(q.karma_rate, 1.0, "no setting: the normal rate");
+        assert_eq!(
+            Profile::from_json(&json!({"karma_rate": 99.0})).karma_rate,
+            10.0
+        );
         assert_eq!(q.quality, "high");
         assert_eq!(q.fov, 90.0);
         assert_eq!(q.render_scale, 0.5);

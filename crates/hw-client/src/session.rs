@@ -114,14 +114,18 @@ fn is_world_news(m: &ToClient) -> bool {
 }
 
 impl Session {
-    /// Single player in `town`; `open` also listens for friends.
+    /// Single player in `town`; `open` also listens for friends. Every
+    /// karma earned is multiplied by `karma_rate` (the host's choice).
     pub fn single(
         seed: Seed,
         town: &GeneratedTown,
         name: &str,
         open: bool,
+        karma_rate: f32,
     ) -> std::io::Result<Self> {
-        let mut host = Host::with_sim(Sim::for_town(seed, town));
+        let mut sim = Sim::for_town(seed, town);
+        sim.set_karma_rate(karma_rate);
+        let mut host = Host::with_sim(sim);
         // No villains wait where a new hero appears: trouble is found in
         // the world. The old test group stays for the fight screenshot
         // (without the crate pile, which would stand in the way).

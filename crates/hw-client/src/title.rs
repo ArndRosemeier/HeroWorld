@@ -34,6 +34,7 @@ use hw_gen::urban::landmarks::LandmarkKind;
 use hw_gen::urban::props::{CarModel, PropKind};
 use hw_gen::urban::world::TownWorld;
 use hw_sim::collision::Obstacles;
+use hw_sim::karma_rate;
 use std::f32::consts::TAU;
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
@@ -140,7 +141,7 @@ pub struct Title {
     panel: Panel,
     new_name: String,
     /// The city window, while open: the seed as typed and the size picked.
-    city_window: Option<(String, usize)>,
+    city_window: Option<(String, usize, f32)>,
     join_code: String,
     /// A line under the buttons: what is happening, or what went wrong.
     pub status: Option<(String, bool)>,
@@ -960,13 +961,13 @@ impl Title {
             .iter()
             .position(|s| s.name == size_of(self.profile.people).name)
             .unwrap_or(0);
-        self.city_window = Some((self.profile.seed.to_string(), size));
+        self.city_window = Some((self.profile.seed.to_string(), size, self.profile.karma_rate));
     }
 
     /// The city window: world number and size. Nothing is built while it
     /// is open; OK saves the choice and starts the build.
     fn city_modal(&mut self, ctx: &egui::Context, sfx: &mut Vec<Sfx>) -> Option<Choice> {
-        let (seed_text, size) = self.city_window.as_mut()?;
+        let (seed_text, size, rate) = self.city_window.as_mut()?;
         let mut choice = None;
         let mut close = false;
         let modal = egui::Modal::new(egui::Id::new("city window"))
@@ -1039,6 +1040,24 @@ impl Title {
                     }
                 }
                 ui.add_space(4.0);
+                ui.label("How fast does karma come?");
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
+                    crate::googie::star_icon(ui.painter(), rect.center(), 14.0);
+                    ui.add(
+                        egui::Slider::new(rate, karma_rate::MIN..=karma_rate::MAX)
+                            .logarithmic(true)
+                            .custom_formatter(|v, _| format!("x{v:.1}"))
+                            .custom_parser(|t| t.trim().trim_start_matches(['x', 'X']).parse().ok()),
+                    )
+                    .on_hover_text("Every karma you earn is multiplied by this. In a shared world the host's number counts for everyone.");
+                    if ui.button("x1").clicked() {
+                        sfx.push(Sfx::Click);
+                        *rate = karma_rate::DEFAULT;
+                    }
+                });
+                *rate = karma_rate::clamp(*rate);
+                ui.add_space(4.0);
                 ui.label(
                     egui::RichText::new(format!(
                         "OK starts building it behind the title; a {} takes {}.",
@@ -1068,12 +1087,14 @@ impl Title {
                     }
                 });
             });
+        let rate_picked = *rate;
         if modal.should_close() {
             close = true;
         }
         if let Some(Choice::City(c)) = &choice {
             self.profile.seed = c.seed;
             self.profile.people = c.people;
+            self.profile.karma_rate = rate_picked;
             self.profile.save();
         }
         if close {

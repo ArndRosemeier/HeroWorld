@@ -177,6 +177,14 @@ town.
 Karma is the one currency. Everything earned adds to **lifetime karma** (which sets the
 level) and to **unspent karma** (which buys powers). Spending never lowers your level.
 
+- **Karma rate** (`hw-sim/src/karma_rate.rs`, 0.320): a slider in the title's city window
+  (the star, x0.1 to x10, default x1, a log scale so x1 sits in the middle). Every karma a hero
+  *earns* is multiplied by it on the server: fights, street crime, incidents and rescues, missions,
+  the story, and augments traded in (for the karma). Not scaled: karma handed back when you give a
+  power up, and the debug menu's grants. The host's rate counts for everyone in a shared world
+  (it is a server setting, saved in the world save so a new host keeps it); a joiner's own slider
+  does nothing. Each earning rounds, never down to nothing. Headless host: `HW_KARMA=2.5`.
+
 - Level 1 → 2 costs 960 karma; each later level costs a quarter of that more, and from
   level 6 another 4% per level above 5 (`karma_to_next(l) = 960 × (1 + 0.25 × (l − 1)) ×
   (1 + 0.04 × max(0, l − 5))`). Cap: level 20 (karma keeps coming after it, for powers).
