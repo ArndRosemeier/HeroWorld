@@ -217,10 +217,34 @@ fn a_herobot_fights_earns_karma_and_the_drone_flies_it_to_the_hospital() {
         panic!("not connected: {:?}", conn.state);
     };
     let before = host.sim.sheet(bot).expect("a hero file").lifetime;
+    // The Herobot stays by people: walk our hero up to the trouble and it
+    // comes along (it never strays far from us).
+    let mine = host.sim.hero_of(me).unwrap();
+    for _ in 0..TICK_HZ * 5 {
+        step(&mut host, &mut conn, &mut brain);
+    }
+    let trouble = host.sim.incidents.open.first().expect("an incident").at;
+    host.sim.set_body(
+        mine,
+        Body {
+            pos: trouble + DVec3::new(0.0, 0.5, 12.0),
+            vel: DVec3::ZERO,
+            grounded: true,
+        },
+    );
     // It follows and fights: within ten minutes it has earned karma.
     let mut earned = false;
     for _ in 0..TICK_HZ as u64 * 600 {
         step(&mut host, &mut conn, &mut brain);
+        if host.sim.tick % 30 == 0 && host.sim.tick > 600 {
+            let a = host.sim.position(hero).unwrap();
+            let b = host.sim.position(mine).unwrap();
+            assert!(
+                a.distance(b) < 80.0,
+                "strayed {:.0} m from the player",
+                a.distance(b)
+            );
+        }
         if std::env::var_os("HB_DEBUG").is_some() && host.sim.tick % 150 == 0 {
             let at = host.sim.position(hero).unwrap();
             let f = host.sim.fighter(hero).unwrap();

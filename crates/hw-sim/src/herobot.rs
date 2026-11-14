@@ -34,7 +34,11 @@ use std::time::{Duration, Instant};
 /// medical drone itself (s).
 pub const CALL_DRONE_AFTER: f64 = 20.0;
 /// How far from the hero it follows (m): it stays about this near.
-const FOLLOW_AT: f64 = 12.0;
+const FOLLOW_AT: f64 = 6.0;
+/// Farther than this from the hero it follows, it closes up again (m).
+const FOLLOW_START: f64 = 10.0;
+/// It never strays farther than this from them, fighting or not (m).
+const LEASH: f64 = 35.0;
 /// Villains this near that fight, or stand near an open incident, are
 /// attacked (m).
 const SEE_VILLAIN: f64 = 70.0;
@@ -423,11 +427,28 @@ impl Brain {
             return input;
         }
 
+        // Whom it stays by: the nearest person, else the nearest hero (a
+        // Herobot keeps with people before it keeps with another Herobot).
+        let is_bot = |e: &&EntityState| e.mount.is_some_and(|m| m.1 >= hw_net::HEROBOT_MOUNT);
+        let leader = nearest(heroes.iter().copied().filter(|e| !is_bot(e)).collect(), pos)
+            .or_else(|| nearest(heroes.clone(), pos));
+        let anchor = leader.map(at);
+        // On the leash: back to them first, whatever is going on.
+        if let (Some(a), Some(l)) = (anchor, leader) {
+            let down = l.combat.is_some_and(|c| c.status == Status::Down);
+            if !down && (flat_distance(a, pos) > LEASH || (a.y - pos.y).abs() > 30.0) {
+                self.travel(&mut input, pos, a, FOLLOW_AT, can_fly);
+                return input;
+            }
+        }
+        let near_anchor = |p: DVec3, r: f64| anchor.is_none_or(|a| flat_distance(a, p) < r);
+
         // A downed hero near: help them up.
         let downed = heroes
             .iter()
             .filter(|e| e.combat.is_some_and(|c| c.status == Status::Down))
             .filter(|e| at(e).distance(pos) < SEE_DOWNED)
+            .filter(|e| near_anchor(at(e), LEASH + 10.0))
             .min_by(|a, b| {
                 at(a)
                     .distance(pos)
@@ -456,6 +477,7 @@ impl Brain {
                     .is_some_and(|c| matches!(c.status, Status::Standing | Status::Knocked))
             })
             .filter(|e| at(e).distance(pos) < SEE_VILLAIN)
+            .filter(|e| near_anchor(at(e), LEASH))
             .filter(|e| {
                 e.combat.is_some_and(|c| c.target.is_some())
                     || incidents
@@ -502,6 +524,7 @@ impl Brain {
         let incident = incidents
             .iter()
             .filter(|i| flat_distance(**i, pos) < SEE_INCIDENT)
+            .filter(|i| near_anchor(**i, LEASH + 10.0))
             .min_by(|a, b| {
                 flat_distance(**a, pos)
                     .total_cmp(&flat_distance(**b, pos))
@@ -514,18 +537,8 @@ impl Brain {
                 return input;
             }
         }
-        let leader = heroes
-            .iter()
-            .filter(|e| e.combat.is_some_and(|c| c.status != Status::Carried))
-            .min_by(|a, b| {
-                at(a)
-                    .distance(pos)
-                    .total_cmp(&at(b).distance(pos))
-                    .then(a.id.cmp(&b.id))
-            });
-        if let Some(l) = leader {
-            let goal = at(l);
-            if flat_distance(goal, pos) > FOLLOW_AT * 1.5 || goal.y - pos.y > 15.0 {
+        if let Some(goal) = anchor {
+            if flat_distance(goal, pos) > FOLLOW_START || goal.y - pos.y > 15.0 {
                 self.travel(&mut input, pos, goal, FOLLOW_AT, can_fly);
             }
         }
@@ -754,6 +767,18 @@ impl Brain {
         input.move_z = dir.y as f32;
         input.boost = d > 40.0;
     }
+}
+
+/// The nearest of `list` that is not being carried off.
+fn nearest(list: Vec<&EntityState>, pos: DVec3) -> Option<&EntityState> {
+    list.into_iter()
+        .filter(|e| e.combat.is_some_and(|c| c.status != Status::Carried))
+        .min_by(|a, b| {
+            DVec3::from_array(a.pos)
+                .distance(pos)
+                .total_cmp(&DVec3::from_array(b.pos).distance(pos))
+                .then(a.id.cmp(&b.id))
+        })
 }
 
 fn flat_distance(a: DVec3, b: DVec3) -> f64 {

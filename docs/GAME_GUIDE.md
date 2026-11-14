@@ -1864,7 +1864,9 @@ on the way. Rides are free.
     spent), a random origin and element, and every bit of karma spent at once on random
     powers it can unlock (attacks first). Later karma is spent as it comes; augments it finds
     are set into the first socket they fit, or traded in.
-  - What it does: follows the nearest hero (about 12 m), heads for incidents the radio
+  - What it does: follows the nearest person (not another Herobot): closes up beyond 10 m to about 6 m, and is
+    on a 35 m leash (it returns first, whatever it is doing). It only goes for incidents and
+    villains within that leash of the person, and heads for incidents the radio
     announces, fights villains that fight or stand at one (rotating through its attack
     powers, a sidekick if it has one, a heal if someone is hurt, defensive toggles on in a
     fight and off after a quiet while), helps a downed hero up (hold revive), walks round

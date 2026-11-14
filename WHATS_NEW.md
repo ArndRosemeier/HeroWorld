@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.299 (2026-11-14)
+
+- Herobots stay close to the people: they keep within about 6 to 10 metres, only go after villains and trouble near the player they follow, and come straight back if they stray more than 35 metres.
+
 ## 0.298 (2026-11-14)
 
 - The stairs down to the underground are much roomier: the shaft is wider, the pillar slimmer and the steps deeper, so your hero walks them up and down without scraping the walls. The camera no longer gets stuck inside the hero in a tight stairwell: the hero simply is not drawn when the view has to sit in the head.
