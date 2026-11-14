@@ -113,6 +113,13 @@ pub struct Host {
     /// Where heroes were in a loaded save, by name: a player of that name
     /// starts there.
     arrivals: BTreeMap<String, DVec3>,
+    /// Team voice: what the local player says and what the others said.
+    voice: hw_net::VoiceBox,
+    /// Frames each remote player has used of their voice allowance.
+    voice_budget: BTreeMap<PlayerId, hw_net::voice::FrameBudget>,
+    /// The local player (the person at this machine), once they joined.
+    local_player: Option<PlayerId>,
+    voice_clock: Instant,
 }
 
 impl Host {
@@ -134,6 +141,10 @@ impl Host {
             power_log: Vec::new(),
             local_sheet: None,
             arrivals: BTreeMap::new(),
+            voice: hw_net::VoiceBox::new(),
+            voice_budget: BTreeMap::new(),
+            local_player: None,
+            voice_clock: Instant::now(),
         }
     }
 
@@ -196,8 +207,11 @@ impl Host {
 
     /// Adds the player sitting at this machine.
     pub fn join_local(&mut self, name: &str) -> PlayerId {
-        self.add_player(name, false)
-            .expect("room for the local player")
+        let id = self
+            .add_player(name, false)
+            .expect("room for the local player");
+        self.local_player = self.local_player.or(Some(id));
+        id
     }
 
     /// Bytes and packets exchanged with a remote player so far.
@@ -301,6 +315,7 @@ impl Host {
     fn remove_player(&mut self, id: PlayerId) -> Option<HostEvent> {
         let info = self.players.remove(&id)?;
         self.remotes.remove(&id);
+        self.voice_budget.remove(&id);
         self.sim.remove_hero(id);
         if let Some(s) = self.socket.as_mut() {
             s.kick(id);
@@ -373,7 +388,68 @@ impl Host {
         }
     }
 
+    /// The mailbox for team voice at this machine: the local player's
+    /// speech goes in ([`hw_net::VoiceBox::send`]), the others' comes out
+    /// ([`hw_net::VoiceBox::take_heard`]).
+    pub fn voice_box(&self) -> hw_net::VoiceBox {
+        self.voice.clone()
+    }
+
+    /// Passes a player's speech on to everyone else, the local player
+    /// included. The host never decodes it.
+    fn relay_voice(&mut self, from: PlayerId, packet: hw_net::VoicePacket) {
+        for p in self.remotes.keys().copied().collect::<Vec<_>>() {
+            if p != from {
+                if let Some(s) = self.socket.as_mut() {
+                    s.send(
+                        p,
+                        &ServerMsg::Voice {
+                            from,
+                            seq: packet.seq,
+                            frames: packet.frames.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        if self.local_player.is_some_and(|l| l != from) {
+            self.voice.hear(packet);
+        }
+    }
+
+    /// Team voice: what the local player said goes to the remote players.
+    fn send_local_voice(&mut self) {
+        let Some(me) = self.local_player else { return };
+        for (seq, frames) in self.voice.take_outgoing() {
+            self.relay_voice(
+                me,
+                hw_net::VoicePacket {
+                    from: me,
+                    seq,
+                    frames,
+                },
+            );
+        }
+    }
+
     fn on_input(&mut self, player: PlayerId, msg: ClientMsg, out: &mut Vec<HostEvent>) {
+        if let ClientMsg::Voice { seq, frames } = msg {
+            let packet = hw_net::VoicePacket {
+                from: player,
+                seq,
+                frames,
+            };
+            let now = self.voice_clock.elapsed().as_secs_f64();
+            let allowed = self
+                .voice_budget
+                .entry(player)
+                .or_default()
+                .allow(now, packet.frames.len());
+            if packet.is_sane() && allowed {
+                self.relay_voice(player, packet);
+            }
+            return;
+        }
         let ClientMsg::Input {
             seq,
             inputs,
@@ -487,6 +563,7 @@ impl Host {
                 ServerEvent::Left { player } => out.extend(self.remove_player(player)),
             }
         }
+        self.send_local_voice();
         // Each remote hero takes its next input; with none waiting it keeps
         // doing what it did.
         let mut take = Vec::new();

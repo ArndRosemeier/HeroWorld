@@ -46,6 +46,8 @@ pub enum ConnState {
 
 pub struct Connection {
     link: Box<dyn Link>,
+    /// Team voice to send and what was heard (see [`crate::voice`]).
+    pub voice: crate::VoiceBox,
     name: String,
     pub state: ConnState,
     last_hello: Option<Instant>,
@@ -82,6 +84,7 @@ impl Connection {
     pub fn over(link: Box<dyn Link>, name: &str) -> Self {
         Self {
             link,
+            voice: crate::VoiceBox::new(),
             name: name.to_string(),
             state: ConnState::Connecting,
             last_hello: None,
@@ -148,6 +151,11 @@ impl Connection {
                             town_population,
                             tick_hz,
                         };
+                    }
+                }
+                ServerMsg::Voice { from, seq, frames } => {
+                    if matches!(self.state, ConnState::Connected { .. }) {
+                        self.voice.hear(crate::VoicePacket { from, seq, frames });
                     }
                 }
                 ServerMsg::Reject { reason } => {
@@ -237,6 +245,9 @@ impl Connection {
                     reliable: self.rel_out.due(self.ticks, RESEND_TICKS),
                 };
                 self.link.send(&msg.encode());
+                for (seq, frames) in self.voice.take_outgoing() {
+                    self.link.send(&ClientMsg::Voice { seq, frames }.encode());
+                }
                 return Some(self.seq);
             }
             ConnState::Rejected(_) | ConnState::Ended(_) | ConnState::TakingOver => {}

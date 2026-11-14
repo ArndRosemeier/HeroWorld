@@ -26,3 +26,7 @@ actors-generator = { workspace = true }
 actors-human = { workspace = true }
 # Graffiti decals (PNG); the same image crate Engine uses.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# Team voice: the microphone and speakers (the version rodio in Engine uses)
+# and the Opus codec (libopus, built from source by opusic-sys: no cmake).
+cpal = "0.16"
+opus = "0.4"

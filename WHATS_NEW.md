@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.280 (2026-11-14)
+
+- Team voice. When a friend is in your game, hold Z to talk: everyone on your team hears you, however far away they are, and a "so-and-so is talking" note shows at the left edge. Click the small Voice button in the chat window to turn voice off, pick another key, set the team volume, or mute a friend or turn them up or down. No microphone? The panel says so and the game carries on.
+
 ## 0.279 (2026-11-14)
 
 - Glide is gone: it cost the same as Flight and did less. In its place in the Travel powers tree is **Grapple Swing**: hold F and a line hooks whatever you aim at, up to 45 m away (70 m at level 20), and pulls you in. Steer, swing round buildings, and let go at the top to fling yourself far. It costs no energy.

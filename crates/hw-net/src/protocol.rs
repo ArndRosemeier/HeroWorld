@@ -2656,6 +2656,12 @@ pub enum ClientMsg {
         reliable: Vec<(u32, ToServer)>,
     },
     Bye,
+    /// Speech from the player's microphone (see [`crate::voice`]). Not
+    /// reliable, and not tied to the input stream.
+    Voice {
+        seq: u16,
+        frames: Vec<Vec<u8>>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2683,6 +2689,12 @@ pub enum ServerMsg {
         entities: Vec<EntityState>,
         /// Entities the client should forget (gone, or out of its range).
         removed: Vec<NetId>,
+    },
+    /// Another player's speech, forwarded by the host.
+    Voice {
+        from: PlayerId,
+        seq: u16,
+        frames: Vec<Vec<u8>>,
     },
 }
 
@@ -2762,6 +2774,36 @@ fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
     })
 }
 
+fn write_frames(w: &mut Writer, frames: &[Vec<u8>]) {
+    let n = frames.len().min(crate::voice::MAX_FRAMES);
+    w.u8(n as u8);
+    for f in &frames[..n] {
+        let len = f.len().min(crate::voice::MAX_FRAME_BYTES);
+        w.u8(len as u8);
+        w.buf.extend_from_slice(&f[..len]);
+    }
+}
+
+fn read_frames(r: &mut Reader) -> Result<Vec<Vec<u8>>, WireError> {
+    let n = r.u8()? as usize;
+    if n == 0 || n > crate::voice::MAX_FRAMES {
+        return Err(WireError);
+    }
+    let mut frames = Vec::with_capacity(n);
+    for _ in 0..n {
+        let len = r.u8()? as usize;
+        if len > crate::voice::MAX_FRAME_BYTES {
+            return Err(WireError);
+        }
+        let mut f = Vec::with_capacity(len);
+        for _ in 0..len {
+            f.push(r.u8()?);
+        }
+        frames.push(f);
+    }
+    Ok(frames)
+}
+
 impl ClientMsg {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::new();
@@ -2803,6 +2845,11 @@ impl ClientMsg {
                 }
             }
             ClientMsg::Bye => header(&mut w, 3),
+            ClientMsg::Voice { seq, frames } => {
+                header(&mut w, 4);
+                w.u16(*seq);
+                write_frames(&mut w, frames);
+            }
         }
         w.buf
     }
@@ -2840,6 +2887,10 @@ impl ClientMsg {
                 }
             }
             3 => ClientMsg::Bye,
+            4 => ClientMsg::Voice {
+                seq: r.u16()?,
+                frames: read_frames(&mut r)?,
+            },
             _ => return Err(WireError),
         };
         r.is_done().then_some(msg).ok_or(WireError)
@@ -2867,6 +2918,11 @@ impl ServerMsg {
             ServerMsg::Reject { reason } => {
                 header(&mut w, 2);
                 w.str(reason);
+            }
+            ServerMsg::Voice { from, seq, frames } => {
+                header(&mut w, 4);
+                w.u16(from.0).u16(*seq);
+                write_frames(&mut w, frames);
             }
             ServerMsg::Update {
                 tick,
@@ -2933,6 +2989,11 @@ impl ServerMsg {
                 tick_hz: r.u16()?,
             },
             2 => ServerMsg::Reject { reason: r.str()? },
+            4 => ServerMsg::Voice {
+                from: PlayerId(r.u16()?),
+                seq: r.u16()?,
+                frames: read_frames(&mut r)?,
+            },
             3 => {
                 let tick = r.u64()?;
                 let ack = r.u32()?;
@@ -2977,6 +3038,30 @@ impl ServerMsg {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn voice_packets_round_trip_and_bad_ones_are_refused() {
+        let frames = vec![vec![1u8, 2, 3], vec![9; 60]];
+        let c = ClientMsg::Voice {
+            seq: 65535,
+            frames: frames.clone(),
+        };
+        assert_eq!(ClientMsg::decode(&c.encode()).unwrap(), c);
+        let s = ServerMsg::Voice {
+            from: PlayerId(3),
+            seq: 7,
+            frames,
+        };
+        assert_eq!(ServerMsg::decode(&s.encode()).unwrap(), s);
+        // A cut-off packet is not speech.
+        let mut bad = ClientMsg::Voice {
+            seq: 1,
+            frames: vec![vec![1]],
+        }
+        .encode();
+        bad.pop();
+        assert!(ClientMsg::decode(&bad).is_err());
+    }
 
     fn hero(id: u32) -> EntityState {
         EntityState {

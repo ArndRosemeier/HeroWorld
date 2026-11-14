@@ -97,6 +97,7 @@ pub mod tubenooks;
 pub mod uikit;
 pub mod undergroundview;
 pub mod visor;
+pub mod voice;
 pub mod waterfrontview;
 pub mod weathermodel;
 pub mod weatherview;

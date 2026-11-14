@@ -647,6 +647,11 @@ fn main() -> EngineResult<()> {
     }
     // The chat window (bottom left): what is said near the hero.
     let mut chat = hw_client::chat::ChatLog::new();
+    // Team voice: push-to-talk. The microphone is only opened while someone
+    // else is in the session (and voice is on).
+    let mut voice_profile = profile.voice.clone();
+    let mut voice: Option<(hw_net::VoiceBox, hw_client::voice::Voice)> = None;
+    let mut voice_ui = hw_client::voice::VoiceUi::default();
     // The pointer was locked when the chat line opened: lock it again after.
     let mut chat_relock = false;
     // Always-on mouselook: when the pointer is pinned and when it is freed.
@@ -5167,6 +5172,59 @@ fn main() -> EngineResult<()> {
                         chat.add(Channel::Local, l.who, &l.text, Voice::Ally);
                     }
                     chat.update(frame.dt);
+                    // Team voice: open the microphone while friends are here,
+                    // hold the key to talk, and show who is talking.
+                    {
+                        let others = session.others();
+                        let want = voice_profile.enabled && !others.is_empty();
+                        let mailbox = session.voice_box();
+                        if !want || voice.as_ref().is_some_and(|(b, _)| !b.same(&mailbox)) {
+                            voice = None;
+                        }
+                        if want && voice.is_none() {
+                            voice =
+                                Some((mailbox.clone(), hw_client::voice::Voice::start(mailbox)));
+                        }
+                        let talking = voice_profile.enabled
+                            && !chat.typing
+                            && !on_ui_keys(frame)
+                            && frame.input.down(voice_profile.key());
+                        let mut names = Vec::new();
+                        if let Some((_, v)) = &voice {
+                            v.set_talking(talking);
+                            for (p, n) in &others {
+                                v.set_gain(*p, voice_profile.gain_of(n));
+                            }
+                            for p in v.speaking() {
+                                if let Some((_, n)) = others.iter().find(|o| o.0 == p) {
+                                    if voice_profile.gain_of(n) > 0.0 {
+                                        names.push(n.clone());
+                                    }
+                                }
+                            }
+                        }
+                        chat.voice_label = (!others.is_empty()).then(|| {
+                            if talking {
+                                "Voice: talking".to_string()
+                            } else {
+                                format!("Voice ({})", voice_profile.key)
+                            }
+                        });
+                        if chat.voice_clicked {
+                            voice_ui.open = !voice_ui.open;
+                        }
+                        voice_ui.speaking(frame.ui.ctx(), talking, &names);
+                        if voice_ui.panel(
+                            frame.ui.ctx(),
+                            voice.as_ref().map(|(_, v)| v),
+                            &mut voice_profile,
+                            &others,
+                        ) {
+                            let mut p = Profile::load();
+                            p.voice = voice_profile.clone();
+                            p.save();
+                        }
+                    }
                     let (beside, above) = fightview::beside_tray(
                         frame.ui.ctx().screen_rect().width(),
                         powers.tray.second_row(),

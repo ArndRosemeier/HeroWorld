@@ -588,6 +588,41 @@ impl Session {
         }
     }
 
+    /// The player sitting at this machine, once known.
+    pub fn my_player(&self) -> Option<PlayerId> {
+        match self {
+            Session::Local { host, .. } => Some(host.me()),
+            Session::Remote { conn, .. } => match conn.state {
+                ConnState::Connected { player, .. } => Some(player),
+                _ => None,
+            },
+        }
+    }
+
+    /// The other players in the session, by id and name.
+    pub fn others(&self) -> Vec<(PlayerId, String)> {
+        let me = self.my_player();
+        let all: Vec<(PlayerId, String)> = match self {
+            Session::Local { host, .. } => host
+                .view()
+                .players
+                .iter()
+                .map(|(p, i)| (*p, i.name.clone()))
+                .collect(),
+            Session::Remote { names, .. } => names.iter().map(|(p, n)| (*p, n.clone())).collect(),
+        };
+        all.into_iter().filter(|(p, _)| Some(*p) != me).collect()
+    }
+
+    /// The team voice mailbox: speech to send goes in, what the others
+    /// said comes out. The same call for a joined world and our own.
+    pub fn voice_box(&self) -> hw_net::VoiceBox {
+        match self {
+            Session::Local { host, .. } => host.voice_box(),
+            Session::Remote { conn, .. } => conn.voice.clone(),
+        }
+    }
+
     /// Our hero says `text` on the Team channel: every player of the
     /// session hears it, wherever they are. Single player, nobody else does.
     pub fn say_team(&mut self, text: &str) {

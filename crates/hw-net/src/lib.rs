@@ -14,6 +14,7 @@ pub mod reliable;
 pub mod replication;
 pub mod transport;
 pub mod upnp;
+pub mod voice;
 pub mod wire;
 
 pub use connection::{ConnState, Connection};
@@ -31,9 +32,10 @@ pub use replication::{Candidate, ClientView};
 pub use transport::{
     ClientSocket, Handover, Link, PeerAddr, ServerEvent, ServerLink, ServerSocket, Traffic,
 };
+pub use voice::{VoiceBox, VoicePacket};
 
 /// Protocol version. Server and client must match exactly to play together.
-pub const PROTOCOL_VERSION: u32 = 55;
+pub const PROTOCOL_VERSION: u32 = 56;
 
 /// Most players in one world.
 pub const MAX_PLAYERS: usize = 10;

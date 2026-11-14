@@ -126,6 +126,7 @@ impl TickClock {
 /// The [`Host`] on its own thread, with the local player `me`.
 pub struct HostThread {
     me: PlayerId,
+    voice: hw_net::VoiceBox,
     cmds: Sender<Cmd>,
     views: Receiver<Published>,
     thread: Option<JoinHandle<()>>,
@@ -151,12 +152,14 @@ impl HostThread {
     pub fn spawn(host: Host, me: PlayerId) -> Self {
         let (cmds, rx) = channel::<Cmd>();
         let (tx, views) = channel::<Published>();
+        let voice = host.voice_box();
         let thread = std::thread::Builder::new()
             .name("hw-server".into())
             .spawn(move || run(host, me, rx, tx))
             .expect("start the server thread");
         let mut s = Self {
             me,
+            voice,
             cmds,
             views,
             thread: Some(thread),
@@ -178,6 +181,12 @@ impl HostThread {
 
     pub fn me(&self) -> PlayerId {
         self.me
+    }
+
+    /// The team voice mailbox (see `Host::voice_box`); it works from any
+    /// thread, without waiting for a tick.
+    pub fn voice_box(&self) -> hw_net::VoiceBox {
+        self.voice.clone()
     }
 
     /// One tick with `input` (runs on the server thread, in order).

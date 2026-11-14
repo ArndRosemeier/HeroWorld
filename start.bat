@@ -12,6 +12,14 @@ if errorlevel 1 (
   exit /b 1
 )
 
+where cmake >nul 2>nul
+if errorlevel 1 (
+  echo CMake is not installed; it builds the voice codec. Run: winget install Kitware.CMake
+  echo then open a new window and run this again.
+  pause
+  exit /b 1
+)
+
 rem Fetch the newest version if this is a git checkout and nothing is changed locally.
 where git >nul 2>nul
 if not errorlevel 1 if exist .git git pull --ff-only

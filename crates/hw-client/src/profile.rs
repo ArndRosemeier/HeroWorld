@@ -40,6 +40,8 @@ pub struct Profile {
     /// Always-on mouselook: the pointer is hidden and the mouse turns the
     /// camera without the right button (see `mouselook`).
     pub mouselook: bool,
+    /// Team voice: on or off, the key, volumes and mutes.
+    pub voice: crate::voice::VoiceProfile,
     /// The hero file: karma, affinities, origin and powers. None until an
     /// origin is chosen.
     pub hero: Option<Sheet>,
@@ -70,6 +72,7 @@ impl Default for Profile {
             look_speed: 1.0,
             invert_y: false,
             mouselook: true,
+            voice: crate::voice::VoiceProfile::default(),
             hero: None,
             look: None,
             tray: Tray::default(),
@@ -143,6 +146,7 @@ impl Profile {
                 .map_or(d.look_speed, |x| (x as f32).clamp(0.3, 3.0)),
             invert_y: v["invert_y"].as_bool().unwrap_or(d.invert_y),
             mouselook: v["mouselook"].as_bool().unwrap_or(d.mouselook),
+            voice: crate::voice::VoiceProfile::from_json(&v["voice"]),
             hero: sheet_from_json(&v["hero"]),
             look: serde_json::from_value::<CharacterConfig>(v["look"].clone()).ok(),
             tray: Tray::from_json(&v["tray"]),
@@ -170,6 +174,7 @@ impl Profile {
             "look_speed": self.look_speed,
             "invert_y": self.invert_y,
             "mouselook": self.mouselook,
+            "voice": self.voice.to_json(),
             "hero": self.hero.as_ref().map(sheet_to_json),
             "look": self.look.as_ref().and_then(|l| serde_json::to_value(l).ok()),
             "tray": self.tray.to_json(),
@@ -395,6 +400,13 @@ mod tests {
             look_speed: 1.6,
             invert_y: true,
             mouselook: false,
+            voice: crate::voice::VoiceProfile {
+                enabled: false,
+                key: "H".into(),
+                volume: 0.5,
+                muted: ["Mal".to_string()].into(),
+                gains: [("Ada".to_string(), 1.5)].into(),
+            },
             hero: Some(hw_sim::progress::starter()),
             look: Some(CharacterConfig {
                 hair: Some("ponytail01".into()),

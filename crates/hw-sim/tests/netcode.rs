@@ -151,6 +151,25 @@ fn news_arrives_reliably_and_the_host_ends_the_session_cleanly() {
         .collect();
     assert_eq!(team, vec!["coming", "meet at the tower"]);
 
+    // Team voice: Alice's frames reach the host's mailbox untouched, the
+    // host's reach Alice, and a flood from Alice is cut off.
+    let voice = host.voice_box();
+    c.voice.send(vec![vec![1, 2, 3], vec![4, 5]]);
+    voice.send(vec![vec![9; 40]]);
+    run(&mut host, &mut [&mut c], InputState::default(), 20);
+    let heard = voice.take_heard();
+    assert_eq!(heard.len(), 1);
+    assert_eq!(heard[0].frames, vec![vec![1, 2, 3], vec![4, 5]]);
+    let back = c.voice.take_heard();
+    assert_eq!(back.len(), 1);
+    assert_eq!(back[0].frames, vec![vec![9; 40]]);
+    assert_eq!(back[0].from, me);
+    for _ in 0..40 {
+        c.voice.send(vec![vec![0; 20]; 4]);
+    }
+    run(&mut host, &mut [&mut c], InputState::default(), 20);
+    assert!(voice.take_heard().len() < 40);
+
     // The host closes: Alice is told why, in time.
     let addr_client = std::thread::scope(|s| {
         let h = s.spawn(|| {

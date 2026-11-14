@@ -113,6 +113,11 @@ pub struct ChatLog {
     clock: f64,
     /// The window was just opened for typing: focus the field.
     focus: bool,
+    /// Text of the small Voice button in the tab row; None hides it (nobody
+    /// to talk to).
+    pub voice_label: Option<String>,
+    /// The Voice button was clicked this frame (opens the voice panel).
+    pub voice_clicked: bool,
 }
 
 impl ChatLog {
@@ -283,8 +288,15 @@ impl ChatLog {
                         self.tab = Some(c);
                     }
                 }
+                self.voice_clicked = false;
                 if !self.typing {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if let Some(label) = &self.voice_label {
+                            let b = egui::RichText::new(label.as_str()).size(12.0);
+                            if ui.small_button(b).clicked() {
+                                self.voice_clicked = true;
+                            }
+                        }
                         ui.label(
                             egui::RichText::new("Enter: chat")
                                 .size(11.0)

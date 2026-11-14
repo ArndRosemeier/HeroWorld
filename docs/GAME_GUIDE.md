@@ -1808,13 +1808,35 @@ on the way. Rides are free.
   zoom it opens at, `HW_VIEW=map` opens it.
 - **Chat window** (bottom left, beside the power tray or above it on narrow screens;
   drag its corner to resize; `hw-client/src/chat.rs`): one log with a tab per channel, as in
-  EverQuest and City of Heroes. Today there is one channel, **Local**: what is said near the
-  hero. Gang warnings carry 70 m (`chat::SHOUT_RANGE`), other speech 35 m (`SAY_RANGE`):
+  EverQuest and City of Heroes. Two channels: **Team** (0.276) and **Local**, what is said
+  near the hero. Team is every player of the session, however far apart: click the tab, press
+  Enter and type (the line goes to the tab on show). On the wire it is `ToServer::TeamChat` and
+  `ToClient::TeamChat` (reliable); the host forwards it to every remote player and to the
+  person at the host (`Host::team_chat`, `HostEvent::TeamChat`); a bot says it with
+  `Connection::team_chat(text)`. There is no team roster yet: the whole co-op session is the team. Gang warnings carry 70 m (`chat::SHOUT_RANGE`), other speech 35 m (`SAY_RANGE`):
   mole folk thanking you, Hero Hall's heroes giving tips, Commander Starling on the wrist
   radio (always heard), and what players type (Enter or `/` opens the line, Enter says it,
   Escape cancels; your words also show over your hero). The same speaker repeating the same
-  words within 6 s is logged once; the log keeps the last 400 lines. Planned channels: team,
-  police radio, combat log (each is one more `chat::Channel`).
+  words within 6 s is logged once; the log keeps the last 400 lines. Planned channels: police
+  radio, combat log (each is one more `chat::Channel`).
+- **Team voice** (0.280, `hw-client/src/voice.rs`, `hw-net/src/voice.rs`): push-to-talk. Hold
+  Z (the key is chosen in the Voice panel: Z, X, C, H, U or L; not while typing in chat). The
+  microphone opens only while someone else is in the session and voice is on. The sound is cut
+  into 20 ms Opus frames (48 kHz mono, 24 kbit/s with a little loss protection, about 3 KB/s
+  while talking, nothing while the key is up, a 160 ms tail after release) on a worker thread
+  and sent as unreliable `ClientMsg::Voice` datagrams of up to 3 frames over the same UDP link
+  (or the GameHub relay). The host never decodes: it checks the sizes, allows 100 frames/s per
+  player (`voice::MAX_FRAMES_PER_SECOND`), and forwards the packet as `ServerMsg::Voice` to
+  every other player and to the person at the host. A listener decodes on a worker thread
+  (a lost packet is concealed, a late or repeated one dropped), keeps a 60 ms prefill and at
+  most 400 ms per speaker, and the output stream mixes everyone. Both ends talk to the network
+  only through a `VoiceBox` (`Session::voice_box()`), so the audio never waits for a tick and a
+  bot can send ready Opus frames with `voicebox.send(frames)`. The Voice button in the chat
+  window's tab row opens the panel: voice on or off, the key, a team volume, a microphone
+  meter, and per player a mute box and a volume slider (kept by name in the profile). Who is
+  talking is listed at the left edge. A missing microphone or speakers show as a line in the
+  panel, never as a crash. Opus is libopus built by `opusic-sys` with cmake (Windows users
+  need CMake on the PATH; `start.bat` checks).
 - **Speech bubbles** (`hw-client/src/speech.rs`, 0.179): what people say shows in a comic
   balloon over their head, tail pointing at them, as far as it is heard (35 m, shouts 70 m).
   Lines wrap at about 230 pt and the balloon grows to hold them; it stays up 2.4 s plus
