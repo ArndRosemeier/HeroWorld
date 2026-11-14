@@ -2106,6 +2106,10 @@ fn main() -> EngineResult<()> {
     // `HW_HUD=0`: no HUD, menus or labels on screen (clean shots for the
     // website and the press; the game runs as usual underneath).
     let hide_hud = std::env::var("HW_HUD").is_ok_and(|v| v == "0");
+    // `HW_ARRANGE=1` starts with the screen arrangement showing (screenshots).
+    if std::env::var_os("HW_ARRANGE").is_some() {
+        hw_client::layout::set_editing(true);
+    }
     let run = Engine::run_with_settings(
         format!("HeroWorld {}", hw_core::version()),
         startup,
@@ -5205,6 +5209,9 @@ fn main() -> EngineResult<()> {
                     world.set_pointer_lock(false);
                     town_map.relock = true;
                 }
+                // "Arrange the screen" (Escape menu): the pointer is free so
+                // pieces can be dragged; Done or Enter ends it.
+                hw_client::layout::edit_bar(frame.ui.ctx());
                 town_map.show(
                     frame.ui.ctx(),
                     &generated.world,
@@ -5382,6 +5389,7 @@ fn main() -> EngineResult<()> {
                 // this frame is known, so it wins over the pointer frees
                 // and re-pins above. Alt held shows the pointer.
                 let cursor_needed = menu.open
+                    || hw_client::layout::editing()
                     || debug.open
                     || powers.open
                     || creating

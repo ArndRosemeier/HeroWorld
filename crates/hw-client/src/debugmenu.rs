@@ -211,49 +211,61 @@ impl DebugMenu {
             return out;
         }
         let mut open = self.open;
-        egui::Window::new("Debug  (Ctrl+Shift+F12)")
-            .id(egui::Id::new("debug menu"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_width(460.0)
-            .default_height(560.0)
-            .anchor(egui::Align2::LEFT_TOP, egui::vec2(16.0, 60.0))
-            .frame(
-                egui::Frame::window(&ctx.style())
-                    .fill(egui::Color32::from_rgba_unmultiplied(18, 22, 30, 238)),
-            )
-            .show(ctx, |ui| {
-                if !info.local && self.tab != Tab::Log {
-                    ui.label("The debug menu works only in your own world (single player).");
-                    return;
-                }
-                ui.horizontal(|ui| {
-                    for (t, name) in [
-                        (Tab::Places, "Go to"),
-                        (Tab::Hero, "Hero"),
-                        (Tab::Events, "Events"),
-                        (Tab::World, "World"),
-                        (Tab::Log, "Log"),
-                    ] {
-                        if ui.selectable_label(self.tab == t, name).clicked() {
-                            self.tab = t;
-                        }
+        let resp = crate::layout::window(
+            egui::Window::new("Debug  (Ctrl+Shift+F12)"),
+            "debug menu",
+            egui::Align2::LEFT_TOP,
+            egui::pos2(16.0, 60.0),
+        )
+        .id(egui::Id::new("debug menu"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(true)
+        .default_size(crate::layout::size_of("debug menu").unwrap_or(egui::vec2(460.0, 560.0)))
+        .frame(
+            egui::Frame::window(&ctx.style())
+                .fill(egui::Color32::from_rgba_unmultiplied(18, 22, 30, 238)),
+        )
+        .show(ctx, |ui| {
+            if !info.local && self.tab != Tab::Log {
+                ui.label("The debug menu works only in your own world (single player).");
+                return;
+            }
+            ui.horizontal(|ui| {
+                for (t, name) in [
+                    (Tab::Places, "Go to"),
+                    (Tab::Hero, "Hero"),
+                    (Tab::Events, "Events"),
+                    (Tab::World, "World"),
+                    (Tab::Log, "Log"),
+                ] {
+                    if ui.selectable_label(self.tab == t, name).clicked() {
+                        self.tab = t;
                     }
-                });
-                ui.separator();
-                if self.tab == Tab::Log {
-                    log_tab(ui);
-                    return;
                 }
-                egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
-                    Tab::Places => self.places_tab(ui, info, &mut out),
-                    Tab::Hero => hero_tab(ui, info, &mut out),
-                    Tab::Events => events_tab(ui, info, &mut out),
-                    Tab::World => world_tab(ui, info, &mut out),
-                    Tab::Log => {}
-                });
             });
+            ui.separator();
+            if self.tab == Tab::Log {
+                log_tab(ui);
+                return;
+            }
+            egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
+                Tab::Places => self.places_tab(ui, info, &mut out),
+                Tab::Hero => hero_tab(ui, info, &mut out),
+                Tab::Events => events_tab(ui, info, &mut out),
+                Tab::World => world_tab(ui, info, &mut out),
+                Tab::Log => {}
+            });
+        });
+        if let Some(r) = &resp {
+            crate::layout::remember(
+                ctx,
+                "debug menu",
+                egui::Align2::LEFT_TOP,
+                r.response.rect,
+                true,
+            );
+        }
         self.open = open;
         out
     }

@@ -429,8 +429,8 @@ fn close_button(ui: &mut egui::Ui, body: Rect, id: egui::Id) -> bool {
         .clicked()
 }
 
-/// A Googie window: `win` is the egui window to show (anchored, sized, as
-/// usual; its title bar and frame are replaced), `title` goes on its sign
+/// A Googie window: `win` is the egui window to show (placed with
+/// `layout::window` under the title as its key, sized, as usual; its title bar and frame are replaced), `title` goes on its sign
 /// plate, `open` (if any) gets a close button. Returns what `add` returned,
 /// when it was shown.
 pub fn window<R>(
@@ -463,6 +463,17 @@ pub fn window<R>(
         if let Some(o) = open {
             *o = false;
         }
+    }
+    // The window may be dragged: its place is kept (see `layout.rs`; the
+    // caller gave it the saved place under the same name as the title).
+    if let Some(s) = &shown {
+        crate::layout::remember(
+            ctx,
+            title,
+            egui::Align2::CENTER_CENTER,
+            s.response.rect,
+            false,
+        );
     }
     shown.and_then(|s| s.inner)
 }

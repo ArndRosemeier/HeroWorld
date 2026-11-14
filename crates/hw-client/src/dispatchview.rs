@@ -137,11 +137,16 @@ pub fn compass(ctx: &egui::Context, eye: Vec3, look: Vec3, radio: &Radio, mine: 
     let left = screen.center().x - width * 0.5;
     let top = 8.0;
     let rect = egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(width, height));
-    let painter = ctx.layer_painter(egui::LayerId::new(
+    let layer = egui::LayerId::new(
         // Under the windows (the powers window reaches the top).
         egui::Order::Background,
         egui::Id::new("compass"),
-    ));
+    );
+    // Where the player put it, and how big (see `layout.rs`).
+    let anchor = egui::pos2(rect.center().x, rect.top());
+    crate::layout::apply(ctx, "compass", anchor, &[layer]);
+    crate::layout::overlay(ctx, "compass", "Compass", anchor, rect);
+    let painter = ctx.layer_painter(layer);
     crate::googie::badge_strip(&painter, rect);
     // Ticks and letters stay inside the badge.
     let painter = painter.with_clip_rect(rect.shrink2(egui::vec2(height * 0.8, 3.0)));

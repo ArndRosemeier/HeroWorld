@@ -23,6 +23,8 @@ use std::sync::Arc;
 
 /// The map's radius on screen (points).
 const RADIUS: f32 = 92.0;
+/// Its key in the saved screen layout.
+const LAYOUT_KEY: &str = "minimap";
 /// Gap to the screen's edges (points).
 const MARGIN: f32 = 30.0;
 /// Metres from the middle to the rim when on foot.
@@ -186,7 +188,7 @@ impl Minimap {
         let want = (WALK_REACH + height.max(0.0) * 1.6).min(MAX_REACH);
         self.reach += (want - self.reach) * 0.08;
         self.stream(at, self.reach);
-        if self.shown {
+        if self.shown || crate::layout::editing() {
             self.draw(ctx, town, at, look, mates, radio, mine);
         }
     }
@@ -203,12 +205,20 @@ impl Minimap {
         mine: u8,
     ) {
         let screen = ctx.screen_rect();
-        let centre = egui::pos2(
+        let home = egui::pos2(
             screen.right() - MARGIN - RADIUS,
             screen.bottom() - MARGIN - RADIUS,
         );
+        // Where the player put it, and how big (see `layout.rs`): scaled
+        // about its bottom right corner, so growing it fills the corner.
+        let box_ = egui::Rect::from_center_size(home, egui::vec2(RADIUS + 8.0, RADIUS + 8.0) * 2.0);
+        let anchor = box_.right_bottom();
+        let tf = crate::layout::transform(LAYOUT_KEY, anchor);
+        let centre = tf.mul_pos(home);
+        let radius = RADIUS * tf.scaling;
+        crate::layout::overlay(ctx, LAYOUT_KEY, "Minimap", anchor, box_);
         let ppp = ctx.pixels_per_point();
-        let side = ((RADIUS * 2.0 * ppp).round() as usize).clamp(64, 512);
+        let side = ((radius * 2.0 * ppp).round() as usize).clamp(64, 768);
         let fwd = DVec2::new(look.x as f64, look.z as f64)
             .try_normalize()
             .unwrap_or(DVec2::NEG_Y);
@@ -250,10 +260,10 @@ impl Minimap {
             egui::Order::Background,
             egui::Id::new("minimap"),
         ));
-        let rect = egui::Rect::from_center_size(centre, egui::vec2(RADIUS * 2.0, RADIUS * 2.0));
+        let rect = egui::Rect::from_center_size(centre, egui::vec2(radius * 2.0, radius * 2.0));
         painter.circle_filled(
             centre + egui::vec2(2.0, 3.0),
-            RADIUS + 5.0,
+            radius + 5.0,
             egui::Color32::from_black_alpha(90),
         );
         if let Some(t) = &self.texture {
@@ -265,53 +275,53 @@ impl Minimap {
             );
         }
         // A 1950s starburst clock round a gold chrome bezel.
-        crate::googie::starburst_ring(&painter, centre, RADIUS);
+        crate::googie::starburst_ring(&painter, centre, radius);
         // A gold chrome bezel with hour ticks, Googie style.
         painter.circle_stroke(
             centre,
-            RADIUS + 2.5,
+            radius + 2.5,
             egui::Stroke::new(5.0_f32, crate::uikit::GOLD),
         );
         painter.circle_stroke(
             centre,
-            RADIUS + 1.0,
+            radius + 1.0,
             egui::Stroke::new(1.0_f32, crate::uikit::GOLD_LIGHT),
         );
         painter.circle_stroke(
             centre,
-            RADIUS + 5.5,
+            radius + 5.5,
             egui::Stroke::new(2.0_f32, crate::uikit::DEEP),
         );
         painter.circle_stroke(
             centre,
-            RADIUS,
+            radius,
             egui::Stroke::new(1.0_f32, crate::uikit::GOLD_DARK),
         );
         for k in 0..12 {
             let a = k as f32 * std::f32::consts::TAU / 12.0;
             let d = egui::vec2(a.sin(), -a.cos());
             painter.line_segment(
-                [centre + d * (RADIUS + 0.5), centre + d * (RADIUS + 4.5)],
+                [centre + d * (radius + 0.5), centre + d * (radius + 4.5)],
                 egui::Stroke::new(1.5_f32, crate::uikit::GOLD_DARK),
             );
         }
         // Map metres to the screen.
-        let scale = RADIUS as f64 / reach;
+        let scale = radius as f64 / reach;
         let to_screen = |p: DVec2| -> (egui::Pos2, bool) {
             let d = p - at;
             let (u, v) = (d.dot(right) * scale, -d.dot(fwd) * scale);
             let len = (u * u + v * v).sqrt();
-            let inside = len <= RADIUS as f64 - 6.0;
+            let inside = len <= radius as f64 - 6.0;
             let k = if inside {
                 1.0
             } else {
-                (RADIUS as f64 - 6.0) / len.max(1e-9)
+                (radius as f64 - 6.0) / len.max(1e-9)
             };
             (centre + egui::vec2((u * k) as f32, (v * k) as f32), inside)
         };
         // North on the rim.
         let (n, _) = to_screen(at + DVec2::new(0.0, -1e6));
-        let n = centre + (n - centre).normalized() * (RADIUS + 2.5);
+        let n = centre + (n - centre).normalized() * (radius + 2.5);
         painter.circle_filled(n, 9.0, crate::uikit::HERO_RED);
         painter.circle_stroke(n, 9.0, egui::Stroke::new(1.5_f32, crate::uikit::DEEP));
         painter.text(

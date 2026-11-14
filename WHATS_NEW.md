@@ -3,9 +3,15 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.277 (2026-11-14)
+
+- Arrange the screen your way. Escape menu, "Arrange the screen": drag the minimap, compass, power tray, wrist radio and police monitor wherever you like, and drag a piece's corner to make it bigger or smaller. Enter or the green tick finishes; the round red arrow puts everything back. Your layout is kept for next time.
+- The chat, powers and police computer windows can be dragged too (hold Alt to get the pointer), and they remember where you left them.
+
 ## 0.276 (2026-11-14)
 
 - The chat window has a Team tab. Click it, press Enter and type: everyone in your session reads it, however far away they are, and the tab shows how many new lines wait for you.
+
 
 ## 0.275 (2026-11-14)
 

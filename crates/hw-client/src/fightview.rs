@@ -2464,13 +2464,28 @@ impl FightView {
             let extra = (rows - 1) as f32 * ROW_STEP;
             let base = egui::pos2(screen.center().x - w * 0.5, screen.bottom() - 112.0 - extra);
             let panel = egui::Rect::from_min_size(base, egui::vec2(w, 98.0 + extra));
+            // The tray (gauges, slots, key hints) is one piece the player
+            // may move and resize (see `layout.rs`): scaled about the middle
+            // of its bottom edge, which does not move when a row is added.
+            let tray_anchor = egui::pos2(screen.center().x, screen.bottom() - 14.0);
+            let mut tray_layers = vec![egui::LayerId::new(
+                egui::Order::Background,
+                egui::Id::new("tray hud"),
+            )];
+            tray_layers.extend(
+                (0..tray::SLOTS).map(|k| {
+                    egui::LayerId::new(egui::Order::Middle, egui::Id::new(("tray slot", k)))
+                }),
+            );
+            let tray_tf = crate::layout::apply(ctx, "tray", tray_anchor, &tray_layers);
+            let tray_painter = ctx.layer_painter(tray_layers[0]);
             // A Googie dashboard: a fin with a spinning atom on top, a heart
             // and a bolt for the two gauges.
-            googie::dashboard(&painter, panel, now, uikit::reduced_motion(ctx));
-            googie::heart_icon(&painter, base + egui::vec2(26.0, 16.5), 8.5);
-            googie::bolt_icon(&painter, base + egui::vec2(26.0, 34.5), 8.5);
+            googie::dashboard(&tray_painter, panel, now, uikit::reduced_motion(ctx));
+            googie::heart_icon(&tray_painter, base + egui::vec2(26.0, 16.5), 8.5);
+            googie::bolt_icon(&tray_painter, base + egui::vec2(26.0, 34.5), 8.5);
             uikit::gauge(
-                &painter,
+                &tray_painter,
                 egui::Rect::from_min_size(
                     base + egui::vec2(42.0, 10.0),
                     egui::vec2(w - 58.0, 13.0),
@@ -2481,7 +2496,7 @@ impl FightView {
                 0.3,
             );
             uikit::gauge(
-                &painter,
+                &tray_painter,
                 egui::Rect::from_min_size(
                     base + egui::vec2(42.0, 28.0),
                     egui::vec2(w - 58.0, 13.0),
@@ -2553,7 +2568,7 @@ impl FightView {
                 let Some(power) = power else {
                     // An empty slot: a dim well and its key.
                     uikit::slot(
-                        &painter,
+                        &tray_painter,
                         slot,
                         &tray::label(k),
                         uikit::SlotLook::Empty,
@@ -2584,7 +2599,7 @@ impl FightView {
                 let key = tray::label(k);
                 let raised = hovered || resp.hovered();
                 let (at, name_x) = uikit::slot(
-                    &painter,
+                    &tray_painter,
                     slot,
                     &key,
                     look,
@@ -2599,7 +2614,7 @@ impl FightView {
                     power_name(power)
                 };
                 uikit::fit_text(
-                    &painter,
+                    &tray_painter,
                     slot.min + egui::vec2(name_x, 5.0),
                     name,
                     uikit::ui_font(ctx, 12.5),
@@ -2612,7 +2627,7 @@ impl FightView {
                 );
                 // Its sockets: a dot for each, lit where an augment is set.
                 crate::augmentview::socket_dots(
-                    &painter,
+                    &tray_painter,
                     slot.right_bottom() - egui::vec2(7.0, 6.0),
                     sheet,
                     spec,
@@ -2627,7 +2642,7 @@ impl FightView {
                 } else {
                     "free".into()
                 };
-                painter.text(
+                tray_painter.text(
                     slot.min + egui::vec2(6.0, 24.0),
                     egui::Align2::LEFT_TOP,
                     cost,
@@ -2644,14 +2659,14 @@ impl FightView {
                 if let Some(d) = egui::DragAndDrop::payload::<tray::Drag>(ctx) {
                     let over = ctx
                         .pointer_interact_pos()
-                        .is_some_and(|p| panel.contains(p));
+                        .is_some_and(|p| panel.contains(tray_tf.inverse().mul_pos(p)));
                     if let (tray::Drag::Slot(k), false) = (*d, over) {
                         changed = Some(tray::Change::Clear(k));
                     }
                 }
             }
             uikit::shadow_text(
-                &painter,
+                &tray_painter,
                 egui::pos2(screen.center().x, base.y - 38.0),
                 egui::Align2::CENTER_BOTTOM,
                 &{
@@ -2676,6 +2691,7 @@ impl FightView {
                 font(12.5),
                 egui::Color32::from_white_alpha(200),
             );
+            crate::layout::overlay(ctx, "tray", "Power tray", tray_anchor, panel);
 
             // Down: what now.
             if c.status == Status::Down {

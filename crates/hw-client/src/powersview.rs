@@ -224,11 +224,15 @@ impl PowersView {
         let mut open = self.open;
         crate::googie::window(
             ctx,
-            egui::Window::new("Powers")
-                .collapsible(false)
-                .resizable(false)
-                .default_width(COL_STEP * COLUMNS as f32 + augmentview::BAG_WIDTH + 40.0)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, -20.0)),
+            crate::layout::window(
+                egui::Window::new("Powers"),
+                "Powers",
+                egui::Align2::CENTER_CENTER,
+                ctx.screen_rect().center() + egui::vec2(0.0, -20.0),
+            )
+            .collapsible(false)
+            .resizable(false)
+            .default_width(COL_STEP * COLUMNS as f32 + augmentview::BAG_WIDTH + 40.0),
             "Powers",
             Some(&mut open),
             |ui| {

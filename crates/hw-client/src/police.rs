@@ -98,7 +98,18 @@ impl Police {
     /// The monitor icon in the HUD; true when clicked.
     pub fn icon(&self, ctx: &egui::Context, board: &Board) -> bool {
         let mut clicked = false;
-        egui::Area::new(egui::Id::new("police-icon"))
+        // The player may have moved or resized it (see `layout.rs`).
+        let anchor = egui::pos2(ctx.screen_rect().right() - 10.0, 62.0);
+        crate::layout::apply(
+            ctx,
+            "police-icon",
+            anchor,
+            &[egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("police-icon"),
+            )],
+        );
+        let shown = egui::Area::new(egui::Id::new("police-icon"))
             .anchor(Align2::RIGHT_TOP, vec2(-10.0, 62.0))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
@@ -123,6 +134,13 @@ impl Police {
                 }
                 clicked = resp.on_hover_text("Police computer (Y)").clicked();
             });
+        crate::layout::overlay(
+            ctx,
+            "police-icon",
+            "Police computer",
+            anchor,
+            shown.response.rect,
+        );
         clicked
     }
 
@@ -138,10 +156,14 @@ impl Police {
         let mut out = Vec::new();
         if self.desktop {
             let mut open = true;
-            let win = egui::Window::new("police desktop")
-                .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
-                .resizable(false)
-                .collapsible(false);
+            let win = crate::layout::window(
+                egui::Window::new("police desktop"),
+                "Police computer",
+                Align2::CENTER_CENTER,
+                ctx.screen_rect().center(),
+            )
+            .resizable(false)
+            .collapsible(false);
             crate::googie::window(ctx, win, "Police computer", Some(&mut open), |ui| {
                 ui.label(
                     egui::RichText::new("METRO POLICE DEPT.  -  officer login: HERO")

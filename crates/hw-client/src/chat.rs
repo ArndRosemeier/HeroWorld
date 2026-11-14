@@ -256,92 +256,105 @@ impl ChatLog {
             ))
             .corner_radius(crate::googie::leaf(16))
             .inner_margin(egui::Margin::symmetric(10, 7));
-        egui::Window::new("chat")
-            .title_bar(false)
-            .resizable(true)
-            .collapsible(false)
-            .frame(frame)
-            .pivot(egui::Align2::LEFT_BOTTOM)
-            .default_pos(egui::pos2(screen.left() + 10.0, screen.bottom() - bottom))
-            .default_size(egui::vec2(width, 160.0))
-            .min_size(egui::vec2(220.0, 80.0))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    for c in Channel::ALL {
-                        let unread = self.unread(c);
-                        let label = if unread > 0 && c != self.tab() {
-                            format!("{} ({unread})", c.name())
-                        } else {
-                            c.name().to_string()
-                        };
-                        let text = egui::RichText::new(label).size(13.0).strong();
-                        if ui.selectable_label(c == self.tab(), text).clicked() {
-                            self.tab = Some(c);
-                        }
-                    }
-                    if !self.typing {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(
-                                egui::RichText::new("Enter: chat")
-                                    .size(11.0)
-                                    .color(egui::Color32::from_gray(150)),
-                            );
-                        });
-                    }
-                });
-                let tab = self.tab();
-                self.unread.retain(|u| u.0 != tab);
-                ui.separator();
-                let typing_h = if self.typing { 30.0 } else { 0.0 };
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .stick_to_bottom(true)
-                    .max_height((ui.available_height() - typing_h).max(30.0))
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 2.0;
-                        let mut any = false;
-                        for l in self.channel(tab) {
-                            any = true;
-                            ui.label(line_text(l));
-                        }
-                        if !any {
-                            ui.label(
-                                egui::RichText::new(match tab {
-                                    Channel::Local => "What people say near you shows here.",
-                                    Channel::Team => {
-                                        "What your team says shows here, wherever they are."
-                                    }
-                                })
-                                .size(12.5)
-                                .italics()
-                                .color(egui::Color32::from_gray(150)),
-                            );
-                        }
-                    });
-                if self.typing {
-                    let hint_tab = self.tab();
-                    let edit = egui::TextEdit::singleline(&mut self.input)
-                        .hint_text(match hint_tab {
-                            Channel::Local => "Say something (Enter sends, Esc cancels)",
-                            Channel::Team => "Tell your team (Enter sends, Esc cancels)",
-                        })
-                        .char_limit(MAX_TYPED)
-                        .desired_width(f32::INFINITY);
-                    let r = ui.add(edit);
-                    if self.focus {
-                        r.request_focus();
-                        self.focus = false;
-                    } else if r.lost_focus() {
-                        // Enter in a one-line field gives up its focus: send.
-                        // A click elsewhere just closes the line.
-                        let text = self.input.trim().to_string();
-                        if enter && !text.is_empty() {
-                            sent = Some((self.tab(), text));
-                        }
-                        close = true;
+        // Where the player left it last time, else bottom left beside the tray.
+        let resp = crate::layout::window(
+            egui::Window::new("chat"),
+            "chat",
+            egui::Align2::LEFT_BOTTOM,
+            egui::pos2(screen.left() + 10.0, screen.bottom() - bottom),
+        )
+        .title_bar(false)
+        .resizable(true)
+        .collapsible(false)
+        .frame(frame)
+        .default_size(crate::layout::size_of("chat").unwrap_or(egui::vec2(width, 160.0)))
+        .min_size(egui::vec2(220.0, 80.0))
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                for c in Channel::ALL {
+                    let unread = self.unread(c);
+                    let label = if unread > 0 && c != self.tab() {
+                        format!("{} ({unread})", c.name())
+                    } else {
+                        c.name().to_string()
+                    };
+                    let text = egui::RichText::new(label).size(13.0).strong();
+                    if ui.selectable_label(c == self.tab(), text).clicked() {
+                        self.tab = Some(c);
                     }
                 }
+                if !self.typing {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new("Enter: chat")
+                                .size(11.0)
+                                .color(egui::Color32::from_gray(150)),
+                        );
+                    });
+                }
             });
+            let tab = self.tab();
+            self.unread.retain(|u| u.0 != tab);
+            ui.separator();
+            let typing_h = if self.typing { 30.0 } else { 0.0 };
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .stick_to_bottom(true)
+                .max_height((ui.available_height() - typing_h).max(30.0))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    let mut any = false;
+                    for l in self.channel(tab) {
+                        any = true;
+                        ui.label(line_text(l));
+                    }
+                    if !any {
+                        ui.label(
+                            egui::RichText::new(match tab {
+                                Channel::Local => "What people say near you shows here.",
+                                Channel::Team => {
+                                    "What your team says shows here, wherever they are."
+                                }
+                            })
+                            .size(12.5)
+                            .italics()
+                            .color(egui::Color32::from_gray(150)),
+                        );
+                    }
+                });
+            if self.typing {
+                let hint_tab = self.tab();
+                let edit = egui::TextEdit::singleline(&mut self.input)
+                    .hint_text(match hint_tab {
+                        Channel::Local => "Say something (Enter sends, Esc cancels)",
+                        Channel::Team => "Tell your team (Enter sends, Esc cancels)",
+                    })
+                    .char_limit(MAX_TYPED)
+                    .desired_width(f32::INFINITY);
+                let r = ui.add(edit);
+                if self.focus {
+                    r.request_focus();
+                    self.focus = false;
+                } else if r.lost_focus() {
+                    // Enter in a one-line field gives up its focus: send.
+                    // A click elsewhere just closes the line.
+                    let text = self.input.trim().to_string();
+                    if enter && !text.is_empty() {
+                        sent = Some((self.tab(), text));
+                    }
+                    close = true;
+                }
+            }
+        });
+        if let Some(r) = &resp {
+            crate::layout::remember(
+                ctx,
+                "chat",
+                egui::Align2::LEFT_BOTTOM,
+                r.response.rect,
+                true,
+            );
+        }
         if close {
             self.stop_typing();
         }

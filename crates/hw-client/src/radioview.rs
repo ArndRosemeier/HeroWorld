@@ -1778,7 +1778,18 @@ impl Radio {
         }
         let mut calls: Vec<(&u32, &Call)> = self.calls.iter().collect();
         calls.sort_by(|a, b| a.1.at.distance(eye).total_cmp(&b.1.at.distance(eye)));
-        egui::Area::new(egui::Id::new("radio"))
+        // The player may have moved or resized it (see `layout.rs`).
+        let anchor = egui::pos2(10.0, 10.0);
+        crate::layout::apply(
+            ctx,
+            "radio",
+            anchor,
+            &[egui::LayerId::new(
+                egui::Order::Middle,
+                egui::Id::new("radio"),
+            )],
+        );
+        let shown = egui::Area::new(egui::Id::new("radio"))
             // Words only: the pointer over it must not take the keys.
             .interactable(false)
             .anchor(egui::Align2::LEFT_TOP, egui::vec2(10.0, 10.0))
@@ -1864,6 +1875,7 @@ impl Radio {
                     }
                 });
             });
+        crate::layout::overlay(ctx, "radio", "Wrist radio", anchor, shown.response.rect);
     }
 
     pub fn clear(&mut self, world: &mut World) {

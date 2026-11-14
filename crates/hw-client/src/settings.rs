@@ -339,6 +339,11 @@ impl GameMenu {
                         if ui.button("Settings").clicked() {
                             *page = Page::Settings;
                         }
+                        // Drag and resize the minimap, tray and other pieces.
+                        if ui.button("Arrange the screen").clicked() {
+                            crate::layout::set_editing(true);
+                            *open = false;
+                        }
                         if ui.button("Controls").clicked() {
                             *page = Page::Controls;
                         }
