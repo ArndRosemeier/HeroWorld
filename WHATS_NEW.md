@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.321 (2026-11-14)
+
+- The country is in colour: trees in pink, violet, flame, gold and teal blossom stand among new acacias, baobabs, willows and junipers, each where it fits (valley floor, tablelands, river banks).
+- Flowering bushes grow in drifts, wildflower fields colour the grass, and the cliffs of the tablelands show red, ochre and cream bands.
+- Rocks lie under the cliffs and on the tables, from boulders to blocks as big as a house.
+- The world of every seed is new again.
+
 ## 0.320 (2026-11-14)
 
 - New karma slider in the "Your city" window, set when you start a game: from x0.1 (slow) to x10 (fast), normally x1. Everything you earn is multiplied by it: fights, crimes stopped, rescues, missions, and augments traded in.

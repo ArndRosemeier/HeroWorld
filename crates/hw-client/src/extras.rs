@@ -508,7 +508,12 @@ pub fn set_town_stream(
     let trees: BTreeMap<PropKind, LodId> = kinds
         .iter()
         .zip(prop_sets)
-        .filter(|(k, _)| matches!(k, PropKind::Tree(..)))
+        .filter(|(k, _)| {
+            matches!(
+                k,
+                PropKind::Tree(..) | PropKind::Bloom(..) | PropKind::Bush(..) | PropKind::Rock(..)
+            )
+        })
         .map(|(k, id)| (*k, *id))
         .collect();
     // A wide, coarse water window, so rivers and lakes show across the town
@@ -527,7 +532,14 @@ pub fn set_town_stream(
         trees,
     };
     let stream = WorldStream::new(ground, settings)
-        .with_terrain(|t| t.with_beach(1.8).with_dry_ground(scree()));
+        // Colourful country (Arnd 2026-11-14): wildflower fields on the
+        // grass, and the cliffs banded red, ochre and cream.
+        .with_terrain(|t| {
+            t.with_beach(1.8)
+                .with_dry_ground(scree())
+                .with_flowers(0.9)
+                .with_painted_rock(1.0)
+        });
     world.set_stream(Some(stream))
 }
 

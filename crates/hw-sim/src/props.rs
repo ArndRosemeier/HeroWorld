@@ -29,7 +29,7 @@ pub enum Breaks {
 /// elements) and how it breaks; `None`: it does not break (yet).
 pub fn toughness(kind: PropKind) -> Option<(f32, Breaks)> {
     Some(match kind {
-        PropKind::Shrub(_) => (20.0, Breaks::Smashed),
+        PropKind::Shrub(_) | PropKind::Bush(..) => (20.0, Breaks::Smashed),
         PropKind::Hedge(_) => (60.0, Breaks::Smashed),
         PropKind::Bin => (40.0, Breaks::Smashed),
         PropKind::Bench => (120.0, Breaks::Smashed),
@@ -37,7 +37,7 @@ pub fn toughness(kind: PropKind) -> Option<(f32, Breaks)> {
         PropKind::Hydrant => (250.0, Breaks::Topples),
         PropKind::Lamp(_) => (200.0, Breaks::Topples),
         PropKind::TrafficLight => (260.0, Breaks::Topples),
-        PropKind::Tree(..) => (320.0, Breaks::Topples),
+        PropKind::Tree(..) | PropKind::Bloom(..) => (320.0, Breaks::Topples),
         PropKind::AdPillar => (350.0, Breaks::Topples),
         PropKind::Car(..) => (300.0, Breaks::Flips),
         PropKind::Kiosk => (380.0, Breaks::Smashed),
@@ -55,7 +55,9 @@ pub fn toughness(kind: PropKind) -> Option<(f32, Breaks)> {
         PropKind::Fence(_) => (60.0, Breaks::Smashed),
         PropKind::Grave(_) => (160.0, Breaks::Topples),
         PropKind::GraveRail => (140.0, Breaks::Smashed),
-        PropKind::Fountain | PropKind::Tomb(_) | PropKind::GraveGate => return None,
+        PropKind::Fountain | PropKind::Tomb(_) | PropKind::GraveGate | PropKind::Rock(..) => {
+            return None
+        }
     })
 }
 
@@ -69,8 +71,8 @@ pub fn trunk(kind: PropKind) -> (f64, f64) {
         PropKind::Bench => (0.8, 0.9),
         PropKind::Statue(_) => (1.0, 4.5),
         PropKind::AdPillar => (0.7, 3.2),
-        PropKind::Tree(..) => (0.4, 6.0),
-        PropKind::Shrub(_) => (0.6, 1.0),
+        PropKind::Tree(..) | PropKind::Bloom(..) => (0.4, 6.0),
+        PropKind::Shrub(_) | PropKind::Bush(..) => (0.6, 1.0),
         PropKind::Hedge(_) => (1.2, 1.15),
         PropKind::Lamp(_) | PropKind::TrafficLight => (0.2, 5.0),
         PropKind::Bin | PropKind::Hydrant | PropKind::Bollard => (0.3, 0.9),
@@ -85,6 +87,7 @@ pub fn trunk(kind: PropKind) -> (f64, f64) {
         PropKind::GraveRail => (1.2, 1.7),
         PropKind::Tomb(_) => (2.0, 4.0),
         PropKind::GraveGate => (2.5, 4.0),
+        PropKind::Rock(r, _) => r.size(),
         PropKind::Barricade(p) => {
             let (hx, hz, h) = p.block();
             (hx.max(hz), h)
@@ -101,7 +104,7 @@ fn cost(kind: PropKind) -> f64 {
         PropKind::Grave(_) => 4_000.0,
         PropKind::Kiosk => 6_000.0,
         PropKind::BusStop | PropKind::PhoneBooth => 3_000.0,
-        PropKind::Tree(..) => 2_500.0,
+        PropKind::Tree(..) | PropKind::Bloom(..) => 2_500.0,
         PropKind::TrafficLight | PropKind::Lamp(_) => 1_800.0,
         // The villains' own: nobody minds.
         PropKind::Barricade(_) => 0.0,

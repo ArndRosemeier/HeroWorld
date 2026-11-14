@@ -406,6 +406,8 @@ impl Woods {
     }
 
     fn near(&self, p: DVec2, r: f64) -> Vec<Arc<[Solid]>> {
+        // A rock as big as a house reaches out of the cell its middle is in.
+        let r = r + 8.0;
         let (x0, z0) = (
             ((p.x - r) / WOOD_CELL).floor() as i64,
             ((p.y - r) / WOOD_CELL).floor() as i64,

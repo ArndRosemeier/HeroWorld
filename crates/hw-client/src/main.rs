@@ -1787,7 +1787,7 @@ fn main() -> EngineResult<()> {
                 )
             }
         }
-        "mesas" | "canyon" => {
+        "mesas" | "canyon" | "flora" => {
             // The tablelands round the town: from over its edge towards the
             // side where most of them stand, or from low over the river
             // where it runs through one.
@@ -1819,12 +1819,33 @@ fn main() -> EngineResult<()> {
                         .max_by(|a, b| tables(*a).total_cmp(&tables(*b)))
                         .expect("48 directions");
                     let yaw = d.x.atan2(d.y).to_degrees() as f32;
-                    let p = d * (w.half() - 600.0);
-                    FlyCamera::new(
-                        (p.x as f32, ground(p) as f32 + 160.0, p.y as f32),
-                        yaw,
-                        -3.0,
-                    )
+                    // What grows out there (flora): from head height
+                    // over the valley floor just beyond the town.
+                    let (out, up, pitch) = if view == "flora" {
+                        (350.0, 6.0, -5.0)
+                    } else {
+                        (-600.0, 160.0, -3.0)
+                    };
+                    let mut p = d * (w.half() + out);
+                    let mut yaw = yaw;
+                    if view == "flora" {
+                        // Towards the nearest tree in blossom (HW_PROP: any
+                        // other wild thing by name, "Rock", "Bush", "Willow").
+                        let name = std::env::var("HW_PROP").unwrap_or_else(|_| "Bloom".into());
+                        let green = hw_gen::urban::greenery::Greenery::new(w);
+                        let wild =
+                            green.wild_trees(w, p - DVec2::splat(400.0), p + DVec2::splat(400.0));
+                        let near = wild
+                            .iter()
+                            .filter(|t| format!("{:?}", t.kind).contains(&name))
+                            .min_by(|a, b| a.pos.distance(p).total_cmp(&b.pos.distance(p)));
+                        if let Some(t) = near {
+                            let from = t.pos - d * 16.0;
+                            yaw = d.x.atan2(d.y).to_degrees() as f32;
+                            p = from;
+                        }
+                    }
+                    FlyCamera::new((p.x as f32, ground(p) as f32 + up, p.y as f32), yaw, pitch)
                 }
             }
         }

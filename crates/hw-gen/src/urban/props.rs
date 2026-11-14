@@ -41,7 +41,7 @@ pub enum LampStyle {
     Atomic,
 }
 
-/// Tree species (the same ten Engine grows).
+/// Tree species (the same fourteen Engine grows).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Species {
     Plane,
@@ -54,7 +54,103 @@ pub enum Species {
     Cypress,
     Chestnut,
     Ginkgo,
+    /// Umbrella thorn: a wide flat crown, the tree of the mesa country's floor.
+    Acacia,
+    /// Low and gnarled, on the table tops.
+    Juniper,
+    /// Weeping, by the water.
+    Willow,
+    /// Bottle tree: a swollen trunk under a small crown.
+    Baobab,
 }
+
+/// Trees of the wild that stand in colour all year (Arnd 2026-11-14: the
+/// country is to be colourful). Each is one of Engine's species with its
+/// crown in blossom.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Blossom {
+    /// Flame thorn: an umbrella thorn in scarlet.
+    Flame,
+    /// Violet thorn: an umbrella thorn in violet, as a jacaranda.
+    Violet,
+    /// Rose tree: a round crown in pink.
+    Rose,
+    /// Sun willow: a weeping willow in gold.
+    Gold,
+    /// Aether bottle: a bottle tree whose crown is teal, where the Aether
+    /// has touched the land.
+    Teal,
+}
+
+impl Blossom {
+    pub const ALL: [Blossom; 5] = [
+        Blossom::Flame,
+        Blossom::Violet,
+        Blossom::Rose,
+        Blossom::Gold,
+        Blossom::Teal,
+    ];
+
+    /// The tree under the colour.
+    pub fn species(self) -> Species {
+        match self {
+            Blossom::Flame | Blossom::Violet => Species::Acacia,
+            Blossom::Rose => Species::Linden,
+            Blossom::Gold => Species::Willow,
+            Blossom::Teal => Species::Baobab,
+        }
+    }
+
+    /// The colour (sRGB) and the share of the crown that wears it.
+    pub fn color(self) -> ([u8; 3], f32) {
+        match self {
+            Blossom::Flame => ([255, 80, 40], 0.85),
+            Blossom::Violet => ([150, 90, 230], 1.0),
+            Blossom::Rose => ([255, 150, 190], 0.9),
+            Blossom::Gold => ([255, 210, 60], 0.8),
+            Blossom::Teal => ([60, 220, 210], 1.0),
+        }
+    }
+}
+
+/// Colours a flowering bush comes in (sRGB): the wildflowers' own.
+pub const BUSH_COLORS: [[u8; 3]; 5] = [
+    [240, 60, 40],
+    [250, 200, 40],
+    [140, 90, 235],
+    [250, 130, 180],
+    [248, 240, 215],
+];
+/// Individuals per colour of flowering bush, and per tree in blossom.
+pub const BUSH_VARIANTS: u8 = 2;
+pub const BLOSSOM_VARIANTS: u8 = 3;
+
+/// Rocks of the wild: boulders and blocks under the cliffs, slabs and
+/// spires on the tables (Engine's four rock shapes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Rock {
+    Boulder,
+    Block,
+    Slab,
+    Spire,
+}
+
+impl Rock {
+    pub const ALL: [Rock; 4] = [Rock::Boulder, Rock::Block, Rock::Slab, Rock::Spire];
+
+    /// Radius of its foot and its height at scale 1 (m), a little inside
+    /// Engine's model so a hero can stand close.
+    pub fn size(self) -> (f64, f64) {
+        match self {
+            Rock::Boulder => (0.85, 1.2),
+            Rock::Block => (0.8, 1.3),
+            Rock::Slab => (0.95, 0.6),
+            Rock::Spire => (0.55, 2.6),
+        }
+    }
+}
+/// Individuals per rock shape.
+pub const ROCK_VARIANTS: u8 = 3;
 
 /// Golden-age cars.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -80,6 +176,12 @@ pub enum PropKind {
     Lamp(LampStyle),
     Tree(Species, u8),
     Shrub(u8),
+    /// A wild tree in blossom, and which individual.
+    Bloom(Blossom, u8),
+    /// A flowering bush: its colour ([`BUSH_COLORS`]) and which individual.
+    Bush(u8, u8),
+    /// A rock of the wild, and which individual.
+    Rock(Rock, u8),
     Bench,
     Bin,
     Hydrant,
@@ -258,9 +360,19 @@ impl PropKind {
         ];
         out.extend([Lantern, Deco, Atomic].map(PropKind::Lamp));
         for s in [
-            Plane, Linden, Maple, Oak, Birch, Pine, Palm, Cypress, Chestnut, Ginkgo,
+            Plane, Linden, Maple, Oak, Birch, Pine, Palm, Cypress, Chestnut, Ginkgo, Acacia,
+            Juniper, Willow, Baobab,
         ] {
             out.extend((0..TREE_VARIANTS).map(|v| PropKind::Tree(s, v)));
+        }
+        for b in Blossom::ALL {
+            out.extend((0..BLOSSOM_VARIANTS).map(|v| PropKind::Bloom(b, v)));
+        }
+        for c in 0..BUSH_COLORS.len() as u8 {
+            out.extend((0..BUSH_VARIANTS).map(|v| PropKind::Bush(c, v)));
+        }
+        for r in Rock::ALL {
+            out.extend((0..ROCK_VARIANTS).map(|v| PropKind::Rock(r, v)));
         }
         out.extend((0..SHRUB_VARIANTS).map(PropKind::Shrub));
         for m in [Cruiser, Bubble, Hover] {
@@ -370,8 +482,16 @@ impl Prop {
                 },
             )],
             PropKind::TrafficLight => vec![disc(0.16, 4.1)],
-            PropKind::Tree(..) => vec![disc((0.32 * s).max(0.15), 3.0)],
-            PropKind::Shrub(_) => Vec::new(),
+            // A bottle tree's trunk is a metre thick.
+            PropKind::Tree(Species::Baobab, _) | PropKind::Bloom(Blossom::Teal, _) => {
+                vec![disc(1.0 * s, 5.0)]
+            }
+            PropKind::Tree(..) | PropKind::Bloom(..) => vec![disc((0.32 * s).max(0.15), 3.0)],
+            PropKind::Shrub(_) | PropKind::Bush(..) => Vec::new(),
+            PropKind::Rock(r, _) => {
+                let (radius, height) = r.size();
+                vec![disc(radius * s, height * s)]
+            }
             // A clipped hedge: dense enough to stop a body.
             PropKind::Hedge(_) => vec![block(HEDGE_LEN * 0.5, HEDGE_DEPTH * 0.5, HEDGE_HEIGHT)],
             PropKind::Bench => vec![block(0.97, 0.36, 0.95)],

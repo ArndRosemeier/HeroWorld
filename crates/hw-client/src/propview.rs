@@ -8,7 +8,9 @@
 
 use crate::citymesh::{MeshBuilder, Surf};
 use engine::prelude::*;
-use engine::vegetation::{shrub_model, tree_model, TreeSpecies};
+use engine::vegetation::{
+    shrub_model, shrub_model_in_bloom, tree_model, tree_model_in_bloom, Bloom, TreeSpecies,
+};
 use glam::{DVec2, DVec3};
 use hw_gen::urban::props::{CarModel, Prop, PropKind, Species};
 use hw_gen::urban::quarter::DetailId;
@@ -366,7 +368,7 @@ fn broken_place(p: &Prop, whole: Place, (_, hi): (Vec3, Vec3), fell: u8) -> Plac
             // along the fall. Trees lean on
             // their crowns rather than lying flat.
             // (Its +z, the front, ends up underneath.)
-            let tree = matches!(p.kind, PropKind::Tree(..));
+            let tree = matches!(p.kind, PropKind::Tree(..) | PropKind::Bloom(..));
             let pitch = if tree { 76.0 } else { 90.0 };
             let lift = if tree { 0.0 } else { hi.z.max(0.05) * s };
             Place {
@@ -404,6 +406,11 @@ pub fn prop_place(p: &Prop) -> Place {
         PropKind::Hedge(_) => Place {
             stretch: HEDGE_STRETCH,
             tint: Color::rgb01_unchecked(0.82, 1.0, 0.62),
+            ..at
+        },
+        // The mesas' own sandstone: warm, as the cliffs it fell from.
+        PropKind::Rock(..) => Place {
+            tint: Color::rgb01_unchecked(1.0, 0.72, 0.52),
             ..at
         },
         _ => at,
@@ -446,6 +453,10 @@ fn species(s: Species) -> TreeSpecies {
         Species::Cypress => TreeSpecies::Cypress,
         Species::Chestnut => TreeSpecies::Chestnut,
         Species::Ginkgo => TreeSpecies::Ginkgo,
+        Species::Acacia => TreeSpecies::Acacia,
+        Species::Juniper => TreeSpecies::Juniper,
+        Species::Willow => TreeSpecies::Willow,
+        Species::Baobab => TreeSpecies::Baobab,
     }
 }
 
@@ -471,6 +482,39 @@ pub fn model_levels(kind: PropKind) -> EngineResult<Vec<LodLevel>> {
     Ok(match kind {
         PropKind::Tree(s, v) => tree_model(species(s), v as u32)?.lod_levels(),
         PropKind::Shrub(v) => shrub_model(v as u32)?.lod_levels(),
+        // The wild's trees in blossom: a different individual from the green
+        // ones of the same species.
+        PropKind::Bloom(b, v) => {
+            let ([r, g, bl], share) = b.color();
+            tree_model_in_bloom(
+                species(b.species()),
+                20 + v as u32,
+                Bloom::new(rgb(r, g, bl), share),
+            )?
+            .lod_levels()
+        }
+        // Flowering bushes: the deciduous shrubs (even variants), in flower.
+        PropKind::Bush(c, v) => {
+            let [r, g, bl] = hw_gen::urban::props::BUSH_COLORS[c as usize % 5];
+            shrub_model_in_bloom(
+                2 * (c as u32 * 3 + v as u32),
+                Bloom::new(rgb(r, g, bl), 0.7),
+            )?
+            .lod_levels()
+        }
+        // Rocks stand from one to several times their natural size: detail
+        // distances for a big one.
+        PropKind::Rock(r, v) => {
+            use engine::rocks::RockShape;
+            use hw_gen::urban::props::Rock;
+            let shape = match r {
+                Rock::Boulder => RockShape::Boulder,
+                Rock::Block => RockShape::Block,
+                Rock::Slab => RockShape::Slab,
+                Rock::Spire => RockShape::Spire,
+            };
+            engine::rocks::rock_model(shape, 7 + v as u32)?.lod_levels_scaled(2.5)
+        }
         PropKind::Hedge(v) => hedge_levels(v)?,
         PropKind::Lamp(style) => three(&|l| pm::lamp(style, l), [30.0, 140.0, 700.0]),
         PropKind::Car(m, paint) => parked_car_levels(m, paint),

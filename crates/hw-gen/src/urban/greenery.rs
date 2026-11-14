@@ -13,7 +13,8 @@
 
 use super::deep::StreetHole;
 use super::growth::Era;
-use super::props::{Prop, PropKind, Species};
+use super::land::smooth;
+use super::props::{Blossom, Prop, PropKind, Species};
 use super::streets::StreetStyle;
 use super::world::{Bridge, TownWorld, WorldBuilding, WorldRoad, DECK};
 use super::{contains, Town};
@@ -445,14 +446,168 @@ fn steep(w: &TownWorld, p: DVec2) -> bool {
 
 /// A tree of the open country at `p`, on ground `h` high.
 fn wild_tree(species: Species, p: DVec2, h: f64, rng: &mut hw_core::Rng) -> Prop {
-    let v = rng.range_int(0, super::props::TREE_VARIANTS as i64) as u8;
+    wild_plant(Flora::Tree(species), p, h, rng)
+}
+
+/// A tree of the wild: green, or one that stands in blossom.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Flora {
+    Tree(Species),
+    Bloom(Blossom),
+}
+
+fn wild_plant(kind: Flora, p: DVec2, h: f64, rng: &mut hw_core::Rng) -> Prop {
+    let kind = match kind {
+        Flora::Tree(s) => PropKind::Tree(
+            s,
+            rng.range_int(0, super::props::TREE_VARIANTS as i64) as u8,
+        ),
+        Flora::Bloom(b) => PropKind::Bloom(
+            b,
+            rng.range_int(0, super::props::BLOSSOM_VARIANTS as i64) as u8,
+        ),
+    };
     let dir = DVec2::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0)).normalize_or(DVec2::Y);
     Prop {
-        kind: PropKind::Tree(species, v),
+        kind,
         pos: p,
         y: h - 0.05,
         dir,
         scale: rng.range(0.75, 1.25),
+    }
+}
+
+/// Where in mesa country a spot lies: what grows there depends on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Habitat {
+    /// The valley floor.
+    Floor,
+    /// On a tableland, any tier.
+    Table,
+    /// The floor right under a cliff: its fallen rock lies here.
+    Foot,
+    /// By a river or lake.
+    Bank,
+}
+
+impl Habitat {
+    fn at(w: &TownWorld, planet: &crate::planet::PlanetPatch, p: DVec2, h: f64) -> Habitat {
+        if w.outer_rivers().is_some_and(|o| o.canyon(p) < 0.75) {
+            return Habitat::Bank;
+        }
+        if h - planet.lowland(p) > 25.0 {
+            return Habitat::Table;
+        }
+        // A wall within 45 m, on any of six sides?
+        let wall = (0..6).any(|k| {
+            let q = p + hw_core::det::dir2(k as f64 / 6.0 * std::f64::consts::TAU) * 45.0;
+            w.ground(q) - h > 25.0
+        });
+        if wall {
+            Habitat::Foot
+        } else {
+            Habitat::Floor
+        }
+    }
+}
+
+/// What grows at a spot of mesa country. `grove` (noise, about -0.5..0.5)
+/// changes slowly, so stretches of country lean to one kind: a violet
+/// grove, a flame grove, plain umbrella thorns, the old woods.
+fn mesa_flora(place: Habitat, grove: f64, region: Region, h: f64, rng: &mut hw_core::Rng) -> Flora {
+    use Flora::{Bloom, Tree};
+    // The grove's own tree, two times in three.
+    let band = ((grove + 0.5) * 9.0).rem_euclid(6.0) as usize;
+    let own = rng.chance(0.66);
+    match place {
+        Habitat::Bank => match rng.weighted(&[0.42, 0.26, 0.12, 0.2]) {
+            0 => Tree(Species::Willow),
+            1 => Bloom(Blossom::Gold),
+            2 => Bloom(Blossom::Rose),
+            _ => Tree(super::props::wild_species(region, h, rng)),
+        },
+        Habitat::Table => {
+            if own && band == 1 {
+                return Bloom(Blossom::Violet);
+            }
+            if own && band == 4 {
+                return Bloom(Blossom::Teal);
+            }
+            match rng.weighted(&[0.5, 0.16, 0.14, 0.08, 0.06, 0.06]) {
+                0 => Tree(Species::Juniper),
+                1 => Tree(Species::Pine),
+                2 => Tree(Species::Acacia),
+                3 => Bloom(Blossom::Flame),
+                4 => Bloom(Blossom::Teal),
+                _ => Tree(Species::Baobab),
+            }
+        }
+        Habitat::Floor | Habitat::Foot => {
+            if own {
+                match band {
+                    0 => return Tree(Species::Acacia),
+                    1 => return Bloom(Blossom::Flame),
+                    2 => return Bloom(Blossom::Violet),
+                    3 => return Bloom(Blossom::Rose),
+                    4 => return Tree(Species::Baobab),
+                    _ => {}
+                }
+            }
+            match rng.weighted(&[0.3, 0.08, 0.08, 0.08, 0.06, 0.4]) {
+                0 => Tree(Species::Acacia),
+                1 => Bloom(Blossom::Flame),
+                2 => Bloom(Blossom::Violet),
+                3 => Bloom(Blossom::Rose),
+                4 => Tree(Species::Baobab),
+                _ => Tree(super::props::wild_species(region, h, rng)),
+            }
+        }
+    }
+}
+
+/// A flowering bush; `color` (noise) picks its colour, so bushes stand in
+/// drifts of one.
+fn wild_bush(color: f64, p: DVec2, h: f64, rng: &mut hw_core::Rng) -> Prop {
+    let n = super::props::BUSH_COLORS.len();
+    let c = ((color + 0.5) * 11.0).rem_euclid(n as f64) as usize % n;
+    Prop {
+        kind: PropKind::Bush(
+            c as u8,
+            rng.range_int(0, super::props::BUSH_VARIANTS as i64) as u8,
+        ),
+        pos: p,
+        y: h - 0.03,
+        dir: DVec2::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0)).normalize_or(DVec2::Y),
+        scale: rng.range(0.8, 1.5),
+    }
+}
+
+/// A rock: blocks and boulders fallen under a cliff, slabs and now and then
+/// a spire on a table, a lone boulder in the open.
+fn wild_rock(place: Habitat, cliff: bool, p: DVec2, h: f64, rng: &mut hw_core::Rng) -> Prop {
+    use super::props::Rock;
+    let rock = match (place, cliff) {
+        (Habitat::Table, false) => {
+            [Rock::Slab, Rock::Slab, Rock::Spire, Rock::Boulder][rng.range_int(0, 4) as usize]
+        }
+        (_, true) | (Habitat::Foot, _) => {
+            [Rock::Block, Rock::Block, Rock::Boulder][rng.range_int(0, 3) as usize]
+        }
+        _ => Rock::Boulder,
+    };
+    // Mostly a metre or two, a few as big as a house.
+    let u = rng.unit();
+    let scale = 0.6 + 1.6 * u + 5.0 * u * u * u * u * u * u;
+    Prop {
+        kind: PropKind::Rock(
+            rock,
+            rng.range_int(0, super::props::ROCK_VARIANTS as i64) as u8,
+        ),
+        pos: p,
+        // Sunk a little, so it sits in the slope.
+        y: h - 0.25 * scale,
+        dir: DVec2::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0)).normalize_or(DVec2::Y),
+        scale,
     }
 }
 
@@ -515,7 +670,7 @@ impl Greenery {
                     let cover = planet.cover(p, h);
                     // Closed forest where the land is wooded, the same
                     // copses and lone trees where it is open.
-                    let take = f64::min(take * 1.25, 1.0) * cover.trees
+                    let woods = f64::min(take * 1.25, 1.0) * cover.trees
                         + if wood > 0.1 {
                             0.5 * cover.trees * cover.trees
                         } else {
@@ -523,19 +678,62 @@ impl Greenery {
                         };
                     // Not in the water, the sea's or a river pool's.
                     let dry = h - w.water_level(p);
-                    if rng.unit() > take || dry < SAND_TOP + 0.8 || steep(w, p) {
+                    if dry < SAND_TOP + 0.8 {
+                        continue;
+                    }
+                    let place = Habitat::at(w, planet, p, h);
+                    let cliff = steep(w, p);
+                    // Rocks lie under the cliffs and on them, and here and
+                    // there on a table.
+                    let rocks = match (cliff, place) {
+                        (true, _) => 0.1,
+                        (false, Habitat::Foot) => 0.3,
+                        (false, Habitat::Table) => 0.012,
+                        _ => 0.0015,
+                    };
+                    if rng.unit() < rocks {
+                        out.push(wild_rock(place, cliff, p, h, &mut rng));
+                        continue;
+                    }
+                    if cliff || cover.green < 0.15 {
+                        continue;
+                    }
+                    // Mesa country is open: parkland on the floor, sparse
+                    // on the tables, a ribbon of trees along the water.
+                    let take = match place {
+                        Habitat::Floor | Habitat::Foot => 0.5 * woods + 0.022 * cover.trees.sqrt(),
+                        Habitat::Table => 0.22 * woods + 0.03 * cover.trees.sqrt(),
+                        Habitat::Bank => woods.max(0.3 * cover.trees.sqrt()),
+                    };
+                    let roll = rng.unit();
+                    if roll > take {
+                        // Flowering bushes in the open, in drifts of one colour.
+                        let drift = noise.fbm(p.x * 0.011 + 40.0, p.y * 0.011 - 7.0, 2);
+                        if roll < take + 0.035 * cover.green * smooth(0.0, 0.25, drift) {
+                            let color = noise.fbm(p.x * 0.0031 - 90.0, p.y * 0.0031 + 13.0, 2);
+                            out.push(wild_bush(color, p, h, &mut rng));
+                        }
                         continue;
                     }
                     // Conifers where it is cold, up the mountains.
-                    let species = if cover.temp < 6.0 && rng.chance(0.85) {
-                        Species::Pine
+                    let kind = if cover.temp < 6.0 && rng.chance(0.85) {
+                        Flora::Tree(Species::Pine)
                     } else {
-                        super::props::wild_species(self.region, h, &mut rng)
+                        // Groves: a stretch of country leans to one kind.
+                        let grove = noise.fbm(p.x * 0.0023 + 31.0, p.y * 0.0023 + 77.0, 2);
+                        mesa_flora(place, grove, self.region, h, &mut rng)
                     };
-                    out.push(wild_tree(species, p, h, &mut rng));
+                    out.push(wild_plant(kind, p, h, &mut rng));
                     continue;
                 }
-                if rng.unit() > take || built(&w.town, p) {
+                let roll = rng.unit();
+                // On the planet the town's own open land flowers like the
+                // country round it: bushes in drifts between the trees.
+                let bush = planet.is_some() && roll > take && {
+                    let drift = noise.fbm(p.x * 0.011 + 40.0, p.y * 0.011 - 7.0, 2);
+                    roll < take + 0.03 * smooth(0.0, 0.25, drift)
+                };
+                if (roll > take && !bush) || built(&w.town, p) {
                     continue;
                 }
                 let h = w.ground(p);
@@ -551,8 +749,17 @@ impl Greenery {
                 if steep(w, p) {
                     continue;
                 }
-                let species = super::props::wild_species(self.region, h, &mut rng);
-                out.push(wild_tree(species, p, h, &mut rng));
+                if bush {
+                    let color = noise.fbm(p.x * 0.0031 - 90.0, p.y * 0.0031 + 13.0, 2);
+                    out.push(wild_bush(color, p, h, &mut rng));
+                } else if planet.is_some() {
+                    let grove = noise.fbm(p.x * 0.0023 + 31.0, p.y * 0.0023 + 77.0, 2);
+                    let kind = mesa_flora(Habitat::Floor, grove, self.region, h, &mut rng);
+                    out.push(wild_plant(kind, p, h, &mut rng));
+                } else {
+                    let species = super::props::wild_species(self.region, h, &mut rng);
+                    out.push(wild_tree(species, p, h, &mut rng));
+                }
             }
         }
         out
@@ -642,6 +849,68 @@ mod tests {
             assert!(!super::built(&w.town, p.pos));
             assert!(!g.on_road(&w, p.pos, 0.0));
         }
+    }
+
+    /// Mesa country (Arnd 2026-11-14: fitting, colourful vegetation): the
+    /// land beyond the town grows trees in blossom and flowering bushes
+    /// beside the green ones, rocks lie about, and the same seed plants the
+    /// same country.
+    #[test]
+    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
+    fn the_country_beyond_the_town_is_in_flower_and_strewn_with_rocks() {
+        use crate::planet::{choose_home, PlanetMap, PlanetPatch};
+        let seed = Seed(1);
+        let map = PlanetMap::build(seed, 96);
+        let patch = std::sync::Arc::new(PlanetPatch::new(&map, choose_home(&map)));
+        let params = TownParams::on_planet(seed, 20_000.0, &patch);
+        let w = TownWorld::generate_on_or_stop(seed, params, None, &hw_core::Cancel::new())
+            .expect("not cancelled");
+        let g = Greenery::new(&w);
+        let h = w.half();
+        // A band of country north of the town.
+        let (lo, hi) = (
+            DVec2::new(-1500.0, h + 100.0),
+            DVec2::new(1500.0, h + 1600.0),
+        );
+        let all = g.wild_trees(&w, lo, hi);
+        let count = |f: &dyn Fn(PropKind) -> bool| all.iter().filter(|p| f(p.kind)).count();
+        let trees = count(&|k| matches!(k, PropKind::Tree(..)));
+        let blooms = count(&|k| matches!(k, PropKind::Bloom(..)));
+        let bushes = count(&|k| matches!(k, PropKind::Bush(..)));
+        let rocks = count(&|k| matches!(k, PropKind::Rock(..)));
+        assert!(trees > 50, "{trees} green trees");
+        assert!(blooms * 8 > trees, "{blooms} in blossom of {trees} trees");
+        assert!(bushes > 30, "{bushes} flowering bushes");
+        assert!(rocks > 20, "{rocks} rocks");
+        // More than one colour of blossom, so the country is not one wash.
+        let colours: std::collections::BTreeSet<u8> = all
+            .iter()
+            .filter_map(|p| match p.kind {
+                PropKind::Bloom(b, _) => Some(b as u8),
+                _ => None,
+            })
+            .collect();
+        assert!(colours.len() >= 2, "{colours:?}");
+        // Nothing grows in the water, and every rock is solid.
+        for p in &all {
+            assert!(
+                w.ground(p.pos) > w.water_level(p.pos),
+                "{p:?} stands in water"
+            );
+            if matches!(
+                p.kind,
+                PropKind::Rock(..) | PropKind::Tree(..) | PropKind::Bloom(..)
+            ) {
+                assert!(!p.footprints().is_empty(), "{p:?} is not solid");
+            }
+        }
+        // The same seed, the same country.
+        let again = g.wild_trees(&w, lo, hi);
+        assert_eq!(all.len(), again.len());
+        assert!(all
+            .iter()
+            .zip(&again)
+            .all(|(a, b)| a.kind == b.kind && a.pos == b.pos));
     }
 
     #[test]
