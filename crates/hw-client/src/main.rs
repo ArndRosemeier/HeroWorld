@@ -1784,6 +1784,36 @@ fn main() -> EngineResult<()> {
                 )
             }
         }
+        "falls" | "cascade" | "headwater" => {
+            // The river above the town: its lowest fall from close by, the
+            // flight of falls from further down the valley, or the pool at
+            // its head from far off (drawn there as far water).
+            let w = &generated.world;
+            let found = w.outer_rivers().and_then(|o| {
+                let (r, levels) = o.rivers.first().zip(o.levels.first())?;
+                let k = levels.windows(2).rposition(|l| l[0] > l[1])?;
+                Some((r.pts.clone(), levels.clone(), k))
+            });
+            if let Some((pts, levels, k)) = found {
+                let fall = (pts[k] + pts[k + 1]) * 0.5;
+                // Upstream is towards the head.
+                let up = (pts[k] - pts[k + 1]).normalize();
+                let (at, look_at, above, pitch) = match view.as_str() {
+                    "falls" => (fall - up * 70.0, fall, levels[k] + 14.0, -14.0),
+                    "cascade" => (fall - up * 420.0, fall, levels[k] + 90.0, -14.0),
+                    _ => {
+                        let head = pts[0];
+                        let away = (head - fall).normalize_or(up);
+                        (head + away * 2600.0, head, levels[0] + 500.0, -11.0)
+                    }
+                };
+                let d = look_at - at;
+                let yaw = d.x.atan2(d.y).to_degrees() as f32;
+                FlyCamera::new((at.x as f32, above as f32, at.y as f32), yaw, pitch as f32)
+            } else {
+                FlyCamera::new((0.0, ground(DVec2::ZERO) as f32 + 300.0, 0.0), 0.0, -20.0)
+            }
+        }
         "river" => {
             // Looking at the first river near the town (for screenshots).
             let r = generated.world.town.land.rivers.first().map_or(spawn, |r| {

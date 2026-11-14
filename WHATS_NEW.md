@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.317 (2026-11-14)
+
+- Rivers now climb into the country: beyond the town a river rises pool by pool, and the water really runs over the falls between them. Gentle land gives long pools and small falls, steep land a cascade in a gorge.
+- Here and there a pool widens into a lake, and every river that climbs has a spring at its head.
+- Lakes and rivers up in the hills show from far away, not only close by.
+
 ## 0.316 (2026-11-14)
 
 - Fixed: the city river showed as patches of water over a dry bed from close up. It is whole again.

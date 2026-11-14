@@ -521,7 +521,9 @@ impl Greenery {
                         } else {
                             0.0
                         };
-                    if rng.unit() > take || h < SAND_TOP + 0.8 || steep(w, p) {
+                    // Not in the water, the sea's or a river pool's.
+                    let dry = h - w.water_level(p);
+                    if rng.unit() > take || dry < SAND_TOP + 0.8 || steep(w, p) {
                         continue;
                     }
                     // Conifers where it is cold, up the mountains.

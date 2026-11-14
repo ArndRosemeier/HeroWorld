@@ -100,17 +100,32 @@ impl WorldGenerator for TownGround {
         crate::deepview::density(self.world(), p, ground)
     }
 
-    /// Every water surface of the town stands at [`WATER_LEVEL`], so Engine's
-    /// calm far water at that height is the town's water to the horizon: the
-    /// open sea of a coast, and wherever the ground dips below it, the rivers
-    /// and lakes (a flat plane that the land hides).
+    /// The sea, the town's own water and the lowest reach of its rivers stand
+    /// at [`WATER_LEVEL`]: Engine's far sea at that height is all of it to the
+    /// horizon, wherever the ground dips below it.
     fn sea(&self) -> Option<engine::water::Sea> {
         Some(engine::water::Sea::calm(WATER_LEVEL as f32))
     }
 
-    fn water_level(&self, _x: f32, _z: f32) -> Option<f32> {
-        // Rivers and lakes stand at sea level; the land rises from them.
-        Some(WATER_LEVEL as f32)
+    /// Beyond the town a river climbs in pools, each at its own level
+    /// (`TownWorld::water_level`); everything else is at the sea's.
+    fn water_level(&self, x: f32, z: f32) -> Option<f32> {
+        Some(self.town.water_level(DVec2::new(x as f64, z as f64)) as f32)
+    }
+
+    /// The springs at the heads of the rivers, so their falls keep running.
+    fn water_sources(&self, min: glam::Vec2, max: glam::Vec2) -> Vec<engine::water::WaterSource> {
+        let Some(outer) = self.town.outer_rivers() else {
+            return Vec::new();
+        };
+        outer
+            .springs(min.as_dvec2(), max.as_dvec2())
+            .into_iter()
+            .map(|s| engine::water::WaterSource {
+                position: glam::Vec3::new(s.at.x as f32, s.level as f32 + 0.5, s.at.y as f32),
+                rate: s.flow as f32,
+            })
+            .collect()
     }
 
     /// Engine's water fills a window around the camera (simulated, with

@@ -247,9 +247,15 @@ impl TownWorld {
                 piece_grid.entry(c).or_default().push(i as u32);
             }
         }
-        let outer = planet
-            .as_ref()
-            .map(|pl| super::outer::OuterRivers::new(&town.land.rivers, pl, town.params.relief));
+        let outer = planet.as_ref().map(|pl| {
+            super::outer::OuterRivers::new(
+                seed,
+                &town.land.rivers,
+                pl,
+                town.params.relief,
+                terrain.half(),
+            )
+        });
         let mut out = TownWorld {
             seed,
             town,
@@ -359,6 +365,16 @@ impl TownWorld {
             }
             town + (wild - town) * w
         }
+    }
+
+    /// The level the water stands at around `p`: [`WATER_LEVEL`] for the sea
+    /// and the town's own water, higher in the pools of a river that climbs
+    /// into the country. A point is under water where [`Self::ground`] lies
+    /// below it.
+    pub fn water_level(&self, p: DVec2) -> f64 {
+        self.outer
+            .as_ref()
+            .map_or(WATER_LEVEL, |o| o.water_level(p).max(WATER_LEVEL))
     }
 
     /// The town's rivers from their heads in the hills, if it stands on a planet.
