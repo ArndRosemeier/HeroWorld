@@ -273,6 +273,46 @@ impl NightLights {
                 }
             }
         }
+        // The harbour: its quay lamps over the berths, the harbour master's
+        // cab glowing, floodlights on the cranes' work.
+        if let Some(h) = &town.harbour {
+            use hw_gen::urban::harbour as hb;
+            for (p, arm) in h.lamps() {
+                let q = p + arm * 1.75;
+                sources.push(Source {
+                    lamp: street(
+                        Vec3::new(q.x as f32, (h.deck + 6.6) as f32, q.y as f32),
+                        rgb(205, 236, 255),
+                        16.0,
+                        22.0,
+                    ),
+                });
+            }
+            let t = h.to_plan(DVec2::new(0.0, hb::TOWER_Z));
+            sources.push(Source {
+                lamp: Lamp::point(
+                    Vec3::new(
+                        t.x as f32,
+                        (h.deck + hb::TOWER_CAB.1 + 1.8) as f32,
+                        t.y as f32,
+                    ),
+                    rgb(180, 240, 255),
+                    30.0,
+                    26.0,
+                ),
+            });
+            for (m, out, _) in h.cranes() {
+                let p = m + out * 9.0;
+                sources.push(Source {
+                    lamp: Lamp::point(
+                        Vec3::new(p.x as f32, (h.deck + hb::PORTAL_H + 3.0) as f32, p.y as f32),
+                        rgb(255, 226, 180),
+                        40.0,
+                        30.0,
+                    ),
+                });
+            }
+        }
         Self {
             sources,
             town,

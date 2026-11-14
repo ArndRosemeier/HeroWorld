@@ -1025,6 +1025,7 @@ impl<'a> Placer<'a> {
             || self.in_building(pos, r)
             || self.crowded(pos, r)
             || self.w.landmarks.iter().any(|l| l.covers(pos, r))
+            || self.w.harbour.as_ref().is_some_and(|h| h.covers(pos, r))
         {
             return false;
         }
@@ -1757,6 +1758,7 @@ impl<'a> Placer<'a> {
                 .iter()
                 .any(|e| self.on_road(*e, 0.15, None, true) || self.in_building(*e, 0.2))
             || self.w.landmarks.iter().any(|l| l.covers(p, 1.0))
+            || self.w.harbour.as_ref().is_some_and(|h| h.covers(p, 1.0))
             || (self.w.ground(ends[0]) - self.w.ground(ends[1])).abs() > 0.7
         {
             return false;
@@ -1921,6 +1923,7 @@ impl<'a> Placer<'a> {
                 .iter()
                 .any(|e| self.on_road(*e, 0.2, None, true) || self.in_building(*e, 0.2))
             || self.w.landmarks.iter().any(|l| l.covers(p, 1.0))
+            || self.w.harbour.as_ref().is_some_and(|h| h.covers(p, 1.0))
             || (self.w.ground(ends[0]) - self.w.ground(ends[1])).abs() > 0.8
         {
             return false;
@@ -2207,6 +2210,7 @@ impl<'a> Placer<'a> {
                 .iter()
                 .any(|e| self.on_road(*e, 0.1, None, true) || self.in_building(*e, 0.2))
             || self.w.landmarks.iter().any(|l| l.covers(p, 1.0))
+            || self.w.harbour.as_ref().is_some_and(|h| h.covers(p, 1.0))
             || (self.w.ground(ends[0]) - self.w.ground(ends[1])).abs() > 0.6
             || self.crowded(p, 0.3)
         {

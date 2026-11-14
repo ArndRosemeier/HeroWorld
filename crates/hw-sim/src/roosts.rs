@@ -121,6 +121,13 @@ pub fn pirate_roost(w: &TownWorld) -> Option<PirateRoost> {
             if !over_water || wet(q.pts[k] - out * 5.0) {
                 continue;
             }
+            // Not over the harbour's mole, its basins or its ships.
+            if w.harbour.as_ref().is_some_and(|h| {
+                let l = h.to_local(c);
+                l.x.abs() < 230.0 && l.y > -60.0 && l.y < 560.0
+            }) {
+                continue;
+            }
             // High enough to clear whatever stands under it. A spot where
             // it hangs at its usual height wins; else the lowest.
             let roofs = roofs_under(w, c, along, SHIP_HALF.0 + 6.0, SHIP_HALF.1 + 6.0);

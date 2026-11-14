@@ -1328,6 +1328,71 @@ fn main() -> EngineResult<()> {
                 None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
             }
         }
+        "harbour" | "cargoquay" | "freighter" | "shipclose" | "breakwater" => {
+            // The harbour: over it from the land behind (`harbour`), along
+            // the cargo quay under the cranes (`cargoquay`), alongside the
+            // freighter wherever HW_HARBOUR_T puts it (`freighter`), close
+            // to a ship (`shipclose`, HW_SHIP=freighter|liner|tug|launch),
+            // or from the breakwater's head back at the town (`breakwater`).
+            use hw_gen::urban::harbour::ShipKind;
+            match &generated.world.harbour {
+                Some(h) => {
+                    let l = |x: f64, z: f64, y: f64| {
+                        let p = h.to_plan(DVec2::new(x, z));
+                        DVec3::new(p.x, h.deck + y, p.y)
+                    };
+                    let t = hw_client::harbourview::view_t();
+                    let near_ship = |kind: ShipKind, pose: hw_gen::urban::harbour::ShipPose| {
+                        let d = kind.dims();
+                        let off = (d.len * 0.3).max(7.0);
+                        // On the side away from the mole, out on the water.
+                        let mole = h.to_plan(DVec2::new(0.0, 110.0));
+                        let side = |s: f64| {
+                            pose.to_plan(DVec2::new(s * (d.beam * 0.5 + off), d.len * 0.22))
+                        };
+                        let p = if side(1.0).distance(mole) > side(-1.0).distance(mole) {
+                            side(1.0)
+                        } else {
+                            side(-1.0)
+                        };
+                        let c = pose.to_plan(DVec2::new(0.0, d.len * 0.05));
+                        (
+                            DVec3::new(p.x, d.free * 0.8 + off * 0.12 + 1.5, p.y),
+                            DVec3::new(c.x, d.free * 0.9, c.y),
+                        )
+                    };
+                    let (eye, look) = match view.as_str() {
+                        "harbour" => (l(-120.0, -90.0, 70.0), l(40.0, 140.0, 0.0)),
+                        "cargoquay" => (l(15.5, 30.0, 1.8), l(34.0, 110.0, 9.0)),
+                        "breakwater" => {
+                            // Along its crown towards the light at its head.
+                            let head = *h.breakwater().last().expect("breakwater");
+                            let local = h.to_local(head);
+                            let up = h.crown() - h.deck;
+                            (l(137.0, 160.0, up + 1.8), l(local.x, local.y, up + 5.0))
+                        }
+                        "freighter" => near_ship(ShipKind::Freighter, h.freighter_pose(t).0),
+                        _ => {
+                            let want = std::env::var("HW_SHIP").unwrap_or_default();
+                            let mut ships = h.moored();
+                            ships.extend(h.ships_at(t));
+                            let pick = ships
+                                .iter()
+                                .find(|(k, _)| format!("{k:?}").eq_ignore_ascii_case(&want))
+                                .or(ships.first())
+                                .copied()
+                                .expect("a ship");
+                            near_ship(pick.0, pick.1)
+                        }
+                    };
+                    let d = look - eye;
+                    let yaw = d.x.atan2(d.z).to_degrees() as f32;
+                    let pitch = (d.y / DVec2::new(d.x, d.z).length()).atan().to_degrees() as f32;
+                    FlyCamera::new((eye.x as f32, eye.y as f32, eye.z as f32), yaw, pitch)
+                }
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
         "atomplant" | "atomgate" | "atomtower" => {
             // The atomic plant: the whole of it from the road, the gate and
             // its atom close up, or up at a cooling tower from its foot.
@@ -3075,6 +3140,10 @@ fn main() -> EngineResult<()> {
             hw_client::hitch::mark("mast");
             if let Some(m) = extras.mast.as_mut() {
                 m.update(world, session.time(tick_clock.frac()), frame.dt)?;
+            }
+            hw_client::hitch::mark("harbour");
+            if let Some(h) = extras.harbour.as_mut() {
+                h.update(world, session.time(tick_clock.frac()))?;
             }
             hw_client::hitch::mark("rocket port");
             if let Some(r) = extras.rocket.as_mut() {
@@ -5846,7 +5915,14 @@ fn main() -> EngineResult<()> {
                         .as_mut()
                         .map(|d| d.heard())
                         .unwrap_or_default(),
-                    mast: extras.mast.as_mut().map(|m| m.heard()).unwrap_or_default(),
+                    mast: {
+                        // The freighter's horn plays as the liner's does.
+                        let mut m = extras.mast.as_mut().map(|m| m.heard()).unwrap_or_default();
+                        if let Some(h) = extras.harbour.as_mut() {
+                            m.horns.extend(h.heard().horns);
+                        }
+                        m
+                    },
                     rocket: extras
                         .rocket
                         .as_mut()

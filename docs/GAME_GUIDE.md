@@ -1406,6 +1406,47 @@ comes back. The beacon blinks red, a second on, a second off. Sound: the engines
 the latch clanking, the winch whirring. Views: `HW_VIEW=mast`, `mastapron`, `terminal`,
 `liner`; `HW_MAST_T=<s>` holds the liner that many seconds into its cycle (0 just moored).
 
+### The harbour and its ships (`hw-gen/src/urban/harbour.rs`, `hw-client/src/{harbourmesh,shipmesh,harbourview}.rs`)
+
+A town on the sea has a harbour (0.322), placed on the shore nearest the core where it fits:
+a 60 m wide, 230 m long mole straight out from the first street into water at least 2 m
+deep, its deck level with that street (1.4-4.5 m over the sea), its land end following the
+street's edge. Nothing else of the town stands on it: no houses, props, street quays or
+pirate moorings, and no bridge within 10 m. The harbour is turned and set to one side until
+its breakwater, basins and the freighter's turning circle all lie over open sea.
+
+On the mole: granite quay walls down to the sea bed with a pale coping and black fenders,
+yellow edge lines, crane rails on the cargo side and a railway on the passenger side; two
+warehouses (real town buildings in the Aether Works style, so they break like any other);
+three orange portal cranes (four legs on bogies, a cream machine house with a glazed cab,
+a lattice boom 32 m long, a hook on its cable); the harbour master's tower at the head
+(a fluted shaft with three teal fins, a flying-saucer cab with a band of windows at 15-19 m,
+a mast with an atom and a beacon); two gangway towers with covered bridges out to the
+liner; atomic street lamps, mooring bollards every 15 m, stacks of crates, and two floating
+pontoons with gangways down to them. Off the cargo side runs the breakwater: a rubble mound
+under a concrete crown with a parapet on its sea side, ending in a round head with a red and
+white light that flashes red every 4 s.
+
+Ships (Googie streamline: smooth lofted hulls, raked bows, chrome speed spears, raked
+teardrop funnels with fins, rounded decks with bands of windows; three levels each):
+the freighter (118 m) works a timetable from the game clock, so every player sees it in the
+same place: 420 s at its berth under the cranes, 250 s backing out 270 m with the tug
+pulling at its bow, 100 s turning, then a wide loop out to sea and home along its berth's
+line (7 m/s at sea, easing in and out). The tug (26 m) waits at its own berth and tows it
+out and back. The liner (156 m) lies at the passenger quay; two motor launches ride at a
+pontoon; up to two coasters pass on lanes 1.7-3.6 km out. Ships bob on the swell (small ones
+more). The freighter sounds its horn as it casts off and as it moors (1.5 km).
+
+Everything is solid (`Harbour::footprints`, `ship_solids`): the deck and the breakwater's
+crown are ground (`Obstacles::ground_at`), the cranes' legs, portals, houses and booms, the
+towers, bridges, lamps, bollards, crates and parapet are fixed colliders, the moored liner
+and launches too, and the freighter, tug and coasters are boxes that move with them for
+heroes near. Lit at night: the quay lamps, the tower's cab, floodlights on the cranes.
+`tests/harbour.rs` checks all of it on two seeds. Views: `HW_VIEW=harbour`, `cargoquay`,
+`freighter`, `breakwater`, `shipclose` (with `HW_SHIP=freighter|liner|tug|launch`);
+`HW_HARBOUR_T=<s>` holds the clock (0: the freighter just moored). The map:
+`cargo run --release -p hw-gen --example harbour_map -- <seed>`.
+
 ### The rocket port (`hw-gen/src/urban/gantry.rs`, `hw-sim/src/rocket.rs`, `hw-client/src/rocketview.rs`)
 
 Every town has a rocket port out past its built edge (the first level spot 45 m or more

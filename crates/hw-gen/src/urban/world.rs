@@ -154,6 +154,9 @@ pub struct TownWorld {
     /// The Aether Spire, Hero Hall, the Tesla tower, the rocket port and,
     /// by the sea, a lighthouse.
     pub landmarks: Vec<Landmark>,
+    /// The harbour on the open sea shore, if the town has one
+    /// ([`super::harbour`]).
+    pub harbour: Option<super::harbour::Harbour>,
     /// The deep underground, planned tile by tile.
     deep: Deep,
     /// Ground heights, river beds and sea floor included.
@@ -285,6 +288,7 @@ impl TownWorld {
             main_roads: Vec::new(),
             main_bridges: Vec::new(),
             landmarks: Vec::new(),
+            harbour: None,
             deep: Deep::new(),
             terrain,
             outer,
@@ -330,6 +334,9 @@ impl TownWorld {
         out.main_roads = mains;
         cancel.check()?;
         out.landmarks = plan_landmarks(&out, cancel)?;
+        cancel.check()?;
+        cancel.stage("Laying out the harbour", 0.25, 0.27);
+        out.harbour = super::harbour::plan_harbour(&out);
         Ok(out)
     }
 
@@ -1047,7 +1054,20 @@ impl TownWorld {
             lo,
             hi,
         };
-        let buildings = self.buildings_on(unit, streets.as_deref(), &roads);
+        let mut buildings = self.buildings_on(unit, streets.as_deref(), &roads);
+        // The harbour's sheds, on the ground (the mole) this unit owns.
+        if let Some(h) = &self.harbour {
+            for site in h.sheds(self.seed) {
+                let c = site.corners();
+                if owner.owns((c[0] + c[2]) * 0.5) {
+                    buildings.push(WorldBuilding {
+                        site,
+                        base: h.deck,
+                        low: h.deck,
+                    });
+                }
+            }
+        }
         let local = Local {
             world: self,
             roads,
@@ -1097,6 +1117,14 @@ impl TownWorld {
                 }
                 // Nor on a landmark's plinth.
                 if self.landmarks.iter().any(|l| l.overlaps(&site, 1.5)) {
+                    continue;
+                }
+                // Nor on the harbour's mole.
+                if self
+                    .harbour
+                    .as_ref()
+                    .is_some_and(|h| h.overlaps(&site, 1.5))
+                {
                     continue;
                 }
                 buildings.push(WorldBuilding {

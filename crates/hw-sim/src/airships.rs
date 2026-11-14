@@ -293,6 +293,10 @@ pub struct Airships {
     /// each hangs and its solids.
     saucers: BTreeMap<u32, (DVec3, Vec<Solid>)>,
     town: Option<Town>,
+    /// The harbour, whose freighter, tug and coasters move on the game
+    /// clock ([`hw_gen::urban::harbour::Harbour::ships_at`]): solid like
+    /// the airships, where heroes are near them.
+    harbour: Option<Arc<hw_gen::urban::harbour::Harbour>>,
 }
 
 impl Airships {
@@ -353,6 +357,7 @@ impl Airships {
             raids: BTreeMap::new(),
             saucers: BTreeMap::new(),
             town: None,
+            harbour: w.harbour.clone().map(Arc::new),
         }
     }
 
@@ -386,6 +391,19 @@ impl Airships {
         for (c, solids) in self.saucers.values() {
             if near(*c, SAUCER_RADIUS + 4.0) {
                 out.extend(solids.iter().cloned());
+            }
+        }
+        if let Some(h) = &self.harbour {
+            use hw_gen::urban::world::WATER_LEVEL;
+            for (kind, pose) in h.ships_at(time) {
+                let mid = DVec3::new(pose.at.x, WATER_LEVEL, pose.at.y);
+                if near(mid, kind.dims().len * 0.5 + 12.0) {
+                    out.extend(
+                        hw_gen::urban::harbour::ship_solids(kind, &pose, WATER_LEVEL)
+                            .iter()
+                            .flat_map(crate::collision::solids_of),
+                    );
+                }
             }
         }
         out

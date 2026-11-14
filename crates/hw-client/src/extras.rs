@@ -66,6 +66,8 @@ pub struct TownExtras {
     pub dystopia: Option<crate::dystopiaview::DystopiaView>,
     /// The airship mooring mast and its liner.
     pub mast: Option<crate::mastview::MastView>,
+    /// The harbour's ships and its light.
+    pub harbour: Option<crate::harbourview::HarbourView>,
     /// The rocket port's launches.
     pub rocket: Option<crate::rocketview::RocketView>,
     pub atom: Option<crate::atomview::AtomView>,
@@ -114,6 +116,9 @@ impl TownExtras {
         if let Some(mut m) = self.mast.take() {
             m.clear(world);
         }
+        if let Some(mut h) = self.harbour.take() {
+            h.clear(world);
+        }
         if let Some(mut a) = self.atom.take() {
             a.clear(world);
         }
@@ -139,6 +144,8 @@ pub struct ExtrasParts {
     /// each stands.
     furniture: Vec<(Vec<LodLevel>, Vec<Place>)>,
     roost: Option<RoostParts>,
+    /// The harbour's fixed parts and where each stands.
+    harbour: Vec<(Vec<LodLevel>, Vec<Place>)>,
 }
 
 impl ExtrasParts {
@@ -151,6 +158,7 @@ impl ExtrasParts {
             grass: GrassView::models(green)?,
             furniture: crate::cometmesh::furniture_models(town),
             roost: factionview::roost_parts(town),
+            harbour: crate::harbourview::models(town),
         })
     }
 }
@@ -308,6 +316,8 @@ impl ExtrasLoad {
                 .into_iter()
                 .map(|(l, at)| Step::Furniture(l, at)),
         );
+        self.steps
+            .extend(p.harbour.into_iter().map(|(l, at)| Step::Furniture(l, at)));
         self.steps.extend(p.roost.map(|r| Step::Roost(Box::new(r))));
         self.steps.push_back(Step::Stream);
         self.steps.push_back(Step::Ground(None));
@@ -432,6 +442,7 @@ fn assemble(
         drill: Some(crate::drillview::DrillView::new(town)),
         dystopia: Some(crate::dystopiaview::DystopiaView::new(town)),
         mast: Some(crate::mastview::MastView::new(town)),
+        harbour: Some(crate::harbourview::HarbourView::new(town)),
         rocket: Some(crate::rocketview::RocketView::new(town)),
         atom: Some(crate::atomview::AtomView::new(town)),
         weather: Some(crate::weatherview::WeatherView::new(town)),

@@ -3,6 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.322 (2026-11-14)
+
+- The city has a harbour: a long stone mole out into the sea with granite quays, warehouses, three big portal cranes, a harbour master's tower with a flying-saucer cab, and a breakwater with a flashing red light at its head.
+- Ships: a streamlined freighter unloads under the cranes, then backs out with its tug, turns and sails out to sea in a wide loop and comes home again. An ocean liner lies at the passenger quay with covered gangways, motor launches ride at the pontoons, and coasters pass far out on the horizon.
+- Everything in the harbour is solid: walk the quays, climb onto the liner's decks, bump into the freighter as it sails by. The warehouses can be smashed like any building.
+- The freighter sounds its horn when it casts off and when it comes home, and the quays are lit at night.
+
 ## 0.321 (2026-11-14)
 
 - The country is in colour: trees in pink, violet, flame, gold and teal blossom stand among new acacias, baobabs, willows and junipers, each where it fits (valley floor, tablelands, river banks).

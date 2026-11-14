@@ -309,6 +309,8 @@ pub struct Obstacles {
     movers: RwLock<Arc<[Solid]>>,
     /// Landmarks, whose paved plinths are raised ground.
     plinths: Vec<hw_gen::urban::landmarks::Landmark>,
+    /// The harbour, whose mole, breakwater and pontoons are raised ground.
+    harbour: Option<Arc<hw_gen::urban::harbour::Harbour>>,
     /// The country's woods, made cell by cell where bodies go.
     woods: Option<Woods>,
     /// The deep underground (tube, lab, ruins, the Deeps) and the solid
@@ -823,6 +825,22 @@ impl Obstacles {
                 continue;
             }
             out.add_all(parts.iter().flat_map(solids_of).collect());
+        }
+        // The harbour: its decks are raised ground; cranes, the tower, the
+        // light, bollards and the ships that never leave are solid, in
+        // cells so a body tests only what is near it. (Its sheds are
+        // buildings; the ships that come and go are movers.)
+        if let Some(h) = &world.harbour {
+            out.harbour = Some(Arc::new(h.clone()));
+            let mut cells: BTreeMap<(i64, i64), Vec<Solid>> = BTreeMap::new();
+            for f in &h.footprints() {
+                let c = f.at();
+                let key = ((c.x / 12.0).floor() as i64, (c.y / 12.0).floor() as i64);
+                cells.entry(key).or_default().extend(solids_of(f));
+            }
+            for (_, solids) in cells {
+                out.add_all(solids);
+            }
         }
         out.town = Some(TownSolids {
             world: world.clone(),
@@ -1390,6 +1408,9 @@ impl Obstacles {
     /// the sea (bridges excepted).
     pub fn ground_at(&self, p: DVec2) -> f64 {
         if let Some(top) = self.plinths.iter().find_map(|l| l.on_plinth(p)) {
+            return top;
+        }
+        if let Some(top) = self.harbour.as_ref().and_then(|h| h.deck_at(p)) {
             return top;
         }
         if let Some(t) = &self.terrain {

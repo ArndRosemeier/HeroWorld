@@ -84,6 +84,8 @@ pub(super) fn plan_waterfront(l: &Local) -> (Vec<QuayWall>, Vec<WaterSteps>) {
                 let beyond = e + n * 1.2;
                 let ok = l.owner.owns(e)
                     && wet(beyond)
+                    // The harbour's mole has its own quays.
+                    && !w.harbour.as_ref().is_some_and(|h| h.covers(e, 3.0))
                     // On a bridge the street itself is over the water.
                     && !wet(c)
                     && !roads.touches(e + n * 0.6, 0.2, Some(ri))

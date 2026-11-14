@@ -32,6 +32,7 @@ pub mod graph;
 pub mod graveyard;
 pub mod greenery;
 pub mod growth;
+pub mod harbour;
 pub mod hospital;
 pub mod land;
 pub mod landmarks;
