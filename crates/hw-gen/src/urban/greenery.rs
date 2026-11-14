@@ -13,7 +13,7 @@
 
 use super::deep::StreetHole;
 use super::growth::Era;
-use super::props::{Prop, PropKind};
+use super::props::{Prop, PropKind, Species};
 use super::streets::StreetStyle;
 use super::world::{Bridge, TownWorld, WorldBuilding, WorldRoad, DECK};
 use super::{contains, Town};
@@ -434,6 +434,28 @@ impl Greenery {
 /// Spacing of the grid the woods are scattered on (m).
 const WOOD_STEP: f64 = 7.0;
 
+/// Too steep for a tree to stand on?
+fn steep(w: &TownWorld, p: DVec2) -> bool {
+    let e = 2.0;
+    let slope = ((w.ground(p + DVec2::X * e) - w.ground(p - DVec2::X * e)).abs()
+        + (w.ground(p + DVec2::Y * e) - w.ground(p - DVec2::Y * e)).abs())
+        / (2.0 * e);
+    slope > 0.9
+}
+
+/// A tree of the open country at `p`, on ground `h` high.
+fn wild_tree(species: Species, p: DVec2, h: f64, rng: &mut hw_core::Rng) -> Prop {
+    let v = rng.range_int(0, super::props::TREE_VARIANTS as i64) as u8;
+    let dir = DVec2::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0)).normalize_or(DVec2::Y);
+    Prop {
+        kind: PropKind::Tree(species, v),
+        pos: p,
+        y: h - 0.05,
+        dir,
+        scale: rng.range(0.75, 1.25),
+    }
+}
+
 impl Greenery {
     /// The woods, copses and lone field trees of the open country whose
     /// foot lies in `lo`..`hi`. Not street props: the client streams them
@@ -443,7 +465,14 @@ impl Greenery {
     pub fn wild_trees(&self, w: &TownWorld, lo: DVec2, hi: DVec2) -> Vec<Prop> {
         let mut out = Vec::new();
         let half = w.half() - 20.0;
-        let (lo, hi) = (lo.max(DVec2::splat(-half)), hi.min(DVec2::splat(half)));
+        // A town on the planet has country all round it, as far as one goes;
+        // one on its own ends at its edge.
+        let planet = w.planet();
+        let (lo, hi) = if planet.is_some() {
+            (lo, hi)
+        } else {
+            (lo.max(DVec2::splat(-half)), hi.min(DVec2::splat(half)))
+        };
         if lo.x >= hi.x || lo.y >= hi.y {
             return out;
         }
@@ -478,6 +507,32 @@ impl Greenery {
                 } else {
                     0.01
                 };
+                // Beyond the town the planet says how wooded the country is.
+                let outside = p.x.abs().max(p.y.abs()) > half;
+                if outside {
+                    let Some(planet) = planet else { continue };
+                    let h = w.ground(p);
+                    let cover = planet.cover(p, h);
+                    // Closed forest where the land is wooded, the same
+                    // copses and lone trees where it is open.
+                    let take = f64::min(take * 1.25, 1.0) * cover.trees
+                        + if wood > 0.1 {
+                            0.5 * cover.trees * cover.trees
+                        } else {
+                            0.0
+                        };
+                    if rng.unit() > take || h < SAND_TOP + 0.8 || steep(w, p) {
+                        continue;
+                    }
+                    // Conifers where it is cold, up the mountains.
+                    let species = if cover.temp < 6.0 && rng.chance(0.85) {
+                        Species::Pine
+                    } else {
+                        super::props::wild_species(self.region, h, &mut rng)
+                    };
+                    out.push(wild_tree(species, p, h, &mut rng));
+                    continue;
+                }
                 if rng.unit() > take || built(&w.town, p) {
                     continue;
                 }
@@ -491,24 +546,11 @@ impl Greenery {
                 {
                     continue;
                 }
-                let e = 2.0;
-                let slope = ((w.ground(p + DVec2::X * e) - w.ground(p - DVec2::X * e)).abs()
-                    + (w.ground(p + DVec2::Y * e) - w.ground(p - DVec2::Y * e)).abs())
-                    / (2.0 * e);
-                if slope > 0.9 {
+                if steep(w, p) {
                     continue;
                 }
                 let species = super::props::wild_species(self.region, h, &mut rng);
-                let v = rng.range_int(0, super::props::TREE_VARIANTS as i64) as u8;
-                let dir =
-                    DVec2::new(rng.range(-1.0, 1.0), rng.range(-1.0, 1.0)).normalize_or(DVec2::Y);
-                out.push(Prop {
-                    kind: PropKind::Tree(species, v),
-                    pos: p,
-                    y: h - 0.05,
-                    dir,
-                    scale: rng.range(0.75, 1.25),
-                });
+                out.push(wild_tree(species, p, h, &mut rng));
             }
         }
         out

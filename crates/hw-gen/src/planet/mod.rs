@@ -15,6 +15,6 @@ pub mod wonders;
 pub use biome::Biome;
 pub use globe::Globe;
 pub use grid::{Cell, Grid};
-pub use home::{choose_home, PatchSite, PlanetPatch};
+pub use home::{choose_home, Cover, PatchSite, PlanetPatch};
 pub use map::{Landmass, PlanetMap, Sample};
 pub use wonders::{Wonder, WonderKind};

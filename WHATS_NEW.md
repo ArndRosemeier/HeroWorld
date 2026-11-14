@@ -3,6 +3,12 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.316 (2026-11-14)
+
+- Fixed: the city river showed as patches of water over a dry bed from close up. It is whole again.
+- The country beyond the town is no longer bare: woods where the climate grows them (pines where it is cold), grass on the wet ground, grey scree on the heights and snow above the snow line.
+- Rugged highlands rise inland, and you can see them: the view now reaches 64 km on a clear day.
+
 ## 0.315 (2026-11-14)
 
 - Behind the scenes: a test of running speed now matches the sprint every hero has from the start. Nothing changes in play.

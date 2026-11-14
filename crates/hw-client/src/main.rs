@@ -1759,6 +1759,31 @@ fn main() -> EngineResult<()> {
                 -45.0,
             )
         }
+        "mountains" | "woods" => {
+            // The country round the town: from high over it towards the
+            // highest ground in sight, or low over the woods beyond its edge.
+            let w = &generated.world;
+            let high = |d: DVec2| {
+                (1..=24)
+                    .map(|k| w.ground(d * (k as f64 * 2500.0)))
+                    .fold(0.0, f64::max)
+            };
+            let d = (0..48)
+                .map(|k| hw_core::det::dir2(k as f64 / 48.0 * std::f64::consts::TAU))
+                .max_by(|a, b| high(*a).total_cmp(&high(*b)))
+                .expect("48 directions");
+            let yaw = d.x.atan2(d.y).to_degrees() as f32;
+            if view == "mountains" {
+                FlyCamera::new((0.0, ground(DVec2::ZERO) as f32 + 450.0, 0.0), yaw, -4.0)
+            } else {
+                let p = d * (w.half() + 300.0);
+                FlyCamera::new(
+                    (p.x as f32, ground(p) as f32 + 45.0, p.y as f32),
+                    yaw,
+                    -12.0,
+                )
+            }
+        }
         "river" => {
             // Looking at the first river near the town (for screenshots).
             let r = generated.world.town.land.rivers.first().map_or(spawn, |r| {

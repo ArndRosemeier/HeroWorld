@@ -45,22 +45,24 @@ pub fn choose_home(map: &PlanetMap) -> DVec3 {
             if strict && aether > 0.45 {
                 continue;
             }
-            // Mountains in sight (within about 50 km) make a better view.
+            // Mountains in sight make the place: the highest ground on rings
+            // 15 and 30 km out.
             let up = map.centers[c].as_dvec3();
             let east = DVec3::Y.cross(up).normalize_or(DVec3::X);
             let north = up.cross(east);
-            let peak = (0..12)
+            let peak = (0..32)
                 .map(|k| {
-                    let a = k as f64 / 12.0 * std::f64::consts::TAU;
+                    let a = (k / 2) as f64 / 16.0 * std::f64::consts::TAU;
+                    let far = if k % 2 == 0 { 15_000.0 } else { 30_000.0 };
                     let (s, co) = det::sin_cos(a);
-                    let dir = (up + (east * co + north * s) * (45_000.0 / map.globe.radius()))
-                        .normalize();
-                    map.globe.elevation(dir, 2000.0)
+                    let dir =
+                        (up + (east * co + north * s) * (far / map.globe.radius())).normalize();
+                    map.globe.elevation(dir, 1000.0)
                 })
                 .fold(0.0, f64::max);
             let score = (flow as f64).ln() - 4.0 * aether - (t as f64 - 12.0).abs() * 0.1
-                + peak.min(3000.0) / 600.0
-                - if peak < 600.0 { 3.0 } else { 0.0 };
+                + peak.min(3000.0) / 400.0
+                - if peak < 1000.0 { 3.0 } else { 0.0 };
             if best.is_none_or(|(s, bc)| score > s || (score == s && c < bc)) {
                 best = Some((score, c));
             }
@@ -105,6 +107,28 @@ pub struct PlanetPatch {
     frame: LocalFrame,
     planet: Planet,
     pub site: PatchSite,
+    /// Sea-level temperature (°C) and rain (mm a year) on a grid of
+    /// [`CLIMATE_N`]² points [`CLIMATE_STEP`] apart, centred on the place.
+    climate: Vec<(f32, f32)>,
+}
+
+/// Spacing of the patch's climate grid (m) and its points per side.
+const CLIMATE_STEP: f64 = 16_000.0;
+const CLIMATE_N: usize = 33;
+/// Air cools by this much per metre of height (°C).
+const LAPSE: f64 = 6.5 / 1000.0;
+
+/// What covers the ground at a point of the patch.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Cover {
+    /// 1 grass .. 0 bare ground (dry country, or scree above the meadows).
+    pub green: f64,
+    /// Local height above which snow lies (m, in the patch's heights).
+    pub snow_line: f64,
+    /// How much of the ground trees cover, 0 to 1.
+    pub trees: f64,
+    /// Mean temperature here (°C).
+    pub temp: f64,
 }
 
 impl PartialEq for PlanetPatch {
@@ -134,6 +158,7 @@ impl PlanetPatch {
                 coast_distance: None,
                 flow: None,
             },
+            climate: Vec::new(),
         };
         // Stand where the real coast is a few hundred metres off, so the
         // town's sea is the planet's sea.
@@ -144,7 +169,77 @@ impl PlanetPatch {
             .up();
         patch.frame = frame_at(moved);
         patch.site = patch.describe(map, moved);
+        patch.climate = patch.read_climate(map);
         patch
+    }
+
+    /// The map's climate around the place, taken down to sea level and
+    /// averaged over each cell and its neighbours, so it changes smoothly.
+    fn read_climate(&self, map: &PlanetMap) -> Vec<(f32, f32)> {
+        let half = (CLIMATE_N / 2) as f64;
+        let mut out = Vec::with_capacity(CLIMATE_N * CLIMATE_N);
+        for j in 0..CLIMATE_N {
+            for i in 0..CLIMATE_N {
+                let p = DVec2::new(i as f64 - half, j as f64 - half) * CLIMATE_STEP;
+                let u = self.frame.to_planet(DVec3::new(p.x, 0.0, p.y)).up();
+                let cell = map.grid.cell_of(u);
+                let (mut t, mut r, mut n) = (0.0, 0.0, 0.0);
+                for c in std::iter::once(cell).chain(map.grid.neighbours(cell)) {
+                    let c = c as usize;
+                    t += map.temp[c] as f64 + LAPSE * (map.elev[c] as f64).max(0.0);
+                    r += map.rain[c] as f64;
+                    n += 1.0;
+                }
+                out.push(((t / n) as f32, (r / n) as f32));
+            }
+        }
+        out
+    }
+
+    /// Sea-level temperature (°C) and rain (mm a year) at local `p`.
+    pub fn climate(&self, p: DVec2) -> (f64, f64) {
+        let half = (CLIMATE_N / 2) as f64;
+        let max = (CLIMATE_N - 1) as f64;
+        let g = (p / CLIMATE_STEP + DVec2::splat(half)).clamp(DVec2::ZERO, DVec2::splat(max));
+        let (i, j) = (
+            (g.x as usize).min(CLIMATE_N - 2),
+            (g.y as usize).min(CLIMATE_N - 2),
+        );
+        let (fx, fy) = (g.x - i as f64, g.y - j as f64);
+        let at = |i: usize, j: usize| {
+            let (t, r) = self.climate[j * CLIMATE_N + i];
+            DVec2::new(t as f64, r as f64)
+        };
+        let v = at(i, j)
+            .lerp(at(i + 1, j), fx)
+            .lerp(at(i, j + 1).lerp(at(i + 1, j + 1), fx), fy);
+        (v.x, v.y)
+    }
+
+    /// What covers the ground at local `p`, where the ground stands at
+    /// `height` (as [`Self::ground`] gives it). Grass thins out where it is
+    /// dry and towards the snow; trees stop well below it.
+    pub fn cover(&self, p: DVec2, height: f64) -> Cover {
+        let (sea_temp, rain) = self.climate(p);
+        let drop = self.frame.ground_drop(&self.planet, p.length());
+        let real = height + drop;
+        let temp = sea_temp - LAPSE * real.max(0.0);
+        // Snow lies where the year's mean is below -1 °C.
+        let snow_real = (sea_temp + 1.0) / LAPSE;
+        let step = |a: f64, b: f64, x: f64| {
+            let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        let wet = step(180.0, 520.0, rain);
+        let below_scree = 1.0 - step(snow_real - 900.0, snow_real - 250.0, real);
+        let biome = super::biome::classify(temp, rain, real);
+        let below_trees = 1.0 - step(snow_real - 1500.0, snow_real - 1000.0, real);
+        Cover {
+            green: wet * below_scree,
+            snow_line: snow_real - drop,
+            trees: biome.tree_cover() * below_trees,
+            temp,
+        }
     }
 
     /// Is `p` in the sea proper, looking along `d`: under water here and
@@ -289,6 +384,23 @@ mod tests {
         }
         // The planet curves away: 30 km out is lower than the plane by its drop.
         assert!(patch.site.relief > 0.0);
+        // The home is green low country; high up there is scree, then snow,
+        // and no trees.
+        let low = patch.cover(DVec2::ZERO, 20.0);
+        assert!(low.green > 0.9 && low.trees > 0.3, "{low:?}");
+        assert!((5.0..=20.0).contains(&low.temp), "{low:?}");
+        assert!((1200.0..=4500.0).contains(&low.snow_line), "{low:?}");
+        let high = patch.cover(DVec2::ZERO, low.snow_line + 100.0);
+        assert!(high.green == 0.0 && high.trees == 0.0, "{high:?}");
+        // Climate is smooth across the grid's points.
+        for k in 0..40 {
+            let p = DVec2::new(k as f64 * 3100.0 - 60_000.0, k as f64 * 1700.0 - 30_000.0);
+            let (a, b) = (patch.climate(p), patch.climate(p + DVec2::X * 100.0));
+            assert!(
+                (a.0 - b.0).abs() < 0.2 && (a.1 - b.1).abs() < 20.0,
+                "{a:?} {b:?}"
+            );
+        }
     }
 
     #[test]

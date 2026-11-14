@@ -36,6 +36,10 @@ use std::time::Instant;
 /// streaming in either way): around a moving camera the stream may not
 /// report ready for a while.
 const GROUND_WAIT_S: f32 = 10.0;
+/// Bare ground where no grass grows: the scree of the heights.
+fn scree() -> Color {
+    rgb(138, 128, 112)
+}
 /// What the first frame waits for the ground when everything is made at once.
 const PREPARE_S: f32 = 20.0;
 
@@ -514,6 +518,7 @@ pub fn set_town_stream(
         water_cell: 4.0,
         // Deep enough for the Deeps, the lowest caves under the town.
         voxel_below: hw_gen::urban::deep::VOXEL_DEPTH as f32,
+        view_distance: crate::settings::VIEW_DISTANCE,
         ..StreamSettings::default()
     };
     let ground = TownGround {
@@ -521,7 +526,8 @@ pub fn set_town_stream(
         green,
         trees,
     };
-    let stream = WorldStream::new(ground, settings).with_terrain(|t| t.with_beach(1.8));
+    let stream = WorldStream::new(ground, settings)
+        .with_terrain(|t| t.with_beach(1.8).with_dry_ground(scree()));
     world.set_stream(Some(stream))
 }
 

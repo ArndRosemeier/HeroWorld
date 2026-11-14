@@ -32,8 +32,9 @@ pub fn quality_hint(q: Quality) -> String {
     )
 }
 
-/// How far the town is drawn (m).
-pub const VIEW_DISTANCE: f32 = 6000.0;
+/// How far the world is drawn (m): far enough for the mountains inland to
+/// stand on the horizon, through the haze.
+pub const VIEW_DISTANCE: f32 = 64_000.0;
 
 /// Engine's startup settings from the profile, so the world starts at the
 /// player's quality, frame-rate cap, render scale and vsync (Engine checks

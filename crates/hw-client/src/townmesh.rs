@@ -65,6 +65,20 @@ impl WorldGenerator for TownGround {
         self.town.ground(DVec2::new(x as f64, z as f64)) as f32
     }
 
+    /// The planet's cover: grass thins to scree up the mountains and to
+    /// bare ground in dry country, and snow lies on the heights.
+    fn ground_cover(&self, x: f32, z: f32) -> Option<engine::voxel_terrain::GroundCover> {
+        let planet = self.town.planet()?;
+        let p = DVec2::new(x as f64, z as f64);
+        // The height matters only far above the town: the planet's own
+        // ground is near enough there, and cheaper than the town's.
+        let c = planet.cover(p, planet.ground(p));
+        Some(engine::voxel_terrain::GroundCover {
+            green: c.green as f32,
+            snow_line: c.snow_line as f32,
+        })
+    }
+
     /// Woods and field trees outside the town.
     fn populate(&self, tile: &mut engine::stream::Tile) -> EngineResult<()> {
         let (lo, hi) = (tile.min(), tile.max());

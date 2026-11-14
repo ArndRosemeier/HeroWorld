@@ -175,10 +175,22 @@ mod tests {
                 let g = town.ground(*q);
                 assert!(g < 0.0, "dry river bed ({g} m) at {q}");
             }
-            // And dry land not far to the side of it, upstream of the town.
-            let (a, b) = (r.pts[0], r.pts[1]);
-            let side = (b - a).normalize().perp() * 900.0;
-            assert!(town.ground(a + side) > 0.0 || town.ground(a - side) > 0.0);
+            // And dry land not far to the side of it along most of its way: a
+            // valley, not an arm of the sea. (Not every point: the country may
+            // lie at sea level where the river leaves the town.)
+            let banked = r
+                .pts
+                .windows(2)
+                .filter(|w| {
+                    let side = (w[1] - w[0]).normalize().perp() * 900.0;
+                    town.ground(w[0] + side) > 0.0 || town.ground(w[0] - side) > 0.0
+                })
+                .count();
+            assert!(
+                banked * 2 > r.pts.len(),
+                "banks at {banked} of {} points",
+                r.pts.len()
+            );
         }
     }
 }

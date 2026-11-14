@@ -229,6 +229,24 @@ impl Globe {
         );
         h += (60.0 + 260.0 * smooth(0.05, 0.5, s)) * (lumps - 0.35) * shore_gate;
 
+        // Highlands: in rugged country, crags and peaks a day's walk across
+        // stand right behind the coast, far taller than the hills.
+        let rugged = smooth(
+            -0.05,
+            0.3,
+            self.n_drama
+                .fbm(u.x * 9.0 + 3.0, u.y * 9.0 - 5.0, u.z * 9.0, 3),
+        );
+        if rugged > 0.0 && s > 0.004 {
+            let crags = self.n_ridge.ridged(
+                u.x * 230.0 - 7.0,
+                u.y * 230.0,
+                u.z * 230.0 + 2.0,
+                octaves(27_700.0),
+            );
+            h += 3200.0 * rugged * crags * crags * smooth(0.004, 0.035, s);
+        }
+
         // Mountain belts where plates close.
         let ridge = self
             .n_ridge
@@ -236,13 +254,16 @@ impl Globe {
         let conv_pos = t.conv.max(0.0);
         let belt = det::exp(-(t.edge / 550_000.0).powi(2));
         h += conv_pos * belt * (0.15 + 0.85 * ridge) * 9000.0 * land_gate;
+        // (Both fade in from the shore, so the coast has no step in it.)
+        let sea_gate = smooth(0.0, 0.04, -s);
         // Island arcs where two sea plates close; a trench beside a coast range.
         if t.both_sea && s < 0.0 {
             let arc = det::exp(-(t.edge / 180_000.0).powi(2));
-            h += conv_pos * arc * smooth(0.5, 0.85, ridge) * 5200.0;
+            h += conv_pos * arc * smooth(0.5, 0.85, ridge) * 5200.0 * sea_gate;
         }
         if !t.both_land && !t.both_sea && s < 0.0 {
-            h -= 2500.0 * conv_pos * det::exp(-((t.edge - 60_000.0) / 150_000.0).powi(2));
+            h -=
+                2500.0 * conv_pos * det::exp(-((t.edge - 60_000.0) / 150_000.0).powi(2)) * sea_gate;
         }
         // Rifts where plates part.
         if t.conv < 0.0 {
