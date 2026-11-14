@@ -5535,6 +5535,7 @@ fn main() -> EngineResult<()> {
                     eye,
                     hero: hero_at,
                     flying: hero_flies,
+                    grounded: me_state.is_none_or(|m| m.grounded),
                     speed: hero_speed,
                     height,
                     indoors: town.inside.is_some(),

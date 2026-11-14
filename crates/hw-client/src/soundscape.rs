@@ -339,6 +339,9 @@ pub struct Scene<'a> {
     /// The local hero's feet, if one is played.
     pub hero: Option<Vec3>,
     pub flying: bool,
+    /// The hero is standing on something: no footsteps in a super jump, a
+    /// grapple swing or a fall.
+    pub grounded: bool,
     /// The hero's speed (m/s).
     pub speed: f32,
     /// Metres from the camera down to the ground.
@@ -1461,7 +1464,7 @@ impl Soundscape {
         let Some(feet) = s.hero else {
             return;
         };
-        if s.flying || s.speed < 0.6 || feet.distance(s.eye) > 25.0 {
+        if s.flying || !s.grounded || s.speed < 0.6 || feet.distance(s.eye) > 25.0 {
             self.stride = 0.0;
             return;
         }
@@ -1883,6 +1886,7 @@ mod tests {
             eye: Vec3::ZERO,
             hero: None,
             flying: false,
+            grounded: true,
             speed: 0.0,
             height: 2.0,
             indoors: false,
