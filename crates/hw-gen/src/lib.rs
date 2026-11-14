@@ -7,6 +7,7 @@ pub mod city;
 pub mod doors;
 pub mod geom;
 pub mod layout;
+pub mod planet;
 pub mod roofsolid;
 pub mod style;
 pub mod urban;

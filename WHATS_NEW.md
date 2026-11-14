@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.304 (2026-11-14)
+
+- The planet has a shape now, behind the scenes: continents and island chains, mountain ranges, climate, rain, rivers, lakes and the kinds of land they make (forest, desert, tundra and more). You will walk on it in a coming build; nothing changes in the game yet.
+
 ## 0.303 (2026-11-14)
 
 - Heroes can swap augments at a table. Stand next to a teammate, open the powers window (B) and press "Swap with ..." under your bag. Drag augments from your bag onto the table; both of you see both sides.

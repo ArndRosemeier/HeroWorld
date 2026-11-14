@@ -11,7 +11,7 @@ pub mod seed;
 pub use cancel::{Cancel, Cancelled};
 pub use coords::{LatLon, LocalFrame, Planet, PlanetPos};
 pub use ids::{NetId, NetIdAllocator, StableId};
-pub use noise::Noise;
+pub use noise::{Noise, Noise3};
 pub use seed::{Rng, Seed};
 
 /// Version of the world-generation rules. Bump it when a change would make an
