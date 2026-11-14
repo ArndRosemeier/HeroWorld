@@ -26,7 +26,7 @@ pub const TUNNEL_HALF: f64 = 2.4;
 const PASSAGE_HALF: f64 = 1.5;
 const PASSAGE_HEIGHT: f64 = 3.2;
 /// Half the side of a stair shaft.
-pub const SHAFT_HALF: f64 = 1.7;
+pub const SHAFT_HALF: f64 = 2.1;
 /// How far the paved apron round a shaft's hole in the street reaches
 /// past the hole (m).
 pub const APRON: f64 = 2.4;

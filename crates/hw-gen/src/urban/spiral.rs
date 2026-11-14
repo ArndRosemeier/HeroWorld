@@ -1,14 +1,14 @@
 //! The spiral stair down a shaft.
 //!
 //! Every way into the underground is a stair you walk: a square spiral
-//! round a pillar, going down the shaft's 3.4 m square. Its steps are plain
+//! round a pillar, going down the shaft's 4.2 m square. Its steps are plain
 //! data, so what is drawn is what collides: slabs (a hero steps up and down
 //! them, 0.2 m at a time) and the pillar in the middle. There is no lift
 //! that floats a body up and down.
 //!
-//! The ring round the pillar is 1 m wide. A turn is 16 steps: a square
-//! landing in each corner and three treads along each side between them,
-//! 3.2 m of height per turn, so the next turn up clears the head. The top
+//! The ring round the pillar is 1.65 m wide. A turn is 12 steps: a square
+//! landing in each corner and two treads along each side between them,
+//! 2.4 m of height per turn, so the next turn up clears the head. The top
 //! landing is flush with the ground (or the room floor) at a corner of the
 //! door side; the foot opens to wherever the shaft leads, and a stair
 //! whose foot would be walled in by its own low steps is turned round.
@@ -21,16 +21,18 @@ use glam::DVec2;
 pub const RISE: f64 = 0.2;
 /// Thickness of a step slab (m): the space under a step is open.
 pub const SLAB: f64 = 0.3;
-/// Steps in one turn: four landings and twelve treads.
-pub const PER_TURN: usize = 16;
+/// Steps in one turn: four landings and eight treads.
+pub const PER_TURN: usize = 12;
 /// Half the pillar's side.
-pub const NEWEL: f64 = 0.7;
+pub const NEWEL: f64 = 0.45;
 /// Centre line of the ring, and half the width of a step across it.
-const MID: f64 = 1.2;
-const HALF_WIDTH: f64 = 0.5;
+const MID: f64 = (NEWEL + SHAFT_HALF) / 2.0;
+const HALF_WIDTH: f64 = (SHAFT_HALF - NEWEL) / 2.0;
+/// Steps along one side of the ring: a landing and two treads.
+const SIDE: usize = PER_TURN / 4;
 /// The ring's inner and outer edges, from the shaft's centre: the pillar's
 /// face and the shaft's wall.
-pub const RING: (f64, f64) = (NEWEL, MID + HALF_WIDTH);
+pub const RING: (f64, f64) = (NEWEL, SHAFT_HALF);
 /// The balustrade: its rail's height over a step and its thickness (m),
 /// standing just inside the ring's outer edge.
 pub const RAIL_HEIGHT: f64 = 0.95;
@@ -137,13 +139,13 @@ impl Spiral {
             DVec2::new(-MID, -MID),
             DVec2::new(MID, -MID),
         ];
-        let tread = (2.0 * MID - 2.0 * HALF_WIDTH) / 3.0;
+        let tread = (2.0 * MID - 2.0 * HALF_WIDTH) / (SIDE - 1) as f64;
         let mirror = if self.corner == 1 { -1.0 } else { 1.0 };
         let r = self.riser();
         (0..self.count())
             .map(|i| {
                 let q = i % PER_TURN;
-                let (ci, j) = (q / 4, q % 4);
+                let (ci, j) = (q / SIDE, q % SIDE);
                 let a = corners[ci];
                 let (at, half) = if j == 0 {
                     (a, DVec2::splat(HALF_WIDTH))
@@ -440,5 +442,17 @@ mod tests {
             }
         }
         assert!(open >= 6, "only {open} of 16 passage directions open");
+    }
+
+    #[test]
+    fn a_hero_fits_the_ring_with_room_to_turn() {
+        // A person's centre keeps 0.4 m from the pillar and from the
+        // balustrade: the lane left between is wide enough to walk without
+        // scraping (it was 0.16 m when the ring was 1 m wide).
+        let lane = (RING.1 - RAIL_T - 0.08) - RING.0 - 2.0 * BODY;
+        assert!(lane >= 0.6, "walkable lane {lane:.2} m");
+        // And a tread is deep enough to put a foot on.
+        let steps = spiral(10.0).steps();
+        assert!(steps.iter().all(|s| s.half.min_element() * 2.0 >= 0.4));
     }
 }

@@ -5045,6 +5045,20 @@ fn main() -> EngineResult<()> {
                     if orbit.is_some() {
                         (hero_cam.yaw, hero_cam.distance) = kept;
                     }
+                    // The camera in the hero's head (a narrow stair shaft,
+                    // a tight corner): the hero is not drawn, so the view
+                    // is never from inside the body. Next frame's place
+                    // brings it back.
+                    let head = p.as_vec3() + Vec3::Y * (BODY_HEIGHT as f32 - 0.15);
+                    if world.camera().eye().distance(head) < 1.0 {
+                        if let Some(&(e, _)) = mine.and_then(|m| hero_entities.get(&m)) {
+                            if let Ok(m) = world.world_transform(e) {
+                                let at = m.w_axis.truncate();
+                                let _ = world
+                                    .set_place(e, Place::new(at.x, at.y, at.z).with_scale(0.0001));
+                            }
+                        }
+                    }
                     let shake = fight.shake();
                     if shake != Vec3::ZERO {
                         let cam = world.camera();

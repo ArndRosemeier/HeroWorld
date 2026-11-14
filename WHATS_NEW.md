@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.298 (2026-11-14)
+
+- The stairs down to the underground are much roomier: the shaft is wider, the pillar slimmer and the steps deeper, so your hero walks them up and down without scraping the walls. The camera no longer gets stuck inside the hero in a tight stairwell: the hero simply is not drawn when the view has to sit in the head.
+
 ## 0.297 (2026-11-14)
 
 - The menu button moved down under the police computer's icon: it sat behind it and could not be clicked.
