@@ -555,10 +555,11 @@ impl BuildingPlan {
 
     /// Where people stand in a building of halls, in building
     /// coordinates, storey by storey (lowest first): each place with the
-    /// use of its room.
+    /// use of its room. Nobody in a gang's hideout: those inside are the
+    /// gang, and the game puts them there.
     pub fn standing(&self) -> Vec<Vec<(RoomKind, crate::layout::people::Stand)>> {
         use crate::layout::SpaceKind;
-        let Some(l) = self.layout.as_ref() else {
+        let Some(l) = self.layout.as_ref().filter(|_| !self.site.is_hideout()) else {
             return Vec::new();
         };
         let levels = l.levels();

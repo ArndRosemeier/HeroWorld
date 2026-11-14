@@ -778,8 +778,9 @@ fn a_closed_hideout_gives_up_and_someone_says_thanks() {
         .collect();
     assert_eq!(thanks.len(), 1, "one to say thanks");
     assert!(!b.holds(thanks[0], 0.0), "outside the building");
-    // The police are called to the door: a cruiser sets out.
-    assert_eq!(sim.police.out(), 1, "a cruiser for the hideout");
+    // The police are called to the door: none, or up to three cruisers
+    // by the size of the gang.
+    assert!(sim.police.out() <= 3, "{} cruisers", sim.police.out());
     // The police drones take them all in.
     let mut left = TICK_HZ * 240;
     let people = |sim: &mut Sim| sim.enemies().iter().any(|e| e.1 != EnemyKind::Safe);
@@ -808,4 +809,102 @@ fn a_closed_hideout_gives_up_and_someone_says_thanks() {
     }
     assert!(sim.enemies().is_empty(), "a safe was left behind");
     assert!(sim.missions.safe_solids().is_empty());
+}
+
+/// Police called to a hideout with places to look at go in: two cruisers
+/// land apart, one officer guards the door, the others walk into the
+/// building, collect evidence (standing still at it), come out again and
+/// fly off; nobody walks on the spot.
+#[test]
+fn the_police_go_in_and_collect_evidence() {
+    use hw_net::EntityKind;
+    let (mut sim, floors) = town();
+    let b = &floors.buildings[0];
+    let front = b.to_town(b.graph.front());
+    let outside = front + DVec3::new(0.0, 0.0, -25.0);
+    let hero = sim.spawn_hero(PlayerId(1), outside);
+    sim.step();
+    let scenes: Vec<DVec3> = b
+        .graph
+        .rooms()
+        .into_iter()
+        // Where a gang holds out: halls, lobbies and shops.
+        .filter(|(k, r, _)| {
+            use hw_gen::layout::SpaceKind as K;
+            matches!(k, K::Hall | K::Boardroom | K::Lobby | K::Shop)
+                && r.size().min_element() >= 8.0
+        })
+        .take(4)
+        .map(|(_, r, y)| b.to_town(DVec3::new(r.center().x, y, r.center().y)))
+        .collect();
+    assert!(scenes.len() >= 2);
+    sim.call_police_to(
+        front,
+        b.dir,
+        2,
+        Some(hw_sim::police::Visit {
+            floors: floors.clone(),
+            scenes,
+        }),
+    );
+    let mut cars = std::collections::BTreeSet::new();
+    let mut went_in = std::collections::BTreeSet::new();
+    let mut collected = std::collections::BTreeSet::new();
+    let mut last: std::collections::BTreeMap<hw_core::NetId, DVec3> = Default::default();
+    let (mut walking, mut on_the_spot) = (0, 0);
+    let mut flew = false;
+    for _ in 0..TICK_HZ * 400 {
+        put(&mut sim, hero, outside);
+        sim.step();
+        let all = sim.snapshot();
+        for e in &all {
+            match e.kind {
+                EntityKind::PoliceCar => {
+                    flew = true;
+                    cars.insert(e.id);
+                }
+                EntityKind::Officer => {
+                    let p = DVec3::from_array(e.pos);
+                    if b.holds(p, 0.0) {
+                        went_in.insert(e.id);
+                    }
+                    if e.mount.is_some_and(|m| m.1 & 0x80 != 0) {
+                        collected.insert(e.id);
+                    }
+                    let v = glam::Vec3::from_array(e.vel);
+                    if let Some(q) = last.insert(e.id, p) {
+                        if glam::Vec2::new(v.x, v.z).length() > 0.5 {
+                            walking += 1;
+                            if DVec2::new(p.x - q.x, p.z - q.z).length() < 0.005 {
+                                on_the_spot += 1;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if flew && sim.police.out() == 0 {
+            break;
+        }
+    }
+    assert_eq!(cars.len(), 2, "two cruisers");
+    assert!(went_in.len() >= 2, "{} officers went in", went_in.len());
+    assert!(
+        collected.len() >= 2,
+        "{} collected evidence",
+        collected.len()
+    );
+    assert!(walking > 100);
+    assert!(
+        on_the_spot * 50 < walking,
+        "{on_the_spot} of {walking} walking ticks on the spot"
+    );
+    assert_eq!(sim.police.out(), 0, "they flew off");
+    let left = sim
+        .snapshot()
+        .iter()
+        .filter(|e| e.kind == EntityKind::Officer)
+        .count();
+    assert_eq!(left, 0, "nobody left behind");
 }

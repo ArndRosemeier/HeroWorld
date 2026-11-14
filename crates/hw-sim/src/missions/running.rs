@@ -21,6 +21,28 @@ struct Room {
     called: bool,
 }
 
+/// The police called to a closed hideout: how many cruisers, to which
+/// door, and what their officers look at inside.
+#[derive(Clone)]
+pub struct PoliceCall {
+    pub door: DVec3,
+    pub out: DVec2,
+    pub cars: usize,
+    pub visit: crate::police::Visit,
+}
+
+/// How many cruisers come to a closed hideout whose gang held `rooms`
+/// rooms, by the dice `roll` (0 to 1): sometimes none for a small one,
+/// up to three for a big one.
+pub(crate) fn cruisers_for(rooms: usize, roll: f64) -> usize {
+    let odds: &[(f64, usize)] = match rooms {
+        0..=2 => &[(0.3, 0), (1.0, 1)],
+        3..=4 => &[(0.15, 0), (0.6, 1), (1.0, 2)],
+        _ => &[(0.2, 1), (0.6, 2), (1.0, 3)],
+    };
+    odds.iter().find(|(p, _)| roll < *p).map_or(1, |o| o.1)
+}
+
 /// A clue to find, or a hostage to free.
 #[derive(Clone, Copy, Debug)]
 struct Clue {
@@ -875,7 +897,7 @@ impl Running {
         &mut self,
         world: &mut World,
         tick: u64,
-    ) -> (Vec<Safe>, Option<(DVec3, DVec2)>) {
+    ) -> (Vec<Safe>, Option<PoliceCall>) {
         let mut police = None;
         let spots: Vec<usize> = self.groups_mut().map(|r| r.spot).collect();
         for (en, mut f) in world
@@ -892,8 +914,28 @@ impl Running {
         if let (Some(at), Some(k)) = (self.way_in, self.site().building) {
             let b = &self.floors.buildings[k];
             let out = DVec2::new(at.x - b.pos.x, at.z - b.pos.y).normalize_or(DVec2::X);
-            // The front door looks square out of the house front.
-            police = Some((at, if out.dot(b.dir) > 0.5 { b.dir } else { out }));
+            // The front door looks square out of the house front. The
+            // officers look over where the gang stood.
+            let roll = hw_core::Seed(self.number as u64)
+                .child(self.gang as u64)
+                .child(self.plan.variant as u64)
+                .child("police")
+                .unit();
+            let scenes: Vec<DVec3> = self
+                .rooms
+                .iter()
+                .chain(self.boss.iter())
+                .map(|r| r.at)
+                .collect();
+            police = Some(PoliceCall {
+                door: at,
+                out: if out.dot(b.dir) > 0.5 { b.dir } else { out },
+                cars: cruisers_for(self.rooms.len(), roll),
+                visit: crate::police::Visit {
+                    floors: self.floors.clone(),
+                    scenes,
+                },
+            });
             let solids = world.resource::<crate::Solids>().0.clone();
             let stand = (2..7).find_map(|m| {
                 let p = at + DVec3::new(out.x, 0.0, out.y) * (m as f64 * 1.5);

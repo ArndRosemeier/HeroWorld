@@ -3537,6 +3537,59 @@ pub fn drums(m: &mut Maker) {
     }
 }
 
+/// A low wall of sandbags `w` wide (0.6 deep, 0.85 high), its front
+/// to +z: two courses two bags deep, two more one bag deep on top, each
+/// course laid half a bag on from the one below, every bag a little
+/// different in size, lie and the colour of its burlap.
+pub fn sandbags(m: &mut Maker, w: f64) {
+    use hw_gen::layout::furnish::SANDBAGS_DEPTH;
+    const LONG: f64 = 0.56;
+    const PITCH: f64 = 0.2;
+    let n = ((w / LONG).round() as usize).max(2);
+    let long = w / n as f64;
+    let mut k: u64 = 0;
+    // A number from 0 to 1, the next for every bag (same every time).
+    let mut next = || {
+        k += 1;
+        let h = k.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29) ^ k;
+        (h.wrapping_mul(0xBF58_476D_1CE4_E5B9) >> 40) as f64 / (1u64 << 24) as f64
+    };
+    for course in 0..4 {
+        let y = 0.115 + course as f64 * PITCH;
+        let rows: &[f64] = if course < 2 {
+            &[-SANDBAGS_DEPTH * 0.24, SANDBAGS_DEPTH * 0.24]
+        } else {
+            &[0.0]
+        };
+        let half_z = if course < 2 { 0.15 } else { 0.17 };
+        // Every other course half a bag on, one bag fewer.
+        let (count, start) = if course % 2 == 0 {
+            (n, -w * 0.5 + long * 0.5)
+        } else {
+            (n - 1, -w * 0.5 + long)
+        };
+        for &z in rows {
+            for i in 0..count {
+                let (a, b, c) = (next(), next(), next());
+                let x = start + i as f64 * long + (a - 0.5) * 0.04;
+                let burlap = rgb(
+                    (142.0 + 22.0 * b) as u8,
+                    (122.0 + 18.0 * b) as u8,
+                    (84.0 + 14.0 * c) as u8,
+                );
+                let mut bag = m.sub(DVec3::new(x, y, z), (c - 0.5) * 0.12);
+                bag.blob(
+                    Mat::Cloth(burlap),
+                    DVec3::ZERO,
+                    DVec3::new(long * (0.52 + 0.04 * a), 0.112, half_z * (0.96 + 0.08 * b)),
+                    0.0,
+                    (0.3, 0.55),
+                );
+            }
+        }
+    }
+}
+
 /// The thing a gang is hiding, lying on the floor for a hero to find
 /// (about 0.7 m across, 0.4 high): a real object with a small glint
 /// of its own (a lit seal, a glowing coil, a gilt rim) so it shows from

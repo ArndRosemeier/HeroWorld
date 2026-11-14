@@ -3,6 +3,17 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.284 (2026-11-14)
+
+- The balconies and bridges of a gang's den are no longer bare. Behind every balcony's rail the gang has piled sandbags, crates and oil drums to crouch behind, and their pin boards, safes and cabinets stand against the wall; bridges have sandbags along both rails.
+- The walk along the rail stays free, so you (and the gang) can still run from one stair to the next.
+- Sandbag walls stand on the hall floor of hideouts too, among the card tables and cots.
+- The way into a case's building is easy to spot now: a glowing teal neon frame round its door and teal arrows on the pavement pointing at it, from the moment you take the case until it is done.
+- No more townsfolk standing about inside gang hideouts. Whoever is in there is the gang.
+- After a hideout is cleared the police come in varying numbers: sometimes nobody, up to three cruisers for a big gang. The officers no longer just stand at the door: they go inside, walk to where the gang held out and collect the evidence, then come out and fly off. When several cars come, one officer guards the door.
+- Officers no longer walk on the spot.
+- This changes what is inside the hideouts of every town. Everyone playing together needs this version.
+
 ## 0.283 (2026-11-14)
 
 - Waking or sending home a Herobot is now H (F is the Grapple Swing).

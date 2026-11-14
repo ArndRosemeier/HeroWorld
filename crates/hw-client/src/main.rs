@@ -1088,6 +1088,12 @@ fn main() -> EngineResult<()> {
                         r.max.y,
                         l.levels()
                     );
+                    for s in l.spaces.iter().filter(|s| s.within.is_some()) {
+                        eprintln!(
+                            "  deck {:?} x {:.1}..{:.1} z {:.1}..{:.1} at {:.1}",
+                            s.kind, s.rect.min.x, s.rect.max.x, s.rect.min.y, s.rect.max.y, s.y
+                        );
+                    }
                 }
             }
             // `HW_HALLS_EYE=x,y,z,x,y,z`: the eye and what it looks at, in
@@ -4013,6 +4019,21 @@ fn main() -> EngineResult<()> {
                     },
                     frame.dt,
                 );
+                if h.kind == hw_net::EntityKind::Officer {
+                    // Standing, an officer faces the way the server turned
+                    // them (the street on guard, the evidence inside).
+                    if Vec3::new(vel.x, 0.0, vel.z).length() < 0.3 {
+                        let y = hw_sim::robots::rotation_yaw(h.rot).to_degrees() as f32;
+                        anim.face(y, frame.dt);
+                        d.yaw = anim.yaw();
+                    }
+                    // Collecting evidence, they reach down for it.
+                    if h.mount.is_some_and(|m| m.1 & 0x80 != 0) {
+                        d.clip = "interact";
+                        d.rate = 0.8;
+                        d.once = false;
+                    }
+                }
                 // Fighters face their foe while they stand and fight.
                 let action = fight.action(h.id);
                 let foe = h.combat.and_then(|c| c.target).and_then(at_of);
@@ -4078,7 +4099,7 @@ fn main() -> EngineResult<()> {
                     }
                     // A police officer.
                     hw_net::EntityKind::Officer => {
-                        Who::Officer(h.mount.map_or(0, |m| m.1) % hw_sim::police::LOOKS)
+                        Who::Officer((h.mount.map_or(0, |m| m.1) & 0x7f) % hw_sim::police::LOOKS)
                     }
                     // One of Hero Hall's own heroes.
                     hw_net::EntityKind::NpcHero => Who::NpcHero(h.mount.map_or(0, |m| m.1)),

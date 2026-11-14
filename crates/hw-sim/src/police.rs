@@ -46,6 +46,16 @@ const SINK: f64 = 7.0;
 const CRUISE: f64 = 42.0;
 /// It comes in from this far off (m).
 const FROM: f64 = 220.0;
+/// How long an officer collects evidence at a place (s): from, to.
+const COLLECT: (f64, f64) = (8.0, 14.0);
+/// An officer who has not made a metre in this long gives the place up.
+const STUCK: f64 = 6.0;
+/// The longest an officer stays inside before heading out (s).
+const INSIDE: f64 = 150.0;
+/// The next cruiser of one call sets out this much after the one before.
+const NEXT_CAR: f64 = 5.0;
+/// Two cruisers' middles keep at least this far apart (m).
+const APART: f64 = 2.0 * CRUISER_HALF.y + 1.0;
 /// The officers' pace (m/s).
 const WALK: f64 = 1.5;
 /// Seconds they stand guard at the door.
@@ -81,6 +91,24 @@ pub struct Cruiser;
 pub struct Officer {
     /// Which of the [`LOOKS`] they have.
     pub look: u8,
+    /// Collecting evidence (kneeling over something, taking it).
+    pub busy: bool,
+}
+
+/// What a call sends: how many cruisers, and what their officers do
+/// inside (nothing: they guard the door).
+pub struct Dispatch {
+    pub cars: usize,
+    pub visit: Option<Visit>,
+}
+
+/// What a closed hideout leaves the police to do inside: the building's
+/// route map and the places the gang held (town points on its floors),
+/// where officers go to collect the evidence.
+#[derive(Clone)]
+pub struct Visit {
+    pub floors: Arc<crate::floornav::Floors>,
+    pub scenes: Vec<DVec3>,
 }
 
 /// The solid box of a cruiser standing at `pos` (its skids' feet), its
@@ -177,6 +205,7 @@ fn ticks(seconds: f64) -> u64 {
 type RoadPiece = (DVec2, DVec2, f64);
 
 /// A call whose landing place is still being looked for.
+#[derive(Clone)]
 struct Search {
     door: DVec3,
     out: DVec2,
@@ -191,6 +220,11 @@ struct Search {
     next: usize,
     /// Not before this tick does the cruiser set out.
     answer_at: u64,
+    /// The call it answers, which of its cruisers it is, of how many.
+    call: u64,
+    car: usize,
+    cars: usize,
+    visit: Option<Arc<Visit>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -199,14 +233,29 @@ enum Stage {
     Coming,
     /// Landed, the canopy swinging up, since this tick.
     Opening(u64),
-    /// The officers out, until this tick.
+    /// The officers out; those who guard the door stand until this tick
+    /// at least (and until everyone who went in is out again).
     Guard(u64),
-    /// The officers walking back and getting in.
-    Returning,
     /// Hovering over the door until this tick (nowhere to land).
     Watching(u64),
     /// The canopy shut, off again.
     Leaving,
+}
+
+/// What an officer is doing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Doing {
+    /// Walking from the cruiser to their post by the door.
+    Out,
+    /// On their post, facing the street.
+    Post,
+    /// Walking in the building to goal `k` (past the last: back to the
+    /// post).
+    To(usize),
+    /// Collecting evidence at goal `k` until this tick.
+    Collect(usize, u64),
+    /// Walking back from the post to the cruiser.
+    Back,
 }
 
 /// An officer out of the cruiser.
@@ -216,6 +265,26 @@ struct Walker {
     way: Vec<DVec3>,
     /// The next point of it they make for (walking back: counted down).
     next: usize,
+    /// Stands guard at the door (else goes in to collect evidence).
+    guard: bool,
+    /// The places in the building they collect evidence at.
+    goals: Vec<DVec3>,
+    doing: Doing,
+    /// Inside: the points to head for, found again at this tick.
+    path: Vec<DVec3>,
+    repath: u64,
+    /// Where they were at a tick, to tell they are stuck.
+    check: (u64, DVec3),
+    /// Inside: they head out at this tick whatever is left.
+    out_by: u64,
+}
+
+/// How a walk in the building goes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Stride {
+    Going,
+    There,
+    Stuck,
 }
 
 struct Patrol {
@@ -229,6 +298,11 @@ struct Patrol {
     officers: Vec<Walker>,
     /// Where it was called to.
     door: DVec3,
+    /// The call it answers, which of its cruisers it is, of how many.
+    call: u64,
+    nth: usize,
+    cars: usize,
+    visit: Option<Arc<Visit>>,
 }
 
 /// The cruisers out on calls.
@@ -237,6 +311,8 @@ pub struct Police {
     town: Option<Arc<Area>>,
     searches: Vec<Search>,
     patrols: Vec<Patrol>,
+    /// Calls so far (each call's number).
+    calls: u64,
     /// Screenshots: cruisers answer at once and set down from a metre up.
     pub quick: bool,
 }
@@ -276,9 +352,12 @@ impl Police {
             .collect()
     }
 
-    /// Calls a cruiser to the door at `door` (feet), which looks out
-    /// along `out`. One cruiser per place: a second call near is dropped.
-    /// It lands on none of `people` (whoever stands about there now).
+    /// Calls `cars` cruisers to the door at `door` (feet), which looks
+    /// out along `out`, one after another. One call per place: a second
+    /// call near is dropped. They land on none of `people` (whoever stands
+    /// about there now). With a `visit`, officers go in and collect
+    /// evidence where the gang was (one of the first cruiser's stays at
+    /// the door when more than one came); without, both stand guard.
     pub fn call(
         &mut self,
         solids: &Obstacles,
@@ -286,20 +365,38 @@ impl Police {
         out: DVec2,
         people: &[DVec3],
         tick: u64,
+        Dispatch { cars, visit }: Dispatch,
     ) {
         let out = out.normalize_or(DVec2::X);
         let near = |p: DVec3| p.distance(door) < 40.0;
-        if self.searches.iter().any(|s| near(s.door)) || self.patrols.iter().any(|p| near(p.door)) {
+        if cars == 0
+            || self.searches.iter().any(|s| near(s.door))
+            || self.patrols.iter().any(|p| near(p.door))
+        {
             return;
         }
-        let mut s = search(self.town.as_deref(), solids, door, out);
-        s.answer_at = tick + if self.quick { 0 } else { ticks(ANSWER) };
-        s.people = people
-            .iter()
-            .filter(|p| p.distance(door) < 60.0)
-            .map(|p| DVec2::new(p.x, p.z))
-            .collect();
-        self.searches.push(s);
+        self.calls += 1;
+        let visit = visit.filter(|v| !v.scenes.is_empty()).map(Arc::new);
+        let first = search(self.town.as_deref(), solids, door, out);
+        for car in 0..cars {
+            let mut s = first.clone();
+            let wait = if self.quick {
+                0.0
+            } else {
+                ANSWER + NEXT_CAR * car as f64
+            };
+            s.answer_at = tick + ticks(wait);
+            s.people = people
+                .iter()
+                .filter(|p| p.distance(door) < 60.0)
+                .map(|p| DVec2::new(p.x, p.z))
+                .collect();
+            s.call = self.calls;
+            s.car = car;
+            s.cars = cars;
+            s.visit = visit.clone();
+            self.searches.push(s);
+        }
     }
 
     /// Takes every cruiser and officer out of the world.
@@ -339,6 +436,10 @@ fn search(town: Option<&Area>, solids: &Obstacles, door: DVec3, out: DVec2) -> S
         roads,
         next: 0,
         answer_at: 0,
+        call: 0,
+        car: 0,
+        cars: 1,
+        visit: None,
     }
 }
 
@@ -357,7 +458,7 @@ pub fn find_landing(
     }
     (0..)
         .map_while(|k| candidate(&s, k))
-        .find_map(|(c, fwd)| try_landing(solids, &s, c, fwd).ok())
+        .find_map(|(c, fwd)| try_landing(solids, &s, c, fwd, &[]).ok())
 }
 
 /// Why each place a cruiser might land at for a call to `door` will not
@@ -375,7 +476,7 @@ pub fn why_not(
         *why.entry("no posts").or_default() += 1;
     }
     for (c, fwd) in (0..).map_while(|k| candidate(&s, k)) {
-        if let Err(e) = try_landing(solids, &s, c, fwd) {
+        if let Err(e) = try_landing(solids, &s, c, fwd, &[]) {
             *why.entry(e).or_default() += 1;
         }
     }
@@ -482,7 +583,11 @@ fn try_landing(
     s: &Search,
     c: DVec2,
     fwd: DVec2,
+    taken: &[DVec2],
 ) -> Result<Landing, &'static str> {
+    if taken.iter().any(|t| t.distance(c) < APART) {
+        return Err("another cruiser stands there");
+    }
     let right = DVec2::new(fwd.y, -fwd.x);
     // The ground under the box as a plane: its height in the middle and
     // how it rises to the nose and to the side.
@@ -685,7 +790,7 @@ fn spawn_officer(world: &mut World, tick: u64, at: DVec3, yaw: f64, look: u8) ->
             }),
             Orientation(yaw_quat(yaw)),
             LastChange(tick),
-            Officer { look },
+            Officer { look, busy: false },
         ))
         .id()
 }
@@ -749,6 +854,10 @@ fn set_out(
         landing,
         officers: Vec::new(),
         door: s.door,
+        call: s.call,
+        nth: s.car,
+        cars: s.cars,
+        visit: s.visit.clone(),
     })
 }
 
@@ -795,10 +904,25 @@ pub fn step(
     tick: u64,
 ) {
     let town = police.town.clone();
+    // Where the cruisers of each call stand (their middles): the next of
+    // a call lands elsewhere.
+    let mut taken: Vec<(u64, DVec2)> = police
+        .patrols
+        .iter()
+        .filter_map(|p| {
+            let l = p.landing.as_ref()?;
+            Some((p.call, cruiser_solid(l.at, l.yaw).to_world(DVec2::ZERO)))
+        })
+        .collect();
     // Finding where to land, a little each tick.
     let mut k = 0;
     while k < police.searches.len() {
         let s = &mut police.searches[k];
+        let mine: Vec<DVec2> = taken
+            .iter()
+            .filter(|t| t.0 == s.call)
+            .map(|t| t.1)
+            .collect();
         let mut found = None;
         let mut over = s.posts.len() < 2;
         for _ in 0..PER_TICK {
@@ -808,7 +932,7 @@ pub fn step(
             match candidate(s, s.next) {
                 Some((c, fwd)) => {
                     s.next += 1;
-                    found = try_landing(solids, s, c, fwd).ok();
+                    found = try_landing(solids, s, c, fwd, &mine).ok();
                     if found.is_some() {
                         break;
                     }
@@ -820,6 +944,9 @@ pub fn step(
             let s = police.searches.remove(k);
             let quick = police.quick;
             if let Some(p) = set_out(world, town.as_deref(), solids, &s, found, tick, quick) {
+                if let Some(l) = &p.landing {
+                    taken.push((p.call, cruiser_solid(l.at, l.yaw).to_world(DVec2::ZERO)));
+                }
                 police.patrols.push(p);
             }
         } else if found.is_some() {
@@ -836,10 +963,7 @@ pub fn step(
         let t = (tick - p.since) as f64 * DT;
         let total: f64 = p.legs.iter().map(|l| l.secs).sum();
         let (pos, vel) = fly(&p.legs, t);
-        let open = matches!(
-            p.stage,
-            Stage::Opening(_) | Stage::Guard(_) | Stage::Returning
-        );
+        let open = matches!(p.stage, Stage::Opening(_) | Stage::Guard(_));
         if let Ok(mut e) = world.get_entity_mut(p.car) {
             if let Some(mut m) = e.get_mut::<Motion>() {
                 m.set_if_neq(Motion(crate::collision::Body {
@@ -900,47 +1024,57 @@ pub fn step(
             Stage::Opening(since) if tick >= since + ticks(CANOPY) => {
                 // Out they get, each at their side.
                 let ways = p.landing.as_ref().map_or_else(Vec::new, |l| l.ways.clone());
+                let car_id = world.get::<Net>(p.car).map_or(0, |n| n.0 .0) as usize;
                 for (k, way) in ways.into_iter().enumerate() {
-                    let look = ((world.get::<Net>(p.car).map_or(0, |n| n.0 .0) as usize + k)
-                        % LOOKS as usize) as u8;
+                    let look = ((car_id + k) % LOOKS as usize) as u8;
                     let e = spawn_officer(world, tick, way[0], p.yaw, look);
-                    p.officers.push(Walker { e, way, next: 1 });
+                    // Who goes in, and where: one of the first cruiser's
+                    // stays at the door when more came.
+                    let (guard, goals) = match &p.visit {
+                        Some(v) if !(p.nth == 0 && k == 0 && p.cars > 1) => {
+                            let n = v.scenes.len();
+                            let g = p.nth * 2 + k;
+                            let mut goals = vec![v.scenes[g % n]];
+                            let second = v.scenes[(g + 1 + n / 2) % n];
+                            if n > 1 && second.distance(goals[0]) > 2.0 {
+                                goals.push(second);
+                            }
+                            (false, goals)
+                        }
+                        _ => (true, Vec::new()),
+                    };
+                    p.officers.push(Walker {
+                        e,
+                        way,
+                        next: 1,
+                        guard,
+                        goals,
+                        doing: Doing::Out,
+                        path: Vec::new(),
+                        repath: 0,
+                        check: (tick, DVec3::ZERO),
+                        out_by: u64::MAX,
+                    });
                 }
                 p.stage = Stage::Guard(tick + ticks(GUARD));
             }
             Stage::Guard(until) => {
                 let out = p.landing.as_ref().map_or(DVec2::X, |l| l.out);
-                for w in &mut p.officers {
-                    if w.next < w.way.len() && walk(world, solids, w, w.way[w.next]) {
-                        w.next += 1;
-                        if w.next == w.way.len() {
-                            // On their post: facing the street.
-                            if let Some(mut o) = world.get_mut::<Orientation>(w.e) {
-                                o.0 = yaw_quat(det::atan2(out.x, out.y));
-                            }
-                        }
-                    }
-                }
-                if tick >= until {
-                    for w in &mut p.officers {
-                        w.next = w.next.min(w.way.len() - 1).saturating_sub(1);
-                    }
-                    p.stage = Stage::Returning;
-                }
-            }
-            Stage::Returning => {
+                // The guards go back once nobody is inside any more (and
+                // they have stood a while).
+                let inside = p.officers.iter().any(|w| {
+                    matches!(w.doing, Doing::Out | Doing::To(_) | Doing::Collect(..)) && !w.guard
+                });
+                let release = tick >= until && !inside;
+                let floors = p.visit.as_ref().map(|v| v.floors.clone());
                 let mut k = 0;
                 while k < p.officers.len() {
                     let w = &mut p.officers[k];
-                    let to = w.way[w.next];
-                    if walk(world, solids, w, to) {
-                        if w.next == 0 {
-                            // In they get.
-                            let w = p.officers.remove(k);
-                            world.despawn(w.e);
-                            continue;
-                        }
-                        w.next -= 1;
+                    if officer_step(world, solids, floors.as_deref(), w, out, release, tick) {
+                        // In they get.
+                        let w = p.officers.remove(k);
+                        world.despawn(w.e);
+                        continue;
                     }
                     k += 1;
                 }
@@ -962,6 +1096,186 @@ pub fn step(
         }
         world.despawn(p.car);
     }
+}
+
+/// One tick of officer `w` (posts look out along `out`; guards may go
+/// back once `release`): true once they are back in the cruiser.
+fn officer_step(
+    world: &mut World,
+    solids: &Obstacles,
+    floors: Option<&crate::floornav::Floors>,
+    w: &mut Walker,
+    out: DVec2,
+    release: bool,
+    tick: u64,
+) -> bool {
+    let post = *w.way.last().expect("a walk has its post");
+    match w.doing {
+        Doing::Out => {
+            if walk(world, solids, w, w.way[w.next]) {
+                w.next += 1;
+                if w.next == w.way.len() {
+                    w.next -= 1;
+                    w.doing = Doing::Post;
+                    stand(world, w.e, out, false);
+                    if !w.goals.is_empty() && floors.is_some() {
+                        w.doing = Doing::To(0);
+                        w.out_by = tick + ticks(INSIDE);
+                        w.check = (tick, post);
+                        w.repath = tick;
+                    }
+                }
+            }
+        }
+        Doing::Post => {
+            if release {
+                w.next = w.next.saturating_sub(1);
+                w.doing = Doing::Back;
+            }
+        }
+        Doing::To(g) => {
+            let Some(floors) = floors else {
+                w.doing = Doing::Post;
+                return false;
+            };
+            let home = g >= w.goals.len();
+            let goal = if home { post } else { w.goals[g] };
+            let here = world.get::<Motion>(w.e).map_or(goal, |m| m.0.pos);
+            let r = match stride(world, solids, floors, w, goal, tick) {
+                // Something stands on the very place (a desk, a crate):
+                // they look at it from where they got to.
+                Stride::Stuck if !home && here.distance(goal) < 3.0 => Stride::There,
+                r => r,
+            };
+            if r == Stride::Stuck {
+                // Each new place gets its own time to be reached.
+                w.check = (tick, here);
+            }
+            match r {
+                Stride::Going => {
+                    // Long enough inside: out, whatever is left.
+                    if !home && tick >= w.out_by {
+                        w.doing = Doing::To(w.goals.len());
+                        w.repath = tick;
+                    }
+                }
+                Stride::There if home => {
+                    stand(world, w.e, out, false);
+                    w.doing = Doing::Post;
+                }
+                Stride::There => {
+                    // Down to the floor, turned to whatever lies there.
+                    let id = world.get::<Net>(w.e).map_or(0, |n| n.0 .0) as u64;
+                    let spread = det::sin((id * 7 + g as u64 * 13) as f64);
+                    let secs = COLLECT.0 + (COLLECT.1 - COLLECT.0) * (0.5 + 0.5 * spread);
+                    let face = DVec2::from_angle(spread * 3.0);
+                    stand(world, w.e, face, true);
+                    w.doing = Doing::Collect(g, tick + ticks(secs));
+                }
+                // Cannot get there: the next place (or out).
+                Stride::Stuck if !home => {
+                    w.doing = Doing::To(g + 1);
+                    w.repath = tick;
+                }
+                // Cannot get out the way they came: they leave by the
+                // building's own ways, out of sight (never stand stuck
+                // in a wall for ever).
+                Stride::Stuck => return true,
+            }
+        }
+        Doing::Collect(g, until) => {
+            if tick >= until {
+                if let Some(mut o) = world.get_mut::<Officer>(w.e) {
+                    o.busy = false;
+                }
+                w.doing = Doing::To(g + 1);
+                w.repath = tick;
+                w.check = (tick, world.get::<Motion>(w.e).map_or(post, |m| m.0.pos));
+            }
+        }
+        Doing::Back => {
+            if walk(world, solids, w, w.way[w.next]) {
+                if w.next == 0 {
+                    return true;
+                }
+                w.next -= 1;
+            }
+        }
+    }
+    false
+}
+
+/// Officer `e` stands still facing `face`, collecting evidence or not.
+fn stand(world: &mut World, e: Entity, face: DVec2, busy: bool) {
+    if let Some(mut m) = world.get_mut::<Motion>(e) {
+        if m.0.vel != DVec3::ZERO {
+            m.0.vel = DVec3::ZERO;
+        }
+    }
+    if let Some(mut o) = world.get_mut::<Orientation>(e) {
+        o.set_if_neq(Orientation(yaw_quat(det::atan2(face.x, face.y))));
+    }
+    if let Some(mut o) = world.get_mut::<Officer>(e) {
+        o.set_if_neq(Officer { busy, ..*o });
+    }
+}
+
+/// Walks officer `w` a tick towards `to` in a building, round its walls,
+/// up its stairs and round its furniture the way villains go (`floors`'
+/// route map, the walk found again every second and a half), as a body
+/// that falls and collides.
+fn stride(
+    world: &mut World,
+    solids: &Obstacles,
+    floors: &crate::floornav::Floors,
+    w: &mut Walker,
+    to: DVec3,
+    tick: u64,
+) -> Stride {
+    let Some(m) = world.get::<Motion>(w.e) else {
+        return Stride::Stuck;
+    };
+    let mut body = m.0;
+    let here = body.pos;
+    let flat = |a: DVec3, b: DVec3| DVec2::new(a.x - b.x, a.z - b.z).length();
+    if flat(here, to) < 0.8 && (to.y - here.y).abs() < 0.5 {
+        stand(world, w.e, DVec2::new(to.x - here.x, to.z - here.z), false);
+        return Stride::There;
+    }
+    if tick >= w.check.0 + ticks(STUCK) {
+        if flat(here, w.check.1) < 1.0 && (here.y - w.check.1.y).abs() < 0.5 {
+            return Stride::Stuck;
+        }
+        w.check = (tick, here);
+    }
+    if tick >= w.repath || w.path.is_empty() {
+        w.path = floors.way(solids, here, to).unwrap_or_else(|| vec![to]);
+        w.repath = tick + ticks(1.5);
+    }
+    while w.path.len() > 1 && flat(w.path[0], here) < 0.8 {
+        w.path.remove(0);
+    }
+    let d = DVec2::new(w.path[0].x - here.x, w.path[0].z - here.z).normalize_or_zero();
+    let fall = if body.grounded {
+        0.0
+    } else {
+        body.vel.y - crate::GRAVITY * DT
+    };
+    body.vel = DVec3::new(d.x * WALK, fall, d.y * WALK);
+    solids.move_body(&mut body, DT);
+    // The pace they really made: pressed against something they stand
+    // (and are drawn standing), never walking on the spot.
+    let made = (body.pos - here) / DT;
+    body.vel = DVec3::new(made.x, body.vel.y, made.z);
+    if let Some(mut m) = world.get_mut::<Motion>(w.e) {
+        m.0 = body;
+    }
+    if d != DVec2::ZERO {
+        if let Some(mut o) = world.get_mut::<Orientation>(w.e) {
+            o.set_if_neq(Orientation(yaw_quat(det::atan2(d.x, d.y))));
+        }
+    }
+    Stride::Going
 }
 
 /// The cruiser at `pos` shuts its canopy (`wait` seconds) and flies off.

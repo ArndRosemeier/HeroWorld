@@ -138,7 +138,7 @@ fn wall(
 }
 
 /// The edge two rectangles share: (along_x, wall line, from, to).
-fn shared(r: &Rect, s: &Rect) -> Option<(bool, f64, f64, f64)> {
+pub(super) fn shared(r: &Rect, s: &Rect) -> Option<(bool, f64, f64, f64)> {
     let e = 1e-3;
     for (ra, sb) in [(r.max.y, s.min.y), (r.min.y, s.max.y)] {
         if (ra - sb).abs() < e {

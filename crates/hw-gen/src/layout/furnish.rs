@@ -10,8 +10,8 @@
 //! stairs themselves, columns, lift shafts and landings low enough to
 //! bump into.
 
-use super::solid::{pieces, Part};
-use super::{Flight, Layout, LinkKind, Space, SpaceKind};
+use super::solid::{pieces, shared, Part, Piece};
+use super::{Flight, Layout, LinkKind, Scheme, Space, SpaceKind};
 use crate::geom::Rect;
 use crate::urban::footprint::Footprint;
 use glam::DVec2;
@@ -97,6 +97,8 @@ pub enum ItemKind {
     PinBoard,
     /// A cluster of oil drums.
     Drums,
+    /// A low wall of sandbags: cover to crouch behind.
+    Sandbags,
 }
 
 /// How a building of halls is furnished.
@@ -161,6 +163,7 @@ impl ItemKind {
             Self::Safe => (0.8, 1.5),
             Self::PinBoard => (0.5, 1.9),
             Self::Drums => (1.1, 1.0),
+            Self::Sandbags => (SANDBAGS_DEPTH, 0.85),
         }
     }
 
@@ -179,6 +182,8 @@ const EXHIBITS: &[(ItemKind, f64)] = &[
 /// A bar from the wall to the front of its counter (m): the back bar,
 /// the barman's walk, the counter.
 pub const BAR_DEPTH: f64 = 1.9;
+/// A sandbag wall from back to front (m).
+pub const SANDBAGS_DEPTH: f64 = 0.6;
 /// A band's stage: how deep, how high (m).
 pub const STAGE_DEPTH: f64 = 3.2;
 pub const STAGE_HEIGHT: f64 = 0.45;
@@ -239,6 +244,11 @@ const STAIR_APRON: f64 = 3.2;
 const OFF_WALL: f64 = 0.24;
 /// The walk left free along the walls of a hall (m).
 const WALK: f64 = 2.2;
+/// The walk left free along a balcony or a bridge, between what stands
+/// at its wall and what stands at its rail (m).
+const DECK_WALK: f64 = 1.4;
+/// Room kept round where a flight leaves or reaches a balcony (m).
+const DECK_APRON: f64 = 2.2;
 
 /// Places pieces in one space.
 struct Room<'a> {
@@ -310,15 +320,23 @@ impl Room<'_> {
 
     /// Stands a piece with its back to wall `k`, `t` metres along it.
     fn against(&mut self, k: usize, t: f64, kind: ItemKind, w: f64, gap: f64) -> bool {
-        if !self.walls[k] {
-            return false;
-        }
+        self.walls[k] && self.at_edge(k, t, kind, w, gap)
+    }
+
+    /// Stands a piece with its back to edge `k` (a wall or a rail), `t`
+    /// metres along it.
+    fn at_edge(&mut self, k: usize, t: f64, kind: ItemKind, w: f64, gap: f64) -> bool {
+        self.off_edge(k, t, 0.0, kind, w, gap)
+    }
+
+    /// The same `off` metres in from the edge.
+    fn off_edge(&mut self, k: usize, t: f64, off: f64, kind: ItemKind, w: f64, gap: f64) -> bool {
         let (o, along, n, len) = self.wall(k);
         if t - w * 0.5 < 0.0 || t + w * 0.5 > len {
             return false;
         }
         let (d, _) = kind.depth_height();
-        self.put(kind, o + along * t + n * (d * 0.5), n, w, gap)
+        self.put(kind, o + along * t + n * (off + d * 0.5), n, w, gap)
     }
 
     /// A seating group round `c`: two sofas (or a sofa and armchairs)
@@ -634,6 +652,7 @@ impl Room<'_> {
                     &[
                         (ItemKind::PokerTable, 1.95),
                         (ItemKind::Crates, 1.6),
+                        (ItemKind::Sandbags, 2.4),
                         (ItemKind::Cot, 0.9),
                         (ItemKind::Drums, 1.1),
                     ],
@@ -1112,6 +1131,101 @@ impl Room<'_> {
         );
     }
 
+    /// A gang's balcony or bridge over its hall. A balcony: the walk
+    /// along its rail (where the flights come and go), and behind it a
+    /// line of sandbags, crates and drums to crouch behind with the gang's
+    /// things against the wall. A bridge: sandbags at both rails, the walk
+    /// down its middle.
+    fn balcony(&mut self) {
+        let size = self.inner.size();
+        let along_x = size.x >= size.y;
+        let (len, across) = if along_x {
+            (size.x, size.y)
+        } else {
+            (size.y, size.x)
+        };
+        if len < 4.0 {
+            return;
+        }
+        // Its long edges.
+        let (a, b) = if along_x { (0, 1) } else { (2, 3) };
+        let r = self.inner;
+        // The walk, `lo` to `lo + DECK_WALK` across from edge `a`.
+        let strip = |lo: f64| {
+            if along_x {
+                Rect::from_xz(r.min.x, r.min.y + lo, r.max.x, r.min.y + lo + DECK_WALK)
+            } else {
+                Rect::from_xz(r.min.x + lo, r.min.y, r.min.x + lo + DECK_WALK, r.max.y)
+            }
+        };
+        let (wall, rail) = match (self.walls[a], self.walls[b]) {
+            (true, false) => (a, b),
+            (false, true) => (b, a),
+            (false, false) => {
+                if across < DECK_WALK + 2.0 * SANDBAGS_DEPTH {
+                    return;
+                }
+                self.blocked.push(strip((across - DECK_WALK) * 0.5));
+                let bags = [(ItemKind::Sandbags, 2.4), (ItemKind::Sandbags, 1.8)];
+                for k in [a, b] {
+                    self.row(k, 0.0, len, &bags, (1.4, 3.0));
+                }
+                return;
+            }
+            (true, true) => return,
+        };
+        // Across from the wall: its things, the cover, the walk.
+        let cover_d = if across >= 4.0 { 1.2 } else { SANDBAGS_DEPTH };
+        let by_wall = across - DECK_WALK - cover_d;
+        if by_wall < -1e-9 {
+            return;
+        }
+        self.blocked
+            .push(strip(if rail == a { 0.0 } else { across - DECK_WALK }));
+        let cover: &[(ItemKind, f64)] = if cover_d > 1.0 {
+            &[
+                (ItemKind::Sandbags, 2.4),
+                (ItemKind::Crates, 1.6),
+                (ItemKind::Sandbags, 1.8),
+                (ItemKind::Drums, 1.1),
+            ]
+        } else {
+            &[(ItemKind::Sandbags, 2.4), (ItemKind::Sandbags, 1.8)]
+        };
+        self.row(rail, DECK_WALK, len, cover, (1.0, 2.6));
+        let things: Vec<(ItemKind, f64)> = [
+            (ItemKind::PinBoard, 2.4),
+            (ItemKind::Crates, 1.6),
+            (ItemKind::Safe, 1.0),
+            (ItemKind::Drums, 1.1),
+            (ItemKind::Cabinet, 0.48),
+        ]
+        .into_iter()
+        .filter(|(kind, _)| {
+            let (d, h) = kind.depth_height();
+            d <= by_wall + 1e-9 && h + 0.3 <= self.s.h
+        })
+        .collect();
+        if !things.is_empty() {
+            self.row(wall, 0.0, len, &things, (0.6, 1.8));
+        }
+    }
+
+    /// Pieces picked from `kinds` along edge `k`, a gap between `gaps`
+    /// apart, where they fit.
+    /// `off` metres in from it.
+    fn row(&mut self, k: usize, off: f64, len: f64, kinds: &[(ItemKind, f64)], gaps: (f64, f64)) {
+        let mut t = self.rng.range(0.3, 1.5);
+        while t < len {
+            let (kind, w) = *self.rng.pick(kinds);
+            if self.off_edge(k, t + w * 0.5, off, kind, w, 0.5) {
+                t += w + self.rng.range(gaps.0, gaps.1);
+            } else {
+                t += 0.5;
+            }
+        }
+    }
+
     /// A walkway: benches and plants along its real walls.
     fn walkway(&mut self) {
         self.along_walls(
@@ -1123,6 +1237,121 @@ impl Room<'_> {
                 (ItemKind::Plant, 0.5),
             ],
         );
+    }
+}
+
+/// What stands or hangs in space `s` up to head height: stairs,
+/// landings, columns, shafts and their rails, with walking room round
+/// them.
+fn in_the_way(solid: &[Piece], s: &Space) -> Vec<Rect> {
+    let mut blocked = Vec::new();
+    for p in solid {
+        if !matches!(
+            p.part,
+            Part::Step | Part::Deck | Part::Column | Part::Shaft | Part::Glass | Part::Rail
+        ) {
+            continue;
+        }
+        let (y0, y1) = p.shape.span();
+        if y1 < s.y + 0.1 || y0 > s.y + 2.3 {
+            continue;
+        }
+        let (x0, x1) = p.shape.extent(DVec2::ZERO, DVec2::X);
+        let (z0, z1) = p.shape.extent(DVec2::ZERO, DVec2::Y);
+        let r = Rect::from_xz(x0, z0, x1, z1);
+        // The room's own walls of glass and rails are its edge, not
+        // something in it.
+        if !s.rect.inset(0.3).contains_point(r.center()) && r.overlap(&s.rect.inset(0.3)) < 0.05 {
+            continue;
+        }
+        blocked.push(r.inset(-CLEAR));
+    }
+    blocked
+}
+
+/// A balcony or bridge `i` in hall `host`, ready to furnish: its edges on
+/// the hall's walls are walls, the rest rails; kept clear are its ways
+/// in, the flights that leave or reach it and every join with the decks
+/// beside it, and its middle (where the route map crosses it).
+fn deck_room<'a>(l: &'a Layout, i: usize, host: usize, solid: &[Piece], rng: Rng) -> Room<'a> {
+    let s = &l.spaces[i];
+    let (r, hr) = (&s.rect, &l.spaces[host].rect);
+    let e = 1e-3;
+    let walls = [
+        (r.min.y - hr.min.y).abs() < e,
+        (r.max.y - hr.max.y).abs() < e,
+        (r.min.x - hr.min.x).abs() < e,
+        (r.max.x - hr.max.x).abs() < e,
+    ];
+    let mut blocked = in_the_way(solid, s);
+    for k in l
+        .links
+        .iter()
+        .filter(|k| (k.a == i || k.b == Some(i)) && (k.y - s.y).abs() < 0.1)
+    {
+        if k.kind.passable() {
+            // Clear from the door right across to the walk at the rail.
+            let d = k.apron().inset(-0.8);
+            blocked.push(if k.along_x {
+                Rect::from_xz(d.min.x, r.min.y, d.max.x, r.max.y)
+            } else {
+                Rect::from_xz(r.min.x, d.min.y, r.max.x, d.max.y)
+            });
+        }
+    }
+    for st in l.stairs.iter().filter(|st| st.host == host) {
+        for f in &st.flights {
+            if f.y1() > s.y - 1.0 && f.y0() < s.y + 2.3 {
+                blocked.push(f.footprint().inset(-CLEAR));
+            }
+            let Flight::Straight {
+                from, dir, risers, ..
+            } = *f
+            else {
+                continue;
+            };
+            let a = DVec2::new(from.x, from.z);
+            for (p, y) in [(a, f.y0()), (a + dir * Flight::run(risers), f.y1())] {
+                if (y - s.y).abs() < 0.5 {
+                    blocked.push(Rect::new(
+                        p - DVec2::splat(DECK_APRON),
+                        p + DVec2::splat(DECK_APRON),
+                    ));
+                }
+            }
+        }
+    }
+    // Where it meets another deck at its height: a strip into it, wide.
+    for (j, t) in l.spaces.iter().enumerate() {
+        if j == i || t.within != Some(host) || (t.y - s.y).abs() > 0.1 {
+            continue;
+        }
+        if let Some((along_x, w, lo, hi)) = shared(r, &t.rect) {
+            let (lo, hi) = (lo - 0.4, hi + 0.4);
+            let into = if along_x {
+                if (w - r.min.y).abs() < e {
+                    Rect::from_xz(lo, w, hi, w + 1.8)
+                } else {
+                    Rect::from_xz(lo, w - 1.8, hi, w)
+                }
+            } else if (w - r.min.x).abs() < e {
+                Rect::from_xz(w, lo, w + 1.8, hi)
+            } else {
+                Rect::from_xz(w - 1.8, lo, w, hi)
+            };
+            blocked.push(into);
+        }
+    }
+    let c = r.center();
+    blocked.push(Rect::new(c - DVec2::splat(0.7), c + DVec2::splat(0.7)));
+    Room {
+        i,
+        s,
+        inner: r.inset(OFF_WALL),
+        blocked,
+        walls,
+        out: Vec::new(),
+        rng,
     }
 }
 
@@ -1160,41 +1389,27 @@ pub fn items_for(l: &Layout, club: Option<usize>, fit: Fit) -> Vec<Item> {
         .child("furnish");
     let mut out = Vec::new();
     for (i, s) in l.spaces.iter().enumerate() {
-        if s.within.is_some()
-            || matches!(
-                s.kind,
-                SpaceKind::Shaft | SpaceKind::StairHall | SpaceKind::Canyon
-            )
-            || (s.kind == SpaceKind::Vestibule && !l.scheme.homes())
+        if let Some(host) = s.within {
+            // A gang's den: its balconies and bridges are part of the fight.
+            if fit == Fit::Hideout
+                && l.scheme == Scheme::Den
+                && matches!(s.kind, SpaceKind::Landing | SpaceKind::Bridge)
+            {
+                let mut room = deck_room(l, i, host, &solid, seed.child(i as u64).rng());
+                room.balcony();
+                out.append(&mut room.out);
+            }
+            continue;
+        }
+        if matches!(
+            s.kind,
+            SpaceKind::Shaft | SpaceKind::StairHall | SpaceKind::Canyon
+        ) || (s.kind == SpaceKind::Vestibule && !l.scheme.homes())
         {
             continue;
         }
         let inner = s.rect.inset(OFF_WALL);
-        // What stands or hangs in the room up to head height: stairs,
-        // landings, columns, shafts and their rails.
-        let mut blocked: Vec<Rect> = Vec::new();
-        for p in &solid {
-            if !matches!(
-                p.part,
-                Part::Step | Part::Deck | Part::Column | Part::Shaft | Part::Glass | Part::Rail
-            ) {
-                continue;
-            }
-            let (y0, y1) = p.shape.span();
-            if y1 < s.y + 0.1 || y0 > s.y + 2.3 {
-                continue;
-            }
-            let (x0, x1) = p.shape.extent(DVec2::ZERO, DVec2::X);
-            let (z0, z1) = p.shape.extent(DVec2::ZERO, DVec2::Y);
-            let r = Rect::from_xz(x0, z0, x1, z1);
-            // The room's own walls of glass and rails are its edge, not
-            // something in it.
-            if !s.rect.inset(0.3).contains_point(r.center()) && r.overlap(&s.rect.inset(0.3)) < 0.05
-            {
-                continue;
-            }
-            blocked.push(r.inset(-CLEAR));
-        }
+        let mut blocked = in_the_way(&solid, s);
         // Doorways, and whatever one can fall or step through.
         let mut walls = [true; 4];
         let mut entrance = None;
@@ -1477,7 +1692,78 @@ mod tests {
                 its.len()
             );
             assert_eq!(its, items(&l), "the same every time");
-            let solids: Vec<(Part, Rect, (f64, f64))> = pieces(&l)
+            assert_clear(&l, &its);
+        }
+    }
+
+    /// A gang's den: its balconies and bridges carry sandbags and crates
+    /// at their rails and the gang's things at their walls, clear of
+    /// stairs, doorways and each other, and a walk is left along each.
+    #[test]
+    fn den_balconies_get_cover() {
+        let (mut dens, mut decks, mut covered, mut sandbags) = (0, 0, 0, 0);
+        for k in 0..60u64 {
+            let size = DVec2::new(12.0 + (k % 7) as f64 * 0.5, 22.0 + (k % 6) as f64 * 2.0);
+            let Some(l) = plan_scheme(Seed(k), size, 3 + (k % 2) as u32, Scheme::Den) else {
+                continue;
+            };
+            dens += 1;
+            let its = items_for(&l, None, Fit::Hideout);
+            assert_eq!(
+                its,
+                items_for(&l, None, Fit::Hideout),
+                "the same every time"
+            );
+            assert_clear(&l, &its);
+            for (i, s) in l.spaces.iter().enumerate() {
+                if s.within.is_none() || s.rect.size().min_element() < 2.9 {
+                    continue;
+                }
+                decks += 1;
+                let mine: Vec<&Item> = its.iter().filter(|it| it.space == i).collect();
+                covered += usize::from(!mine.is_empty());
+                sandbags += mine
+                    .iter()
+                    .filter(|it| it.kind == ItemKind::Sandbags)
+                    .count();
+                // A walk along it: a strip of DECK_WALK somewhere across
+                // that nothing stands in.
+                let along_x = s.rect.size().x >= s.rect.size().y;
+                let (lo, hi) = if along_x {
+                    (s.rect.min.y, s.rect.max.y)
+                } else {
+                    (s.rect.min.x, s.rect.max.x)
+                };
+                let free = |v: f64| {
+                    mine.iter().filter(|it| it.kind.solid()).all(|it| {
+                        let (c, h) = if along_x {
+                            (it.at.y, it.half().y)
+                        } else {
+                            (it.at.x, it.half().x)
+                        };
+                        c + h <= v + 1e-6 || c - h >= v + DECK_WALK - 1e-6
+                    })
+                };
+                let mut v = lo;
+                let mut found = false;
+                while v + DECK_WALK <= hi + 1e-6 {
+                    found |= free(v);
+                    v += 0.02;
+                }
+                assert!(found, "no walk along deck {i} {:?}: {mine:?}", s.rect);
+            }
+        }
+        assert!(dens > 40, "{dens}");
+        assert!(
+            covered * 3 > decks * 2,
+            "{covered} of {decks} decks furnished"
+        );
+        assert!(sandbags > decks, "{sandbags} sandbags on {decks} decks");
+    }
+
+    fn assert_clear(l: &Layout, its: &[Item]) {
+        {
+            let solids: Vec<(Part, Rect, (f64, f64))> = pieces(l)
                 .iter()
                 .filter(|p| !matches!(p.part, Part::Floor(_) | Part::Roof))
                 .map(|p| {

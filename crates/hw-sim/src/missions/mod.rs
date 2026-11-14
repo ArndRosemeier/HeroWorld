@@ -306,7 +306,7 @@ pub struct Missions {
     left: Vec<running::Safe>,
     /// Doors the police are called to (and the way each looks out), for
     /// the server to take: a hideout case just closed there.
-    pub police_calls: Vec<(glam::DVec3, glam::DVec2)>,
+    pub police_calls: Vec<running::PoliceCall>,
     now: u64,
     last_sent: BTreeMap<u16, ToClient>,
     board_sent: Option<ToClient>,

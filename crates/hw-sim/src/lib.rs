@@ -1382,8 +1382,8 @@ impl Sim {
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
         // A hideout case closed: the police come for the gang.
-        for (door, out) in std::mem::take(&mut self.missions.police_calls) {
-            self.call_police(door, out);
+        for c in std::mem::take(&mut self.missions.police_calls) {
+            self.call_police_to(c.door, c.out, c.cars, Some(c.visit));
         }
         let heroes_at: Vec<DVec3> = self
             .world
@@ -2483,6 +2483,19 @@ impl Sim {
     /// along `out`: a cruiser lands near it and its officers stand guard
     /// (see [`police`]).
     pub fn call_police(&mut self, door: DVec3, out: DVec2) {
+        self.call_police_to(door, out, 1, None);
+    }
+
+    /// Calls `cars` cruisers to the door at `door` (feet), which looks out
+    /// along `out`; with a `visit`, their officers go in and collect
+    /// evidence (see [`police::Police::call`]).
+    pub fn call_police_to(
+        &mut self,
+        door: DVec3,
+        out: DVec2,
+        cars: usize,
+        visit: Option<police::Visit>,
+    ) {
         let solids = self.solids();
         // It lands on nobody: not a hero, not someone who came to say
         // thanks.
@@ -2492,7 +2505,14 @@ impl Sim {
             .iter(&self.world)
             .map(|m| m.0.pos)
             .collect();
-        self.police.call(&solids, door, out, &people, self.tick);
+        self.police.call(
+            &solids,
+            door,
+            out,
+            &people,
+            self.tick,
+            police::Dispatch { cars, visit },
+        );
     }
 
     /// Every replicated entity with the tick it last changed, sorted by ID.
@@ -2583,7 +2603,9 @@ impl Sim {
                                 .or(drone.map(|d| (d.carry, d.medical as u8)))
                                 .or(enemy.and_then(|e| e.look).map(|l| (n.0, l)))
                                 .or(bystander.and_then(|b| b.look).map(|l| (n.0, l)))
-                                .or(officer.map(|o| (n.0, o.look))),
+                                // An officer: their looks, and 0x80 while
+                                // collecting evidence.
+                                .or(officer.map(|o| (n.0, o.look | if o.busy { 0x80 } else { 0 }))),
                         },
                         c.0,
                     )

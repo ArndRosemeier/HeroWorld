@@ -234,6 +234,7 @@ fn piece(m: &mut crate::interior::pieces::Maker, scheme: Scheme, (kind, w, c): L
         K::Safe => pc::safe(m, w),
         K::PinBoard => pc::pin_board(m, w),
         K::Drums => pc::drums(m),
+        K::Sandbags => pc::sandbags(m, w),
     }
 }
 
@@ -1509,6 +1510,8 @@ mod tests {
             (K::Safe, 100),
             (K::PinBoard, 240),
             (K::Drums, 110),
+            (K::Sandbags, 180),
+            (K::Sandbags, 240),
         ] {
             for seg in FURNITURE_SEGS {
                 let mesh = piece_mesh(Scheme::Atrium, (kind, w, 1), seg);

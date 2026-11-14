@@ -24,6 +24,8 @@ use hw_sim::missions::{
 /// Who speaks on the wrist radio.
 pub const DISPATCH: &str = "Police HQ";
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::sync::Arc;
 
 /// The cases' colour on the radio, the compass and the map.
 pub const CASE_TEAL: egui::Color32 = egui::Color32::from_rgb(90, 225, 210);
@@ -200,6 +202,97 @@ pub struct MissionView {
     /// The safes standing about: each one's middle on the floor and the
     /// way its door faces (from the game, every frame).
     pub safes: Vec<(Vec3, glam::Vec2)>,
+    /// The way into each case's building, by case: where the case says
+    /// it is, and the teal neon round its door once found.
+    doors: BTreeMap<u16, (Vec3, Option<EntityId>)>,
+    /// Doors being looked for on a worker: the case, where, the answer.
+    finding: Vec<(u16, Vec3, Receiver<Option<DoorMark>>)>,
+}
+
+/// A door's mark, and where it goes.
+type DoorMark = (Mesh, engine::prelude::Place);
+
+/// The teal of the cases, glowing.
+const NEON: (u8, u8, u8) = (90, 225, 210);
+
+/// The mark on the way into a case's building: a neon tube round the
+/// doorway (`width` wide, standing on the floor at the origin, the street
+/// to +z) and three chevrons on the pavement pointing at it.
+pub fn door_mark_mesh(width: f64) -> Mesh {
+    use glam::DVec3;
+    use hw_gen::layout::solid::ENTRANCE_H;
+    let mut b = crate::citymesh::MeshBuilder::new();
+    let mut m = crate::interior::pieces::Maker::new(
+        &mut b,
+        DVec3::ZERO,
+        DVec3::Z,
+        24,
+        crate::skins::Wear::Fresh,
+    );
+    let neon = crate::interior::pieces::Mat::Glow(rgb(NEON.0, NEON.1, NEON.2));
+    let (hw, top, out) = (width * 0.5 + 0.3, ENTRANCE_H + 0.15, 0.18);
+    m.tube(
+        neon,
+        &[
+            DVec3::new(-hw, 0.05, out),
+            DVec3::new(-hw, top, out),
+            DVec3::new(hw, top, out),
+            DVec3::new(hw, 0.05, out),
+        ],
+        0.06,
+    );
+    for k in 0..3 {
+        let z = 0.9 + k as f64 * 0.75;
+        m.tube(
+            neon,
+            &[
+                DVec3::new(-0.5, 0.045, z + 0.45),
+                DVec3::new(0.0, 0.045, z),
+                DVec3::new(0.5, 0.045, z + 0.45),
+            ],
+            0.04,
+        );
+    }
+    b.finish()
+}
+
+/// The way in from the street of the building whose door `at` stands
+/// 2 m in front of (the place a case gives), and its mark placed on it.
+fn find_door(town: &TownWorld, at: Vec3) -> Option<DoorMark> {
+    use glam::{DVec2, DVec3};
+    use hw_gen::layout::LinkKind;
+    let c = DVec2::new(at.x as f64, at.z as f64);
+    let reach = DVec2::splat(60.0);
+    let mut best: Option<(f64, DVec3, f64)> = None;
+    for q in town.quarters_in(c - reach, c + reach) {
+        for b in &q.buildings {
+            let site = &b.site;
+            if site.halls.is_none() {
+                continue;
+            }
+            let mid = site.origin + (site.along * site.size.x + site.inward * site.size.y) * 0.5;
+            if mid.distance(c) > site.size.length() + 5.0 {
+                continue;
+            }
+            let Some(l) = site.layout() else { continue };
+            for k in l
+                .links
+                .iter()
+                .filter(|k| k.kind == LinkKind::Entrance && k.b.is_none())
+            {
+                let door = site.to_city(DVec3::new(k.at.x, b.base + k.y, k.at.y));
+                let off = (DVec2::new(door.x, door.z).distance(c) - 2.0).abs();
+                if off < 0.6 && best.is_none_or(|(e, _, _)| off < e) {
+                    best = Some((off, door, k.width));
+                }
+            }
+        }
+    }
+    let (_, door, width) = best?;
+    let n = (c - DVec2::new(door.x, door.z)).normalize_or_zero();
+    let place = engine::prelude::Place::new(door.x as f32, door.y as f32, door.z as f32)
+        .with_yaw_deg(n.x.atan2(n.y).to_degrees() as f32);
+    Some((door_mark_mesh(width), place))
 }
 
 /// The mesh of the thing a gang hides (see `interior::pieces::evidence`).
@@ -343,7 +436,7 @@ impl MissionView {
 
     /// Every frame: the words for the news, the light over the tracked
     /// building, the sparkles over the clues, the line on the air.
-    pub fn update(&mut self, world: &mut World, _town: &TownWorld, radio: &mut Radio, dt: f32) {
+    pub fn update(&mut self, world: &mut World, town: &Arc<TownWorld>, radio: &mut Radio, dt: f32) {
         for (before, now) in std::mem::take(&mut self.pending) {
             let n = now.number;
             let said = lines(before.as_ref(), &now, self.cases.len());
@@ -408,6 +501,7 @@ impl MissionView {
                 }
             }
         }
+        self.mark_doors(world, town);
         // The things to find: real objects on the floor, until found.
         let wanted: Vec<((u16, usize), Vec3, CrimeKind)> = self
             .cases
@@ -593,10 +687,77 @@ impl MissionView {
 
     /// A new town: the server's cases go (the cabinet stays: it is the
     /// hero's).
+    /// Marks the way into the building of every open case at one, from
+    /// when it is taken until it closes or moves on, so the door shows
+    /// from up the street (and on the way out again).
+    fn mark_doors(&mut self, world: &mut World, town: &Arc<TownWorld>) {
+        let wanted: BTreeMap<u16, Vec3> = self
+            .cases
+            .values()
+            .filter(|s| s.stage != CLOSED && s.stage != IDLE)
+            .filter_map(|s| {
+                let h = s.here()?;
+                (h.place == Place::Building).then_some((s.number, h.at))
+            })
+            .collect();
+        let stale: Vec<u16> = self
+            .doors
+            .iter()
+            .filter(|(n, (at, _))| wanted.get(n) != Some(at))
+            .map(|(n, _)| *n)
+            .collect();
+        for n in stale {
+            if let Some((_, Some(e))) = self.doors.remove(&n) {
+                world.despawn(e);
+            }
+        }
+        self.finding.retain(|(n, at, _)| wanted.get(n) == Some(at));
+        for (&n, &at) in &wanted {
+            if self.doors.contains_key(&n) || self.finding.iter().any(|f| f.0 == n) {
+                continue;
+            }
+            let (tx, rx) = channel();
+            let town = town.clone();
+            // Planning the building's floors to find its door takes its
+            // time: never on the frame's thread.
+            let started = std::thread::Builder::new()
+                .name("case door".into())
+                .spawn(move || {
+                    engine::parallel::background_thread();
+                    let _ = tx.send(find_door(&town, at));
+                });
+            if started.is_ok() {
+                self.finding.push((n, at, rx));
+            } else {
+                self.doors.insert(n, (at, None));
+            }
+        }
+        let mut k = 0;
+        while k < self.finding.len() {
+            match self.finding[k].2.try_recv() {
+                Err(TryRecvError::Empty) => k += 1,
+                got => {
+                    let (n, at, _) = self.finding.swap_remove(k);
+                    let e = got
+                        .ok()
+                        .flatten()
+                        .and_then(|(mesh, place)| world.place(mesh, place).ok());
+                    self.doors.insert(n, (at, e));
+                }
+            }
+        }
+    }
+
     pub fn clear(&mut self, world: &mut World) {
         if let Some((e, _)) = self.beam.take() {
             world.despawn(e);
         }
+        for (_, (_, e)) in std::mem::take(&mut self.doors) {
+            if let Some(e) = e {
+                world.despawn(e);
+            }
+        }
+        self.finding.clear();
         self.cases.clear();
         self.board = Board::default();
         for (_, e) in std::mem::take(&mut self.things) {

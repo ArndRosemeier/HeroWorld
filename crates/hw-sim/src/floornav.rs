@@ -1136,12 +1136,13 @@ mod tests {
     #[test]
     fn a_body_walks_every_route_through_the_solids() {
         use crate::collision::{solids_of, Body, Obstacles};
-        use hw_gen::layout::furnish::items;
+        use hw_gen::layout::furnish::{items, items_for, Fit};
         use hw_gen::layout::solid::{pieces, Part};
         let mut walked = 0;
         let mut failed = Vec::new();
         for (n, l) in layouts().into_iter().enumerate() {
-            if n % 3 != 0 {
+            // (Every den: their balconies are the most crowded.)
+            if n % 3 != 0 && l.scheme != Scheme::Den {
                 continue;
             }
             let mut o = Obstacles::flat(0.0);
@@ -1151,10 +1152,16 @@ mod tests {
                     .filter(|p| p.part != Part::LiftDoor)
                     .flat_map(|p| solids_of(&p.shape))
                     .chain(
-                        items(&l)
-                            .iter()
-                            .filter_map(|i| i.footprint())
-                            .flat_map(|f| solids_of(&f)),
+                        // (A den is always a gang's: furnished as one,
+                        // balconies and bridges too.)
+                        if l.scheme == Scheme::Den {
+                            items_for(&l, None, Fit::Hideout)
+                        } else {
+                            items(&l)
+                        }
+                        .iter()
+                        .filter_map(|i| i.footprint())
+                        .flat_map(|f| solids_of(&f)),
                     )
                     .collect(),
             );
