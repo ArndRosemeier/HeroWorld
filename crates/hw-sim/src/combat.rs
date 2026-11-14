@@ -1097,6 +1097,9 @@ pub struct Enemy {
     /// Breaking off until this tick: it fights nobody and runs to its
     /// `home` (a boss making for another room; see [`crate::missions`]).
     pub flee_until: u64,
+    /// Until then it is walking to something it means to smash, so it does
+    /// not stroll about its place instead (a vandal's errand).
+    pub errand_until: u64,
     /// The tick it last acted. A villain that waits its turn (see
     /// [`enemies_act`]) walks the ticks it missed in one go, so it moves at
     /// the same speed however often it acts.
@@ -1882,6 +1885,7 @@ pub(crate) fn spawn_enemy(
             look: None,
             leaving: false,
             flee_until: 0,
+            errand_until: 0,
             last_think: tick.saturating_sub(1),
         },
         LastChange(tick),
@@ -4929,7 +4933,7 @@ fn enemies_act(
             spec.reach *= PERCH_RANGE;
         }
         let ranged = en.kind.ranged();
-        let strolls = en.kind.strolls() && !en.leaving;
+        let strolls = en.kind.strolls() && !en.leaving && tick >= en.errand_until;
         let mut input = InputState::default();
         let getting_up = tick < actors[i].f.busy_until;
         let held = actors[i].f.held(tick) || actors[i].f.frozen(tick);

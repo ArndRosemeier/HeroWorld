@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.294 (2026-11-14)
+
+- Rampaging mutants and escaped lab technicians smash up the street again: they used to wander about their spot instead of walking up to the lamp or bench they meant to break.
+
 ## 0.293 (2026-11-14)
 
 - The menu (settings, controls, back to the title screen, quit) is a round button in the top right corner now, under the version. Escape no longer opens it: it just lets go of the mouse and closes the open window. You can move and resize the button under "Arrange the screen". With the mouse locked, hold Alt to click it.

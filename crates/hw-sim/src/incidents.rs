@@ -1806,6 +1806,7 @@ impl Incidents {
                 // On its way to it (it stops a step short).
                 let to = foot + (me - foot).normalize_or(DVec2::X) * (reach * 0.7);
                 en.home = DVec3::new(to.x, pos.y, to.y);
+                en.errand_until = tick + ticks(SMASH_EVERY);
             }
         }
     }
