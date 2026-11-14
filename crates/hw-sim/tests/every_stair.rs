@@ -200,6 +200,6 @@ fn every_stair_has_room_for_a_hero_on_every_step() {
 fn rails_are_too_high_to_climb() {
     use hw_gen::urban::spiral::{PARAPET_HEIGHT, RAIL_HEIGHT};
     use hw_sim::collision::STEP_UP;
-    assert!(RAIL_HEIGHT > STEP_UP + 0.05, "balustrade {RAIL_HEIGHT}");
-    assert!(PARAPET_HEIGHT > STEP_UP + 0.05, "parapet {PARAPET_HEIGHT}");
+    const { assert!(RAIL_HEIGHT > STEP_UP + 0.05, "balustrade too low") };
+    const { assert!(PARAPET_HEIGHT > STEP_UP + 0.05, "parapet too low") };
 }
