@@ -501,8 +501,8 @@ fn add(f: &mut Fields, d: &PowerDef, e: Effect, p: f32) {
             // On the ground or in the air, by what the power is.
             if b.travel & travel::FLY != 0 {
                 f.soar += kept(0.0);
-            } else if b.travel & (travel::JUMP | travel::GLIDE) != 0 {
-                // A super jump's speed through the air, and a glide's.
+            } else if b.travel & (travel::JUMP | travel::GRAPPLE) != 0 {
+                // A super jump's speed through the air, and a swing's.
                 f.leap += kept(0.0);
             } else {
                 f.swift += kept(0.0);

@@ -202,3 +202,80 @@ fn a_hard_landing_stomps_the_villains_round_the_hero() {
     // Dropped in, not jumped: no take-off shows.
     assert!(!fx.iter().any(|e| e.kind == FxKind::Launch));
 }
+
+fn swinger() -> Moves {
+    Moves {
+        grapple: true,
+        super_jump: true,
+        level: 5,
+        ..Moves::ON_FOOT
+    }
+}
+
+/// Where a hero ends up 1.5 s after starting at rest 30 m up, `hold`ing the
+/// grapple key aimed forward-down (45 degrees) with `moves`.
+fn drop_with_line(moves: Moves, hold: bool, aim: [f32; 3]) -> Body {
+    let solids = Obstacles::flat(GROUND_Y);
+    let mut b = Body {
+        pos: ground(0.0, 0.0) + DVec3::Y * 30.0,
+        vel: DVec3::ZERO,
+        grounded: false,
+    };
+    for _ in 0..(TICK_HZ * 3 / 2) {
+        let input = InputState {
+            grapple: hold,
+            aim,
+            ..Default::default()
+        };
+        step_moving(&mut b, input, &solids, moves);
+    }
+    b
+}
+
+#[test]
+fn the_line_pulls_a_hero_toward_what_they_aim_at() {
+    let s = std::f32::consts::FRAC_1_SQRT_2;
+    let down_ahead = [s, -s, 0.0];
+    let swing = drop_with_line(swinger(), true, down_ahead);
+    let fall = drop_with_line(swinger(), false, down_ahead);
+    assert!(fall.pos.x.abs() < 0.01, "no key, no line: {:?}", fall.pos);
+    assert!(
+        swing.pos.x > 8.0,
+        "the line carried the hero ahead: {:?}",
+        swing.pos
+    );
+    // The speed is held under what the line allows.
+    assert!(swing.vel.length() <= hw_sim::grapple_speed(5) * 1.15 + 1e-6);
+}
+
+#[test]
+fn the_line_needs_the_power_and_something_to_hook() {
+    let s = std::f32::consts::FRAC_1_SQRT_2;
+    // Without Grapple Swing the key does nothing.
+    let plain = drop_with_line(Moves::ON_FOOT, true, [s, -s, 0.0]);
+    assert!(plain.pos.x.abs() < 0.01, "{:?}", plain.pos);
+    // Aimed at empty sky, nothing is hooked.
+    let sky = drop_with_line(swinger(), true, [s, s, 0.0]);
+    assert!(sky.pos.x.abs() < 0.01, "{:?}", sky.pos);
+    // Out of reach (level 5 reaches under 60 m): aimed nearly flat, the
+    // ground is far beyond the line.
+    let far = drop_with_line(swinger(), true, [1.0, -0.01, 0.0]);
+    assert!(far.pos.x.abs() < 0.01, "{:?}", far.pos);
+}
+
+#[test]
+fn glide_is_retired_and_its_karma_comes_back() {
+    use hw_net::{OwnedPower, PowerId};
+    let mut s = hw_sim::progress::new_hero(0, hw_sim::powers::Element::Frost);
+    let before = s.karma;
+    s.powers.push(OwnedPower {
+        power: PowerId(4),
+        paid: 1440,
+    });
+    let s = hw_sim::progress::sanitize(s);
+    assert!(!s.powers.iter().any(|p| p.power == PowerId(4)));
+    assert_eq!(s.karma, before + 1440);
+    // Grapple Swing is in the travel tree, next to Flight.
+    let d = hw_sim::powers::get(PowerId(9)).expect("Grapple Swing");
+    assert_eq!(d.name, "Grapple Swing");
+}

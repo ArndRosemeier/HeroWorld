@@ -3095,7 +3095,7 @@ fn impact(world: &mut World, at: Vec3, colour: Color, size: f32) {
 
 /// A beam of light from `a` to `b`: a line of glowing motes that flare and
 /// fade within a fifth of a second.
-fn beam(world: &mut World, a: Vec3, b: Vec3, core: Color, edge: Color) {
+pub fn beam(world: &mut World, a: Vec3, b: Vec3, core: Color, edge: Color) {
     let len = a.distance(b);
     if !len.is_finite() || len < 0.05 {
         return;

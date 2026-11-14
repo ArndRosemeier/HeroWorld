@@ -56,6 +56,9 @@ pub struct InputState {
     pub revive: bool,
     /// A downed hero calls the medical drone now instead of waiting.
     pub hospital: bool,
+    /// Holding the grapple key: the line of Grapple Swing is out, to where
+    /// the hero aims.
+    pub grapple: bool,
 }
 
 /// A power in the power trees (see `hw_sim::powers`): a number under
@@ -66,7 +69,7 @@ pub struct PowerId(pub u8);
 impl PowerId {
     pub const STRIKE: PowerId = PowerId(1);
     /// Super Jump, every hero's from the start, free: the travel tree's
-    /// first row (Glide and Flight build on it).
+    /// first row (Grapple Swing and Flight build on it).
     pub const SUPER_JUMP: PowerId = PowerId(2);
     /// Sprint, every hero's from the start, free (Super Speed builds on it).
     pub const SPRINT: PowerId = PowerId(3);
@@ -975,8 +978,8 @@ pub const EFFECT_FROZEN: u32 = 2048;
 pub const EFFECT_CHILLED: u32 = 4096;
 /// Hypnotised: fighting for the heroes for now.
 pub const EFFECT_CHARMED: u32 = 8192;
-/// Owns Glide (falls slowly with jump held).
-pub const EFFECT_GLIDE: u32 = 1 << 14;
+/// Owns Grapple Swing (a line to what the hero aims at, to swing from).
+pub const EFFECT_GRAPPLE: u32 = 1 << 14;
 /// Owns Sprint (runs faster).
 pub const EFFECT_SPRINT: u32 = 1 << 15;
 /// Owns Wall Run (runs up walls).
@@ -2717,7 +2720,9 @@ fn write_input(w: &mut Writer, input: &InputState) {
     for a in input.aim {
         w.u16(((a.clamp(-1.0, 1.0) * 32767.0).round() as i16) as u16);
     }
-    w.u32(input.target.map_or(0, |t| t.0)).u8(input.power);
+    w.u32(input.target.map_or(0, |t| t.0))
+        .u8(input.power)
+        .u8(input.grapple as u8);
 }
 
 fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
@@ -2737,6 +2742,7 @@ fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
     if power as usize >= POWER_IDS {
         return Err(WireError);
     }
+    let grapple = r.u8()? & 1 != 0;
     Ok(InputState {
         move_x: x * k,
         move_y: y * k,
@@ -2752,6 +2758,7 @@ fn read_input(r: &mut Reader) -> Result<InputState, WireError> {
         hospital: bits & 128 != 0,
         target,
         power,
+        grapple,
     })
 }
 
@@ -3078,6 +3085,7 @@ mod tests {
                         revive: true,
                         hospital: false,
                         power: 4,
+                        grapple: true,
                     },
                 ],
                 ack_tick: 1234,

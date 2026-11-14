@@ -404,16 +404,16 @@ pub struct Moves {
     pub super_jump: bool,
     /// Super Speed is owned.
     pub speed: bool,
-    /// Sprint (a faster run), Glide (hold jump to fall slowly) and Wall
+    /// Sprint (a faster run), Grapple Swing (a line to swing from) and Wall
     /// Run (run up walls) are owned.
     pub sprint: bool,
-    pub glide: bool,
+    pub grapple: bool,
     pub wall_run: bool,
     /// The hero's level: travel powers grow with it.
     pub level: u8,
     /// What augments add, in percent: to speed on the ground (Sprint,
     /// Super Speed), to flying speed, to speed through the air without
-    /// flying (a super jump, a glide) and to a super jump's height. Whole
+    /// flying (a super jump, a swing) and to a super jump's height. Whole
     /// percents, the same ones the client is sent (see
     /// [`combat::Fighter::boosts`]), so prediction steps exactly alike.
     pub boosts: [u8; 4],
@@ -431,7 +431,7 @@ impl Moves {
         super_jump: false,
         speed: false,
         sprint: false,
-        glide: false,
+        grapple: false,
         wall_run: false,
         level: 1,
         boosts: [0; 4],
@@ -452,7 +452,7 @@ impl Moves {
             super_jump: effects & hw_net::EFFECT_SUPER_JUMP != 0,
             speed: effects & hw_net::EFFECT_SUPER_SPEED != 0,
             sprint: effects & hw_net::EFFECT_SPRINT != 0,
-            glide: effects & hw_net::EFFECT_GLIDE != 0,
+            grapple: effects & hw_net::EFFECT_GRAPPLE != 0,
             wall_run: effects & hw_net::EFFECT_WALL_RUN != 0,
             boosts: c.boosts,
         }
@@ -468,14 +468,67 @@ impl Moves {
             super_jump: kit.travels(travel::JUMP),
             speed: kit.travels(travel::SPEED),
             sprint: kit.travels(travel::SPRINT),
-            glide: kit.travels(travel::GLIDE),
+            grapple: kit.travels(travel::GRAPPLE),
             wall_run: kit.travels(travel::WALL),
         }
     }
 }
 
-/// A glider falls no faster than this (m/s).
-pub const GLIDE_FALL: f64 = 2.5;
+/// How fast Grapple Swing can pull a hero along the line (m/s) at level 1
+/// and 20; with what is thrown in the air it is the swing's top speed.
+pub fn grapple_speed(level: u8) -> f64 {
+    grown(level, 26.0, 36.0)
+}
+/// How far the line reaches (m) at level 1 and 20.
+pub fn grapple_range(level: u8) -> f64 {
+    grown(level, 45.0, 70.0)
+}
+/// What the line pulls with (m/s²), and how much the hero can still steer
+/// with the stick while swinging (m/s²).
+pub const GRAPPLE_PULL: f64 = 38.0;
+pub const GRAPPLE_STEER: f64 = 14.0;
+/// The line is hooked this far over the spot aimed at, so a swing
+/// carries over a ledge instead of ending against the wall below it.
+pub const GRAPPLE_HOOK_LIFT: f64 = 1.2;
+/// Height of the hand the line leaves from, over the feet (m).
+pub const GRAPPLE_HAND: f64 = 1.4;
+
+/// Where Grapple Swing's line catches: the first thing the hero's aim meets
+/// within `range`. A pure function of what the server and the client's
+/// prediction both know, so they agree; the client draws the line to it.
+pub fn grapple_anchor(solids: &Obstacles, feet: DVec3, aim: [f32; 3], range: f64) -> Option<DVec3> {
+    let dir = DVec3::new(aim[0] as f64, aim[1] as f64, aim[2] as f64).normalize_or_zero();
+    if dir == DVec3::ZERO {
+        return None;
+    }
+    let hit = destruction::raycast(solids, feet + DVec3::Y * GRAPPLE_HAND, dir, range)?;
+    Some(hit + DVec3::Y * GRAPPLE_HOOK_LIFT)
+}
+
+/// One tick on the line: pulled toward `anchor` (gently near it), gravity
+/// still working, so a hero swings in an arc and keeps the speed when
+/// letting go. The stick steers a little; nothing slows the swing down.
+fn swing_step(body: &mut Body, input: InputState, solids: &Obstacles, anchor: DVec3, moves: Moves) {
+    let [_, _, leap, _] = moves.boosts;
+    let top = boosted(grapple_speed(moves.level), leap);
+    let to = anchor - (body.pos + DVec3::Y * GRAPPLE_HAND);
+    let dist = to.length();
+    // Full pull from 6 m out, none right at the hook.
+    let pull = ((dist - 1.5) / 4.5).clamp(0.0, 1.0);
+    if dist > 1e-6 {
+        body.vel += to / dist * (GRAPPLE_PULL * pull * DT);
+    }
+    body.vel += DVec3::new(input.move_x as f64, 0.0, input.move_z as f64) * (GRAPPLE_STEER * DT);
+    body.vel.y -= GRAVITY * DT;
+    // Never faster than the line allows (a little over, for the swing).
+    let cap = top * 1.15;
+    if body.vel.length() > cap {
+        body.vel = body.vel.normalize() * cap;
+    }
+    // On the line the hero is off the ground (like a flier, see `move_body`).
+    body.grounded = false;
+    solids.move_body(body, DT);
+}
 /// A wall runner climbs this fast (m/s).
 pub const WALL_CLIMB: f64 = 9.0;
 
@@ -501,6 +554,13 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
         return;
     }
     let level = moves.level;
+    if moves.grapple && input.grapple {
+        let range = grapple_range(level);
+        if let Some(anchor) = grapple_anchor(solids, body.pos, input.aim, range) {
+            swing_step(body, input, solids, anchor, moves);
+            return;
+        }
+    }
     let leap_speed = boosted(super_leap_speed(level), leap);
     let top = if moves.speed && body.grounded {
         boosted(
@@ -525,12 +585,6 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
         boosted(sprint_speed(level), swift)
     } else {
         RUN_SPEED
-    };
-    // A glider floating down glides faster with what was set into Glide.
-    let top = if moves.glide && input.jump && !body.grounded && !moves.super_jump {
-        boosted(top, leap)
-    } else {
-        top
     };
     let want = DVec3::new(input.move_x as f64, 0.0, input.move_z as f64) * top;
     let horizontal = DVec3::new(body.vel.x, 0.0, body.vel.z);
@@ -575,10 +629,6 @@ pub fn step_moving(body: &mut Body, mut input: InputState, solids: &Obstacles, m
         1.0
     };
     body.vel.y -= GRAVITY * pull * DT;
-    // A glider holding jump floats down.
-    if moves.glide && input.jump && !body.grounded {
-        body.vel.y = body.vel.y.max(-GLIDE_FALL);
-    }
     // A wall runner running into a wall runs up it.
     let way = DVec3::new(want.x, 0.0, want.z).normalize_or_zero();
     if moves.wall_run

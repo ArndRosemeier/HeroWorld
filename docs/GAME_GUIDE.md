@@ -229,9 +229,22 @@ charmed (`combat::RANK_RESIST`).
 Heroes saved before 0.164 got all the karma they had spent back once, and pick an element
 when they next play (the element card); then B to pick powers from their tree.
 
+### Grapple Swing (`lib.rs`: `swing_step`, `grapple_anchor`)
+
+Replaced Glide in 0.279 (Glide was a slow fall that Flight did strictly better at the same
+price). Hold **F** and the line hooks the first thing the camera aims at, within 45 m
+(level 1) to 70 m (level 20) and 1.2 m over the spot, so a swing carries over a ledge. While
+held the hero is pulled toward the hook (38 m/s², softening in the last 6 m), gravity still
+works and the stick steers a little (14 m/s²), so the hero swings in an arc and keeps the speed
+on letting go (fling off at the top). Top speed 26 (level 1) to 36 m/s (level 20), plus 15%.
+It costs no energy and stops no energy recovery. Server and client prediction run the same
+`step_moving`; the client draws the line to the same hook. Aimed at empty sky or beyond reach,
+F does nothing. Augment "Speed" adds to the swing speed as it does to a super jump's. A hero
+who had bought Glide (id 4, now in `powers::RETIRED`) gets the karma back at the next load.
+
 ### Buying powers: the trees (`progress.rs`, `powers.rs`)
 
-Press **B**. The window shows the hero's origin tree and, on the second big tab ("Travel powers"), the travel tree every hero can buy from (Flight, Super Jump, Super Speed, Glide, Wall Run, Sprint, Hero's Return). Boxes are
+Press **B**. The window shows the hero's origin tree and, on the second big tab ("Travel powers"), the travel tree every hero can buy from (Flight, Super Jump, Super Speed, Grapple Swing, Wall Run, Sprint, Hero's Return). Boxes are
 powers, arrows what they need: owned powers gold, ones to buy now lit blue, too dear grey,
 locked dark; helping powers have a green edge, capstones a star. A toggle's details say
 what share of energy recovery it takes while on. Click a box for what it
@@ -258,8 +271,8 @@ does, what it needs, and Buy or Give up.
   owned power needs cannot be given up until that one is.
 - **Free powers** (`PowerId::FREE`, 0.251): every hero starts with Strike, Super Jump (2),
   Sprint (3) and the portal. Super Jump and Sprint are boxes of the travel tree that are
-  simply already owned (shown as free, never for sale), so Glide, Flight and Super Speed are
-  open from the start (Glide and Flight need Super Jump, Super Speed needs Sprint) and Wall
+  simply already owned (shown as free, never for sale), so Grapple Swing, Flight and Super Speed are
+  open from the start (Grapple Swing and Flight need Super Jump, Super Speed needs Sprint) and Wall
   Run only needs Super Jump or Super Speed. They are not counted towards Hero's Return's
   "two travel powers" (those must be bought). Heroes who had bought them earlier get the
   karma they paid back in full the next time the hero file loads (`progress::sanitize`).
@@ -310,7 +323,7 @@ does, what it needs, and Buy or Give up.
   Cuff 'Em, Martial Master, Gadget Belt) are always on.
 - **Flight costs energy recovery:** while a hero flies (in the air with Flight on), no
   energy comes back at all, so hovering out of reach and firing down is no longer free.
-  Super jump, glide and wall run are not affected.
+  Super jump, grapple swing and wall run are not affected.
 - **The reworked powers in numbers:** Scanner Goggles +25% on held, frozen, confused or
   afraid villains (adds to a power's own `exploit`); Spirit Sight 1 villain blow in 5
   misses; Brace 30% less while standing still (under 0.5 m/s, on the ground); Second Wind
@@ -412,7 +425,7 @@ each one's numbers; the names and links:
 | --- | --- | --- | --- |
 | 1 | **Super Jump** (free) | leaps over rooftops; lands with a stomp | – |
 | 1 | **Sprint** (free) | runs twice as fast | – |
-| 2 | **Glide** | hold jump to float down | Super Jump |
+| 2 | **Grapple Swing** | hold F to hook what you aim at and swing from it | Super Jump |
 | 2 | **Flight** | flies anywhere | Super Jump |
 | 2 | **Super Speed** | runs like the wind | Sprint |
 | 3 | **Wall Run** | runs up walls | Super Speed or Super Jump |

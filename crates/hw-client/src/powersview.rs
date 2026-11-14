@@ -308,7 +308,7 @@ impl PowersView {
                     egui::RichText::new(if self.travel {
                         "Travel powers are open to every origin, and cost karma like any other."
                     } else {
-                        "Getting about (Flight, Super Jump, Super Speed, Glide, Wall Run) is on the Travel powers tab."
+                        "Getting about (Flight, Super Jump, Super Speed, Grapple Swing, Wall Run) is on the Travel powers tab."
                     })
                     .size(12.5)
                     .color(egui::Color32::from_gray(190)),
@@ -1173,7 +1173,7 @@ pub fn what_it_does(d: &PowerDef) -> String {
     for (bit, text) in [
         (travel::JUMP, "leap 14 m up at level 1, 45 m at level 20 (hold Space for full height); a hard landing knocks villains over"),
         (travel::SPRINT, "run twice as fast, faster with every level"),
-        (travel::GLIDE, "hold jump to glide down"),
+        (travel::GRAPPLE, "hold F to hook what you aim at and swing"),
         (
             travel::FLY,
             "V to fly, Shift to go fast; no energy comes back while you are in the air",

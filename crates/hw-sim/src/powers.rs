@@ -85,7 +85,7 @@ pub enum Lands {
 pub mod travel {
     pub const JUMP: u8 = 1;
     pub const SPRINT: u8 = 2;
-    pub const GLIDE: u8 = 4;
+    pub const GRAPPLE: u8 = 4;
     pub const FLY: u8 = 8;
     pub const SPEED: u8 = 16;
     pub const WALL: u8 = 32;
@@ -225,7 +225,7 @@ pub struct Fields {
     /// Takes this share of half its energy less (1: half the energy).
     pub thrifty: f32,
     /// Share faster on the ground (Sprint, Super Speed), in the air
-    /// (Flight, Glide), and the share higher a super jump goes.
+    /// (Flight, Grapple Swing), and the share higher a super jump goes.
     pub swift: f32,
     pub soar: f32,
     /// Share faster through the air on a super jump.
@@ -645,9 +645,9 @@ pub static POWERS: &[PowerDef] = &[
         },
     ),
     def(
-        4,
-        "Glide",
-        "hold jump to float down",
+        9,
+        "Grapple Swing",
+        "hold F to hook what you aim at and swing from it",
         Common,
         (1, 0),
         &[&[2]],
@@ -655,7 +655,7 @@ pub static POWERS: &[PowerDef] = &[
         B::SuperJump,
         "wind",
         Fields {
-            travel: travel::GLIDE,
+            travel: travel::GRAPPLE,
             ..F
         },
     ),
@@ -2534,6 +2534,11 @@ pub const GATE_OPEN: PowerId = PowerId::GATE_OPEN;
 pub fn is_free(id: PowerId) -> bool {
     PowerId::FREE.contains(&id)
 }
+
+/// Powers taken out of the game. A hero's file may still hold them: the
+/// karma paid comes back in full (see `progress::sanitize`). Never reuse
+/// these numbers. 4: Glide (a slow fall, no better than Flight).
+pub const RETIRED: [PowerId; 1] = [PowerId(4)];
 
 /// The table from numbers to powers, built once.
 fn table() -> &'static [Option<&'static PowerDef>; POWER_IDS] {

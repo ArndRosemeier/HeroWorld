@@ -303,6 +303,10 @@ pub fn sanitize(mut s: Sheet) -> Sheet {
     let mut kept: Vec<OwnedPower> = Vec::new();
     for p in &s.powers {
         let Some(d) = powers::get(p.power) else {
+            // Taken out of the game (Glide): the karma paid comes back.
+            if powers::RETIRED.contains(&p.power) {
+                s.karma = s.karma.saturating_add(p.paid);
+            }
             continue;
         };
         if powers::is_free(d.id) {
@@ -391,12 +395,12 @@ mod tests {
         assert_eq!(can_buy(&s, SONIC), Err(BuyError::Needs(BURST)));
         buy(&mut s, BURST).unwrap();
         buy(&mut s, SONIC).unwrap();
-        // Super Jump and Sprint are free for every hero (and open Glide,
-        // Flight and Super Speed); Hero's Return needs two bought travel
+        // Super Jump and Sprint are free for every hero (and open Grapple
+        // Swing, Flight and Super Speed); Hero's Return needs two bought travel
         // powers.
         assert_eq!(can_buy(&s, PowerId(2)), Err(BuyError::NotForSale));
         assert_eq!(can_buy(&s, PowerId(8)), Err(BuyError::NeedsMore(2)));
-        buy(&mut s, PowerId(4)).unwrap();
+        buy(&mut s, PowerId(9)).unwrap();
         buy(&mut s, PowerId(5)).unwrap();
         assert!(can_buy(&s, PowerId(8)).is_ok());
         // Wall Run needs Super Jump or Super Speed.

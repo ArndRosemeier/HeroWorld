@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.279 (2026-11-14)
+
+- Glide is gone: it cost the same as Flight and did less. In its place in the Travel powers tree is **Grapple Swing**: hold F and a line hooks whatever you aim at, up to 45 m away (70 m at level 20), and pulls you in. Steer, swing round buildings, and let go at the top to fling yourself far. It costs no energy.
+- If you had bought Glide, the karma you paid comes back the next time you play.
+
 ## 0.278 (2026-11-14)
 
 - The green "Tube exit" stairs can be walked down again: an invisible floor lay over their holes in the street. A new test walks down every street stair in the town.

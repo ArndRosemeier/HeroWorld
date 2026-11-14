@@ -3160,6 +3160,33 @@ fn main() -> EngineResult<()> {
                 hero_input.smash = input.mouse_down(MouseButton::Left) && !on_ui;
                 hero_input.blast = input.down(Key::Q);
                 hero_input.aim = Camera::direction(hero_cam.yaw, hero_cam.pitch + 10.0).to_array();
+                // Grapple Swing: F held hooks what the camera aims at; the
+                // line is drawn to the same spot the server swings from.
+                hero_input.grapple = input.down(Key::F)
+                    && !creating
+                    && !on_ui_keys(frame)
+                    && my_sheet.has(hw_net::PowerId(9));
+                if hero_input.grapple {
+                    if let Some(feet) = session.my_position(&drawn) {
+                        let range =
+                            hw_sim::grapple_range(hw_sim::progress::level_of(my_sheet.lifetime));
+                        if let Some(hook) = hw_sim::grapple_anchor(
+                            &generated.obstacles,
+                            feet,
+                            hero_input.aim,
+                            range,
+                        ) {
+                            let hand = feet + glam::DVec3::Y * hw_sim::GRAPPLE_HAND;
+                            fightview::beam(
+                                world,
+                                hand.as_vec3(),
+                                hook.as_vec3(),
+                                rgb(255, 235, 170),
+                                rgb(200, 150, 70),
+                            );
+                        }
+                    }
+                }
                 // Fighting: keys, target, revive.
                 let me_state = session
                     .my_hero()

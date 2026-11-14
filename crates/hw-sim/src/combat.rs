@@ -25,7 +25,7 @@ use hw_net::{
     fizzle, CombatState, EntityKind, Fx, FxKind, InputState, PlayerId, Power, PowerId, Status,
     EFFECT_ARMOURED, EFFECT_BURNING, EFFECT_CAN_FLY, EFFECT_CARRYING, EFFECT_CHARMED,
     EFFECT_CHILLED, EFFECT_CONFUSED, EFFECT_DISARMED, EFFECT_EMPOWERED, EFFECT_FEARED,
-    EFFECT_FROZEN, EFFECT_GLIDE, EFFECT_HELD, EFFECT_HIDDEN, EFFECT_RALLIED, EFFECT_SHIELD,
+    EFFECT_FROZEN, EFFECT_GRAPPLE, EFFECT_HELD, EFFECT_HIDDEN, EFFECT_RALLIED, EFFECT_SHIELD,
     EFFECT_SPRINT, EFFECT_SUPER_JUMP, EFFECT_SUPER_SPEED, EFFECT_TOUGH, EFFECT_WALL_RUN,
     EFFECT_WEAKENED, POWER_IDS,
 };
@@ -1019,7 +1019,7 @@ impl Fighter {
                 | (self.kit.travels(powers::travel::JUMP) as u32 * EFFECT_SUPER_JUMP)
                 | (self.kit.travels(powers::travel::SPEED) as u32 * EFFECT_SUPER_SPEED)
                 | (self.kit.travels(powers::travel::SPRINT) as u32 * EFFECT_SPRINT)
-                | (self.kit.travels(powers::travel::GLIDE) as u32 * EFFECT_GLIDE)
+                | (self.kit.travels(powers::travel::GRAPPLE) as u32 * EFFECT_GRAPPLE)
                 | (self.kit.travels(powers::travel::WALL) as u32 * EFFECT_WALL_RUN)
                 | ((self.kit.passive.resist >= 0.3) as u32 * EFFECT_TOUGH)
                 | (self.rallied as u32 * EFFECT_RALLIED)
