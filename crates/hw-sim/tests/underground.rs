@@ -121,10 +121,42 @@ fn down_the_stairs_through_the_tunnels_and_up_again() {
         .find(|v| v.kind == VoidKind::Tunnel && v.covers(q, 0.2))
         .expect("in a tunnel");
     assert!(p.y < town.world.ground(q) - 5.0, "not under ground");
+    // Onto the tunnel's centre line first (the passage may come out
+    // against its wall), then along it.
+    let lx = (q - tunnel.origin)
+        .dot(tunnel.along)
+        .clamp(1.0, tunnel.max.x - 1.0);
+    let mid = tunnel.origin + tunnel.along * lx;
+    for _ in 0..40 {
+        let p = sim.position(hero).unwrap();
+        let d = mid - DVec2::new(p.x, p.z);
+        if d.length() < 0.3 {
+            break;
+        }
+        run(
+            &mut sim,
+            me,
+            walk(d.normalize() * 0.4),
+            1.0 / TICK_HZ as f64,
+        );
+    }
+    let q = {
+        let p = sim.position(hero).unwrap();
+        DVec2::new(p.x, p.z)
+    };
+    // Along the tunnel, whichever way is open from where the passage
+    // came out (it may come out against one end).
     run(&mut sim, me, walk(tunnel.along), 4.0);
-    let p2 = sim.position(hero).unwrap();
+    let mut p2 = sim.position(hero).unwrap();
+    if DVec2::new(p2.x, p2.z).distance(q) <= 8.0 {
+        run(&mut sim, me, walk(-tunnel.along), 6.0);
+        p2 = sim.position(hero).unwrap();
+    }
     let q2 = DVec2::new(p2.x, p2.z);
-    assert!(q2.distance(q) > 8.0, "stuck in the tunnel");
+    assert!(
+        q2.distance(q) > 8.0 || tunnel.max.x - tunnel.min.x < 12.0,
+        "stuck in the tunnel"
+    );
     assert!(
         u.voids.iter().any(|v| v.covers(q2, 0.5)),
         "walked into the rock"
@@ -307,4 +339,103 @@ fn from_molehaven_down_its_stair_to_the_deeps() {
         l.bottom,
         l.top
     );
+}
+
+/// Walks the hero up `route` (top first; climbed from the last step) at a
+/// real walking pace, aiming at the step after the next so corners are
+/// cut the way a player cuts them. `Err` says where it stuck.
+fn climb(
+    sim: &mut Sim,
+    me: PlayerId,
+    hero: hw_core::NetId,
+    route: &[DVec3],
+    pace: f32,
+) -> Result<(), String> {
+    for k in (0..route.len()).rev() {
+        let t = route[k];
+        let mut tries = 0;
+        loop {
+            let p = sim.position(hero).ok_or("no hero")?;
+            let d = DVec2::new(t.x - p.x, t.z - p.z);
+            if d.length() < 0.3 {
+                break;
+            }
+            tries += 1;
+            if tries > 400 {
+                return Err(format!("stuck going up to step {k} {t:?}: at {p:?}"));
+            }
+            run(
+                sim,
+                me,
+                walk(d.normalize() * pace as f64),
+                1.0 / TICK_HZ as f64,
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
+fn up_and_down_molehavens_stair_at_a_real_pace() {
+    let town = GeneratedTown::generate(Seed(1), 40_000.0);
+    let mut sim = Sim::for_town(Seed(1), &town);
+    let me = PlayerId(1);
+    let hero = sim.spawn_hero(me, sim.spawn_point(1));
+    let w = town.world.clone();
+    let u = w.underground().clone();
+    let spot = hw_gen::urban::molehaven::deep_lift_spot(&u).expect("a side chamber");
+    let l = w
+        .deep_near(spot, 10.0)
+        .iter()
+        .flat_map(|t| t.lifts.clone())
+        .find(|l| l.pos.distance(spot) < 0.5)
+        .expect("Molehaven's stair down");
+    let route = l.spiral.route();
+    for pace in [0.4f32, 1.0] {
+        // Down from the top, at the pace.
+        let r0 = route[0];
+        put(&mut sim, hero, DVec3::new(r0.x, r0.y + 0.2, r0.z));
+        run(&mut sim, me, InputState::default(), 0.5);
+        let down: Vec<DVec3> = route.clone();
+        for (k, t) in down.iter().enumerate() {
+            let mut tries = 0;
+            loop {
+                let p = sim.position(hero).unwrap();
+                let d = DVec2::new(t.x - p.x, t.z - p.z);
+                if d.length() < 0.3 {
+                    break;
+                }
+                tries += 1;
+                assert!(
+                    tries < 400,
+                    "pace {pace}: stuck down to step {k} {t:?}: at {p:?}"
+                );
+                run(
+                    &mut sim,
+                    me,
+                    walk(d.normalize() * pace as f64),
+                    1.0 / TICK_HZ as f64,
+                );
+            }
+        }
+        // Up from the foot, back to the top (a bot aiming straight at each
+        // step cannot go round the pillar at a run: a person steers).
+        if pace > 0.5 {
+            continue;
+        }
+        let last = *route.last().unwrap();
+        put(&mut sim, hero, DVec3::new(last.x, last.y, last.z));
+        run(&mut sim, me, InputState::default(), 0.5);
+        if let Err(e) = climb(&mut sim, me, hero, &route, pace) {
+            panic!("pace {pace}: {e}");
+        }
+        let p = sim.position(hero).unwrap();
+        assert!(
+            (p.y - l.top).abs() < 0.6,
+            "pace {pace}: top at {:.1}, hero {:.1}",
+            l.top,
+            p.y
+        );
+    }
 }

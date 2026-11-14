@@ -3,7 +3,7 @@
 //! Every way into the underground is a stair you walk: a square spiral
 //! round a pillar, going down the shaft's 4.2 m square. Its steps are plain
 //! data, so what is drawn is what collides: slabs (a hero steps up and down
-//! them, 0.2 m at a time) and the pillar in the middle. There is no lift
+//! them, 0.24 m at a time) and the pillar in the middle. There is no lift
 //! that floats a body up and down.
 //!
 //! The ring round the pillar is 1.65 m wide. A turn is 12 steps: a square
@@ -18,7 +18,7 @@ use super::underground::{Void, VoidKind, SHAFT_HALF};
 use glam::DVec2;
 
 /// The riser aimed for (m); the real one is the depth split evenly.
-pub const RISE: f64 = 0.2;
+pub const RISE: f64 = 0.24;
 /// Thickness of a step slab (m): the space under a step is open.
 pub const SLAB: f64 = 0.3;
 /// Steps in one turn: four landings and eight treads.
@@ -29,13 +29,19 @@ pub const NEWEL: f64 = 0.45;
 const MID: f64 = (NEWEL + SHAFT_HALF) / 2.0;
 const HALF_WIDTH: f64 = (SHAFT_HALF - NEWEL) / 2.0;
 /// Steps along one side of the ring: a landing and two treads.
-const SIDE: usize = PER_TURN / 4;
+pub const SIDE: usize = PER_TURN / 4;
 /// The ring's inner and outer edges, from the shaft's centre: the pillar's
 /// face and the shaft's wall.
 pub const RING: (f64, f64) = (NEWEL, SHAFT_HALF);
 /// The balustrade: its rail's height over a step and its thickness (m),
 /// standing just inside the ring's outer edge.
-pub const RAIL_HEIGHT: f64 = 0.95;
+///
+/// Higher than a hero climbs: walking into a ledge up to a metre high
+/// climbs onto it (`hw_sim::collision::STEP_UP`), and a rail of 0.95 m was
+/// a step to the top of the balustrade, out over the shaft's edge.
+pub const RAIL_HEIGHT: f64 = 1.1;
+/// The rail round the hole in the street (m), higher than a hero climbs.
+pub const PARAPET_HEIGHT: f64 = 1.15;
 pub const RAIL_T: f64 = 0.04;
 /// Headroom a walkway under the stair needs (m).
 const HEADROOM: f64 = 2.1;
@@ -249,7 +255,7 @@ impl Spiral {
             dir: self.dir,
             half,
             y0: self.top - SLAB,
-            y1: self.top + 1.0,
+            y1: self.top + PARAPET_HEIGHT,
         };
         vec![
             wall(DVec2::new(0.0, -k), DVec2::new(k + t, t)),
@@ -454,5 +460,15 @@ mod tests {
         // And a tread is deep enough to put a foot on.
         let steps = spiral(10.0).steps();
         assert!(steps.iter().all(|s| s.half.min_element() * 2.0 >= 0.4));
+        // Head room under the next turn, at its tightest (the step just
+        // before the one under a landing): a hero 1.8 m tall clears it
+        // with room to spare, at any depth.
+        for depth in [3.0, 7.4, 16.3, 36.0, 52.7] {
+            let s = spiral(depth);
+            if s.count() > PER_TURN {
+                let room = (PER_TURN - 1) as f64 * s.riser() - SLAB;
+                assert!(room >= 2.2, "depth {depth}: head room {room:.2} m");
+            }
+        }
     }
 }

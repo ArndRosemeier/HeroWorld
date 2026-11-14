@@ -114,3 +114,92 @@ fn every_street_stair_walks_down() {
         failed.join("\n")
     );
 }
+
+/// What a hero standing at `at` (feet) bumps its head or sides on: the
+/// first solid among a ring of points round the body, shoulders to head.
+fn bump(town: &GeneratedTown, at: DVec3) -> Option<DVec3> {
+    let o = &town.obstacles;
+    for h in [0.5, 0.9, 1.3, 1.7, 1.85] {
+        for k in 0..9 {
+            let (dx, dz) = if k == 8 {
+                (0.0, 0.0)
+            } else {
+                let a = k as f64 * std::f64::consts::FRAC_PI_4;
+                (0.38 * a.cos(), 0.38 * a.sin())
+            };
+            let p = DVec3::new(at.x + dx, at.y + h, at.z + dz);
+            if o.solid_at(p) {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+#[test]
+#[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
+fn every_stair_has_room_for_a_hero_on_every_step() {
+    let town = GeneratedTown::generate(Seed(1), 40_000.0);
+    let w = town.world.clone();
+    let h = w.half();
+    let mut stairs: Vec<(String, Spiral)> = w
+        .street_holes(DVec2::splat(-h), DVec2::splat(h))
+        .iter()
+        .map(|x| (format!("street {:.0},{:.0}", x.pos.x, x.pos.y), x.spiral))
+        .collect();
+    let u = w.underground().clone();
+    if let Some(spot) = hw_gen::urban::molehaven::deep_lift_spot(&u) {
+        for t in w.deep_near(spot, 10.0) {
+            for l in &t.lifts {
+                if l.pos.distance(spot) < 0.5 {
+                    stairs.push(("molehaven".into(), l.spiral));
+                }
+            }
+        }
+    }
+    assert!(stairs.iter().any(|(n, _)| n == "molehaven"));
+    let mut failed = Vec::new();
+    for (name, sp) in &stairs {
+        for (k, p) in sp.route().iter().enumerate() {
+            if let Some(hit) = bump(&town, *p) {
+                failed.push(format!(
+                    "{name}: step {k} (feet {:.2}, top {:.2}, foot {:.2}): solid {:.2} up, at local ({:.2}, {:.2}) of the shaft; feet at local ({:.2}, {:.2})",
+                    p.y,
+                    sp.top,
+                    sp.bottom,
+                    hit.y - p.y,
+                    (DVec2::new(hit.x, hit.z) - sp.c).dot(DVec2::new(sp.dir.y, -sp.dir.x)),
+                    (DVec2::new(hit.x, hit.z) - sp.c).dot(sp.dir),
+                    (DVec2::new(p.x, p.z) - sp.c).dot(DVec2::new(sp.dir.y, -sp.dir.x)),
+                    (DVec2::new(p.x, p.z) - sp.c).dot(sp.dir)
+                ));
+                break;
+            }
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "{} of {} stairs bump a hero:\n{}",
+        failed.len(),
+        stairs.len(),
+        failed
+            .iter()
+            .take(30)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// A hero climbs ledges up to `STEP_UP` when it walks into them, so no
+/// rail or parapet may be that low: it would be a step up onto the
+/// balustrade and out over the shaft's edge (found at a run: heroes
+/// stepped onto the rail, rose on the next risers and ended outside the
+/// shaft, in the rock).
+#[test]
+fn rails_are_too_high_to_climb() {
+    use hw_gen::urban::spiral::{PARAPET_HEIGHT, RAIL_HEIGHT};
+    use hw_sim::collision::STEP_UP;
+    assert!(RAIL_HEIGHT > STEP_UP + 0.05, "balustrade {RAIL_HEIGHT}");
+    assert!(PARAPET_HEIGHT > STEP_UP + 0.05, "parapet {PARAPET_HEIGHT}");
+}

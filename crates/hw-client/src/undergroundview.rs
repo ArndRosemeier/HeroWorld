@@ -15,7 +15,9 @@ use crate::tilestream::{Built, Glow, Key, Layer, Reach, Settings, UnderTiles, Un
 use engine::prelude::*;
 use engine::texgen::{FacadeLayer, GroundLayer};
 use glam::{DVec2, DVec3, Vec3};
-use hw_gen::urban::spiral::{Spiral, Step, RAIL_HEIGHT, RAIL_T, RING, SLAB};
+use hw_gen::urban::spiral::{
+    Spiral, Step, PARAPET_HEIGHT, PER_TURN, RAIL_HEIGHT, RAIL_T, RING, SIDE, SLAB,
+};
 use hw_gen::urban::underground::{Underground, Void, VoidKind};
 use hw_gen::urban::world::TownWorld;
 use std::collections::BTreeSet;
@@ -657,10 +659,16 @@ pub(crate) fn collar_on(b: &mut MeshBuilder, c: DVec2, door: DVec2, floor: impl 
     // The door is +z: rail along -z, -x and +x.
     for (a, e) in [(0usize, 1usize), (3, 0), (1, 2)] {
         let (pa, pe) = (p(corners[a].0, corners[a].1), p(corners[e].0, corners[e].1));
-        tube(b, pa + DVec3::Y * 1.0, pe + DVec3::Y * 1.0, 0.04, rail);
-        tube(b, pa + DVec3::Y * 0.5, pe + DVec3::Y * 0.5, 0.03, rail);
+        tube(
+            b,
+            pa + DVec3::Y * PARAPET_HEIGHT,
+            pe + DVec3::Y * PARAPET_HEIGHT,
+            0.04,
+            rail,
+        );
+        tube(b, pa + DVec3::Y * 0.55, pe + DVec3::Y * 0.55, 0.03, rail);
         for q in [pa, pe] {
-            tube(b, q, q + DVec3::Y * 1.0, 0.04, rail);
+            tube(b, q, q + DVec3::Y * PARAPET_HEIGHT, 0.04, rail);
         }
     }
     b.surf = Surf::Plain;
@@ -713,7 +721,7 @@ pub(crate) fn spiral_stair(b: &mut MeshBuilder, sp: &Spiral) {
     let fronts: Vec<Option<DVec2>> = (0..steps.len())
         .map(|i| steps.get(i + 1).and_then(|o| towards(&steps[i], o)))
         .collect();
-    let landing = |i: usize| i.is_multiple_of(4);
+    let landing = |i: usize| i.is_multiple_of(SIDE);
     // The underside's height at local `p` of step `i`: level under a
     // landing, sloping half a riser either way under a tread, so the
     // undersides of the treads meet in one smooth helix.
@@ -853,7 +861,7 @@ pub(crate) fn stair_lamps(sp: &Spiral) -> Vec<Glow> {
     steps
         .iter()
         .enumerate()
-        .filter(|(i, s)| i % 16 == 6 && s.top + 2.2 < sp.top - 0.2)
+        .filter(|(i, s)| i % PER_TURN == 4 && s.top + 2.2 < sp.top - 0.2)
         .map(|(_, s)| {
             let p = sp.world(ring_point(s, RING.0 + 0.35));
             Glow {
@@ -1020,7 +1028,7 @@ fn pillar(b: &mut MeshBuilder, sp: &Spiral, steps: &[Step]) {
     crate::carmesh::tube(b, &rail, (0.026, 0.026), 10, Some((Surf::Metal, c_brass())));
     // Its brackets: one on the middle tread of every side.
     for (i, s) in steps.iter().enumerate().skip(1) {
-        if i % 4 != 2 || s.top + 0.9 >= sp.top - 0.05 {
+        if i % SIDE != 1 || s.top + 0.9 >= sp.top - 0.05 {
             continue;
         }
         let p = ring_point(s, k + 0.09);

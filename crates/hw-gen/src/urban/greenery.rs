@@ -449,6 +449,9 @@ impl Greenery {
         }
         let seed = w.seed.child("wild-trees");
         let noise = Noise::new(seed.child("woods"));
+        // Stairs down out in the country (ways up from the tube) keep their
+        // hole and apron clear: no trunk stands on a step.
+        let holes = w.street_holes(lo - DVec2::splat(8.0), hi + DVec2::splat(8.0));
         let (i0, i1) = (
             (lo.x / WOOD_STEP).floor() as i64,
             (hi.x / WOOD_STEP).ceil() as i64,
@@ -482,6 +485,7 @@ impl Greenery {
                 if h < SAND_TOP + 0.8
                     || self.on_road(w, p, 3.0)
                     || self.in_building(w, p, 3.0)
+                    || holes.iter().any(|h| h.distance(p, h.apron + 1.0) < 0.0)
                     // The atomic plant's yard is out in the country.
                     || w.landmarks.iter().any(|l| l.covers(p, 3.0))
                 {
