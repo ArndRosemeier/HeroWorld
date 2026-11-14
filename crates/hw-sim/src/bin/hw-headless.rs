@@ -100,6 +100,7 @@ fn main() -> std::io::Result<()> {
                 }
                 HostEvent::Left { player, name } => println!("{name} (player {}) left", player.0),
                 HostEvent::Chat { name, text, .. } => println!("{name}: {text}"),
+                HostEvent::TeamChat { name, text, .. } => println!("[team] {name}: {text}"),
             }
         }
         let mut quit = ticks.is_some_and(|t| host.sim.tick >= t);

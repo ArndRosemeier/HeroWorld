@@ -3513,9 +3513,20 @@ fn main() -> EngineResult<()> {
                     };
                     chat.add(hw_client::chat::Channel::Local, &who, text, voice);
                 }
+                if let hw_net::ToClient::TeamChat { from, text } = m {
+                    let who = session
+                        .player_name(*from)
+                        .unwrap_or_else(|| "A hero".into());
+                    let voice = if who == name {
+                        hw_client::chat::Voice::Me
+                    } else {
+                        hw_client::chat::Voice::Player
+                    };
+                    chat.add(hw_client::chat::Channel::Team, &who, text, voice);
+                }
             }
             news.retain(|m| match m {
-                hw_net::ToClient::Chat { .. } => false,
+                hw_net::ToClient::Chat { .. } | hw_net::ToClient::TeamChat { .. } => false,
                 hw_net::ToClient::Story { .. } => {
                     story.hear(m);
                     false
@@ -5129,15 +5140,25 @@ fn main() -> EngineResult<()> {
                         frame.ui.ctx().screen_rect().width(),
                         powers.tray.second_row(),
                     );
-                    if let Some(text) = chat.ui(frame.ui.ctx(), beside, above) {
-                        session.say(&text);
+                    if let Some((channel, text)) = chat.ui(frame.ui.ctx(), beside, above) {
                         // A friend's world sends our words back to us; our
                         // own world does not.
-                        if !session.joined() {
-                            chat.add(Channel::Local, &name, &text, Voice::Me);
-                        }
-                        if let Some(h) = hero_at {
-                            fight.speech(h, &text);
+                        match channel {
+                            Channel::Local => {
+                                session.say(&text);
+                                if !session.joined() {
+                                    chat.add(Channel::Local, &name, &text, Voice::Me);
+                                }
+                                if let Some(h) = hero_at {
+                                    fight.speech(h, &text);
+                                }
+                            }
+                            Channel::Team => {
+                                session.say_team(&text);
+                                if !session.joined() {
+                                    chat.add(Channel::Team, &name, &text, Voice::Me);
+                                }
+                            }
                         }
                     }
                 }

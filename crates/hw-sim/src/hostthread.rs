@@ -390,6 +390,13 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
                             text: text.clone(),
                         });
                     }
+                    // Team lines from friends reach our Team tab too.
+                    if let HostEvent::TeamChat { player, text, .. } = &e {
+                        heard.push(ToClient::TeamChat {
+                            from: *player,
+                            text: text.clone(),
+                        });
+                    }
                     println!("{e:?}");
                 }
                 if let Some(n) = colossus_break {

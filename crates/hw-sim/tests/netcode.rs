@@ -135,6 +135,22 @@ fn news_arrives_reliably_and_the_host_ends_the_session_cleanly() {
     // The host's line went out at once, Alice's after it came round.
     assert_eq!(chats, vec!["welcome!", "hello, world"]);
 
+    // The Team channel: a line from Alice reaches the host as an event and
+    // a line from the host reaches Alice as team news, apart from Local.
+    c.team_chat("meet at the tower");
+    host.team_chat(me, "coming");
+    let events = run(&mut host, &mut [&mut c], InputState::default(), 20);
+    assert!(events.iter().any(|e| matches!(e, HostEvent::TeamChat { text, name, .. } if text == "meet at the tower" && name == "Alice")));
+    let team: Vec<String> = c
+        .take_news()
+        .iter()
+        .filter_map(|n| match n {
+            ToClient::TeamChat { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(team, vec!["coming", "meet at the tower"]);
+
     // The host closes: Alice is told why, in time.
     let addr_client = std::thread::scope(|s| {
         let h = s.spawn(|| {

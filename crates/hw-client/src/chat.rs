@@ -33,15 +33,19 @@ const REPEAT_SECONDS: f64 = 6.0;
 pub enum Channel {
     /// What is said near the hero.
     Local,
+    /// What the players of the session say to each other, wherever they
+    /// are. Typing while this tab is on show sends to it.
+    Team,
 }
 
 impl Channel {
     /// Every channel, in tab order.
-    pub const ALL: [Channel; 1] = [Channel::Local];
+    pub const ALL: [Channel; 2] = [Channel::Local, Channel::Team];
 
     pub fn name(self) -> &'static str {
         match self {
             Channel::Local => "Local",
+            Channel::Team => "Team",
         }
     }
 }
@@ -222,12 +226,18 @@ impl ChatLog {
         self.input.clear();
     }
 
-    /// Draws the window. Returns the line the player sent, if any.
+    /// Draws the window. Returns the line the player sent and the channel
+    /// it goes to (the tab on show), if any.
     ///
     /// `beside` is the room left of the power tray; when it is too narrow
     /// the window sits over the tray's left end instead, `above` up from
     /// the bottom of the screen.
-    pub fn ui(&mut self, ctx: &egui::Context, beside: f32, above: f32) -> Option<String> {
+    pub fn ui(
+        &mut self,
+        ctx: &egui::Context,
+        beside: f32,
+        above: f32,
+    ) -> Option<(Channel, String)> {
         let enter = ctx.input(|i| i.key_pressed(egui::Key::Enter));
         let (width, bottom) = if beside >= 300.0 {
             (beside.min(460.0), 10.0)
@@ -296,16 +306,25 @@ impl ChatLog {
                         }
                         if !any {
                             ui.label(
-                                egui::RichText::new("What people say near you shows here.")
-                                    .size(12.5)
-                                    .italics()
-                                    .color(egui::Color32::from_gray(150)),
+                                egui::RichText::new(match tab {
+                                    Channel::Local => "What people say near you shows here.",
+                                    Channel::Team => {
+                                        "What your team says shows here, wherever they are."
+                                    }
+                                })
+                                .size(12.5)
+                                .italics()
+                                .color(egui::Color32::from_gray(150)),
                             );
                         }
                     });
                 if self.typing {
+                    let hint_tab = self.tab();
                     let edit = egui::TextEdit::singleline(&mut self.input)
-                        .hint_text("Say something (Enter sends, Esc cancels)")
+                        .hint_text(match hint_tab {
+                            Channel::Local => "Say something (Enter sends, Esc cancels)",
+                            Channel::Team => "Tell your team (Enter sends, Esc cancels)",
+                        })
                         .char_limit(MAX_TYPED)
                         .desired_width(f32::INFINITY);
                     let r = ui.add(edit);
@@ -317,7 +336,7 @@ impl ChatLog {
                         // A click elsewhere just closes the line.
                         let text = self.input.trim().to_string();
                         if enter && !text.is_empty() {
-                            sent = Some(text);
+                            sent = Some((self.tab(), text));
                         }
                         close = true;
                     }
@@ -402,6 +421,18 @@ mod tests {
         // Empty lines are never logged.
         log.add(Channel::Local, "Me", "   ", Voice::Me);
         assert_eq!(log.lines().count(), 2);
+    }
+
+    #[test]
+    fn team_lines_stay_on_the_team_tab() {
+        let mut log = ChatLog::new();
+        log.add(Channel::Team, "Ada", "meet at the tower", Voice::Player);
+        log.add(Channel::Local, "Brute", "Go away!", Voice::Villain);
+        assert_eq!(log.channel(Channel::Team).count(), 1);
+        assert_eq!(log.channel(Channel::Local).count(), 1);
+        // The tab on show is Local: the team line is unread.
+        assert_eq!(log.unread(Channel::Team), 1);
+        assert_eq!(log.unread(Channel::Local), 0);
     }
 
     #[test]

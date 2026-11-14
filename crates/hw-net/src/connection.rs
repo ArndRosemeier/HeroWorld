@@ -249,6 +249,12 @@ impl Connection {
         self.send(ToServer::Chat { text: text.into() });
     }
 
+    /// Says something on the Team channel: every player of the session
+    /// hears it, wherever they are. (A bot calls this the same way.)
+    pub fn team_chat(&mut self, text: &str) {
+        self.send(ToServer::TeamChat { text: text.into() });
+    }
+
     /// Sends a reliable message (a hero file, a power bought).
     pub fn send(&mut self, msg: ToServer) {
         match &msg {

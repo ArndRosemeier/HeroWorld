@@ -351,7 +351,9 @@ impl Session {
                         if let Some(l) = whole {
                             looks.whole.insert(player, l);
                         }
-                    } else if is_world_news(&m) || matches!(m, ToClient::Chat { .. }) {
+                    } else if is_world_news(&m)
+                        || matches!(m, ToClient::Chat { .. } | ToClient::TeamChat { .. })
+                    {
                         // Portals carry our hero when the guess walks into
                         // one, as the server does.
                         if let (ToClient::Gates { gates }, Some(p)) = (&m, predictor.as_mut()) {
@@ -583,6 +585,16 @@ impl Session {
         match self {
             Session::Local { host, .. } => host.post(move |h, me| h.chat(me, &text)),
             Session::Remote { conn, .. } => conn.chat(&text),
+        }
+    }
+
+    /// Our hero says `text` on the Team channel: every player of the
+    /// session hears it, wherever they are. Single player, nobody else does.
+    pub fn say_team(&mut self, text: &str) {
+        let text = text.to_string();
+        match self {
+            Session::Local { host, .. } => host.post(move |h, me| h.team_chat(me, &text)),
+            Session::Remote { conn, .. } => conn.team_chat(&text),
         }
     }
 

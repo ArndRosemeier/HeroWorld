@@ -75,6 +75,12 @@ pub enum HostEvent {
         name: String,
         text: String,
     },
+    /// A line on the Team channel.
+    TeamChat {
+        player: PlayerId,
+        name: String,
+        text: String,
+    },
 }
 
 /// What the host keeps per remote player.
@@ -340,6 +346,15 @@ impl Host {
         });
     }
 
+    /// A player says something on the Team channel: every remote player
+    /// hears it (the local player gets it from the [`HostEvent::TeamChat`]).
+    pub fn team_chat(&mut self, from: PlayerId, text: &str) {
+        self.tell_all(ToClient::TeamChat {
+            from,
+            text: text.to_string(),
+        });
+    }
+
     fn welcome(&mut self, addr: PeerAddr, player: Option<PlayerId>) {
         let msg = match player.and_then(|p| self.sim.hero_of(p).map(|h| (p, h))) {
             Some((player, hero)) => ServerMsg::Welcome {
@@ -401,6 +416,15 @@ impl Host {
                         .unwrap_or_default();
                     self.chat(player, &text);
                     out.push(HostEvent::Chat { player, name, text });
+                }
+                ToServer::TeamChat { text } => {
+                    let name = self
+                        .players
+                        .get(&player)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_default();
+                    self.team_chat(player, &text);
+                    out.push(HostEvent::TeamChat { player, name, text });
                 }
                 ToServer::Taxi { dest } => self.sim.hail_taxi(player, dest),
                 ToServer::Tube { dest } => self.sim.ride_tube(player, dest),

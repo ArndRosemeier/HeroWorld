@@ -1624,6 +1624,12 @@ pub enum ToClient {
         from: PlayerId,
         text: String,
     },
+    /// A line on the Team channel: every player of the session hears it,
+    /// wherever they are.
+    TeamChat {
+        from: PlayerId,
+        text: String,
+    },
     /// The host is closing the world; the client should leave.
     SessionEnd {
         reason: String,
@@ -1857,6 +1863,10 @@ pub enum ToServer {
     Chat {
         text: String,
     },
+    /// A line for the Team channel (everyone in the session).
+    TeamChat {
+        text: String,
+    },
     /// Hail a taxi to a stand (its index), or 255: get out.
     Taxi {
         dest: u8,
@@ -1910,7 +1920,7 @@ impl ToClient {
         let s = |t: &str| 1 + t.len().min(255);
         1 + match self {
             ToClient::Joined { name, .. } | ToClient::Left { name, .. } => 2 + s(name),
-            ToClient::Chat { text, .. } => 2 + s(text),
+            ToClient::Chat { text, .. } | ToClient::TeamChat { text, .. } => 2 + s(text),
             ToClient::SessionEnd { reason } => s(reason),
             ToClient::Damage { broken, .. } => 8 + 1 + 1 + 4 * broken.len().min(255),
             ToClient::Repaired { .. } => 8,
@@ -1974,6 +1984,9 @@ impl ToClient {
             }
             ToClient::Chat { from, text } => {
                 w.u8(3).u16(from.0).str(text);
+            }
+            ToClient::TeamChat { from, text } => {
+                w.u8(26).u16(from.0).str(text);
             }
             ToClient::SessionEnd { reason } => {
                 w.u8(4).str(reason);
@@ -2246,6 +2259,10 @@ impl ToClient {
                 text: r.str()?,
             },
             4 => ToClient::SessionEnd { reason: r.str()? },
+            26 => ToClient::TeamChat {
+                from: PlayerId(r.u16()?),
+                text: r.str()?,
+            },
             5 => {
                 let building = r.u64()?;
                 let live = r.bool()?;
@@ -2521,7 +2538,7 @@ impl ToClient {
 impl ToServer {
     pub fn wire_size(&self) -> usize {
         match self {
-            ToServer::Chat { text } => 2 + text.len().min(255),
+            ToServer::Chat { text } | ToServer::TeamChat { text } => 2 + text.len().min(255),
             ToServer::Taxi { .. } => 2,
             ToServer::Tube { .. } => 3,
             ToServer::Sheet(s) => 1 + s.wire_size(),
@@ -2575,6 +2592,9 @@ impl ToServer {
             ToServer::TradeAugment { bag } => {
                 w.u8(11).u8(*bag);
             }
+            ToServer::TeamChat { text } => {
+                w.u8(12).str(text);
+            }
         }
     }
 
@@ -2607,6 +2627,7 @@ impl ToServer {
                 slot: r.u8()?,
             },
             11 => ToServer::TradeAugment { bag: r.u8()? },
+            12 => ToServer::TeamChat { text: r.str()? },
             _ => return Err(WireError),
         })
     }
@@ -3099,6 +3120,12 @@ mod tests {
                         },
                     ),
                     (12, ToServer::TradeAugment { bag: 29 }),
+                    (
+                        13,
+                        ToServer::TeamChat {
+                            text: "on my way".into(),
+                        },
+                    ),
                 ],
             },
             ClientMsg::Bye,
