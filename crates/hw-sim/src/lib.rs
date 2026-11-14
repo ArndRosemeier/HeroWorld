@@ -2842,8 +2842,14 @@ mod tests {
         }
         let pos = sim.position(id).unwrap();
         assert_eq!(pos.y, GROUND_Y);
-        // Two seconds at up to 7 m/s, after a short run-up.
-        assert!(pos.x > 11.0 && pos.x < 14.0, "x = {}", pos.x);
+        // Two seconds at the sprint every hero has from the start (0.251),
+        // after a short run-up: not past the top speed, and not slow.
+        let top = sprint_speed(1);
+        assert!(
+            pos.x > top * 2.0 - 5.0 && pos.x <= top * 2.0,
+            "x = {} (sprint {top} m/s)",
+            pos.x
+        );
         assert!(pos.z.abs() < 1e-9);
     }
 
