@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.315 (2026-11-14)
+
+- Behind the scenes: a test of running speed now matches the sprint every hero has from the start. Nothing changes in play.
+
 ## 0.314 (2026-11-14)
 
 - Heroes no longer get stuck against the side of a tunnel (or a river bank): pressing into a wall at a slant now slides you along it instead of stopping you dead.
