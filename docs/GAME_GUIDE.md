@@ -123,7 +123,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | Mouse wheel | Zoom in / out (all the way in: first person) |
 | Tab | Target the nearest villain in view; again: the next nearest not yet picked, round and round |
 | Left click on a villain | Target that villain, up to 150 m away (Tab reaches 60 m); within punching reach (3 m) it also punches |
-| F | Next to a Herobot on Hero Hall's plaza (or one you woke): wake it, or send it home |
+| H | Next to a Herobot on Hero Hall's plaza (or one you woke): wake it, or send it home |
 | Left mouse | Strike |
 | 9 / 0 | Portal Home (mark where your portal leads) / Open Portal (tear it open ahead) |
 | Q | The first bolt power of your tree (Atomic Ray, Arcane Bolt, ...) |
@@ -1821,8 +1821,8 @@ on the way. Rides are free.
   zip) hosts the same town; `HW_SAVE` keeps a world save, `HW_ONLINE=1` lists it on GameHub,
   typing `quit` closes it cleanly.
 - **Herobots** (`hw-sim/src/herobots.rs`, `herobot.rs`): two robots stand on Hero Hall's plaza
-  beside the five town heroes, there so one person can test multiplayer alone. Press **F**
-  within 8 m of one to wake it, **F** near it again to send it home (it flies or walks back
+  beside the five town heroes, there so one person can test multiplayer alone. Press **H**
+  within 8 m of one to wake it, **H** near it again to send it home (it flies or walks back
   to its spot, then leaves). A woken Herobot is a **real player**: its own thread joins the
   host over UDP (single player opens a loopback-only socket the first time, nothing is
   reachable from the network), sends a hero file and then only sees what a player sees (the

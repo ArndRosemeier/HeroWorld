@@ -5166,7 +5166,7 @@ fn main() -> EngineResult<()> {
                         })
                         .min_by(|a, b| a.0.total_cmp(&b.0));
                     if let (Some((_, slot, woken)), true) = (bot, standing) {
-                        if frame.input.pressed(Key::F) && !chat.typing && !on_ui_keys(frame) {
+                        if frame.input.pressed(Key::H) && !chat.typing && !on_ui_keys(frame) {
                             session.herobot(slot);
                         }
                         engine::ui::egui::Area::new(engine::ui::egui::Id::new("herobot prompt"))
@@ -5179,7 +5179,7 @@ fn main() -> EngineResult<()> {
                                 hw_client::googie::plate(ui, false, |ui| {
                                     ui.label(
                                         engine::ui::egui::RichText::new(format!(
-                                            "F: {} Herobot {}",
+                                            "H: {} Herobot {}",
                                             if woken { "send home" } else { "wake" },
                                             slot + 1
                                         ))

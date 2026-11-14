@@ -1927,7 +1927,7 @@ pub enum ToServer {
         number: u16,
     },
     /// Wake the Herobot of this slot (it stands near the hero), or send
-    /// a woken one home (F).
+    /// a woken one home (H).
     Herobot {
         slot: u8,
     },

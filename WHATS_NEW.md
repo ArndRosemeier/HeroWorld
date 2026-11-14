@@ -3,9 +3,13 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.283 (2026-11-14)
+
+- Waking or sending home a Herobot is now H (F is the Grapple Swing).
+
 ## 0.282 (2026-11-14)
 
-- Two Herobots stand on Hero Hall's plaza next to the town's heroes. Press F beside one to wake it: it joins your team as a real player, with your karma and level, a random origin and element, and powers it bought itself. It follows you, rushes to trouble and fights villains, helps downed heroes up, and when it is beaten the drone flies it to the hospital. Press F near it again to send it home.
+- Two Herobots stand on Hero Hall's plaza next to the town's heroes. Press H beside one to wake it: it joins your team as a real player, with your karma and level, a random origin and element, and powers it bought itself. It follows you, rushes to trouble and fights villains, helps downed heroes up, and when it is beaten the drone flies it to the hospital. Press H near it again to send it home.
 - A Herobot takes one of the ten places in your world and makes the fights bigger, like a friend would. Handy for trying multiplayer alone.
 
 ## 0.281 (2026-11-14)
