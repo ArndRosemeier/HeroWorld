@@ -26,7 +26,8 @@ pub use protocol::{
     EFFECT_CHILLED, EFFECT_CONFUSED, EFFECT_DISARMED, EFFECT_EMPOWERED, EFFECT_ENRAGED,
     EFFECT_FEARED, EFFECT_FROZEN, EFFECT_GRAPPLE, EFFECT_HELD, EFFECT_HIDDEN, EFFECT_KNEELING,
     EFFECT_RALLIED, EFFECT_SHIELD, EFFECT_SPRINT, EFFECT_SUPER_JUMP, EFFECT_SUPER_SPEED,
-    EFFECT_TOUGH, EFFECT_WALL_RUN, EFFECT_WEAKENED, FACTIONS, MAX_BAG, POWER_IDS, SOCKETS,
+    EFFECT_TOUGH, EFFECT_WALL_RUN, EFFECT_WEAKENED, FACTIONS, HEROBOT_MOUNT, MAX_BAG, POWER_IDS,
+    SOCKETS,
 };
 pub use replication::{Candidate, ClientView};
 pub use transport::{
@@ -35,7 +36,7 @@ pub use transport::{
 pub use voice::{VoiceBox, VoicePacket};
 
 /// Protocol version. Server and client must match exactly to play together.
-pub const PROTOCOL_VERSION: u32 = 56;
+pub const PROTOCOL_VERSION: u32 = 57;
 
 /// Most players in one world.
 pub const MAX_PLAYERS: usize = 10;

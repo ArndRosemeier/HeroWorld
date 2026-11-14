@@ -21,6 +21,8 @@ pub mod doors;
 pub mod factions;
 pub mod floornav;
 pub mod gates;
+pub mod herobot;
+pub mod herobots;
 pub mod host;
 pub mod hostthread;
 pub mod incidents;
@@ -916,6 +918,13 @@ impl Sim {
                 f.home_is_hall = true;
             }
             npcheroes::spawn(&mut sim.world, tick, &spots);
+            // Two Herobots stand beside them, for a player to wake.
+            let bots: Vec<(DVec3, DVec2)> = hall
+                .herobot_spots()
+                .into_iter()
+                .map(|(p, f)| (DVec3::new(p.x, hall.base, p.y), f))
+                .collect();
+            herobots::spawn(&mut sim.world, tick, &bots);
         }
         sim
     }
@@ -2510,6 +2519,7 @@ impl Sim {
                     Option<&tube::Passenger>,
                     Option<&npcheroes::NpcHero>,
                     Option<&sidekick::Sidekick>,
+                    (Option<&herobots::IdleBot>, Option<&herobots::BotHero>),
                 ),
             )>()
             .iter(&self.world)
@@ -2520,7 +2530,7 @@ impl Sim {
                     h,
                     o,
                     (prop, enemy, drone, view, (cruiser, officer)),
-                    (c, fare, mount, bystander, rider, npc, sidekick),
+                    (c, fare, mount, bystander, rider, npc, sidekick, (idle_bot, bot_hero)),
                 )| {
                     (
                         EntityState {
@@ -2545,6 +2555,8 @@ impl Sim {
                                 EntityKind::NpcHero
                             } else if sidekick.is_some() {
                                 EntityKind::Sidekick
+                            } else if idle_bot.is_some() {
+                                EntityKind::Herobot
                             } else {
                                 EntityKind::Hero
                             },
@@ -2564,6 +2576,8 @@ impl Sim {
                                 .map(|m| (m.on, m.part))
                                 .or(npc.map(|h| (n.0, h.index)))
                                 .or(sidekick.map(|s| (s.owner, s.theme)))
+                                .or(idle_bot.map(|b| (n.0, b.slot)))
+                                .or(bot_hero.map(|b| (n.0, hw_net::HEROBOT_MOUNT + b.slot)))
                                 // A drone: whom it fetches, and medical (1)
                                 // or police (0).
                                 .or(drone.map(|d| (d.carry, d.medical as u8)))

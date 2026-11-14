@@ -25,7 +25,20 @@ use hw_net::{
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::Path;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// A Herobot that has been woken: its thread, and who it is once it joined.
+struct BotRun {
+    ctl: Arc<crate::herobot::Ctl>,
+    handle: std::thread::JoinHandle<()>,
+    player: Option<PlayerId>,
+    started: Instant,
+}
+
+/// How long a woken Herobot has to join before the host gives up on it.
+const BOT_JOIN_WITHIN: Duration = Duration::from_secs(8);
 
 /// Most players in one world.
 pub const MAX_PLAYERS: usize = hw_net::MAX_PLAYERS;
@@ -120,6 +133,10 @@ pub struct Host {
     /// The local player (the person at this machine), once they joined.
     local_player: Option<PlayerId>,
     voice_clock: Instant,
+    /// The Herobots that are out, by slot (see [`crate::herobot`]).
+    bots: BTreeMap<u8, BotRun>,
+    /// The loopback port the Herobots join by.
+    port: Option<u16>,
 }
 
 impl Host {
@@ -145,6 +162,8 @@ impl Host {
             voice_budget: BTreeMap::new(),
             local_player: None,
             voice_clock: Instant::now(),
+            bots: BTreeMap::new(),
+            port: None,
         }
     }
 
@@ -189,9 +208,12 @@ impl Host {
 
     /// Opens the world to remote players on `addr` (port 0 picks a free one).
     pub fn listen(&mut self, addr: impl ToSocketAddrs) -> std::io::Result<SocketAddr> {
-        self.socket
+        let bound = self
+            .socket
             .get_or_insert_with(ServerSocket::without_udp)
-            .open_udp(addr)
+            .open_udp(addr)?;
+        self.port = Some(bound.port());
+        Ok(bound)
     }
 
     /// Also takes players through `link` (the GameHub relay).
@@ -317,6 +339,16 @@ impl Host {
         self.remotes.remove(&id);
         self.voice_budget.remove(&id);
         self.sim.remove_hero(id);
+        // A Herobot that leaves is back on the plaza.
+        let slot = self
+            .bots
+            .iter()
+            .find(|(_, b)| b.player == Some(id))
+            .map(|(s, _)| *s);
+        if let Some(slot) = slot {
+            self.bots.remove(&slot);
+            self.sim.herobot_stand(slot);
+        }
         if let Some(s) = self.socket.as_mut() {
             s.kick(id);
         }
@@ -511,6 +543,7 @@ impl Host {
                 } => self.sim.use_door(player, building, key, open),
                 ToServer::TakeCase { number } => self.sim.missions.take_case(number),
                 ToServer::Sheet(sheet) => self.sim.set_sheet(player, sheet),
+                ToServer::Herobot { slot } => self.herobot(player, slot),
                 ToServer::Buy { power } => {
                     // A refused buy changes nothing; the client checks first.
                     let _ = self.sim.buy(player, power);
@@ -552,6 +585,15 @@ impl Host {
                             let p = self.add_player(&name, true);
                             if let (Some(p), Some(s)) = (p, self.socket.as_mut()) {
                                 s.accept(addr, p);
+                                // A woken Herobot arriving?
+                                if let Some(slot) = crate::herobots::slot_of_name(&name) {
+                                    if let Some(b) =
+                                        self.bots.get_mut(&slot).filter(|b| b.player.is_none())
+                                    {
+                                        b.player = Some(p);
+                                        self.sim.tag_herobot(p, slot);
+                                    }
+                                }
                                 out.push(HostEvent::Joined { player: p, name });
                             }
                             p
@@ -578,6 +620,7 @@ impl Host {
                 info.ack = seq;
             }
         }
+        self.mind_herobots();
         self.sim.step();
         let news = self.sim.take_news();
         if self.players.values().any(|p| !p.remote) {
@@ -735,6 +778,12 @@ impl Host {
             self.tick();
             std::thread::sleep(Duration::from_millis(5));
         }
+        for b in self.bots.values() {
+            b.ctl.stop.store(true, Ordering::Relaxed);
+        }
+        for slot in std::mem::take(&mut self.bots).into_keys() {
+            self.sim.herobot_stand(slot);
+        }
         self.socket = None;
         self.remotes.clear();
         let remote: Vec<PlayerId> = self
@@ -746,6 +795,120 @@ impl Host {
         for p in remote {
             self.players.remove(&p);
             self.sim.remove_hero(p);
+        }
+    }
+
+    /// A player wakes the Herobot of `slot` (standing near them on the
+    /// plaza), or sends a woken one home.
+    pub fn herobot(&mut self, by: PlayerId, slot: u8) {
+        if slot as usize >= crate::herobots::SLOTS {
+            return;
+        }
+        let near = |sim: &mut Sim, at: DVec3| {
+            sim.hero_of(by)
+                .and_then(|h| sim.position(h))
+                .is_some_and(|p| p.distance(at) <= crate::herobots::REACH)
+        };
+        if let Some(b) = self.bots.get(&slot) {
+            // Out already: sent home by someone near it.
+            let hero = self
+                .sim
+                .herobots_out()
+                .into_iter()
+                .find(|(s, _)| *s == slot)
+                .map(|(_, id)| id);
+            let close = hero
+                .and_then(|id| self.sim.position(id))
+                .is_some_and(|at| near(&mut self.sim, at));
+            if close || hero.is_none() {
+                b.ctl.home.store(true, Ordering::Relaxed);
+            }
+            return;
+        }
+        let Some(at) = self.sim.herobot_idle_at(slot) else {
+            return;
+        };
+        if !near(&mut self.sim, at) {
+            return;
+        }
+        // The team has ten places, Herobots included.
+        if self.players.len() + self.bots.values().filter(|b| b.player.is_none()).count()
+            >= MAX_PLAYERS
+        {
+            self.tell_player(by, "The team is full: no room for a Herobot.");
+            return;
+        }
+        let Some(lifetime) = self.sim.sheet(by).map(|s| s.lifetime) else {
+            return;
+        };
+        let Some((home, _)) = self.sim.herobot_home(slot) else {
+            return;
+        };
+        // Single player has no socket: open one on loopback, for the
+        // Herobots only.
+        if self.port.is_none() && self.listen(("127.0.0.1", 0)).is_err() {
+            return;
+        }
+        let Some(port) = self.port else { return };
+        let name = crate::herobots::name(slot);
+        let ctl = Arc::new(crate::herobot::Ctl::default());
+        let params = crate::herobot::Params {
+            addr: SocketAddr::from(([127, 0, 0, 1], port)),
+            name: name.clone(),
+            slot,
+            lifetime,
+            seed: self.sim.seed.0 ^ (self.sim.tick << 8) ^ slot as u64,
+            home,
+            solids: self.sim.solids(),
+            ctl: ctl.clone(),
+        };
+        self.sim.herobot_leave(slot);
+        self.arrivals.insert(name, at + DVec3::Y * 0.2);
+        self.bots.insert(
+            slot,
+            BotRun {
+                ctl,
+                handle: crate::herobot::spawn(params),
+                player: None,
+                started: Instant::now(),
+            },
+        );
+    }
+
+    /// Tells one player something (a line in their chat).
+    fn tell_player(&mut self, player: PlayerId, text: &str) {
+        let msg = ToClient::Chat {
+            from: player,
+            text: text.to_string(),
+        };
+        match self.remotes.get_mut(&player) {
+            Some(r) => {
+                r.rel_out.push(msg);
+            }
+            None => self.local_news.push(msg),
+        }
+    }
+
+    /// Looks after the Herobots: one whose thread ended without ever
+    /// joining (or after leaving) gives its place back.
+    fn mind_herobots(&mut self) {
+        if self.bots.is_empty() || !self.sim.tick.is_multiple_of(TICK_HZ as u64) {
+            return;
+        }
+        let gone: Vec<u8> = self
+            .bots
+            .iter()
+            .filter(|(_, b)| match b.player {
+                None => b.handle.is_finished() || b.started.elapsed() > BOT_JOIN_WITHIN,
+                Some(p) => !self.players.contains_key(&p),
+            })
+            .map(|(s, _)| *s)
+            .collect();
+        for slot in gone {
+            if let Some(b) = self.bots.remove(&slot) {
+                b.ctl.stop.store(true, Ordering::Relaxed);
+            }
+            self.sim.herobot_stand(slot);
         }
     }
 

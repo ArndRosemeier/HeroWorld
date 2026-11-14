@@ -1010,6 +1010,15 @@ impl Session {
         }
     }
 
+    /// Wakes the Herobot of `slot` (standing near us) or sends a woken one
+    /// home (F).
+    pub fn herobot(&mut self, slot: u8) {
+        match self {
+            Session::Local { host, .. } => host.post(move |h, me| h.herobot(me, slot)),
+            Session::Remote { conn, .. } => conn.send(hw_net::ToServer::Herobot { slot }),
+        }
+    }
+
     /// Opens (`open`) or shuts a door our hero stands at (E).
     pub fn use_door(&mut self, building: u64, key: u32, open: bool) {
         match self {

@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.282 (2026-11-14)
+
+- Two Herobots stand on Hero Hall's plaza next to the town's heroes. Press F beside one to wake it: it joins your team as a real player, with your karma and level, a random origin and element, and powers it bought itself. It follows you, rushes to trouble and fights villains, helps downed heroes up, and when it is beaten the drone flies it to the hospital. Press F near it again to send it home.
+- A Herobot takes one of the ten places in your world and makes the fights bigger, like a friend would. Handy for trying multiplayer alone.
+
 ## 0.281 (2026-11-14)
 
 - The town has animals of its own now. Wibbets, big-eyed climbers the size of a cat with glowing feelers, live in small troops on the pavements: they trot along the kerb, run up lamp posts and cling there, hop onto benches, bins and hydrants, and sit up to look around.
@@ -10,6 +15,7 @@ Newest first. Every build pushed to `main` adds 0.001 to the version (in
 - A few citizens have a pet drakelet: a little dragon with a collar that flies on its lead, ahead of its owner and round them when they stop.
 - Driftbells, glowing bells with long trailing arms, float in twos and threes high over the wide streets.
 - All of them come in three colours, and every player sees the same animals in the same places.
+
 ## 0.280 (2026-11-14)
 
 - Team voice. When a friend is in your game, hold Z to talk: everyone on your team hears you, however far away they are, and a "so-and-so is talking" note shows at the left edge. Click the small Voice button in the chat window to turn voice off, pick another key, set the team volume, or mute a friend or turn them up or down. No microphone? The panel says so and the game carries on.

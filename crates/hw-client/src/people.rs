@@ -120,6 +120,9 @@ pub enum Who {
     /// A hero's robot sidekick, by the power's theme (0 Tin Pal, 1 Brass
     /// Squire): an Actors robot, drawn small ([`hw_sim::sidekick::SIZE`]).
     Sidekick(u8),
+    /// One of Hero Hall's two Herobots (by slot), standing on the plaza or
+    /// woken and playing as a hero: a robot of normal size.
+    Herobot(u8),
     /// The hero's statue in front of Hero Hall (the Doctor's story done):
     /// their looks (by key) cast in bronze.
     Statue(u64),
@@ -982,6 +985,42 @@ pub fn sidekick(builder: &CharacterBuilder, theme: u8) -> CharacterConfig {
         r.trim = "#2c5aa8".into();
         r.frame = "#2b2620".into();
         r.metal = "#8a6a32".into();
+        r.glow = "#ffc860".into();
+    }
+    c
+}
+
+/// A Herobot: a tall, broad robot of the 1950s, as big as a hero. Herobot 1
+/// is chrome with a visor and red trim (a golden-age rocket-ship robot),
+/// Herobot 2 polished copper with round optics and blue trim.
+pub fn herobot(builder: &CharacterBuilder, slot: u8) -> CharacterConfig {
+    let mut c = builder.default_config();
+    c.robot = true;
+    c.body.gender = 0.5;
+    c.body.muscle = 0.85;
+    c.body.weight = 0.6;
+    c.body.age_years = 30.0;
+    let r = &mut c.robot_look;
+    r.plating = "segmented".into();
+    r.thickness = 0.9;
+    r.core = true;
+    r.glow_strength = 1.0;
+    r.finish = "metallic".into();
+    if slot == 0 {
+        r.head = "visor".into();
+        r.ears = "pods".into();
+        r.paint = "#d9dde3".into();
+        r.trim = "#c8262c".into();
+        r.frame = "#2a2d33".into();
+        r.metal = "#a9b2bd".into();
+        r.glow = "#5fe0ff".into();
+    } else {
+        r.head = "optics".into();
+        r.ears = "antennae".into();
+        r.paint = "#b8672f".into();
+        r.trim = "#2c5aa8".into();
+        r.frame = "#2b2620".into();
+        r.metal = "#c98a52".into();
         r.glow = "#ffc860".into();
     }
     c
@@ -1886,13 +1925,14 @@ pub fn build_sharing(
         Who::Villain(..) => (false, 0),
         Who::NpcHero(i) => (true, 7_000 + *i as u32),
         Who::Sidekick(theme) => (false, 9_000 + *theme as u32),
+        Who::Herobot(slot) => (true, 9_700 + *slot as u32),
         Who::Medic => (false, 9_500),
         Who::Officer(k) => (false, 9_600 + *k as u32),
         Who::Street(act, k) => (false, name_seed(&format!("street {act:?} {k}"))),
         Who::Guest(k) => (false, name_seed(&format!("club guest {k}"))),
     };
     let mut allowed = allow(hero);
-    if matches!(who, Who::Sidekick(_)) {
+    if matches!(who, Who::Sidekick(_) | Who::Herobot(_)) {
         allowed.races = Some(Flags::List(vec!["human".into(), "robot".into()]));
     }
     if matches!(who, Who::Street(..) | Who::Guest(_) | Who::Officer(_)) {
@@ -1911,6 +1951,7 @@ pub fn build_sharing(
         (Who::Villain(kind, look), _) => villain(builder, *kind, *look),
         (Who::NpcHero(i), _) => npc_hero(builder, *i),
         (Who::Sidekick(theme), _) => sidekick(builder, *theme),
+        (Who::Herobot(slot), _) => herobot(builder, *slot),
         (Who::Medic, _) => medic(builder),
         (Who::Officer(k), _) => officer(builder, *k),
         (Who::Street(act, k), _) => street(builder, *act, *k, rseed),
@@ -1923,7 +1964,9 @@ pub fn build_sharing(
         _ => golden_age(builder.catalog(), rseed, hero),
     };
     let clips: &[&str] = match who {
-        Who::Hero(_) | Who::Look(_) | Who::NpcHero(_) | Who::Statue(_) => HERO_CLIPS,
+        Who::Hero(_) | Who::Look(_) | Who::NpcHero(_) | Who::Herobot(_) | Who::Statue(_) => {
+            HERO_CLIPS
+        }
         Who::Villain(..) => VILLAIN_CLIPS,
         Who::Sidekick(_) => SIDEKICK_CLIPS,
         Who::Citizen(_) | Who::Medic | Who::Officer(_) => CITIZEN_CLIPS,

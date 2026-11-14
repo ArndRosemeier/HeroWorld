@@ -123,6 +123,7 @@ From `settings::CONTROLS` (shown in the game under Escape → Controls) and `fig
 | Mouse wheel | Zoom in / out (all the way in: first person) |
 | Tab | Target the nearest villain in view; again: the next nearest not yet picked, round and round |
 | Left click on a villain | Target that villain, up to 150 m away (Tab reaches 60 m); within punching reach (3 m) it also punches |
+| F | Next to a Herobot on Hero Hall's plaza (or one you woke): wake it, or send it home |
 | Left mouse | Strike |
 | 9 / 0 | Portal Home (mark where your portal leads) / Open Portal (tear it open ahead) |
 | Q | The first bolt power of your tree (Atomic Ray, Arcane Bolt, ...) |
@@ -1819,6 +1820,30 @@ on the way. Rides are free.
 - **Dedicated server:** `cargo run -p hw-sim --bin hw-headless` (or `Host.bat` in the Windows
   zip) hosts the same town; `HW_SAVE` keeps a world save, `HW_ONLINE=1` lists it on GameHub,
   typing `quit` closes it cleanly.
+- **Herobots** (`hw-sim/src/herobots.rs`, `herobot.rs`): two robots stand on Hero Hall's plaza
+  beside the five town heroes, there so one person can test multiplayer alone. Press **F**
+  within 8 m of one to wake it, **F** near it again to send it home (it flies or walks back
+  to its spot, then leaves). A woken Herobot is a **real player**: its own thread joins the
+  host over UDP (single player opens a loopback-only socket the first time, nothing is
+  reachable from the network), sends a hero file and then only sees what a player sees (the
+  entities near it, the wrist radio's incidents, its own hero file). It takes one of the
+  10 places (a full team refuses it), counts for group sizes and incidents like any friend,
+  earns karma and levels, and when it is beaten it calls the medical drone after 20 s and is
+  flown to the hospital like anyone. Team level stays the host's, as for any friend.
+  - Its hero file: all the lifetime karma of the hero who woke it (as if nothing had been
+    spent), a random origin and element, and every bit of karma spent at once on random
+    powers it can unlock (attacks first). Later karma is spent as it comes; augments it finds
+    are set into the first socket they fit, or traded in.
+  - What it does: follows the nearest hero (about 12 m), heads for incidents the radio
+    announces, fights villains that fight or stand at one (rotating through its attack
+    powers, a sidekick if it has one, a heal if someone is hurt, defensive toggles on in a
+    fight and off after a quiet while), helps a downed hero up (hold revive), walks round
+    walls by `nav::find_path`, flies when it owns Flight. No taxis, no missions.
+  - Its sheet lives only in memory: nothing of it goes into your hero file or the world save.
+  - Everyone sees it as a robot (`HEROBOT_MOUNT` on its hero's `mount`; Herobot 1 chrome with
+    red trim, Herobot 2 copper with blue). `HW_VIEW=herobots` looks at them from the plaza.
+  - Tests: `hw-sim/tests/herobots.rs` (wake, ten places, home; daily: fights, earns karma,
+    the drone flies it to the hospital).
 - Multiplayer has been tested by bots (`tests/soak.rs`: ten bots for an hour) but not yet
   by people (postponed until Arnd has someone to play with).
 

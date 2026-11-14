@@ -1171,6 +1171,27 @@ fn main() -> EngineResult<()> {
             let pitch = ((h * 0.4 - (eye - base)) / d.length()).atan().to_degrees() as f32;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
         }
+        "herobots" => {
+            // `HW_VIEW=herobots`: the plaza's row of heroes and the two
+            // Herobots at its ends, from in front.
+            use hw_gen::urban::landmarks::LandmarkKind;
+            let l =
+                hw_client::landmarkview::nearest(&generated.world, LandmarkKind::HeroHall, spawn);
+            match l {
+                Some(l) => {
+                    let spots = l.herobot_spots();
+                    let mid = spots
+                        .first()
+                        .zip(spots.last())
+                        .map_or(l.pos, |(a, b)| (a.0 + b.0) * 0.5);
+                    let p = mid + l.dir * 13.0;
+                    let eye = ground(p).max(l.base) + 2.2;
+                    let yaw = (-l.dir.x).atan2(-l.dir.y).to_degrees() as f32;
+                    FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, -4.0)
+                }
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
         "rocketpad" | "rocketarm" | "rocketboard" => {
             // Close up at the rocket port: from the pad at eye height, level
             // with the crew arm, or at the countdown board.
@@ -4030,7 +4051,13 @@ fn main() -> EngineResult<()> {
                 }
                 // A bystander standing still faces the way the server turned
                 // them (towards the muggers).
-                if (bystander || h.kind == hw_net::EntityKind::NpcHero) && slow {
+                if (bystander
+                    || matches!(
+                        h.kind,
+                        hw_net::EntityKind::NpcHero | hw_net::EntityKind::Herobot
+                    ))
+                    && slow
+                {
                     let (y, _, _) = glam::Quat::from_array(h.rot).to_euler(glam::EulerRot::YXZ);
                     anim.face(y.to_degrees(), frame.dt);
                     d.yaw = anim.yaw();
@@ -4055,6 +4082,13 @@ fn main() -> EngineResult<()> {
                     }
                     // One of Hero Hall's own heroes.
                     hw_net::EntityKind::NpcHero => Who::NpcHero(h.mount.map_or(0, |m| m.1)),
+                    // A Herobot: on the plaza, or woken and playing.
+                    hw_net::EntityKind::Herobot => Who::Herobot(h.mount.map_or(0, |m| m.1).min(1)),
+                    hw_net::EntityKind::Hero
+                        if h.mount.is_some_and(|m| m.1 >= hw_net::HEROBOT_MOUNT) =>
+                    {
+                        Who::Herobot(h.mount.map_or(0, |m| m.1 - hw_net::HEROBOT_MOUNT).min(1))
+                    }
                     // A hero's robot sidekick, by the power's theme.
                     hw_net::EntityKind::Sidekick => {
                         Who::Sidekick(h.mount.map_or(0, |m| m.1).min(1))
@@ -5113,6 +5147,48 @@ fn main() -> EngineResult<()> {
                     let door = (!rescue && !teammate_down && standing)
                         .then(|| hw_client::doorview::door_at_hand(&generated.obstacles, hero))
                         .flatten();
+                    // F wakes a Herobot standing near, or sends a woken one
+                    // home.
+                    let bot = heroes
+                        .iter()
+                        .filter_map(|e| {
+                            let (slot, woken) = match (e.kind, e.mount) {
+                                (hw_net::EntityKind::Herobot, Some(m)) => (m.1, false),
+                                (hw_net::EntityKind::Hero, Some(m))
+                                    if m.1 >= hw_net::HEROBOT_MOUNT =>
+                                {
+                                    (m.1 - hw_net::HEROBOT_MOUNT, true)
+                                }
+                                _ => return None,
+                            };
+                            let d = Vec3::from_array(e.pos.map(|v| v as f32)).distance(h);
+                            (d <= hw_sim::herobots::REACH as f32).then_some((d, slot, woken))
+                        })
+                        .min_by(|a, b| a.0.total_cmp(&b.0));
+                    if let (Some((_, slot, woken)), true) = (bot, standing) {
+                        if frame.input.pressed(Key::F) && !chat.typing && !on_ui_keys(frame) {
+                            session.herobot(slot);
+                        }
+                        engine::ui::egui::Area::new(engine::ui::egui::Id::new("herobot prompt"))
+                            .interactable(false)
+                            .anchor(
+                                engine::ui::egui::Align2::CENTER_BOTTOM,
+                                engine::ui::egui::vec2(0.0, -215.0),
+                            )
+                            .show(frame.ui.ctx(), |ui| {
+                                hw_client::googie::plate(ui, false, |ui| {
+                                    ui.label(
+                                        engine::ui::egui::RichText::new(format!(
+                                            "F: {} Herobot {}",
+                                            if woken { "send home" } else { "wake" },
+                                            slot + 1
+                                        ))
+                                        .color(engine::ui::egui::Color32::from_rgb(140, 230, 255))
+                                        .size(17.0),
+                                    );
+                                });
+                            });
+                    }
                     if let Some(d) = door {
                         if frame.input.pressed(Key::E) && !chat.typing && !on_ui_keys(frame) {
                             session.use_door(d.building, d.key, !d.open);

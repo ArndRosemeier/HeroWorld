@@ -90,6 +90,10 @@ impl PowerId {
     ];
 }
 
+/// A woken Herobot's hero carries `(its own ID, HEROBOT_MOUNT + slot)` as
+/// its `mount`, so every client draws it as a robot.
+pub const HEROBOT_MOUNT: u8 = 200;
+
 /// Power numbers are below this.
 pub const POWER_IDS: usize = 128;
 
@@ -319,6 +323,10 @@ pub enum EntityKind {
     /// A hero's robot sidekick; its `owner` is the hero's player (`mount`:
     /// its own ID and the theme).
     Sidekick,
+    /// One of the two Herobots standing on Hero Hall's plaza, not woken
+    /// yet (`mount`: its own ID and which slot). A woken one is a hero of
+    /// a player of its own, its `mount` marking it ([`HEROBOT_MOUNT`]).
+    Herobot,
     /// The Doctor himself: the mad scientist, an archvillain with a Tesla
     /// staff (the last chapter of his story).
     Doctor,
@@ -375,6 +383,7 @@ impl EntityKind {
             EntityKind::Capsule => 19,
             EntityKind::NpcHero => 20,
             EntityKind::Sidekick => 21,
+            EntityKind::Herobot => 32,
             EntityKind::Doctor => 22,
             EntityKind::Bulwark => 23,
             EntityKind::Grenadier => 24,
@@ -412,6 +421,7 @@ impl EntityKind {
             19 => Ok(EntityKind::Capsule),
             20 => Ok(EntityKind::NpcHero),
             21 => Ok(EntityKind::Sidekick),
+            32 => Ok(EntityKind::Herobot),
             22 => Ok(EntityKind::Doctor),
             23 => Ok(EntityKind::Bulwark),
             24 => Ok(EntityKind::Grenadier),
@@ -1916,6 +1926,11 @@ pub enum ToServer {
     TakeCase {
         number: u16,
     },
+    /// Wake the Herobot of this slot (it stands near the hero), or send
+    /// a woken one home (F).
+    Herobot {
+        slot: u8,
+    },
 }
 
 impl ToClient {
@@ -2552,6 +2567,7 @@ impl ToServer {
             ToServer::TakeCase { .. } => 1 + 2,
             ToServer::SetAugment { .. } => 1 + 3,
             ToServer::TradeAugment { .. } => 1 + 1,
+            ToServer::Herobot { .. } => 1 + 1,
         }
     }
 
@@ -2598,6 +2614,9 @@ impl ToServer {
             ToServer::TeamChat { text } => {
                 w.u8(12).str(text);
             }
+            ToServer::Herobot { slot } => {
+                w.u8(13).u8(*slot);
+            }
         }
     }
 
@@ -2631,6 +2650,7 @@ impl ToServer {
             },
             11 => ToServer::TradeAugment { bag: r.u8()? },
             12 => ToServer::TeamChat { text: r.str()? },
+            13 => ToServer::Herobot { slot: r.u8()? },
             _ => return Err(WireError),
         })
     }
@@ -3204,6 +3224,7 @@ mod tests {
                         },
                     ),
                     (10, ToServer::TakeCase { number: 14 }),
+                    (13, ToServer::Herobot { slot: 1 }),
                     (
                         11,
                         ToServer::SetAugment {

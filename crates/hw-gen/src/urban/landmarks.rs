@@ -320,6 +320,22 @@ impl Landmark {
             .collect()
     }
 
+    /// Where Hero Hall's two Herobots stand: on the same row as the
+    /// greeters, one out at each end, facing out too (town frame).
+    pub fn herobot_spots(&self) -> Vec<(DVec2, DVec2)> {
+        if self.kind != LandmarkKind::HeroHall {
+            return Vec::new();
+        }
+        let z = (HALL_R + HALL_CANOPY.1 + 3.0).min(self.plaza - 1.5);
+        [-9.0, 9.0]
+            .iter()
+            .map(|&x| {
+                let curve = (x / 6.0f64).powi(2) * 1.2;
+                (self.to_plan(DVec2::new(x, z - curve)), self.dir)
+            })
+            .collect()
+    }
+
     /// Where a new hero's portal home is marked: on Hero Hall's plaza, a few
     /// steps out from the greeters, in the town's frame, with the way out
     /// of the hall (the way through the mark faces). None for other
