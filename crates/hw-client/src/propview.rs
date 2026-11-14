@@ -152,6 +152,11 @@ impl PropView {
             .map(|(id, q)| (*id, q))
     }
 
+    /// Every broken prop, by id, and which way it fell.
+    pub fn broken(&self) -> &BTreeMap<u64, u8> {
+        &self.broken
+    }
+
     /// Is prop `id` broken?
     pub fn is_broken(&self, id: u64) -> bool {
         self.broken.contains_key(&id)

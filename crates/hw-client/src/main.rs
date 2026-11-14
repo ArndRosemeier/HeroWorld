@@ -4761,6 +4761,8 @@ fn main() -> EngineResult<()> {
             // thread started here each frame waited up to 31 ms for a core
             // while the town was being built on all of them.
             let critter_hero = session.my_position(&heroes);
+            let no_props = std::collections::BTreeMap::new();
+            let broken_props = extras.props.as_ref().map_or(&no_props, |p| p.broken());
             let (traffic_plan, survey) = {
                 let (traffic, traffic_view) = (&mut traffic, &mut traffic_view);
                 let town_plan = &generated.world;
@@ -4795,6 +4797,7 @@ fn main() -> EngineResult<()> {
                             &alarms,
                             &|id| crowd.delay_of(id),
                             &|world, id| crowd.hand_of(world, id),
+                            broken_props,
                             eye2,
                             critter_hero,
                             game_time,

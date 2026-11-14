@@ -116,7 +116,7 @@ const DRAKELET_SIZE: f64 = 0.85;
 /// rather be up something.
 const GROUND_ROUNDS: f64 = 0.1;
 /// Troops of wibbets per metre of pavement (one side of a street).
-const TROOPS_PER_M: f64 = 1.0 / 45.0;
+const TROOPS_PER_M: f64 = 1.0 / 130.0;
 /// A troop's stretch of pavement reaches this far either way from its home.
 const TROOP_REACH: f64 = 16.0;
 /// How far from the walkers' line the wibbets' lane runs, towards the kerb.
@@ -267,6 +267,26 @@ struct Stop {
     /// The way it looks while resting on top or on the ground, or the way
     /// to the post it clings to.
     face: DVec2,
+    /// The prop it is on (its id in the town), if it is up one.
+    prop: Option<u64>,
+    /// Where its lane passes it, on the pavement.
+    lane: DVec2,
+}
+
+impl Stop {
+    /// The same place with its prop gone: the wibbet is on the pavement,
+    /// where the lane passes, facing the street.
+    fn grounded(&self) -> Stop {
+        Stop {
+            foot: self.lane,
+            at: self.lane,
+            height: 0.0,
+            rest: Rest::Ground,
+            face: (self.lane - self.at).normalize_or(self.face),
+            prop: None,
+            ..*self
+        }
+    }
 }
 
 /// A troop of wibbets and its stretch of pavement.
@@ -463,6 +483,8 @@ impl Citizens {
                     height: 0.0,
                     rest: Rest::Ground,
                     face: DVec2::from_angle(turn).rotate(out),
+                    prop: None,
+                    lane: p,
                 });
             }
             s += rng.range(2.2, 3.4);
@@ -489,6 +511,8 @@ impl Citizens {
                     height: lift + rng.range(low, high),
                     rest: Rest::Cling,
                     face: -to_lane,
+                    prop: Some(self.world.prop_ids[k].0),
+                    lane: from,
                 },
                 Perch::Top {
                     x: px,
@@ -507,6 +531,8 @@ impl Citizens {
                         height: lift + height,
                         rest: Rest::Top,
                         face: way,
+                        prop: Some(self.world.prop_ids[k].0),
+                        lane: from,
                     }
                 }
             };
@@ -576,7 +602,13 @@ impl Citizens {
     }
 
     /// One of a troop's wibbets at `time`.
-    fn wibbet(&self, plan: &Plan, id: u64, time: f64) -> Option<Critter> {
+    fn wibbet(
+        &self,
+        plan: &Plan,
+        id: u64,
+        time: f64,
+        gone: &dyn Fn(u64) -> bool,
+    ) -> Option<Critter> {
         let troop = plan.troops.get(((id >> 8) & 0xFFFF_FFFF) as usize)?;
         let m = (id & 0xFF) as u32;
         if m >= troop.size {
@@ -595,7 +627,11 @@ impl Citizens {
         let k = (t / ROUND).floor() as i64;
         let since = t - k as f64 * ROUND;
         let (ia, ib) = (self.stop_of(troop, m, k - 1), self.stop_of(troop, m, k));
-        let (a, b) = (troop.stops[ia], troop.stops[ib]);
+        let fallen = |s: Stop| match s.prop {
+            Some(p) if gone(p) => s.grounded(),
+            _ => s,
+        };
+        let (a, b) = (fallen(troop.stops[ia]), fallen(troop.stops[ib]));
         let ks = seed.child(k as u64);
         let wait = ks.child("wait").unit() * 2.5;
         let sits = ks.child("sits").unit() < 0.65;
@@ -629,7 +665,7 @@ impl Citizens {
             return resting(&a, if a.s == b.s { before } else { sits && before });
         }
         // Straight across to a place near by: crouch, leap, land.
-        if troop.leaps[ia][ib] {
+        if troop.leaps[ia][ib] && a.rest != Rest::Ground && b.rest != Rest::Ground {
             let (from, to) = (a.at, b.at);
             let way = (to - from).normalize_or(DVec2::Y);
             let air = (from.distance(to) / LEAP_SPEED).max(0.45);
@@ -835,9 +871,16 @@ impl Citizens {
     /// Animal `id` at `time`; `None` if there is none such (or its owner
     /// is indoors).
     pub fn critter(&self, id: u64, time: f64) -> Option<Critter> {
+        self.critter_with(id, time, &|_| false)
+    }
+
+    /// [`Self::critter`] in a town where the props `gone` says are broken
+    /// have fallen: a wibbet that would be up one is on the pavement by
+    /// where it stood instead (the viewer lets it fall).
+    pub fn critter_with(&self, id: u64, time: f64, gone: &dyn Fn(u64) -> bool) -> Option<Critter> {
         let plan = self.critter_plan();
         match Species::of(id)? {
-            Species::Wibbet => self.wibbet(plan, id, time),
+            Species::Wibbet => self.wibbet(plan, id, time, gone),
             Species::Drakelet => self.drakelet(plan, id, time),
             Species::Driftbell => self.driftbell(plan, id, time),
         }
@@ -854,7 +897,7 @@ impl Citizens {
             for &t in plan.by_road.get(&road).into_iter().flatten() {
                 for m in 0..plan.troops[t as usize].size {
                     let id = (Species::Wibbet.tag() << TAG) | ((t as u64) << 8) | m as u64;
-                    out.extend(self.wibbet(plan, id, time).filter(near));
+                    out.extend(self.wibbet(plan, id, time, &|_| false).filter(near));
                 }
             }
             if let Some(b) = plan.blooms.get(&road) {
@@ -1084,7 +1127,7 @@ mod tests {
             ids.len(),
             c.critter_plan().troops.len()
         );
-        assert!(ids.len() > 20, "{} wibbets", ids.len());
+        assert!(ids.len() > 8, "{} wibbets", ids.len());
         let (mut still, mut up, mut going, mut all) = (0, 0, 0, 0);
         for &id in &ids {
             for i in 0..(6.0 * ROUND / 0.5) as usize {
@@ -1111,5 +1154,35 @@ mod tests {
         );
         assert!(f(still) < 0.15, "{:.2} stand on the pavement", f(still));
         assert!(f(going) > 0.1, "{:.2} under way", f(going));
+    }
+
+    #[test]
+    fn a_wibbet_does_not_climb_what_has_fallen() {
+        // With every prop down, no wibbet is up anything, and none is
+        // clear of the ground at any moment.
+        let c = town();
+        let p = c.world.spawn_line().0;
+        let ids: Vec<u64> = c
+            .critters_near(p, 450.0, 300.0, 2000)
+            .into_iter()
+            .filter(|x| x.species == Species::Wibbet)
+            .map(|x| x.id)
+            .collect();
+        let mut was_up = 0;
+        for &id in &ids {
+            for i in 0..400 {
+                let t = 300.0 + i as f64 * 0.5;
+                if let Some(a) = c.critter(id, t) {
+                    was_up += (a.pos.y - c.world.surface(flat(a.pos)) > 0.05) as usize;
+                }
+                let a = c.critter_with(id, t, &|_| true).expect("still there");
+                assert!(
+                    a.pos.y - c.world.surface(flat(a.pos)) < 0.01,
+                    "{id} up at {t}"
+                );
+                assert_eq!(a.pitch, 0.0, "{id} clings at {t}");
+            }
+        }
+        assert!(was_up > 100, "they do climb when nothing has fallen");
     }
 }

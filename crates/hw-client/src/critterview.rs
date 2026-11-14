@@ -137,6 +137,18 @@ struct Visit {
     curious: bool,
 }
 
+/// A wibbet dropping from a post or a bench that has been knocked down.
+#[derive(Clone, Copy)]
+struct Fall {
+    y: f64,
+    v: f64,
+    y0: f64,
+    from: DVec2,
+}
+
+/// How hard gravity pulls a falling wibbet (m/s²).
+const GRAVITY: f64 = 9.8;
+
 /// An animal on screen.
 struct Shown {
     kind: (Species, u8),
@@ -148,6 +160,11 @@ struct Shown {
     pos: DVec3,
     /// Nose up or down a post (degrees).
     pitch: f64,
+    /// Falling off a perch that broke: how high it is, how fast it falls
+    /// (m/s), and where it came off (height, plan).
+    fall: Option<Fall>,
+    /// How high (absolute) it was drawn last frame.
+    y: f64,
     visit: Option<Visit>,
     /// Seconds its round is behind the town's clock (spent on visits).
     delay: f64,
@@ -378,6 +395,7 @@ impl CritterView {
         alarms: &Alarms,
         owner_delay: &dyn Fn(u64) -> f64,
         owner_hand: &dyn Fn(&World, u64) -> Option<Vec3>,
+        broken: &BTreeMap<u64, u8>,
         camera: DVec2,
         hero: Option<DVec3>,
         time: f64,
@@ -404,7 +422,8 @@ impl CritterView {
                 Some(Species::Drakelet) => owner_delay(id & ((1 << 56) - 1)),
                 _ => self.shown.get(&id).map_or(0.0, |s| s.delay),
             };
-            let Some(mut c) = citizens.critter(id, time - delay) else {
+            let Some(mut c) = citizens.critter_with(id, time - delay, &|p| broken.contains_key(&p))
+            else {
                 continue;
             };
             let Some(&crowds) = self.crowds.get(&(c.species, c.coat)) else {
@@ -502,6 +521,34 @@ impl CritterView {
                     }
                 }
             }
+            // A perch that broke under it: it falls to the pavement where the
+            // town now puts it.
+            if c.species == Species::Wibbet {
+                if let Some(s) = self.shown.get_mut(&id) {
+                    if s.fall.is_none() && s.y - c.pos.y > 1.0 + 8.0 * dt && s.visit.is_none() {
+                        s.fall = Some(Fall {
+                            y: s.y,
+                            v: 0.0,
+                            y0: s.y,
+                            from: flat(s.pos),
+                        });
+                    }
+                    if let Some(f) = s.fall.as_mut() {
+                        f.v += GRAVITY * dt;
+                        f.y -= f.v * dt;
+                        if f.y <= c.pos.y {
+                            s.fall = None;
+                        } else {
+                            let done = 1.0 - (f.y - c.pos.y) / (f.y0 - c.pos.y).max(0.01);
+                            let xz = f.from.lerp(flat(c.pos), done.clamp(0.0, 1.0));
+                            c.pos = DVec3::new(xz.x, f.y, xz.y);
+                            c.pitch = 0.0;
+                            c.speed = 0.0;
+                            pose = None;
+                        }
+                    }
+                }
+            }
             // Its place: nose up or down a post, turned smoothly.
             let want = yaw_of(c.facing);
             let (yaw, was_far) = match self.shown.get(&id) {
@@ -543,6 +590,8 @@ impl CritterView {
                         yaw,
                         pos: c.pos,
                         pitch: c.pitch,
+                        fall: None,
+                        y: c.pos.y,
                         delay: old.as_ref().map_or(0.0, |o| o.delay),
                         rest: old.as_ref().map_or(0.0, |o| o.rest),
                         visit: old.and_then(|o| o.visit),
@@ -554,6 +603,7 @@ impl CritterView {
             s.far = far;
             s.pos = c.pos;
             s.pitch = c.pitch;
+            s.y = c.pos.y;
             world.set_crowd_agent(s.crowd, s.agent, place, c.speed as f32)?;
             world.set_crowd_agent_pose(s.crowd, s.agent, pose)?;
             // A drakelet's lead, from its owner's hand to its collar.
