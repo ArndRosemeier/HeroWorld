@@ -12,10 +12,19 @@ if errorlevel 1 (
   exit /b 1
 )
 
+rem The voice codec is built with CMake: install it by itself when it is missing.
+where cmake >nul 2>nul
+if errorlevel 1 if exist "%ProgramFiles%\CMake\bin\cmake.exe" set "PATH=%ProgramFiles%\CMake\bin;%PATH%"
 where cmake >nul 2>nul
 if errorlevel 1 (
-  echo CMake is not installed; it builds the voice codec. Run: winget install Kitware.CMake
-  echo then open a new window and run this again.
+  echo Installing CMake, the tool that builds the voice codec. This happens once.
+  where winget >nul 2>nul
+  if not errorlevel 1 winget install -e --id Kitware.CMake --silent --accept-package-agreements --accept-source-agreements
+  if exist "%ProgramFiles%\CMake\bin\cmake.exe" set "PATH=%ProgramFiles%\CMake\bin;%PATH%"
+)
+where cmake >nul 2>nul
+if errorlevel 1 (
+  echo CMake could not be installed by itself. Get it from https://cmake.org/download and run this again.
   pause
   exit /b 1
 )

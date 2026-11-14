@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.287 (2026-11-14)
+
+- start.bat installs CMake (needed once for the voice codec) by itself when it is missing: no commands to type.
+
 ## 0.286 (2026-11-14)
 
 - start.bat starts again on Windows (its lines ended the wrong way for Windows' command window, which cut a word in half).

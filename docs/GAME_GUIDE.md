@@ -1916,7 +1916,7 @@ on the way. Rides are free.
   meter, and per player a mute box and a volume slider (kept by name in the profile). Who is
   talking is listed at the left edge. A missing microphone or speakers show as a line in the
   panel, never as a crash. Opus is libopus built by `opusic-sys` with cmake (Windows users
-  need CMake on the PATH; `start.bat` checks).
+  need CMake; `start.bat` installs it with winget when it is missing).
 - **Speech bubbles** (`hw-client/src/speech.rs`, 0.179): what people say shows in a comic
   balloon over their head, tail pointing at them, as far as it is heard (35 m, shouts 70 m).
   Lines wrap at about 230 pt and the balloon grows to hold them; it stays up 2.4 s plus
