@@ -201,7 +201,7 @@ impl TownMap {
         town: &TownWorld,
         hero: Option<Vec3>,
         look: Vec3,
-        mates: &[DVec2],
+        mates: &[crate::minimap::Mate],
         radio: &Radio,
         mine: u8,
     ) {
@@ -267,7 +267,7 @@ impl TownMap {
         town: &TownWorld,
         hero: Option<Vec3>,
         look: Vec3,
-        mates: &[DVec2],
+        mates: &[crate::minimap::Mate],
         radio: &Radio,
         mine: u8,
         level: u8,
@@ -373,9 +373,25 @@ impl TownMap {
             ));
         }
         for m in mates {
-            let p = to_screen(*m);
-            painter.circle_filled(p, 5.0, egui::Color32::from_rgb(60, 140, 255));
-            painter.circle_stroke(p, 5.0, egui::Stroke::new(1.2_f32, egui::Color32::WHITE));
+            let p = to_screen(DVec2::new(m.pos.x, m.pos.z));
+            let col = m.colour();
+            painter.circle_filled(p, 6.5, col);
+            painter.circle_stroke(p, 6.5, egui::Stroke::new(1.6_f32, egui::Color32::WHITE));
+            let font = egui::FontId::proportional(14.0);
+            painter.text(
+                p + egui::vec2(10.8, 0.8),
+                egui::Align2::LEFT_CENTER,
+                &m.name,
+                font.clone(),
+                egui::Color32::BLACK,
+            );
+            painter.text(
+                p + egui::vec2(10.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                &m.name,
+                font,
+                col,
+            );
         }
         let mut hero_box = None;
         if let Some(h) = hero {

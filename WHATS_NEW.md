@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.290 (2026-11-14)
+
+- Your teammates, Herobots included, are always on the minimap and the town map with their names (Herobots in teal, people in blue), however far away they are. The patrol visor marks each one too: big named brackets with the distance, or an arrow at the edge of the screen when they are out of sight.
+
 ## 0.289 (2026-11-14)
 
 - Your running footsteps stop while you are in the air: no more stepping noises during a Super Jump, a grapple swing or a fall.

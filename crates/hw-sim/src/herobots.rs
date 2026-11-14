@@ -147,6 +147,18 @@ impl Sim {
         }
     }
 
+    /// Where every player's hero stands.
+    pub fn hero_positions(&mut self) -> Vec<(PlayerId, DVec3)> {
+        let mut out: Vec<(PlayerId, DVec3)> = self
+            .world
+            .query::<(&Hero, &Motion)>()
+            .iter(&self.world)
+            .map(|(h, m)| (h.owner, m.0.pos))
+            .collect();
+        out.sort_by_key(|(p, _)| *p);
+        out
+    }
+
     /// Which of the Herobots (by slot) have a hero in the world now.
     pub fn herobots_out(&mut self) -> Vec<(u8, NetId)> {
         self.world

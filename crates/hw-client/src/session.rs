@@ -39,6 +39,9 @@ pub enum Session {
         sheet: Option<Box<Sheet>>,
         /// Everyone's looks.
         looks: Box<Looks>,
+        /// Where the other heroes are, as the host last said (beyond the
+        /// reach of the world updates too).
+        mates: Vec<(PlayerId, [f32; 3])>,
     },
 }
 
@@ -237,6 +240,7 @@ impl Session {
                             names: Default::default(),
                             sheet: None,
                             looks: Default::default(),
+                            mates: Vec::new(),
                         },
                         seed,
                         people,
@@ -318,6 +322,7 @@ impl Session {
                 names,
                 sheet,
                 looks,
+                mates,
             } => {
                 let was_on = matches!(conn.state, ConnState::Connected { .. });
                 let handovers = conn.handovers;
@@ -351,6 +356,8 @@ impl Session {
                         if let Some(l) = whole {
                             looks.whole.insert(player, l);
                         }
+                    } else if let ToClient::Mates { mates: list } = m {
+                        *mates = list;
                     } else if is_world_news(&m)
                         || matches!(m, ToClient::Chat { .. } | ToClient::TeamChat { .. })
                     {
@@ -457,6 +464,48 @@ impl Session {
                 out
             }
         }
+    }
+
+    /// The other heroes in the session, with their names: every hero the
+    /// world updates show, and (in a joined world) the ones further away
+    /// the host listed. Herobots are marked.
+    pub fn team(
+        &mut self,
+        heroes: &[EntityState],
+        mine: Option<NetId>,
+    ) -> Vec<hw_client::minimap::Mate> {
+        let mut out: Vec<hw_client::minimap::Mate> = Vec::new();
+        let mut seen: Vec<PlayerId> = Vec::new();
+        for e in heroes {
+            if e.kind != hw_net::EntityKind::Hero || Some(e.id) == mine {
+                continue;
+            }
+            let Some(owner) = e.owner else { continue };
+            seen.push(owner);
+            let name = self.player_name(owner).unwrap_or_else(|| "Teammate".into());
+            out.push(hw_client::minimap::Mate {
+                name,
+                pos: glam::DVec3::from_array(e.pos),
+                bot: e.mount.is_some_and(|m| m.1 >= hw_net::HEROBOT_MOUNT),
+            });
+        }
+        let extra: Vec<(PlayerId, [f32; 3])> = match self {
+            Session::Remote { mates, .. } => mates
+                .iter()
+                .filter(|(p, _)| !seen.contains(p))
+                .copied()
+                .collect(),
+            Session::Local { .. } => Vec::new(),
+        };
+        for (p, at) in extra {
+            let name = self.player_name(p).unwrap_or_else(|| "Teammate".into());
+            out.push(hw_client::minimap::Mate {
+                bot: hw_sim::herobots::slot_of_name(&name).is_some(),
+                name,
+                pos: glam::DVec3::new(at[0] as f64, at[1] as f64, at[2] as f64),
+            });
+        }
+        out
     }
 
     /// Fight events since the last call, with the server tick they are

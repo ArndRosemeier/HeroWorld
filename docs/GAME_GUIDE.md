@@ -1863,6 +1863,11 @@ on the way. Rides are free.
   - Its sheet lives only in memory: nothing of it goes into your hero file or the world save.
   - Everyone sees it as a robot (`HEROBOT_MOUNT` on its hero's `mount`; Herobot 1 chrome with
     red trim, Herobot 2 copper with blue). `HW_VIEW=herobots` looks at them from the plaza.
+  - **Teammates on the maps and the visor** (all other heroes, Herobots too): a named dot on
+    the minimap (clamped to its rim when far) and on the town map, and in the patrol visor a
+    big named bracket with the distance (an edge arrow when out of sight). People blue,
+    Herobots teal. The host tells each joined player every other hero's position once a second
+    (`ToClient::Mates`), so they show beyond the 500 m of the world updates; `Session::team`.
   - Tests: `hw-sim/tests/herobots.rs` (wake, ten places, home; daily: fights, earns karma,
     the drone flies it to the hospital).
 - Multiplayer has been tested by bots (`tests/soak.rs`: ten bots for an hour) but not yet

@@ -622,6 +622,7 @@ impl Host {
         }
         self.mind_herobots();
         self.sim.step();
+        self.tell_mates();
         let news = self.sim.take_news();
         if self.players.values().any(|p| !p.remote) {
             self.local_news.extend(news.iter().cloned());
@@ -873,6 +874,28 @@ impl Host {
                 started: Instant::now(),
             },
         );
+    }
+
+    /// About once a second every remote player hears where the others'
+    /// heroes are, so teammates stay on the maps however far away.
+    fn tell_mates(&mut self) {
+        if self.remotes.is_empty() || !self.sim.tick.is_multiple_of(TICK_HZ as u64) {
+            return;
+        }
+        let all = self.sim.hero_positions();
+        for (p, r) in self.remotes.iter_mut() {
+            // Still catching up on a join's news: the next one will do.
+            if r.rel_out.unconfirmed() > 24 {
+                continue;
+            }
+            let mates: Vec<(PlayerId, [f32; 3])> = all
+                .iter()
+                .filter(|(q, _)| q != p)
+                .take(hw_net::protocol::MAX_MATES)
+                .map(|(q, at)| (*q, [at.x as f32, at.y as f32, at.z as f32]))
+                .collect();
+            r.rel_out.push(ToClient::Mates { mates });
+        }
     }
 
     /// Tells one player something (a line in their chat).

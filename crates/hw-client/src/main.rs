@@ -3855,6 +3855,8 @@ fn main() -> EngineResult<()> {
                 keep
             });
             let mine = session.my_hero();
+            // The other heroes of the session, with names (maps, visor).
+            let mates = session.team(&heroes, mine);
             // Where everyone the server sends is, for the fight's lookups.
             let at_of = |id: hw_core::NetId| {
                 heroes
@@ -5114,7 +5116,7 @@ fn main() -> EngineResult<()> {
                     visor.holo(world, body, world.camera().eye());
                     let level = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
                     let eye = world.camera().eye();
-                    visor.draw(frame.ui.ctx(), view_proj, eye, &radio, level, why);
+                    visor.draw(frame.ui.ctx(), view_proj, eye, &radio, &mates, level, why);
                 }
                 let names = |e: &hw_net::EntityState| {
                     e.owner
@@ -5422,11 +5424,6 @@ fn main() -> EngineResult<()> {
                 let at2 = DVec2::new(centre.x as f64, centre.z as f64);
                 let eye2 = DVec2::new(eye.x as f64, eye.z as f64);
                 let height = (eye.y as f64 - generated.world.ground(eye2)).max(0.0) as f32;
-                let mates: Vec<DVec2> = heroes
-                    .iter()
-                    .filter(|e| e.kind == hw_net::EntityKind::Hero && Some(e.id) != mine)
-                    .map(|e| DVec2::new(e.pos[0], e.pos[2]))
-                    .collect();
                 minimap.update(
                     frame.ui.ctx(),
                     &generated.world,

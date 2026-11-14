@@ -21,6 +21,27 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
+/// Another hero of the session, as the maps and the patrol visor show them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mate {
+    pub name: String,
+    /// Where they stand (town frame).
+    pub pos: glam::DVec3,
+    /// A Herobot.
+    pub bot: bool,
+}
+
+impl Mate {
+    /// Their colour on the maps: bright blue for people, teal for Herobots.
+    pub fn colour(&self) -> egui::Color32 {
+        if self.bot {
+            egui::Color32::from_rgb(60, 225, 200)
+        } else {
+            egui::Color32::from_rgb(90, 165, 255)
+        }
+    }
+}
+
 /// The map's radius on screen (points).
 const RADIUS: f32 = 92.0;
 /// Its key in the saved screen layout.
@@ -177,7 +198,7 @@ impl Minimap {
         at: DVec2,
         look: Vec3,
         height: f64,
-        mates: &[DVec2],
+        mates: &[Mate],
         radio: &Radio,
         mine: u8,
         toggle: bool,
@@ -200,7 +221,7 @@ impl Minimap {
         town: &TownWorld,
         at: DVec2,
         look: Vec3,
-        mates: &[DVec2],
+        mates: &[Mate],
         radio: &Radio,
         mine: u8,
     ) {
@@ -356,9 +377,27 @@ impl Minimap {
             painter.circle_stroke(p, r, egui::Stroke::new(1.2_f32, egui::Color32::BLACK));
         }
         for m in mates {
-            let (p, _) = to_screen(*m);
-            painter.circle_filled(p, 4.0, egui::Color32::from_rgb(60, 140, 255));
-            painter.circle_stroke(p, 4.0, egui::Stroke::new(1.2_f32, egui::Color32::WHITE));
+            let (p, _) = to_screen(DVec2::new(m.pos.x, m.pos.z));
+            let col = m.colour();
+            painter.circle_filled(p, 5.0, col);
+            painter.circle_stroke(p, 5.0, egui::Stroke::new(1.5_f32, egui::Color32::WHITE));
+            // Their name beside the dot, toward the middle of the map so it
+            // stays inside when the dot is clamped to the rim.
+            let side = if p.x > centre.x {
+                egui::Align2::RIGHT_CENTER
+            } else {
+                egui::Align2::LEFT_CENTER
+            };
+            let dx = if p.x > centre.x { -8.0 } else { 8.0 };
+            let font = crate::uikit::ui_font(ctx, 11.0);
+            painter.text(
+                p + egui::vec2(dx + 0.8, 0.8),
+                side,
+                &m.name,
+                font.clone(),
+                egui::Color32::BLACK,
+            );
+            painter.text(p + egui::vec2(dx, 0.0), side, &m.name, font, col);
         }
         // You, in the middle, looking up the map.
         let tip = centre + egui::vec2(0.0, -9.0);

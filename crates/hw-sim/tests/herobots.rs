@@ -297,3 +297,50 @@ fn a_herobot_fights_earns_karma_and_the_drone_flies_it_to_the_hospital() {
     assert_eq!(host.sim.fighter(hero).unwrap().status, Status::Standing);
     let _ = herobot::CALL_DRONE_AFTER;
 }
+
+#[test]
+fn every_player_hears_where_the_others_are_however_far() {
+    let (mut host, me) = world();
+    let addr = host.listen("127.0.0.1:0").unwrap();
+    let mut far = Connection::open(addr, "far away").unwrap();
+    for _ in 0..60 {
+        far.update(InputState::default());
+        std::thread::sleep(Duration::from_millis(3));
+        host.tick();
+    }
+    // Our hero stands 3 km from the newcomer, far beyond the world updates.
+    let hero = host.sim.hero_of(me).unwrap();
+    let there = host.sim.position(hero).unwrap();
+    let away = there + DVec3::new(3000.0, 0.0, 0.0);
+    let far_id = *host
+        .players()
+        .iter()
+        .find(|(_, p)| p.name == "far away")
+        .map(|(id, _)| id)
+        .expect("joined");
+    let far_hero = host.sim.hero_of(far_id).unwrap();
+    host.sim.set_body(
+        far_hero,
+        Body {
+            pos: away,
+            vel: DVec3::ZERO,
+            grounded: true,
+        },
+    );
+    let mut heard = None;
+    // (A joining player's backlog of world news goes first: about 35 s.)
+    for _ in 0..TICK_HZ * 60 {
+        far.update(InputState::default());
+        std::thread::sleep(Duration::from_millis(3));
+        host.tick();
+        for m in far.take_news() {
+            if let hw_net::ToClient::Mates { mates } = m {
+                heard = Some(mates);
+            }
+        }
+    }
+    let mates = heard.expect("a Mates message");
+    assert_eq!(mates.len(), 1, "everyone but ourselves");
+    assert_eq!(mates[0].0, me);
+    assert!((mates[0].1[0] as f64 - there.x).abs() < 1.0);
+}

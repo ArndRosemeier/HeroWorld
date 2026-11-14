@@ -186,6 +186,7 @@ impl Visor {
         view_proj: Mat4,
         eye: Vec3,
         radio: &Radio,
+        mates: &[crate::minimap::Mate],
         mine: u8,
         why: Option<Why>,
     ) {
@@ -304,6 +305,21 @@ impl Visor {
             amber(fade(200.0)),
             fade(140.0),
         );
+        if !mates.is_empty() {
+            shadowed(
+                &p,
+                egui::pos2(rim.right() - 70.0, rim.top() + 92.0),
+                egui::Align2::RIGHT_TOP,
+                &format!(
+                    "TEAM - {} HERO{}",
+                    mates.len(),
+                    if mates.len() == 1 { "" } else { "ES" }
+                ),
+                14.0,
+                egui::Color32::from_rgba_unmultiplied(120, 200, 255, fade(240.0)),
+                fade(160.0),
+            );
+        }
         // The calls: brackets on the spot, or an arrow at the rim.
         // Distances as the wrist radio gives them: from the eye.
         let from = eye;
@@ -374,6 +390,59 @@ impl Visor {
                         12.0,
                         label_col,
                         fade(150.0),
+                    );
+                }
+            }
+        }
+        // The team: every other hero, named, in their colour, big enough to
+        // read from across the street (and an arrow at the rim when out of
+        // sight), Herobots in teal.
+        for m in mates {
+            let at3 = Vec3::new(m.pos.x as f32, m.pos.y as f32, m.pos.z as f32);
+            let flat = Vec2::new(at3.x - from.x, at3.z - from.z).length();
+            let c = m.colour();
+            let tint = egui::Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), fade(245.0));
+            let label = format!("{}  {:.0} m", m.name.to_uppercase(), flat);
+            match on_screen(view_proj, at3 + Vec3::Y * 2.3, screen) {
+                Some(at) => {
+                    let at = at + egui::vec2(jitter, 0.0);
+                    let s = (1800.0 / flat.max(1.0)).clamp(16.0, 60.0);
+                    brackets(&p, at, s, egui::Stroke::new(2.5_f32, tint));
+                    shadowed(
+                        &p,
+                        at + egui::vec2(0.0, -s - 6.0),
+                        egui::Align2::CENTER_BOTTOM,
+                        &label,
+                        19.0,
+                        tint,
+                        fade(200.0),
+                    );
+                }
+                None => {
+                    let dir = off_screen_dir(view_proj, at3);
+                    let r = egui::vec2(screen.width() * 0.40, screen.height() * 0.34);
+                    let tip =
+                        centre + egui::vec2(dir.x * r.x, dir.y * r.y) + egui::vec2(jitter, 0.0);
+                    let fwd = egui::vec2(dir.x, dir.y);
+                    let side = egui::vec2(-fwd.y, fwd.x);
+                    let size = 15.0;
+                    p.add(egui::Shape::convex_polygon(
+                        vec![
+                            tip + fwd * size,
+                            tip - fwd * size * 0.6 + side * size * 0.8,
+                            tip - fwd * size * 0.6 - side * size * 0.8,
+                        ],
+                        tint,
+                        egui::Stroke::NONE,
+                    ));
+                    shadowed(
+                        &p,
+                        tip - fwd * (size + 16.0),
+                        egui::Align2::CENTER_CENTER,
+                        &label,
+                        16.0,
+                        tint,
+                        fade(200.0),
                     );
                 }
             }

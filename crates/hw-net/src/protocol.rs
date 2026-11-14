@@ -94,6 +94,9 @@ impl PowerId {
 /// its `mount`, so every client draws it as a robot.
 pub const HEROBOT_MOUNT: u8 = 200;
 
+/// Most heroes one [`ToClient::Mates`] lists.
+pub const MAX_MATES: usize = 16;
+
 /// Power numbers are below this.
 pub const POWER_IDS: usize = 128;
 
@@ -1643,6 +1646,12 @@ pub enum ToClient {
         from: PlayerId,
         text: String,
     },
+    /// Where every other player's hero is (sent about once a second to each
+    /// player, so teammates stay on the maps and the visor however far
+    /// away they are, beyond what the world updates reach).
+    Mates {
+        mates: Vec<(PlayerId, [f32; 3])>,
+    },
     /// The host is closing the world; the client should leave.
     SessionEnd {
         reason: String,
@@ -1939,6 +1948,7 @@ impl ToClient {
         1 + match self {
             ToClient::Joined { name, .. } | ToClient::Left { name, .. } => 2 + s(name),
             ToClient::Chat { text, .. } | ToClient::TeamChat { text, .. } => 2 + s(text),
+            ToClient::Mates { mates } => 1 + 14 * mates.len().min(MAX_MATES),
             ToClient::SessionEnd { reason } => s(reason),
             ToClient::Damage { broken, .. } => 8 + 1 + 1 + 4 * broken.len().min(255),
             ToClient::Repaired { .. } => 8,
@@ -2005,6 +2015,12 @@ impl ToClient {
             }
             ToClient::TeamChat { from, text } => {
                 w.u8(26).u16(from.0).str(text);
+            }
+            ToClient::Mates { mates } => {
+                w.u8(27).u8(mates.len().min(MAX_MATES) as u8);
+                for (p, at) in mates.iter().take(MAX_MATES) {
+                    w.u16(p.0).f32(at[0]).f32(at[1]).f32(at[2]);
+                }
             }
             ToClient::SessionEnd { reason } => {
                 w.u8(4).str(reason);
@@ -2281,6 +2297,17 @@ impl ToClient {
                 from: PlayerId(r.u16()?),
                 text: r.str()?,
             },
+            27 => {
+                let n = r.u8()? as usize;
+                if n > MAX_MATES {
+                    return Err(WireError);
+                }
+                let mut mates = Vec::with_capacity(n);
+                for _ in 0..n {
+                    mates.push((PlayerId(r.u16()?), [r.f32()?, r.f32()?, r.f32()?]));
+                }
+                ToClient::Mates { mates }
+            }
             5 => {
                 let building = r.u64()?;
                 let live = r.bool()?;
@@ -3565,6 +3592,22 @@ mod tests {
             removed: Vec::new(),
         };
         assert_eq!(one.encode().len(), UPDATE_HEADER_BYTES + 4 + m.wire_size());
+        let m = ToClient::Mates {
+            mates: vec![
+                (PlayerId(2), [1.0, 2.0, 3.0]),
+                (PlayerId(5), [-4.5, 0.0, 9.0]),
+            ],
+        };
+        let one = ServerMsg::Update {
+            tick: 0,
+            ack: 0,
+            rel_ack: 0,
+            reliable: vec![(7, m.clone())],
+            entities: Vec::new(),
+            removed: Vec::new(),
+        };
+        assert_eq!(one.encode().len(), UPDATE_HEADER_BYTES + 4 + m.wire_size());
+        assert_eq!(ServerMsg::decode(&one.encode()).unwrap(), one);
         let m = ToClient::Sheet(sheet());
         let one = ServerMsg::Update {
             tick: 0,
