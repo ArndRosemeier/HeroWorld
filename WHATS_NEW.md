@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.331 (2026-11-15)
+
+- Doors that stood far above the pavement can be reached now. Every street door that is higher than a kerb gets a stone landing and a flight of stairs along the front of the building, down to the ground, with a railing. A very tall drop turns back on a platform and comes down in a second flight beside the first. The stairs are solid and you walk them like any others.
+
 ## 0.330 (2026-11-15)
 
 - You can zoom the minimap. While you arrange the screen (menu button, "Arrange the screen"), a magnifier slider at the top sets how much ground the minimap shows, from half to four times as close. It is saved with your layout, and the red arrow puts it back.
