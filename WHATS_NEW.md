@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.329 (2026-11-15)
+
+- Quitting the game now ends it for good at once, so the start.bat window no longer sits there busy afterwards.
+
 ## 0.328 (2026-11-15)
 
 - People ride the real lifts: upstairs, someone steps out of a car when its doors open, and later steps back in when it returns and is carried off. You can see them standing in the car as it rises. Curved stairs (spirals, horseshoes) are climbed too, not only straight flights.
@@ -20,10 +24,6 @@ Newest first. Every build pushed to `main` adds 0.001 to the version (in
 ## 0.325 (2026-11-14)
 
 - Missions you have taken now stand out on the patrol visor: a big teal marker with a case-folder icon, pulsing rings, the case number, the distance (and "up" or "down" when it is on another floor) and what to do next. When it is out of sight a large teal arrow with the folder sits at the edge of the visor, so you always know which way to go. Taking a new mission switches the visor on.
-
-## 0.325 (2026-11-15)
-
-- Quitting the game now ends it for good at once, so the start.bat window no longer sits there busy afterwards.
 
 ## 0.324 (2026-11-15)
 
