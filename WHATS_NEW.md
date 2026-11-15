@@ -21,6 +21,10 @@ Newest first. Every build pushed to `main` adds 0.001 to the version (in
 
 - Missions you have taken now stand out on the patrol visor: a big teal marker with a case-folder icon, pulsing rings, the case number, the distance (and "up" or "down" when it is on another floor) and what to do next. When it is out of sight a large teal arrow with the folder sits at the edge of the visor, so you always know which way to go. Taking a new mission switches the visor on.
 
+## 0.325 (2026-11-15)
+
+- Quitting the game now ends it for good at once, so the start.bat window no longer sits there busy afterwards.
+
 ## 0.324 (2026-11-15)
 
 - Twenty hero slots, like an online game. "Heroes" on the title shows them as cards: pick one to play, click a plus to make a new hero, use the bin (it asks first) to delete one. Your hero is saved all the time, by itself, so there is no save button and Ctrl-C or a crash cannot cost you progress. Your old hero is in slot 1.

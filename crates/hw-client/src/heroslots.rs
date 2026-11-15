@@ -345,11 +345,34 @@ pub fn exit_watchdog() {
     let _ = std::thread::Builder::new()
         .name("exit watchdog".into())
         .spawn(|| {
-            std::thread::sleep(std::time::Duration::from_secs(6));
+            std::thread::sleep(std::time::Duration::from_secs(5));
             crate::profile::Profile::flush();
             eprintln!("Shutting down took too long: ending the process");
-            std::process::exit(0);
+            hard_exit(0);
         });
+}
+
+/// Ends the process now, for good, without running destructors, atexit
+/// handlers or DLL detach code: whatever the sound, graphics or network
+/// libraries would still wait for cannot keep the process (and the
+/// terminal waiting for it) alive. Call it only once the hero is flushed.
+pub fn hard_exit(code: i32) -> ! {
+    #[cfg(windows)]
+    {
+        // ExitProcess (what `std::process::exit` calls) runs DLL detach code
+        // under the loader lock, where a thread stuck in a driver can hold
+        // it forever; TerminateProcess does not wait for anyone.
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetCurrentProcess() -> *mut std::ffi::c_void;
+            fn TerminateProcess(process: *mut std::ffi::c_void, code: u32) -> i32;
+        }
+        // SAFETY: both are plain kernel32 calls on our own process handle.
+        unsafe {
+            TerminateProcess(GetCurrentProcess(), code as u32);
+        }
+    }
+    std::process::exit(code)
 }
 
 #[cfg(test)]

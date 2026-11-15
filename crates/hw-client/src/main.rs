@@ -6265,6 +6265,11 @@ fn main() -> EngineResult<()> {
     if run.is_ok() && RESTART_AT_TITLE.load(std::sync::atomic::Ordering::SeqCst) {
         restart_at_title();
     }
+    if run.is_ok() {
+        // Everything is on disk: end now. Returning from `main` would wait
+        // for libraries' exit code, which can keep the terminal busy.
+        hw_client::heroslots::hard_exit(0);
+    }
     run
 }
 

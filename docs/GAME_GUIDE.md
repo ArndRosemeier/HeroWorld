@@ -110,7 +110,7 @@ cannot hitch), each write is atomic (temp file, sync, rename, old file kept as `
 broken file falls back to its `.bak` and is never overwritten, and lifetime karma on disk
 never goes down. The settings (world, volumes, picture, mouse, voice, the slot played)
 are in `profile.json`. Quitting saves, and if shutting down hangs, a watchdog flushes and
-ends the process after 6 s. A joiner brings their own picked hero into a friend's world.
+ends the process after 5 s. A joiner brings their own picked hero into a friend's world.
 
 The game client keeps **no world save** between runs in single player: damage, broken
 props and the clock start fresh each time (the town repairs itself anyway). The dedicated
