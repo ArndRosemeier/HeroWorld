@@ -80,7 +80,50 @@ pub const VILLAIN_CLIPS: &[&str] = &[
 /// Citizens walk and stand; a few walk the formal walk. "hands up" (a
 /// mugging's victim) is made here, and "clap" for watching street acts;
 /// "interact" drops a coin in a busker's hat or buys a paper.
-pub const CITIZEN_CLIPS: &[&str] = &["idle", "walk", "walk formal", "interact"];
+pub const CITIZEN_CLIPS: &[&str] = &[
+    "idle",
+    "walk",
+    "walk formal",
+    "interact",
+    // What people do where they are (see [`pose_of`]).
+    "talk",
+    "phone",
+    "eat or drink",
+    "dance",
+    "arms folded",
+];
+
+/// The clip someone plays while they do `act`: the poses a citizen's crowd
+/// holds. Standing ones are packed clips or made over "idle", the sitting
+/// ones are made here (see [`poses::add_indoor_clips`]).
+pub fn pose_of(act: hw_core::Act) -> &'static str {
+    use hw_core::Act;
+    match act {
+        Act::Type => "type",
+        Act::Write => "write",
+        Act::SitRead => "sit read",
+        Act::SitSip => "sit sip",
+        Act::SitRelax => "sit relax",
+        Act::SitTalk => "sit talk",
+        Act::Talk => "talk",
+        Act::Phone => "phone",
+        Act::Sip => "eat or drink",
+        Act::Read => "read",
+        Act::Browse => "browse",
+        Act::Serve => "serve",
+        Act::Cook => "cook",
+        Act::Wipe => "wipe",
+        Act::Tinker => "tinker",
+        Act::Admire => "admire",
+        Act::Dance => "dance",
+        Act::Lean => "arms folded",
+    }
+}
+
+/// Every pose of [`pose_of`], by act.
+pub fn indoor_poses() -> impl Iterator<Item = &'static str> {
+    hw_core::Act::ALL.into_iter().map(pose_of)
+}
 /// The street life's performers and club guests: their acts' clips are
 /// made here (see [`poses::add_street_clips`]) over these.
 pub const STREET_CLIPS: &[&str] = &[
@@ -2012,9 +2055,14 @@ pub fn build_sharing(
         // Drivers and passengers (see `riderview`).
         poses::add_seated_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
-    if matches!(who, Who::Citizen(_) | Who::Street(..) | Who::Guest(_)) {
+    if matches!(who, Who::Street(..) | Who::Guest(_)) {
         // The street acts and their audiences (see `streetview`).
         poses::add_street_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+    }
+    if matches!(who, Who::Citizen(_)) {
+        // Townsfolk only watch the acts, and do what people do indoors.
+        poses::add_audience_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+        poses::add_indoor_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
     if matches!(who, Who::Citizen(_) | Who::Medic) {
         // Trapped, hurt and carried at rescues (see `radioview`).

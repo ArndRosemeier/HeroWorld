@@ -528,7 +528,8 @@ fn make_cell(job: CellJob) -> CellMeshes {
             if let Look::Cut { level } = cb.look {
                 let mut list = std::mem::take(&mut one.spots);
                 for s in &mut list {
-                    s.at.y += lift.y as f64;
+                    s.place.at.y += lift.y as f64;
+                    s.place.via.y += lift.y as f64;
                 }
                 if !list.is_empty() {
                     spots.push(IndoorSpots {
@@ -542,15 +543,29 @@ fn make_cell(job: CellJob) -> CellMeshes {
             // every one of its floors while it is drawn in full.
             if blocked {
                 for (level, places) in plan.standing().into_iter().enumerate() {
+                    let to_city = |p: DVec3| wb.site.to_city(DVec3::new(p.x, wb.base + p.y, p.z));
+                    let along = |f: DVec2| wb.site.along * f.x + wb.site.inward * f.y;
                     let list: Vec<crate::citymesh::Spot> = places
                         .iter()
                         .take(INDOOR_PLACES)
                         .map(|(room, st)| crate::citymesh::Spot {
-                            room: *room,
-                            at: wb
-                                .site
-                                .to_city(DVec3::new(st.at.x, wb.base + st.at.y, st.at.z)),
-                            facing: wb.site.along * st.face.x + wb.site.inward * st.face.y,
+                            place: hw_sim::citizens::Place {
+                                room: *room,
+                                at: to_city(st.at),
+                                facing: along(st.face),
+                                act: st.act,
+                                via: to_city(st.via),
+                                door: st.door.map(to_city),
+                                trips: st.trips.map(|t| {
+                                    t.map(|t| hw_sim::citizens::PlaceTrip {
+                                        at: to_city(t.at),
+                                        facing: along(t.face),
+                                        act: t.act,
+                                    })
+                                }),
+                                pair: st.pair,
+                                hip: st.hip,
+                            },
                         })
                         .collect();
                     if !list.is_empty() {

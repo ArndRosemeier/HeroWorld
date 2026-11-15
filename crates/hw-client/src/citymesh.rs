@@ -198,9 +198,8 @@ pub struct MeshBuilder {
 /// A place to stand indoors (city coordinates, feet on the floor).
 #[derive(Clone, Copy, Debug)]
 pub struct Spot {
-    pub room: hw_gen::building::RoomKind,
-    pub at: DVec3,
-    pub facing: DVec2,
+    /// Where the place is and what is done there (see `hw_sim::citizens`).
+    pub place: hw_sim::citizens::Place,
 }
 
 /// The average colour of a texture layer (linear), so vertex colours can

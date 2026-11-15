@@ -125,6 +125,8 @@ pub enum RoomKind {
     Hall,
     Gallery,
     Lab,
+    /// A night club's floor (busy in the evening).
+    Club,
 }
 
 impl RoomKind {
@@ -558,17 +560,32 @@ impl BuildingPlan {
     /// use of its room. Nobody in a gang's hideout: those inside are the
     /// gang, and the game puts them there.
     pub fn standing(&self) -> Vec<Vec<(RoomKind, crate::layout::people::Stand)>> {
-        use crate::layout::SpaceKind;
+        use crate::layout::{furnish, SpaceKind};
         let Some(l) = self.layout.as_ref().filter(|_| !self.site.is_hideout()) else {
             return Vec::new();
         };
         let levels = l.levels();
         let mut out = vec![Vec::new(); levels.len()];
-        for st in crate::layout::people::standing(l) {
-            let room = match l.spaces[st.space].kind {
-                SpaceKind::Hall | SpaceKind::Boardroom => RoomKind::Office,
-                SpaceKind::Shop => RoomKind::Shop,
-                SpaceKind::Gallery | SpaceKind::Arcade | SpaceKind::Concourse => RoomKind::Gallery,
+        let items = self.site.furniture_of(l);
+        let club = self
+            .site
+            .is_club()
+            .then(|| furnish::club_space(l))
+            .flatten();
+        for st in crate::layout::people::standing(l, &items, club) {
+            let room = match (l.spaces[st.space].kind, self.site.usage) {
+                _ if club == Some(st.space) => RoomKind::Club,
+                (SpaceKind::Hall | SpaceKind::Boardroom, BuildingUse::Lab) => RoomKind::Lab,
+                (SpaceKind::Hall | SpaceKind::Boardroom, BuildingUse::Pavilion) => {
+                    RoomKind::Gallery
+                }
+                (SpaceKind::Hall | SpaceKind::Boardroom, _) => RoomKind::Office,
+                (SpaceKind::Shop, _) => RoomKind::Shop,
+                (SpaceKind::Gallery | SpaceKind::Arcade | SpaceKind::Concourse, _) => {
+                    RoomKind::Gallery
+                }
+                (SpaceKind::Living, _) => RoomKind::Living,
+                (SpaceKind::Kitchen, _) => RoomKind::Kitchen,
                 _ => RoomKind::Lobby,
             };
             let level = levels
@@ -576,6 +593,16 @@ impl BuildingPlan {
                 .rposition(|y| *y <= st.at.y + 1e-6)
                 .unwrap_or(0);
             out[level].push((room, st));
+        }
+        // In a stable order that does not favour the first rooms, so a
+        // cap on the places per floor thins every room alike.
+        for list in &mut out {
+            list.sort_by_key(|(_, st)| {
+                hw_core::Seed(st.at.x.to_bits())
+                    .child(st.at.z.to_bits())
+                    .child(st.act as u64)
+                    .0
+            });
         }
         out
     }

@@ -65,6 +65,8 @@
 //! `HW_LEVEL=n` plays a level-n hero with karma to spend, `HW_POWERS=1`
 //! with the whole tree bought (the first of each fork; `HW_ORIGIN=n` picks
 //! the origin, `HW_ELEMENT=n` the element, 1-6);
+//! `HW_VIEW=indoor HW_PLACE=<Type|Browse|Cook|...>` looks at someone doing that in the nearest
+//! building of halls that has a place for it;
 //! `HW_VIEW=powers` opens the powers window, `HW_VIEW=origin` shows a new
 //! hero's origin card.
 //! `HW_VIEW=fight` starts in front of the minions, `HW_AUTOFIGHT=1` (or a list of power codes)
@@ -1133,6 +1135,81 @@ fn main() -> EngineResult<()> {
                     FlyCamera::new((eye.x as f32, eye.y as f32, eye.z as f32), yaw, pitch)
                 }
                 None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
+        "indoor" => {
+            // `HW_VIEW=indoor HW_PLACE=<Type|Browse|Cook|...>`: a close look at
+            // someone doing that, in the nearest building of halls with a place
+            // for it (`HW_PLACE_N` takes the n-th nearest; `HW_PLACE_SIDE=1`
+            // from the side).
+            let want = std::env::var("HW_PLACE").unwrap_or_else(|_| "Type".into());
+            let nth: usize = std::env::var("HW_PLACE_N")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+            let m = DVec2::splat(4000.0);
+            let mut near: Vec<hw_gen::urban::world::WorldBuilding> = generated
+                .world
+                .quarters_in(spawn - m, spawn + m)
+                .iter()
+                .flat_map(|q| q.buildings.clone())
+                .filter(|b| b.site.halls.is_some() && !b.site.is_hideout())
+                .collect();
+            near.sort_by(|a, b| {
+                a.site
+                    .origin
+                    .distance(spawn)
+                    .total_cmp(&b.site.origin.distance(spawn))
+            });
+            let mut found = Vec::new();
+            for b in near.iter().take(60) {
+                let Some(l) = b.site.layout() else { continue };
+                let items = b.site.furniture_of(&l);
+                let club = b
+                    .site
+                    .is_club()
+                    .then(|| hw_gen::layout::furnish::club_space(&l))
+                    .flatten();
+                for st in hw_gen::layout::people::standing(&l, &items, club) {
+                    if format!("{:?}", st.act) == want {
+                        found.push((b.clone(), st));
+                    }
+                }
+                if found.len() > nth {
+                    break;
+                }
+            }
+            match found.get(nth) {
+                Some((b, st)) => {
+                    let p = |v: DVec3| b.site.to_city(DVec3::new(v.x, b.base + v.y, v.z));
+                    let face = DVec3::new(st.face.x, 0.0, st.face.y);
+                    let side = DVec3::new(-st.face.y, 0.0, st.face.x);
+                    let side_on = std::env::var_os("HW_PLACE_SIDE").is_some();
+                    let (eye, at) = if side_on {
+                        (
+                            st.at + side * 2.4 + DVec3::Y * 1.5,
+                            st.at + DVec3::Y * (st.hip.max(0.9)),
+                        )
+                    } else {
+                        (
+                            st.at - face * 2.6 + side * 0.6 + DVec3::Y * 1.9,
+                            st.at + face * 0.8 + DVec3::Y * (st.hip.max(0.9)),
+                        )
+                    };
+                    eprintln!(
+                        "indoor view: {:?} act {:?} of {:?} at {:.1}, {:?}",
+                        b.site.usage, st.act, b.site.id, st.at, st
+                    );
+                    let (eye, at) = (p(eye), p(at));
+                    let d = at - eye;
+                    let yaw = d.x.atan2(d.z).to_degrees() as f32;
+                    let pitch = (d.y / d.x.hypot(d.z)).atan().to_degrees() as f32;
+                    FlyCamera::new((eye.x as f32, eye.y as f32, eye.z as f32), yaw, pitch)
+                }
+                None => {
+                    eprintln!("indoor view: no place for {want}");
+                    FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0)
+                }
             }
         }
         "hospital" | "ward" | "pods" | "hospitaldoor" => {
@@ -4964,17 +5041,17 @@ fn main() -> EngineResult<()> {
             let dt = frame.dt as f64;
             // People at home, at work and shopping on the floors drawn
             // open near the camera: a hash per place, the nearest shown.
-            let mut indoor: Vec<hw_sim::citizens::Citizen> = town
+            let mut indoor: Vec<hw_sim::citizens::Indoor> = town
                 .indoor_spots()
                 .flat_map(|f| {
                     f.spots
                         .iter()
                         .enumerate()
-                        .filter(|(_, s)| DVec2::new(s.at.x, s.at.z).distance(eye2) < INDOOR_SHOWN_M)
+                        .filter(|(_, s)| {
+                            DVec2::new(s.place.at.x, s.place.at.z).distance(eye2) < INDOOR_SHOWN_M
+                        })
                         .filter_map(|(n, s)| {
-                            citizens.indoors(
-                                f.building, f.level, n as u32, s.room, s.at, s.facing, game_time,
-                            )
+                            citizens.indoors(f.building, f.level, n as u32, &s.place, game_time)
                         })
                 })
                 .collect();
@@ -4982,15 +5059,15 @@ fn main() -> EngineResult<()> {
             // floor, and those on the camera's floor come first.)
             let eye3 = eye.as_dvec3();
             indoor.sort_by(|a, b| {
-                let d = |c: &hw_sim::citizens::Citizen| c.pos.distance_squared(eye3);
-                d(a).total_cmp(&d(b)).then(a.id.cmp(&b.id))
+                let d = |c: &hw_sim::citizens::Indoor| c.citizen.pos.distance_squared(eye3);
+                d(a).total_cmp(&d(b)).then(a.citizen.id.cmp(&b.citizen.id))
             });
             indoor.truncate(INDOOR_SHOWN_MAX);
             // The people who live and work along the Aether Tube, while the
             // camera is down there (tiles the deep view has planned).
             let world_plan = &generated.world;
             if (eye.y as f64) < world_plan.ground(eye2) - 3.0 {
-                let mut folk: Vec<hw_sim::citizens::Citizen> = world_plan
+                let mut folk: Vec<hw_sim::citizens::Indoor> = world_plan
                     .deep_planned_near(eye2, TUBE_FOLK_SHOWN_M)
                     .iter()
                     .flat_map(|t| {
@@ -5019,10 +5096,10 @@ fn main() -> EngineResult<()> {
                     }
                 }
                 folk.sort_by(|a, b| {
-                    let d = |c: &hw_sim::citizens::Citizen| {
-                        DVec2::new(c.pos.x, c.pos.z).distance_squared(eye2)
+                    let d = |c: &hw_sim::citizens::Indoor| {
+                        DVec2::new(c.citizen.pos.x, c.citizen.pos.z).distance_squared(eye2)
                     };
-                    d(a).total_cmp(&d(b)).then(a.id.cmp(&b.id))
+                    d(a).total_cmp(&d(b)).then(a.citizen.id.cmp(&b.citizen.id))
                 });
                 folk.truncate(TUBE_FOLK_SHOWN_MAX);
                 indoor.extend(folk);

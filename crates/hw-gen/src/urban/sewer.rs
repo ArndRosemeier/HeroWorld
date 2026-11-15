@@ -328,12 +328,14 @@ pub(crate) fn plan_rooms(
                         facing: -toward,
                         to: None,
                         mole: false,
+                        act: hw_core::Act::Tinker,
                     },
                     Folk {
                         at: at(2.6, 2.0),
                         facing: toward,
                         to: Some(passage.world(DVec2::new(-2.4, PASS_LEN + 4.0))),
                         mole: false,
+                        act: hw_core::Act::Tinker,
                     },
                 ],
                 RoomKind::Workers => vec![
@@ -342,12 +344,14 @@ pub(crate) fn plan_rooms(
                         facing: face(0.4),
                         to: None,
                         mole: false,
+                        act: hw_core::Act::Tinker,
                     },
                     Folk {
                         at: at(-1.0, 4.6),
                         facing: face(-0.6),
                         to: None,
                         mole: false,
+                        act: hw_core::Act::Tinker,
                     },
                 ],
                 RoomKind::Den => vec![
@@ -356,12 +360,14 @@ pub(crate) fn plan_rooms(
                         facing: face(2.8),
                         to: None,
                         mole: rng.chance(0.3),
+                        act: hw_core::Act::Sip,
                     },
                     Folk {
                         at: at(0.0, 1.6),
                         facing: -toward,
                         to: Some(passage.world(DVec2::new(1.5, PASS_LEN + 5.5))),
                         mole: false,
+                        act: hw_core::Act::Read,
                     },
                 ],
             };

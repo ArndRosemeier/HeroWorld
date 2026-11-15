@@ -1,6 +1,7 @@
 //! Shared basics for every HeroWorld crate: planet coordinates, seed hashing
 //! and IDs. Pure Rust, no Engine, so the server and tools can use it anywhere.
 
+pub mod act;
 pub mod cancel;
 pub mod coords;
 pub mod det;
@@ -8,6 +9,7 @@ pub mod ids;
 pub mod noise;
 pub mod seed;
 
+pub use act::Act;
 pub use cancel::{Cancel, Cancelled};
 pub use coords::{LatLon, LocalFrame, Planet, PlanetPos};
 pub use ids::{NetId, NetIdAllocator, StableId};

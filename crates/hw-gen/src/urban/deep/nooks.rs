@@ -88,6 +88,8 @@ pub struct Folk {
     pub to: Option<DVec2>,
     /// A mole person (else a townsperson: a tube worker, a shopper).
     pub mole: bool,
+    /// What they do where they stand (and at the end of their walk).
+    pub act: hw_core::Act,
 }
 
 /// How a section of tube looks.
@@ -648,6 +650,7 @@ fn homes(plan: &mut Plan, c: &Ctx, r: &mut hw_core::seed::Rng) {
             facing: -c.out,
             to: None,
             mole: true,
+            act: hw_core::Act::Sip,
         });
     }
     let (m1, m2) = (c.at(1.0, TUBE_HALF + 4.6), c.at(1.8, TUBE_HALF + 5.4));
@@ -656,12 +659,14 @@ fn homes(plan: &mut Plan, c: &Ctx, r: &mut hw_core::seed::Rng) {
         facing: face(m1, m2),
         to: None,
         mole: true,
+        act: hw_core::Act::Talk,
     });
     plan.t.folk.push(Folk {
         at: DVec3::new(m2.x, f, m2.y),
         facing: face(m2, m1),
         to: None,
         mole: true,
+        act: hw_core::Act::Talk,
     });
     if let Some(&d) = fronts.last() {
         // From home out to the walkway and back.
@@ -670,6 +675,7 @@ fn homes(plan: &mut Plan, c: &Ctx, r: &mut hw_core::seed::Rng) {
             facing: -c.out,
             to: Some(c.at(0.0, TUBE_HALF + 1.6)),
             mole: true,
+            act: hw_core::Act::Read,
         });
     }
 }
@@ -703,6 +709,7 @@ fn market(plan: &mut Plan, c: &Ctx, r: &mut hw_core::seed::Rng) {
                 facing,
                 to: None,
                 mole: true,
+                act: hw_core::Act::Serve,
             });
             if r.chance(0.7) {
                 plan.t.folk.push(Folk {
@@ -710,6 +717,7 @@ fn market(plan: &mut Plan, c: &Ctx, r: &mut hw_core::seed::Rng) {
                     facing: -facing,
                     to: None,
                     mole: r.chance(0.7),
+                    act: hw_core::Act::Browse,
                 });
             }
         }
@@ -768,6 +776,7 @@ fn market(plan: &mut Plan, c: &Ctx, r: &mut hw_core::seed::Rng) {
             facing: c.dir,
             to: Some(b),
             mole: r.chance(0.6),
+            act: hw_core::Act::Browse,
         });
     }
 }
@@ -845,6 +854,7 @@ fn workshop(plan: &mut Plan, c: &Ctx, r: &mut hw_core::seed::Rng) {
         facing: c.out,
         to: None,
         mole: false,
+        act: hw_core::Act::Tinker,
     });
     let w2 = c.at(4.0, back - 3.0);
     plan.t.folk.push(Folk {
@@ -852,6 +862,7 @@ fn workshop(plan: &mut Plan, c: &Ctx, r: &mut hw_core::seed::Rng) {
         facing: c.out,
         to: Some(c.at(0.0, TUBE_HALF + 2.2)),
         mole: r.chance(0.3),
+        act: hw_core::Act::Tinker,
     });
 }
 
@@ -933,6 +944,7 @@ fn shrine(plan: &mut Plan, c: &Ctx, centre: DVec2, r: &mut hw_core::seed::Rng) {
         facing: c.out,
         to: None,
         mole: true,
+        act: hw_core::Act::Admire,
     });
     if r.chance(0.6) {
         let b = c.at(2.6, TUBE_HALF + 3.0 + 3.0);
@@ -941,6 +953,7 @@ fn shrine(plan: &mut Plan, c: &Ctx, centre: DVec2, r: &mut hw_core::seed::Rng) {
             facing: (centre - b).normalize_or(c.out),
             to: None,
             mole: true,
+            act: hw_core::Act::Wipe,
         });
     }
 }
@@ -1024,6 +1037,7 @@ fn burrow(plan: &mut Plan, c: &Ctx, centre: DVec2, r: &mut hw_core::seed::Rng) {
             facing: (fire - q).normalize_or(c.dir),
             to: None,
             mole: true,
+            act: [hw_core::Act::Sip, hw_core::Act::Talk, hw_core::Act::Sip][k],
         });
     }
 }

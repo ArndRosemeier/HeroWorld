@@ -639,13 +639,30 @@ pub fn furnish(b: &mut MeshBuilder, plan: &BuildingPlan, level: usize, top: f64,
             RoomKind::Bedroom => bedroom(&mut fu, &area, seed),
             RoomKind::Shop => shop(&mut fu, room, &area, seed),
             RoomKind::Storage => storage(&mut fu, &area, seed),
-            RoomKind::Gallery | RoomKind::Hall => gallery(&mut fu, &area, seed),
+            RoomKind::Gallery | RoomKind::Hall | RoomKind::Club => gallery(&mut fu, &area, seed),
             RoomKind::Lab => lab(&mut fu, &area, seed),
             RoomKind::Core => {}
             RoomKind::Corridor => corridor(&mut fu, &area, seed),
         }
         dress_walls(&mut fu, room, k, f, seed);
         standing_spots(&mut fu, room, &area, seed);
+    }
+}
+
+/// What someone standing in a room of `kind` does (a floor drawn open
+/// without a plan of halls has no furniture to say), by `h`.
+fn room_act(kind: RoomKind, h: u64) -> hw_core::Act {
+    use hw_core::Act;
+    let pick = |opts: &[Act]| opts[(h % opts.len() as u64) as usize];
+    match kind {
+        RoomKind::Shop => pick(&[Act::Browse, Act::Read, Act::Browse]),
+        RoomKind::Office | RoomKind::Lab => pick(&[Act::Read, Act::Phone, Act::Sip, Act::Tinker]),
+        RoomKind::Kitchen => pick(&[Act::Cook, Act::Wipe, Act::Sip]),
+        RoomKind::Gallery | RoomKind::Hall | RoomKind::Lobby => {
+            pick(&[Act::Admire, Act::Phone, Act::Read])
+        }
+        RoomKind::Club => Act::Dance,
+        _ => pick(&[Act::Sip, Act::Read, Act::Phone]),
     }
 }
 
@@ -719,9 +736,12 @@ fn standing_spots(fu: &mut Furnisher, room: &Room, area: &Rect, seed: u64) {
         };
         let f = fu.dir(toward);
         let spot = Spot {
-            room: room.kind,
-            at: fu.city(p, 0.0),
-            facing: DVec2::new(f.x, f.z).normalize_or(DVec2::Y),
+            place: hw_sim::citizens::Place::simple(
+                room.kind,
+                fu.city(p, 0.0),
+                DVec2::new(f.x, f.z).normalize_or(DVec2::Y),
+                room_act(room.kind, seed ^ hash(p, 0, 7)),
+            ),
         };
         fu.b.spots.push(spot);
     }
@@ -2658,7 +2678,7 @@ mod tests {
                         .spots
                         .iter()
                         .filter(|s| {
-                            let d = DVec2::new(s.at.x, s.at.z) - plan.site.origin;
+                            let d = DVec2::new(s.place.at.x, s.place.at.z) - plan.site.origin;
                             let l = DVec2::new(d.dot(plan.site.along), d.dot(plan.site.inward));
                             let r = room.rect.inset(WALL_HALF);
                             r.min.x <= l.x && l.x <= r.max.x && r.min.y <= l.y && l.y <= r.max.y
@@ -2674,7 +2694,7 @@ mod tests {
                     for (i, a) in here.iter().enumerate() {
                         for c in &here[i + 1..] {
                             assert!(
-                                a.at.distance(c.at) > 1.1,
+                                a.place.at.distance(c.place.at) > 1.1,
                                 "{usage:?}: two places crowd in {:?}",
                                 room.kind
                             );

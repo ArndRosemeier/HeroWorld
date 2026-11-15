@@ -6,8 +6,9 @@
 use crate::people::Built;
 use engine::prelude::*;
 use glam::DVec2;
+use hw_core::Act;
 use hw_sim::alarms::Alarms;
-use hw_sim::citizens::{Citizen, Citizens};
+use hw_sim::citizens::{Citizen, Citizens, Indoor};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Citizens are shown within this distance of the camera...
@@ -28,6 +29,8 @@ struct Shown {
     look: u32,
     crowd: CrowdId,
     agent: CrowdAgentId,
+    /// The pose it is held in (what it does where it stands).
+    pose: Option<&'static str>,
 }
 
 pub struct CrowdView {
@@ -49,7 +52,7 @@ pub struct CrowdView {
     /// Where the citizens shown stood this frame.
     placed: Vec<glam::DVec3>,
     /// People indoors to show next update (see [`Self::set_indoor`]).
-    indoor: Vec<Citizen>,
+    indoor: Vec<Indoor>,
 }
 
 impl Default for CrowdView {
@@ -161,7 +164,11 @@ impl CrowdView {
             .shadows_within(70.0)
             .far_detail(0.06)
             // Drivers and passengers (see `riderview`).
-            .poses([crate::riderview::DRIVE, crate::riderview::RIDE]);
+            .poses(
+                [crate::riderview::DRIVE, crate::riderview::RIDE]
+                    .into_iter()
+                    .chain(crate::people::indoor_poses()),
+            );
         let id = world.add_crowd(built.model.clone(), profile)?;
         self.crowds.insert(look, id);
         self.sits.insert(look, built.sits);
@@ -174,7 +181,7 @@ impl CrowdView {
     /// stop and stare.
     /// The people indoors near the camera, for the next [`Self::update`]
     /// (from `Citizens::indoors`).
-    pub fn set_indoor(&mut self, people: Vec<Citizen>) {
+    pub fn set_indoor(&mut self, people: Vec<Indoor>) {
         self.indoor = people;
     }
 
@@ -213,23 +220,29 @@ impl CrowdView {
         }
         let mut seen = BTreeSet::new();
         self.placed.clear();
-        // People indoors stand at their places (see `Citizens::indoors`).
-        let inside: BTreeMap<u64, Citizen> = std::mem::take(&mut self.indoor)
+        // People indoors are at their places (see `Citizens::indoors`).
+        let inside: BTreeMap<u64, Indoor> = std::mem::take(&mut self.indoor)
             .into_iter()
-            .map(|c| (c.id, c))
+            .map(|i| (i.citizen.id, i))
             .collect();
         for id in self.near.clone().into_iter().chain(inside.keys().copied()) {
             let delay = self.delay.get(&id).copied().unwrap_or(0.0);
             let found = match inside.get(&id) {
-                Some(c) => Some(*c),
-                None => citizens.citizen(id, time - delay),
+                Some(i) => Some((i.citizen, i.act)),
+                None => citizens.citizen(id, time - delay).map(|c| {
+                    // Waiting on the street: not just standing there.
+                    let act = (c.speed < 0.05).then(|| citizens.standing_act(&c, time - delay));
+                    (c, act)
+                }),
             };
-            let Some(mut c): Option<Citizen> = found else {
+            let Some((mut c, mut act)): Option<(Citizen, Option<Act>)> = found else {
                 continue;
             };
             if !self.down.contains_key(&id) {
                 if let Some(r) = self.react(citizens, alarms, &c, time - delay, dt) {
                     c = r;
+                    // Running from trouble, or staring at it.
+                    act = None;
                 }
             }
             if !self.crowds.contains_key(&c.look) {
@@ -245,7 +258,7 @@ impl CrowdView {
                 }
                 continue;
             }
-            self.put(world, &c)?;
+            self.put(world, &c, act)?;
         }
         let gone: Vec<u64> = self
             .shown
@@ -267,14 +280,19 @@ impl CrowdView {
     /// new visitor every visit, see `Citizens::indoors`): they leave the
     /// old look's crowd and join the new one's, so an agent is never used
     /// with a crowd that does not hold it.
-    fn put(&mut self, world: &mut World, c: &Citizen) -> EngineResult<()> {
+    fn put(&mut self, world: &mut World, c: &Citizen, act: Option<Act>) -> EngineResult<()> {
         let Some(&crowd) = self.crowds.get(&c.look) else {
             return Ok(());
         };
         let yaw = c.facing.x.atan2(c.facing.y).to_degrees() as f32;
         let place = Place::new(c.pos.x as f32, c.pos.y as f32, c.pos.z as f32).with_yaw_deg(yaw);
-        if let Some(s) = self.shown.get(&c.id) {
+        let pose = act.map(crate::people::pose_of);
+        if let Some(s) = self.shown.get_mut(&c.id) {
             if s.look == c.look {
+                if s.pose != pose {
+                    world.set_crowd_agent_pose(s.crowd, s.agent, pose)?;
+                    s.pose = pose;
+                }
                 return world.set_crowd_agent(s.crowd, s.agent, place, c.speed as f32);
             }
         }
@@ -283,12 +301,14 @@ impl CrowdView {
         }
         let agent = world.add_crowd_agent(crowd, place)?;
         world.set_crowd_agent(crowd, agent, place, c.speed as f32)?;
+        world.set_crowd_agent_pose(crowd, agent, pose)?;
         self.shown.insert(
             c.id,
             Shown {
                 look: c.look,
                 crowd,
                 agent,
+                pose,
             },
         );
         Ok(())
@@ -422,8 +442,10 @@ mod tests {
                 crate::riderview::DRIVE,
                 crate::riderview::RIDE,
             ]
+            .into_iter()
+            .chain(crate::people::indoor_poses())
             .map(clip)
-            .into(),
+            .collect(),
             bind_local: vec![(Vec3::ZERO, Quat::IDENTITY, Vec3::ONE)],
             morph_targets: vec![],
         };
@@ -480,11 +502,13 @@ mod tests {
         let (one, two) = (crowd.crowd_of(1).unwrap(), crowd.crowd_of(2).unwrap());
         // Look 1's crowd has more people than look 2's, so the visitor's
         // agent number does not exist in look 2's crowd.
-        crowd.put(&mut world, &citizen(10, 1)).unwrap();
-        crowd.put(&mut world, &citizen(11, 1)).unwrap();
-        crowd.put(&mut world, &citizen(11, 2)).expect("a new look");
+        crowd.put(&mut world, &citizen(10, 1), None).unwrap();
+        crowd.put(&mut world, &citizen(11, 1), None).unwrap();
         crowd
-            .put(&mut world, &citizen(11, 2))
+            .put(&mut world, &citizen(11, 2), None)
+            .expect("a new look");
+        crowd
+            .put(&mut world, &citizen(11, 2), Some(Act::Read))
             .expect("and on with it");
         assert_eq!(world.crowd_agent_count(one), 1);
         assert_eq!(world.crowd_agent_count(two), 1);

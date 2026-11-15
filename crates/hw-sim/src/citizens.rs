@@ -14,7 +14,7 @@
 
 use crate::traffic::{Signals, CYCLE};
 use glam::{DVec2, DVec3};
-use hw_core::Seed;
+use hw_core::{Act, Seed};
 use hw_gen::building::{BuildingUse, RoomKind};
 use hw_gen::geom::Polyline;
 use hw_gen::urban::area::Area;
@@ -515,6 +515,24 @@ impl Citizens {
         Some(self.at(id, p, dir, 0.0, look))
     }
 
+    /// What someone who is standing still (`c`, at `time`) does: not just
+    /// standing there. Molehaven's people go on with their trade or their
+    /// talk; anyone else waiting on the street (for the lights, a friend)
+    /// reads, sips, telephones or talks, and goes on to something else
+    /// every so often.
+    pub fn standing_act(&self, c: &Citizen, time: f64) -> Act {
+        let s = self.seed.child("standing").child(c.id);
+        let slot = ((time + s.child("slot").unit() * 60.0) / ACT_SLOT).floor() as i64;
+        let h = s.child("act").child(slot as u64).0;
+        if c.id >> 20 == MOLE_HOME {
+            let n = (c.id & 0xF_FFFF) as usize;
+            if let Some(MoleWay::Stand(.., a) | MoleWay::Errand(.., a)) = self.moles.2.get(n) {
+                return a.variant(h);
+            }
+        }
+        Act::Read.variant(h ^ 0x5a5a)
+    }
+
     /// One of Molehaven's people at `time`.
     fn mole(&self, id: u64, time: f64) -> Option<Citizen> {
         let (floor, _, ways) = &self.moles;
@@ -523,8 +541,8 @@ impl Citizens {
         let mut rng = s.rng();
         let look = LOOKS + (s.child("look").0 % MOLE_LOOKS as u64) as u32;
         let (p, facing, speed) = match way {
-            MoleWay::Stand(p, d) => (p, d, 0.0),
-            MoleWay::Errand(a, b) => {
+            MoleWay::Stand(p, d, _) => (p, d, 0.0),
+            MoleWay::Errand(a, b, _) => {
                 let speed = rng.range(0.8, 1.1);
                 let pause = rng.range(6.0, 20.0);
                 let period = 2.0 * (a.distance(b).max(0.1) / speed + pause);
@@ -1343,10 +1361,20 @@ pub const TUBE_FOLK: u64 = 1 << 62;
 /// average (seconds of game time).
 const STAY: f64 = 900.0;
 
+mod indoors;
+/// How long someone who stands where they are goes on with one act (s).
+pub const ACT_SLOT: f64 = 45.0;
+pub use indoors::{indoors_at, Indoor, Place, PlaceTrip};
+
 /// The share of a room's places taken at `hour`, by the room's use: homes
 /// in the morning and evening (abed at night), offices and labs in working
 /// hours, shops while the shopping streets are busy.
 pub fn indoor_share(room: RoomKind, hour: f64) -> f64 {
+    // (`HW_INDOORS_FULL=1`, for looking at what people do: every place taken.)
+    static FULL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *FULL.get_or_init(|| std::env::var_os("HW_INDOORS_FULL").is_some()) {
+        return 1.0;
+    }
     let h = hour.rem_euclid(24.0);
     let work = if (8.0..18.0).contains(&h) { 1.0 } else { 0.0 };
     let (shops, _) = busy_at(h);
@@ -1363,53 +1391,17 @@ pub fn indoor_share(room: RoomKind, hour: f64) -> f64 {
         RoomKind::Office | RoomKind::Lab => 0.6 * work,
         RoomKind::Shop => 0.6 * shops * if (7.5..21.0).contains(&h) { 1.0 } else { 0.0 },
         RoomKind::Lobby | RoomKind::Gallery | RoomKind::Hall => 0.3 * shops,
-        RoomKind::Core | RoomKind::Corridor | RoomKind::Storage => 0.0,
-    }
-}
-
-impl Citizens {
-    /// Who stands at place `n` of floor `level` of `building` at `time`
-    /// (the place is `at`, facing `facing`, in a room of `room`): someone
-    /// at home, at work or shopping, by the hour ([`Self::set_hour`]);
-    /// `None` while it is empty. People come and go every quarter hour or
-    /// so; at home it is the same household.
-    #[allow(clippy::too_many_arguments)]
-    pub fn indoors(
-        &self,
-        building: u64,
-        level: u32,
-        n: u32,
-        room: RoomKind,
-        at: DVec3,
-        facing: DVec2,
-        time: f64,
-    ) -> Option<Citizen> {
-        let id = INDOOR
-            | ((building & ((1 << 48) - 1)) << 14)
-            | ((level as u64 & 0x3F) << 8)
-            | (n as u64 & 0xFF);
-        let s = self.seed.child("indoors").child(id);
-        let off = s.child("off").unit() * STAY;
-        let visit = ((time + off) / STAY).floor() as i64;
-        let v = s.child(visit as u64);
-        if v.child("here").unit() >= indoor_share(room, self.hour()) {
-            return None;
+        // The club fills up in the evening and stays busy into the night.
+        RoomKind::Club => {
+            if h >= 18.0 || h < 3.0 {
+                0.55
+            } else if h >= 15.0 {
+                0.12
+            } else {
+                0.0
+            }
         }
-        let home = matches!(
-            room,
-            RoomKind::Apartment | RoomKind::Living | RoomKind::Kitchen | RoomKind::Bedroom
-        );
-        let who = if home { s } else { v };
-        let look = (who.child("look").0 % LOOKS as u64) as u32;
-        // Turned a little this way or that, each visit.
-        let turn = (v.child("turn").unit() - 0.5) * 1.2;
-        Some(Citizen {
-            id,
-            pos: at,
-            facing: DVec2::from_angle(turn).rotate(facing.normalize_or(DVec2::Y)),
-            speed: 0.0,
-            look,
-        })
+        RoomKind::Core | RoomKind::Corridor | RoomKind::Storage => 0.0,
     }
 }
 
@@ -1418,7 +1410,7 @@ impl Citizens {
     /// of deep tile `tile`) at `time`: they stand where the plan puts them,
     /// or walk to their errand and back, pausing at each end. Like the
     /// people indoors, they are asked for by their place, not by id.
-    pub fn tube_folk(&self, tile: (i64, i64), n: u32, folk: &Folk, time: f64) -> Citizen {
+    pub fn tube_folk(&self, tile: (i64, i64), n: u32, folk: &Folk, time: f64) -> Indoor {
         let id = TUBE_FOLK
             | (((tile.0 as u64) & 0xF_FFFF) << 28)
             | (((tile.1 as u64) & 0xF_FFFF) << 8)
@@ -1443,12 +1435,21 @@ impl Citizens {
                 )
             }
         };
-        Citizen {
-            id,
-            pos: DVec3::new(p.x, folk.at.y + 0.02, p.y),
-            facing: facing.normalize_or(DVec2::Y),
-            speed,
-            look,
+        // On their feet at their place or at the end of their walk, they
+        // go on with what they do, a different thing every so often.
+        let act = (speed <= 0.0).then(|| {
+            let slot = ((time + s.child("slot").unit() * 60.0) / ACT_SLOT).floor() as i64;
+            folk.act.variant(s.child("act").child(slot as u64).0)
+        });
+        Indoor {
+            citizen: Citizen {
+                id,
+                pos: DVec3::new(p.x, folk.at.y + 0.02, p.y),
+                facing: facing.normalize_or(DVec2::Y),
+                speed,
+                look,
+            },
+            act,
         }
     }
 }
@@ -1578,9 +1579,9 @@ const MARKET_RING: f64 = 11.2;
 #[derive(Clone, Copy, Debug)]
 enum MoleWay {
     /// Stands (a stallkeeper, a shopper, neighbours chatting).
-    Stand(DVec2, DVec2),
+    Stand(DVec2, DVec2, Act),
     /// From a house door to a market stall and back, pausing at each.
-    Errand(DVec2, DVec2),
+    Errand(DVec2, DVec2, Act),
     /// Round and round the well.
     Stroll { centre: DVec2, r: f64, sign: f64 },
 }
@@ -1594,8 +1595,8 @@ fn plan_moles(u: &Underground) -> (f64, DVec2, Vec<MoleWay>) {
     let (well, well_r) = l.well;
     for &(at, d) in &l.stalls {
         // The keeper behind the counter, a shopper in front.
-        ways.push(MoleWay::Stand(at - d * 1.3, d));
-        ways.push(MoleWay::Stand(at + d * 1.5, -d));
+        ways.push(MoleWay::Stand(at - d * 1.3, d, Act::Serve));
+        ways.push(MoleWay::Stand(at + d * 1.5, -d, Act::Browse));
     }
     for h in &l.houses {
         if let Some(door) = h.door {
@@ -1617,16 +1618,16 @@ fn plan_moles(u: &Underground) -> (f64, DVec2, Vec<MoleWay>) {
             if blocked {
                 // A stall stands before the door: nobody waits there.
             } else if h.hall && out.length() > MARKET_RING + 1.5 {
-                ways.push(MoleWay::Errand(front, market));
-                ways.push(MoleWay::Errand(market, front));
+                ways.push(MoleWay::Errand(front, market, Act::Browse));
+                ways.push(MoleWay::Errand(market, front, Act::Talk));
             } else {
-                ways.push(MoleWay::Stand(front, door));
+                ways.push(MoleWay::Stand(front, door, Act::Sip));
             }
         }
     }
     // Neighbours talking in the side chambers.
     for &(at, facing) in &l.chats {
-        ways.push(MoleWay::Stand(at, facing));
+        ways.push(MoleWay::Stand(at, facing, Act::Talk));
     }
     for k in 0..8 {
         ways.push(MoleWay::Stroll {
@@ -1647,45 +1648,6 @@ mod tests {
     fn town() -> Citizens {
         let t = GeneratedTown::generate(Seed(1), 3000.0);
         people(t.area)
-    }
-
-    #[test]
-    #[ignore = "daily (gameplay): scripts/check.sh --daily, and CI's first run of the day"]
-    fn people_indoors_keep_hours() {
-        let c = town();
-        let place =
-            |c: &Citizens, room, n: u32, t: f64| c.indoors(7, 1, n, room, DVec3::ZERO, DVec2::Y, t);
-        let count = |c: &Citizens, room| {
-            (0..200)
-                .filter(|&n| place(c, room, n, 1000.0).is_some())
-                .count()
-        };
-        // Offices empty at night, busy by day; homes abed at 3 and in at 20.
-        c.set_hour(3.0);
-        assert_eq!(count(&c, RoomKind::Office), 0);
-        assert_eq!(count(&c, RoomKind::Apartment), 0);
-        c.set_hour(11.0);
-        assert!(count(&c, RoomKind::Office) > 80);
-        assert!(count(&c, RoomKind::Shop) > 50);
-        c.set_hour(20.0);
-        assert!(count(&c, RoomKind::Apartment) > 70);
-        // Same place, same time, same person; their own ids.
-        let a = place(&c, RoomKind::Apartment, 5, 1000.0);
-        assert_eq!(
-            a.map(|p| (p.id, p.look)),
-            place(&c, RoomKind::Apartment, 5, 1000.0).map(|p| (p.id, p.look))
-        );
-        if let Some(p) = a {
-            assert!(p.id & INDOOR != 0);
-            assert!(c.citizen(p.id, 1000.0).is_none());
-        }
-        // People come and go over the hours.
-        let at = |t: f64| {
-            (0..50)
-                .map(|n| place(&c, RoomKind::Apartment, n, t).is_some())
-                .collect::<Vec<_>>()
-        };
-        assert_ne!(at(0.0), at(STAY * 4.0));
     }
 
     fn people(world: Arc<Area>) -> Citizens {

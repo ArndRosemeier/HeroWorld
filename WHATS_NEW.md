@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.326 (2026-11-15)
+
+- Nobody just stands around any more. Indoors, people sit at desks and type, write or read, cook, serve at counters, browse shelves, chat in pairs, sip a drink, tinker at benches, admire exhibits and dance in clubs. They walk in through the door, stroll between spots in the room and leave again.
+- Each person changes what they do every minute or so; only a short pause is left standing. Waiters in the street, the tube and Molehaven keep busy the same way.
+
 ## 0.325 (2026-11-14)
 
 - Missions you have taken now stand out on the patrol visor: a big teal marker with a case-folder icon, pulsing rings, the case number, the distance (and "up" or "down" when it is on another floor) and what to do next. When it is out of sight a large teal arrow with the folder sits at the edge of the visor, so you always know which way to go. Taking a new mission switches the visor on.

@@ -52,6 +52,7 @@ pub fn add_flight_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("neck_01", Vec3::X, -0.55), ("head", Vec3::X, -0.35)],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -82,6 +83,7 @@ pub fn add_flight_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.04 * w,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -118,6 +120,7 @@ pub fn add_heroic_clip(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: -0.02,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -166,6 +169,7 @@ pub fn add_power_pose_clip(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: -0.02,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -218,6 +222,7 @@ pub fn add_visor_tap_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::Z, -0.07 * k)],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     };
@@ -239,6 +244,7 @@ fn stand(aims: Vec<Aim>, turns: Vec<(&'static str, Vec3, f32)>) -> Pose {
         turns,
         lift: 0.0,
         seated: false,
+        lean: 1.0,
         lay: None,
     }
 }
@@ -520,6 +526,7 @@ pub fn add_sidekick_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -558,6 +565,7 @@ pub fn add_sidekick_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::X, -0.2 * arms)],
             lift: 0.22 * air - 0.08 * crouch,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -580,6 +588,7 @@ pub fn add_sidekick_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -612,6 +621,7 @@ pub fn add_sidekick_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -628,6 +638,7 @@ pub fn add_sidekick_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -659,6 +670,7 @@ pub fn add_sidekick_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.04 * k,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -692,6 +704,7 @@ pub fn add_cuffed_clip(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::X, 0.35)],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -722,6 +735,7 @@ pub fn add_hands_up_clip(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("spine_03", Vec3::X, -0.12), ("head", Vec3::Y, 0.35)],
             lift: -0.04,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -767,6 +781,7 @@ pub fn add_seated_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::Y, 0.06 * w)],
             lift: 0.0,
             seated: true,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -786,6 +801,7 @@ pub fn add_seated_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::Y, 0.14 * w)],
             lift: 0.0,
             seated: true,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -794,6 +810,297 @@ pub fn add_seated_clips(model: &mut AnimatedModel) -> Result<(), String> {
         .retain(|c| c.name != "drive" && c.name != "ride");
     model.clips.push(drive);
     model.clips.push(ride);
+    Ok(())
+}
+
+/// The clips for people indoors (see `hw_core::Act`), each short and made
+/// to loop. Standing ones are laid over "idle". The sitting ones hold the
+/// hips still at the model's origin like the car seats' (so a sitter is
+/// placed by the hip point on the seat), thighs along the cushion, shins
+/// down, and sit upright at a desk and leaning back on a sofa.
+pub fn add_indoor_clips(model: &mut AnimatedModel) -> Result<(), String> {
+    use std::f32::consts::TAU;
+    let sin = |t: f32, n: f32| (t * TAU * n).sin();
+    // A bump that rises and falls once over the loop and rests between.
+    let bump = |t: f32, from: f32, to: f32| {
+        let x = ((t - from) / (to - from)).clamp(0.0, 1.0);
+        (x * std::f32::consts::PI).sin()
+    };
+    // The legs of a sitter on a chair: thighs forward, shins down.
+    let chair = || {
+        vec![
+            aim("thigh_l", "calf_l", 0.1, 0.0, 1.0),
+            aim("thigh_r", "calf_r", -0.1, 0.0, 1.0),
+            aim("calf_l", "foot_l", 0.03, -1.0, 0.12),
+            aim("calf_r", "foot_r", -0.03, -1.0, 0.12),
+            aim("foot_l", "ball_l", 0.0, -0.3, 1.0),
+            aim("foot_r", "ball_r", 0.0, -0.3, 1.0),
+        ]
+    };
+    let sit = |aims: Vec<Aim>, turns: Vec<(&'static str, Vec3, f32)>, lean: f32| {
+        let mut all = chair();
+        all.extend(aims);
+        Pose {
+            aims: all,
+            turns,
+            lift: 0.0,
+            seated: true,
+            lean,
+            lay: None,
+        }
+    };
+    let stand = |aims: Vec<Aim>, turns: Vec<(&'static str, Vec3, f32)>| Pose {
+        aims,
+        turns,
+        lift: 0.0,
+        seated: false,
+        lean: 1.0,
+        lay: None,
+    };
+    let clips = vec![
+        // Typing: hands on the keys, eyes on the screen.
+        make_clip(model, "type", 2.0, |t| {
+            let f = sin(t, 6.0) * 0.05;
+            sit(
+                vec![
+                    aim("upperarm_l", "lowerarm_l", 0.3, -0.8, 0.45),
+                    aim("lowerarm_l", "hand_l", -0.12, -0.3 + f, 1.0),
+                    aim("upperarm_r", "lowerarm_r", -0.3, -0.8, 0.45),
+                    aim("lowerarm_r", "hand_r", 0.12, -0.3 - f, 1.0),
+                ],
+                vec![
+                    ("spine_03", Vec3::X, 0.1),
+                    ("head", Vec3::X, 0.3),
+                    ("head", Vec3::Y, 0.08 * sin(t, 1.0)),
+                ],
+                0.15,
+            )
+        })?,
+        // Writing: the right hand moves across a page, the left holds it.
+        make_clip(model, "write", 2.4, |t| {
+            let w = sin(t, 3.0);
+            sit(
+                vec![
+                    aim("upperarm_l", "lowerarm_l", 0.35, -0.8, 0.4),
+                    aim("lowerarm_l", "hand_l", 0.05, -0.45, 1.0),
+                    aim("upperarm_r", "lowerarm_r", -0.3, -0.8, 0.45),
+                    aim("lowerarm_r", "hand_r", 0.05 + 0.18 * w, -0.5, 1.0),
+                ],
+                vec![
+                    ("spine_03", Vec3::X, 0.16),
+                    ("head", Vec3::X, 0.42),
+                    ("head", Vec3::Y, 0.06 * sin(t, 1.0)),
+                ],
+                0.1,
+            )
+        })?,
+        // Reading, sitting: a book held up before the chest.
+        make_clip(model, "sit read", 3.0, |t| {
+            sit(
+                vec![
+                    aim("upperarm_l", "lowerarm_l", 0.3, -0.9, 0.25),
+                    aim("lowerarm_l", "hand_l", -0.35, 0.55, 1.0),
+                    aim("upperarm_r", "lowerarm_r", -0.3, -0.9, 0.25),
+                    aim("lowerarm_r", "hand_r", 0.35, 0.55, 1.0),
+                ],
+                vec![
+                    ("head", Vec3::X, 0.38),
+                    ("head", Vec3::Y, 0.1 * sin(t, 1.0) * bump(t, 0.3, 0.7)),
+                ],
+                0.5,
+            )
+        })?,
+        // A cup (or a fork) to the mouth now and then.
+        make_clip(model, "sit sip", 5.0, |t| {
+            let k = bump(t, 0.2, 0.7);
+            sit(
+                vec![
+                    aim("upperarm_l", "lowerarm_l", 0.3, -0.95, 0.2),
+                    aim("lowerarm_l", "hand_l", -0.1, -0.5, 1.0),
+                    aim("upperarm_r", "lowerarm_r", -0.3, -0.9 + 0.5 * k, 0.3),
+                    aim(
+                        "lowerarm_r",
+                        "hand_r",
+                        0.1 + 0.4 * k,
+                        -0.3 + 1.2 * k,
+                        1.0 - 0.7 * k,
+                    ),
+                ],
+                vec![
+                    ("head", Vec3::X, 0.1 - 0.1 * k),
+                    ("head", Vec3::Y, 0.12 * sin(t, 1.0)),
+                ],
+                0.6,
+            )
+        })?,
+        // Leaning back, hands in the lap, looking about.
+        make_clip(model, "sit relax", 6.0, |t| {
+            let w = sin(t, 1.0);
+            sit(
+                vec![
+                    aim("upperarm_l", "lowerarm_l", 0.14, -0.92, 0.32),
+                    aim("lowerarm_l", "hand_l", -0.04, -0.42, 1.0),
+                    aim("upperarm_r", "lowerarm_r", -0.14, -0.92, 0.32),
+                    aim("lowerarm_r", "hand_r", 0.04, -0.42, 1.0),
+                ],
+                vec![
+                    ("head", Vec3::Y, 0.35 * w),
+                    ("head", Vec3::X, 0.05 * sin(t, 2.0)),
+                ],
+                1.0,
+            )
+        })?,
+        // Talking, sitting: a hand speaking, a nod.
+        make_clip(model, "sit talk", 4.0, |t| {
+            let g = bump(t, 0.1, 0.5) + bump(t, 0.6, 0.9) * 0.7;
+            sit(
+                vec![
+                    aim("upperarm_l", "lowerarm_l", 0.2, -0.95, 0.2),
+                    aim("lowerarm_l", "hand_l", -0.05, -0.5, 1.0),
+                    aim("upperarm_r", "lowerarm_r", -0.4, -0.8 + 0.4 * g, 0.4),
+                    aim("lowerarm_r", "hand_r", 0.15 - 0.3 * g, 0.1 + 0.5 * g, 1.0),
+                ],
+                vec![
+                    ("head", Vec3::X, -0.05 + 0.1 * sin(t, 2.0)),
+                    ("head", Vec3::Y, 0.2 * sin(t, 1.0)),
+                ],
+                0.4,
+            )
+        })?,
+        // Reading, standing: a book or papers held up.
+        make_clip(model, "read", 3.0, |t| {
+            stand(
+                vec![
+                    aim("upperarm_l", "lowerarm_l", 0.3, -0.9, 0.2),
+                    aim("lowerarm_l", "hand_l", -0.35, 0.45, 1.0),
+                    aim("upperarm_r", "lowerarm_r", -0.3, -0.9, 0.2),
+                    aim("lowerarm_r", "hand_r", 0.35, 0.45, 1.0),
+                ],
+                vec![
+                    ("head", Vec3::X, 0.4),
+                    ("head", Vec3::Y, 0.1 * sin(t, 1.0) * bump(t, 0.3, 0.7)),
+                ],
+            )
+        })?,
+        // Looking over a shelf: a hand reaches out, the head scans.
+        make_clip(model, "browse", 4.0, |t| {
+            let k = bump(t, 0.35, 0.75);
+            stand(
+                vec![
+                    aim(
+                        "upperarm_r",
+                        "lowerarm_r",
+                        -0.3,
+                        -0.7 + 0.3 * k,
+                        0.5 + 0.5 * k,
+                    ),
+                    aim("lowerarm_r", "hand_r", -0.1, 0.1 * k, 1.0),
+                    aim("upperarm_l", "lowerarm_l", 0.3, -0.95, 0.15),
+                    aim("lowerarm_l", "hand_l", 0.05, -0.8, 0.5),
+                ],
+                vec![
+                    ("spine_03", Vec3::X, 0.06 + 0.06 * k),
+                    ("head", Vec3::Y, 0.45 * sin(t, 1.0)),
+                    ("head", Vec3::X, 0.08),
+                ],
+            )
+        })?,
+        // Stirring a pot: the right hand goes round, the left steadies.
+        make_clip(model, "cook", 2.0, |t| {
+            let a = t * TAU * 2.0;
+            stand(
+                vec![
+                    aim("upperarm_r", "lowerarm_r", -0.3, -0.75, 0.45),
+                    aim(
+                        "lowerarm_r",
+                        "hand_r",
+                        0.1 + 0.2 * a.cos(),
+                        -0.55,
+                        1.0 + 0.2 * a.sin(),
+                    ),
+                    aim("upperarm_l", "lowerarm_l", 0.3, -0.85, 0.35),
+                    aim("lowerarm_l", "hand_l", -0.1, -0.5, 1.0),
+                ],
+                vec![("spine_03", Vec3::X, 0.1), ("head", Vec3::X, 0.38)],
+            )
+        })?,
+        // Wiping a surface: the right arm sweeps side to side, leaning in.
+        make_clip(model, "wipe", 1.6, |t| {
+            let w = sin(t, 2.0);
+            stand(
+                vec![
+                    aim("upperarm_r", "lowerarm_r", -0.4, -0.7, 0.5),
+                    aim("lowerarm_r", "hand_r", 0.15 - 0.55 * w, -0.5, 1.0),
+                    aim("upperarm_l", "lowerarm_l", 0.3, -0.9, 0.2),
+                    aim("lowerarm_l", "hand_l", 0.0, -0.6, 0.8),
+                ],
+                vec![
+                    ("spine_03", Vec3::X, 0.16),
+                    ("head", Vec3::X, 0.3),
+                    ("spine_03", Vec3::Y, 0.12 * w),
+                ],
+            )
+        })?,
+        // Working with the hands at a bench or a machine.
+        make_clip(model, "tinker", 2.4, |t| {
+            let a = sin(t, 3.0);
+            let b = sin(t + 0.3, 2.0);
+            stand(
+                vec![
+                    aim("upperarm_l", "lowerarm_l", 0.3, -0.8, 0.45),
+                    aim("lowerarm_l", "hand_l", -0.25 + 0.1 * a, -0.5, 1.0),
+                    aim("upperarm_r", "lowerarm_r", -0.3, -0.8, 0.45),
+                    aim("lowerarm_r", "hand_r", 0.25 - 0.1 * b, -0.5, 1.0),
+                ],
+                vec![
+                    ("spine_03", Vec3::X, 0.12),
+                    ("head", Vec3::X, 0.4),
+                    ("head", Vec3::Y, 0.1 * a),
+                ],
+            )
+        })?,
+        // Serving: hands over the counter, a handing-over now and then, a
+        // nod.
+        make_clip(model, "serve", 4.0, |t| {
+            let k = bump(t, 0.5, 0.8);
+            stand(
+                vec![
+                    aim("upperarm_l", "lowerarm_l", 0.3, -0.8, 0.45),
+                    aim("lowerarm_l", "hand_l", -0.15, -0.5, 1.0),
+                    aim(
+                        "upperarm_r",
+                        "lowerarm_r",
+                        -0.3,
+                        -0.75 + 0.25 * k,
+                        0.5 + 0.3 * k,
+                    ),
+                    aim("lowerarm_r", "hand_r", 0.1 - 0.2 * k, -0.4 + 0.3 * k, 1.0),
+                ],
+                vec![
+                    ("head", Vec3::X, 0.12 + 0.1 * sin(t, 2.0)),
+                    ("head", Vec3::Y, 0.12 * sin(t, 1.0)),
+                ],
+            )
+        })?,
+        // Looking round an exhibit, hands behind the back.
+        make_clip(model, "admire", 6.0, |t| {
+            stand(
+                vec![
+                    aim("upperarm_l", "lowerarm_l", 0.35, -0.9, -0.25),
+                    aim("lowerarm_l", "hand_l", -0.6, -0.2, -0.8),
+                    aim("upperarm_r", "lowerarm_r", -0.35, -0.9, -0.25),
+                    aim("lowerarm_r", "hand_r", 0.6, -0.2, -0.8),
+                ],
+                vec![
+                    ("head", Vec3::X, -0.2 + 0.1 * sin(t, 2.0)),
+                    ("head", Vec3::Y, 0.5 * sin(t, 1.0)),
+                ],
+            )
+        })?,
+    ];
+    let names: Vec<String> = clips.iter().map(|c| c.name.clone()).collect();
+    model.clips.retain(|c| !names.contains(&c.name));
+    model.clips.extend(clips);
     Ok(())
 }
 
@@ -820,6 +1127,7 @@ pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::X, -0.12), ("head", Vec3::Y, 0.1 * w)],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -834,6 +1142,7 @@ pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::Y, -0.15)],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -859,6 +1168,7 @@ pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: Some(0.13),
         }
     })?;
@@ -909,6 +1219,7 @@ pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: Some(0.0),
         }
     })?;
@@ -926,6 +1237,7 @@ pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("spine_03", Vec3::X, 0.12), ("head", Vec3::X, 0.1)],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -991,6 +1303,7 @@ pub fn add_rescue_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: Some(0.13),
         }
     })?;
@@ -1021,6 +1334,7 @@ pub fn add_audience_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::X, -0.05)],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -1039,6 +1353,7 @@ pub fn add_audience_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -1081,6 +1396,7 @@ pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -1103,6 +1419,7 @@ pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -1120,6 +1437,7 @@ pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
         turns: vec![("head", Vec3::X, -0.25), ("head", Vec3::Y, -0.25)],
         lift: 0.0,
         seated: false,
+        lean: 1.0,
         lay: None,
     };
     let statue = make_clip_from(model, "idle", "statue", Some(2.0), statue_pose, true)?;
@@ -1150,6 +1468,7 @@ pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -1167,6 +1486,7 @@ pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::X, -0.3)],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -1187,6 +1507,7 @@ pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -1206,6 +1527,7 @@ pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -1229,6 +1551,7 @@ pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
             ],
             lift: -0.03,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -1243,6 +1566,7 @@ pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("head", Vec3::X, -0.4), ("head", Vec3::Y, 0.15 * w)],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         }
     })?;
@@ -1255,6 +1579,7 @@ pub fn add_street_clips(model: &mut AnimatedModel) -> Result<(), String> {
         turns: vec![("spine_03", Vec3::Z, -0.05)],
         lift: 0.0,
         seated: false,
+        lean: 1.0,
         lay: None,
     })?;
     let names = [
@@ -1300,6 +1625,7 @@ pub fn add_carry_clips(model: &mut AnimatedModel) -> Result<(), String> {
             turns: vec![("spine_03", Vec3::X, -0.06)],
             lift: 0.0,
             seated: false,
+            lean: 1.0,
             lay: None,
         })?;
         made.push(clip);
@@ -1338,6 +1664,9 @@ struct Pose {
     turns: Vec<(&'static str, Vec3, f32)>,
     lift: f32,
     seated: bool,
+    /// How far a sitter leans back into the seat: 1 as in a car seat, 0 sitting
+    /// upright (at a desk).
+    lean: f32,
     /// Last of all, the hips moved to this height over the model's origin
     /// (a body laid down: see [`add_rescue_clips`]).
     lay: Option<f32>,
@@ -1460,6 +1789,7 @@ fn make_clip_from(
             // about 20 degrees), the head held up to look ahead. Before
             // the aims, which then set the limbs in the leaning body.
             for (name, angle) in SEATED_LEAN {
+                let angle = angle * p.lean;
                 let b = joint(name)?;
                 let g = globals(sk, &locals);
                 turn(
