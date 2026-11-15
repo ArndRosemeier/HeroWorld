@@ -1159,6 +1159,12 @@ ordinary call in the world itself. Rampages, breakouts and the colossus also lig
 Signal**: a searchlight from the Aether Spire throws a star onto the sky above the trouble,
 visible from anywhere in town.
 
+**Missions on the visor.** Every case you have taken (going there or inside) shows on the visor
+in the cases' teal, much bigger than a call's amber bracket: a ring and heavy brackets with a
+case-folder icon, the case number and distance (with `^`/`v` and the metres when it is on another
+floor), the goal under it, and a line down to the spot. Out of sight, a big teal arrow with the
+folder sits at the visor's edge. The tracked case is largest. Taking a case switches the visor on.
+
 **The police visor** is a hologram the City Patrol issues to heroes. A new call switches it
 on, and it stays on until the player switches it off with T (T again switches it on). The
 hero touches two fingers to the right temple to switch it (`visor tap`, 1.1 s, standing or

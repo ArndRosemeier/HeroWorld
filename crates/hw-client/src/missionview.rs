@@ -427,6 +427,27 @@ impl MissionView {
         self.tracked.and_then(|n| self.cases.get(&n))
     }
 
+    /// Every case in progress as the patrol visor shows it: where to go
+    /// now (the tracked one first).
+    pub fn visor_marks(&self) -> Vec<crate::visor::MissionMark> {
+        let mut marks: Vec<_> = self
+            .cases
+            .values()
+            .filter_map(|s| {
+                let m = mark(s)?;
+                Some(crate::visor::MissionMark {
+                    number: s.number,
+                    title: format!("Case {}", s.number),
+                    goal: m.goal,
+                    at: m.at?,
+                    tracked: self.tracked == Some(s.number),
+                })
+            })
+            .collect();
+        marks.sort_by_key(|m| (!m.tracked, m.number));
+        marks
+    }
+
     /// Follow case `number` on the radio, the compass and the map.
     pub fn track(&mut self, number: u16) {
         if self.cases.contains_key(&number) {

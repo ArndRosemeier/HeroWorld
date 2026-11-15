@@ -5494,7 +5494,8 @@ fn main() -> EngineResult<()> {
                     let toggle =
                         (frame.input.pressed(Key::T) && !chat.typing && !on_ui_keys(frame))
                             || std::mem::take(&mut visor_asked);
-                    let why = visor.update(frame.dt, toggle, &radio);
+                    let visor_marks = cases.visor_marks();
+                    let why = visor.update(frame.dt, toggle, &radio, visor_marks.len());
                     if visor.take_tap() {
                         visor_tap_until = frame.time + hw_client::visor::TAP_SECONDS;
                     }
@@ -5503,7 +5504,16 @@ fn main() -> EngineResult<()> {
                     visor.holo(world, body, world.camera().eye());
                     let level = me_state.and_then(|m| m.combat).map_or(1, |c| c.level);
                     let eye = world.camera().eye();
-                    visor.draw(frame.ui.ctx(), view_proj, eye, &radio, &mates, level, why);
+                    visor.draw(
+                        frame.ui.ctx(),
+                        view_proj,
+                        eye,
+                        &radio,
+                        &visor_marks,
+                        &mates,
+                        level,
+                        why,
+                    );
                 }
                 let names = |e: &hw_net::EntityState| {
                     e.owner

@@ -17,6 +17,7 @@
 //! switches a moment later, when the fingers get there.
 
 use crate::fightview::con_colour;
+use crate::missionview::CASE_TEAL;
 use crate::radioview::{call_colour, Radio};
 use engine::prelude::*;
 use engine::ui::egui;
@@ -46,6 +47,21 @@ pub enum Why {
     On,
 }
 
+/// An accepted case as the visor shows it: far bigger than a street call,
+/// in the cases' teal, with a case-file icon, always on the rim when off
+/// screen.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MissionMark {
+    pub number: u16,
+    /// "Case 12": short, for the label.
+    pub title: String,
+    /// What to do now ("Go to the tenement", "Arrest the boss").
+    pub goal: String,
+    pub at: Vec3,
+    /// The one the radio and the map follow.
+    pub tracked: bool,
+}
+
 /// The visor's state: how far it has materialised and why it is wanted.
 #[derive(Default)]
 pub struct Visor {
@@ -55,6 +71,8 @@ pub struct Visor {
     on: bool,
     /// The newest call id seen (a newer one switches it on).
     newest: Option<u32>,
+    /// How many missions were accepted last frame (one more switches it on).
+    missions: usize,
     /// Running seconds (flicker, scan band).
     time: f32,
     /// Was it coming in (true) or going out the last frame.
@@ -101,8 +119,12 @@ impl Visor {
 
     /// One frame: `toggle` is T pressed. A new call switches it on; only
     /// the player switches it off. Returns why it is wanted.
-    pub fn update(&mut self, dt: f32, toggle: bool, radio: &Radio) -> Option<Why> {
+    pub fn update(&mut self, dt: f32, toggle: bool, radio: &Radio, missions: usize) -> Option<Why> {
         self.time += dt;
+        if missions > self.missions {
+            self.on = true;
+        }
+        self.missions = missions;
         let newest = radio.calls.keys().max().copied();
         if newest.is_some() && newest > self.newest {
             self.on = true;
@@ -186,6 +208,7 @@ impl Visor {
         view_proj: Mat4,
         eye: Vec3,
         radio: &Radio,
+        missions: &[MissionMark],
         mates: &[crate::minimap::Mate],
         mine: u8,
         why: Option<Why>,
@@ -280,6 +303,11 @@ impl Visor {
         // A word on why it came down, top right of the line of sight.
         let calls = radio.calls.len();
         let head = match why {
+            _ if calls == 0 && !missions.is_empty() => format!(
+                "PATROL VISOR - {} MISSION{}",
+                missions.len(),
+                if missions.len() == 1 { "" } else { "S" }
+            ),
             _ if calls == 0 => "PATROL VISOR - NO CALLS".to_string(),
             Some(Why::NewCall) => format!("PATROL VISOR - NEW CALL ({calls} OPEN)"),
             _ => format!(
@@ -324,6 +352,10 @@ impl Visor {
         // Distances as the wrist radio gives them: from the eye.
         let from = eye;
         let jitter = open.jitter;
+        // Missions first, under the calls: they are the point of the night.
+        for m in missions {
+            mission_mark(&p, view_proj, screen, from, m, self.time, jitter, &fade);
+        }
         for c in radio.calls.values() {
             let flat = Vec2::new(c.at.x - from.x, c.at.z - from.z).length();
             let (r, g, b) = call_colour(c.kind);
@@ -448,6 +480,155 @@ impl Visor {
             }
         }
     }
+}
+
+/// One accepted mission: a big teal reticle with a case-file icon, a pulsing
+/// ring, the case and its distance, the goal under it; off screen a big
+/// arrow with the icon at the rim (never hidden by the visor's frame).
+#[allow(clippy::too_many_arguments)]
+fn mission_mark(
+    p: &egui::Painter,
+    view_proj: Mat4,
+    screen: egui::Rect,
+    from: Vec3,
+    m: &MissionMark,
+    time: f32,
+    jitter: f32,
+    fade: &dyn Fn(f32) -> u8,
+) {
+    let flat = Vec2::new(m.at.x - from.x, m.at.z - from.z).length();
+    let up = m.at.y - from.y;
+    let height = if up > 8.0 {
+        format!("  ^ {up:.0} m")
+    } else if up < -8.0 {
+        format!("  v {:.0} m", -up)
+    } else {
+        String::new()
+    };
+    let (tr, tg, tb) = (CASE_TEAL.r(), CASE_TEAL.g(), CASE_TEAL.b());
+    let teal = |a: f32| egui::Color32::from_rgba_unmultiplied(tr, tg, tb, fade(a));
+    let beat = 0.5 + 0.5 * (time * TAU * 0.8).sin();
+    let label = format!("{}  {:.0} m{height}", m.title.to_uppercase(), flat);
+    let boost = if m.tracked { 1.0 } else { 0.8 };
+    match on_screen(view_proj, m.at + Vec3::Y * 2.0, screen) {
+        Some(at) => {
+            let at = at + egui::vec2(jitter, 0.0);
+            let s = (2600.0 / flat.max(1.0)).clamp(30.0, 84.0) * boost;
+            // Pulsing rings and heavy brackets.
+            p.circle_stroke(
+                at,
+                s * (1.2 + 0.35 * beat),
+                egui::Stroke::new(2.0_f32, teal(120.0 * (1.0 - beat))),
+            );
+            p.circle_stroke(at, s * 1.05, egui::Stroke::new(3.0_f32, teal(235.0)));
+            brackets(p, at, s * 1.45, egui::Stroke::new(4.0_f32, teal(255.0)));
+            // A line down to the ground spot, so it reads as a place.
+            let ground = on_screen(view_proj, m.at, screen).map(|g| g + egui::vec2(jitter, 0.0));
+            if let Some(g) = ground.filter(|g| g.y > at.y + s * 1.6) {
+                p.line_segment(
+                    [at + egui::vec2(0.0, s * 1.5), g],
+                    egui::Stroke::new(2.0_f32, teal(150.0)),
+                );
+            }
+            case_icon(p, at, s * 0.8, fade);
+            let w = s * 1.9;
+            shadowed(
+                p,
+                at + egui::vec2(0.0, w),
+                egui::Align2::CENTER_TOP,
+                &label,
+                18.0,
+                teal(255.0),
+                fade(200.0),
+            );
+            shadowed(
+                p,
+                at + egui::vec2(0.0, w + 22.0),
+                egui::Align2::CENTER_TOP,
+                &m.goal,
+                14.0,
+                egui::Color32::from_rgba_unmultiplied(235, 250, 248, fade(240.0)),
+                fade(190.0),
+            );
+        }
+        None => {
+            let dir = off_screen_dir(view_proj, m.at);
+            let r = egui::vec2(screen.width() * 0.4, screen.height() * 0.33);
+            let tip =
+                screen.center() + egui::vec2(dir.x * r.x, dir.y * r.y) + egui::vec2(jitter, 0.0);
+            let fwd = egui::vec2(dir.x, dir.y);
+            let side = egui::vec2(-fwd.y, fwd.x);
+            let size = (36.0 + 6.0 * beat) * boost;
+            p.add(egui::Shape::convex_polygon(
+                vec![
+                    tip + fwd * size * 1.6,
+                    tip - fwd * size * 0.4 + side * size * 1.1,
+                    tip - fwd * size * 0.4 - side * size * 1.1,
+                ],
+                teal(245.0),
+                egui::Stroke::new(2.0_f32, egui::Color32::from_black_alpha(fade(160.0))),
+            ));
+            let icon = tip - fwd * (size * 1.5);
+            p.circle_filled(
+                icon,
+                size * 1.05,
+                egui::Color32::from_black_alpha(fade(150.0)),
+            );
+            p.circle_stroke(icon, size * 1.05, egui::Stroke::new(2.5_f32, teal(245.0)));
+            case_icon(p, icon, size * 0.8, fade);
+            let text_at = icon - fwd * (size * 1.4);
+            let align = if dir.x > 0.3 {
+                egui::Align2::RIGHT_CENTER
+            } else if dir.x < -0.3 {
+                egui::Align2::LEFT_CENTER
+            } else {
+                egui::Align2::CENTER_CENTER
+            };
+            let shift = egui::vec2(dir.x.signum() * -size * 0.2, 0.0);
+            shadowed(
+                p,
+                text_at + shift,
+                align,
+                &label,
+                16.0,
+                teal(255.0),
+                fade(200.0),
+            );
+        }
+    }
+}
+
+/// A case folder: tab, body and the Patrol's mark, in teal on dark.
+fn case_icon(p: &egui::Painter, c: egui::Pos2, r: f32, fade: &dyn Fn(f32) -> u8) {
+    let teal = |a: f32| {
+        egui::Color32::from_rgba_unmultiplied(CASE_TEAL.r(), CASE_TEAL.g(), CASE_TEAL.b(), fade(a))
+    };
+    let body =
+        egui::Rect::from_center_size(c + egui::vec2(0.0, r * 0.12), egui::vec2(r * 1.5, r * 1.1));
+    let tab = egui::Rect::from_min_size(
+        body.left_top() - egui::vec2(0.0, r * 0.22),
+        egui::vec2(r * 0.65, r * 0.26),
+    );
+    p.rect_filled(tab, 2.0, teal(240.0));
+    p.rect_filled(body, 3.0, teal(235.0));
+    p.rect_stroke(
+        body,
+        3.0,
+        egui::Stroke::new(1.5_f32, egui::Color32::from_black_alpha(fade(190.0))),
+        egui::StrokeKind::Middle,
+    );
+    // The star on the folder, dark.
+    let mut pts = Vec::new();
+    for k in 0..10 {
+        let a = -PI / 2.0 + k as f32 * PI / 5.0;
+        let rr = if k % 2 == 0 { r * 0.36 } else { r * 0.15 };
+        pts.push(body.center() + egui::vec2(a.cos() * rr, a.sin() * rr));
+    }
+    p.add(egui::Shape::convex_polygon(
+        pts,
+        egui::Color32::from_black_alpha(fade(215.0)),
+        egui::Stroke::NONE,
+    ));
 }
 
 /// The hologram over the eyes: amber light that opens from the eye line
@@ -826,22 +1007,22 @@ mod tests {
     fn t_switches_it_on_and_off_and_nothing_else_does() {
         let radio = Radio::default();
         let mut v = Visor::default();
-        assert_eq!(v.update(0.1, false, &radio), None);
-        assert_eq!(v.update(0.1, true, &radio), Some(Why::On));
+        assert_eq!(v.update(0.1, false, &radio, 0), None);
+        assert_eq!(v.update(0.1, true, &radio, 0), Some(Why::On));
         assert!(v.take_tap());
         for _ in 0..20 {
-            v.update(0.1, false, &radio);
+            v.update(0.1, false, &radio, 0);
         }
         assert_eq!(v.shown, 1.0);
         // It stays on however long nobody touches it.
         for _ in 0..1000 {
-            v.update(0.1, false, &radio);
+            v.update(0.1, false, &radio, 0);
         }
         assert_eq!(v.shown, 1.0);
-        assert_eq!(v.update(0.1, true, &radio), None);
+        assert_eq!(v.update(0.1, true, &radio, 0), None);
         assert!(v.take_tap());
         for _ in 0..20 {
-            v.update(0.1, false, &radio);
+            v.update(0.1, false, &radio, 0);
         }
         assert_eq!(v.shown, 0.0);
     }
