@@ -434,7 +434,9 @@ fn clip_of(p: &CrimePerson) -> &'static str {
         Deed::Hurrying | Deed::Running => "walk",
         Deed::Lounging if crook => "lounge",
         Deed::Watching if crook => "lookout",
-        Deed::Lounging | Deed::Watching => "idle",
+        // Onlookers: a call, a drink, a word, arms folded; never a statue.
+        Deed::Lounging | Deed::Watching => ["talk", "phone", "eat or drink", "arms folded"]
+            [((p.id.wrapping_mul(0x9E37_79B1) >> 8) % 4) as usize],
         Deed::Threatening => "threaten",
         Deed::Shoving => "shove",
         Deed::Grabbing => "grab",
@@ -581,6 +583,16 @@ fn victim_lines(kind: CrimeKind, deed: Deed) -> &'static [&'static str] {
     }
 }
 
+/// What a police officer or other citizen-looked person standing about
+/// does with their time: a call, a coffee, a word, arms folded, changing
+/// every 10-18 seconds, each by their own rhythm (by their number).
+pub fn watch_act(id: u32, time: f32) -> &'static str {
+    let period = 10.0 + (id % 9) as f32;
+    let slot = ((time + id as f32 * 3.1) / period) as u32;
+    let x = id.wrapping_mul(0x9E37_79B9) ^ slot.wrapping_mul(0x85EB_CA6B);
+    ["talk", "phone", "eat or drink", "arms folded"][((x ^ (x >> 15)) % 4) as usize]
+}
+
 /// What a villain standing about (a hideout's guard, a crook on a corner)
 /// does with its time: mostly its idle, now and then lounging, keeping a
 /// lookout, counting its money or sharing a laugh. Each villain has its own
@@ -595,8 +607,7 @@ pub fn idle_act(id: u32, time: f32) -> &'static str {
     match x % 8 {
         0 | 1 => "lounge",
         2 | 3 => "lookout",
-        4 => "count",
-        5 => "laugh",
-        _ => "idle",
+        4 | 6 => "count",
+        _ => "laugh",
     }
 }

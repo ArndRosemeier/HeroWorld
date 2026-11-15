@@ -747,12 +747,23 @@ fn clip_of(act: Act, p: &StreetPerson, running: bool, startled: bool) -> &'stati
         },
         Doing::Watching => match act {
             Act::Spotter | Act::Stargazer => "look up",
-            _ => "idle",
+            _ => waiting_clip(p, townsfolk),
         },
         Doing::Clapping => "clap",
         Doing::Tipping | Doing::Buying => "interact",
-        Doing::Queueing if !townsfolk && p.id.is_multiple_of(3) => "talk",
-        Doing::Queueing => "idle",
+        Doing::Queueing => waiting_clip(p, townsfolk),
+    }
+}
+
+/// What someone does while waiting in line or watching: by their number, a
+/// word with the next, arms folded, or (townsfolk) a call or a drink; never
+/// a statue.
+fn waiting_clip(p: &StreetPerson, townsfolk: bool) -> &'static str {
+    let pick = p.id.wrapping_mul(0x9E37_79B1) >> 8;
+    if townsfolk {
+        ["talk", "phone", "eat or drink", "arms folded"][(pick % 4) as usize]
+    } else {
+        ["talk", "arms folded"][(pick % 2) as usize]
     }
 }
 

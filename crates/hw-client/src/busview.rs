@@ -59,6 +59,15 @@ struct Waiter {
     coming: Option<(Escape, f64)>,
 }
 
+/// What a waiter at a stop does now: a different thing every slot, by the
+/// waiter's own rhythm (nothing stored).
+fn wait_pose(w: &Waiter, time: f64) -> &'static str {
+    let slot = ((time + w.slot as f64 * 13.0 + w.look as f64 * 7.0) / hw_sim::citizens::ACT_SLOT)
+        .floor() as u64;
+    let pick = slot.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40;
+    crate::people::pose_of(hw_core::Act::Read.variant(pick))
+}
+
 /// One stop near the camera.
 struct Stop {
     waiting: Vec<Waiter>,
@@ -265,15 +274,20 @@ impl BusView {
                                 slot_place(&stop, w.slot, n),
                                 0.0,
                             )?;
+                            world.set_crowd_agent_pose(id, w.agent, Some(wait_pose(w, time)))?;
                             continue;
                         }
                         let (p, d) = citizens.escape_at(way, left);
                         let place = Place::new(p.x as f32, p.y as f32, p.z as f32)
                             .with_yaw_deg(d_yaw(-d) as f32);
                         world.set_crowd_agent(id, w.agent, place, WALK as f32)?;
+                        world.set_crowd_agent_pose(id, w.agent, None)?;
                     }
                     None => {
                         world.set_crowd_agent(id, w.agent, slot_place(&stop, w.slot, n), 0.0)?;
+                        // Waiting is reading, a call, a drink, a word with
+                        // the next one: never just standing.
+                        world.set_crowd_agent_pose(id, w.agent, Some(wait_pose(w, time)))?;
                     }
                 }
             }

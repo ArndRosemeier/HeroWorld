@@ -57,6 +57,9 @@ pub struct Place {
     pub via: DVec3,
     /// Where one comes in and leaves, if a clear walk leads from there.
     pub door: Option<DVec3>,
+    /// Upstairs: the stair climbed on the way in, from its foot to the
+    /// doorway's far side (the rest None), before [`Self::door`].
+    pub climb: [Option<DVec3>; hw_gen::layout::people::CLIMB],
     pub trips: [Option<PlaceTrip>; 2],
     /// Talking neighbours share a key and come and go together.
     pub pair: Option<u32>,
@@ -83,6 +86,7 @@ impl Place {
             act,
             via: at,
             door: None,
+            climb: [None; hw_gen::layout::people::CLIMB],
             trips: [None, None],
             pair: None,
             hip: 0.0,
@@ -196,18 +200,77 @@ pub fn indoors_at(
     })
 }
 
+/// The way in as a polyline: up the stair if there is one, through the
+/// doorway, to the place beside the act.
+struct Path {
+    pts: [DVec3; hw_gen::layout::people::CLIMB + 2],
+    n: usize,
+    len: f64,
+}
+
+impl Path {
+    /// The point `d` metres along, and the way it heads (in the ground
+    /// plane, unit; zero if the leg is straight up).
+    fn at(&self, d: f64) -> (DVec3, DVec2) {
+        let mut left = d.clamp(0.0, self.len);
+        for k in 0..self.n.saturating_sub(1) {
+            let (a, b) = (self.pts[k], self.pts[k + 1]);
+            let l = a.distance(b);
+            if left <= l || k + 2 == self.n {
+                let f = if l > 0.0 {
+                    (left / l).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                let dir = DVec2::new(b.x - a.x, b.z - a.z).normalize_or_zero();
+                return (a.lerp(b, f), dir);
+            }
+            left -= l;
+        }
+        (self.pts[0], DVec2::ZERO)
+    }
+}
+
+fn entry_path(place: &Place, door: Option<DVec3>) -> Path {
+    let mut pts = [DVec3::ZERO; hw_gen::layout::people::CLIMB + 2];
+    let mut n = 0;
+    if let Some(d) = door {
+        for p in place.climb.iter().flatten() {
+            pts[n] = *p;
+            n += 1;
+        }
+        pts[n] = d;
+        pts[n + 1] = place.via;
+        n += 2;
+    }
+    let len = (0..n.saturating_sub(1))
+        .map(|k| pts[k].distance(pts[k + 1]))
+        .sum();
+    Path { pts, n, len }
+}
+
+/// The way `dir` (a ground direction) heads, else `keep`.
+fn heading_to(dir: DVec2, keep: DVec2) -> DVec2 {
+    if dir.length_squared() > 1e-9 {
+        dir
+    } else {
+        keep
+    }
+}
+
 /// Where someone is `lt` seconds into a visit, facing which way, how fast
 /// they walk, and what they do.
 fn visit_at(place: &Place, gv: Seed, v: Seed, lt: f64) -> (DVec3, DVec2, f64, Option<Act>) {
     let (at, via) = (place.here(), place.via);
     let seat = place.act.seated();
-    // In by the door and out again.
+    // In by the door (up a stair first, upstairs) and out again.
     let door = place.door.filter(|d| flat(*d, via) > 1.0);
-    let w = door.map_or(0.0, |d| flat(d, via) / WALK);
-    if let Some(d) = door {
+    let path = entry_path(place, door);
+    let w = path.len / WALK;
+    if door.is_some() {
         if lt < w {
-            let f = lt / w;
-            return (d.lerp(via, f), heading(d, via, place.facing), WALK, None);
+            let (p, dir) = path.at(lt * WALK);
+            return (p, heading_to(dir, place.facing), WALK, None);
         }
         // Rising, then out.
         let rise = if seat { SETTLE } else { 0.0 };
@@ -216,8 +279,8 @@ fn visit_at(place: &Place, gv: Seed, v: Seed, lt: f64) -> (DVec3, DVec2, f64, Op
                 let f = (lt - (STAY - w - rise)) / rise;
                 return (at.lerp(via, f), place.facing, 0.0, None);
             }
-            let f = (lt - (STAY - w)) / w;
-            return (via.lerp(d, f), heading(via, d, place.facing), WALK, None);
+            let (p, dir) = path.at(path.len - (lt - (STAY - w)) * WALK);
+            return (p, heading_to(-dir, place.facing), WALK, None);
         }
     }
     // Sitting down on arrival.
@@ -364,6 +427,7 @@ mod tests {
             act: Act::Type,
             via: DVec3::new(10.0, 0.0, 9.2),
             door: Some(DVec3::new(10.0, 0.0, 0.0)),
+            climb: [None; hw_gen::layout::people::CLIMB],
             trips: [
                 Some(PlaceTrip {
                     at: DVec3::new(14.0, 0.0, 9.2),
@@ -385,6 +449,7 @@ mod tests {
             act: Act::Browse,
             via: DVec3::new(3.0, 0.0, 3.0),
             door: Some(DVec3::new(0.0, 0.0, 3.0)),
+            climb: [None; hw_gen::layout::people::CLIMB],
             trips: [
                 Some(PlaceTrip {
                     at: DVec3::new(3.0, 0.0, 8.0),
@@ -400,6 +465,47 @@ mod tests {
             pair: None,
             hip: 0.0,
         }
+    }
+
+    /// Upstairs, the way in climbs: from the stair's foot, rising along it,
+    /// to the doorway and the place; the way out retraces it.
+    #[test]
+    fn people_climb_in_and_down_out() {
+        let mut p = walker();
+        p.at = DVec3::new(0.0, 4.0, 3.0);
+        p.via = p.at;
+        p.door = Some(DVec3::new(0.0, 4.0, 8.0));
+        p.climb = [None; hw_gen::layout::people::CLIMB];
+        p.climb[0] = Some(DVec3::new(10.0, 0.0, 8.0));
+        p.climb[1] = Some(DVec3::new(10.0, 4.0, 8.0));
+        p.climb[2] = Some(DVec3::new(2.0, 4.0, 8.0));
+        let c = citizens();
+        c.set_hour(11.0);
+        let mut found = 0;
+        for n in 0..60 {
+            let at = |t: f64| c.indoors(3, 1, n, &p, t).map(|i| i.citizen.pos);
+            let t0 = 1000.0 + n as f64 * 977.0;
+            // Find the start of a visit: first moment present.
+            let Some(start) = (0..(STAY as i64 * 3))
+                .map(|k| t0 + k as f64)
+                .find(|t| at(*t).is_some() && at(*t - 1.0).is_none())
+            else {
+                continue;
+            };
+            found += 1;
+            let a = at(start + 0.5).expect("present");
+            assert!(a.y < 2.5, "starts at the foot: {a:?}");
+            let b = at(start + 12.0).expect("present");
+            assert!(b.y > a.y, "rises: {a:?} {b:?}");
+            // Never jumps more than a walking pace in a second.
+            let mut prev = at(start + 0.5).expect("present");
+            for k in 1..40 {
+                let q = at(start + 0.5 + k as f64 * 0.5).expect("present");
+                assert!(q.distance(prev) < 1.5, "jump {prev:?} -> {q:?}");
+                prev = q;
+            }
+        }
+        assert!(found > 0);
     }
 
     /// Someone indoors always does something: across a whole workday and

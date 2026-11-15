@@ -1100,7 +1100,9 @@ impl Radio {
                     w.at = next;
                 }
                 if w.age >= WALK_SECONDS && w.who.real {
-                    let _ = world.play_animation(w.who.e, "idle");
+                    // Safe at last: a call to say so, a breather, a word.
+                    let pick = (w.at.x * 31.0 + w.at.z * 17.0) as i32 as u32;
+                    let _ = world.play_animation(w.who.e, crate::crimeview::watch_act(pick, 0.0));
                 }
             }
             let yaw = w.dir.x.atan2(w.dir.z).to_degrees();

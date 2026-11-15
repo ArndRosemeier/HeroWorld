@@ -3,6 +3,11 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.327 (2026-11-15)
+
+- Even more people do something. Those waiting at bus stops read, make calls, take a drink or chat. Police officers, onlookers and rescued people make a call, have a coffee or talk. Gang members killing time no longer just stand.
+- Upstairs, people come in by climbing the real stair, and go back down it when they leave.
+
 ## 0.326 (2026-11-15)
 
 - Nobody just stands around any more. Indoors, people sit at desks and type, write or read, cook, serve at counters, browse shelves, chat in pairs, sip a drink, tinker at benches, admire exhibits and dance in clubs. They walk in through the door, stroll between spots in the room and leave again.

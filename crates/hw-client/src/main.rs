@@ -1154,6 +1154,8 @@ fn main() -> EngineResult<()> {
                 .iter()
                 .flat_map(|q| q.buildings.clone())
                 .filter(|b| b.site.halls.is_some() && !b.site.is_hideout())
+                // (`HW_HALLS_CLUB=1`: only night clubs.)
+                .filter(|b| std::env::var("HW_HALLS_CLUB").is_err() || b.site.is_club())
                 .collect();
             near.sort_by(|a, b| {
                 a.site
@@ -1162,7 +1164,7 @@ fn main() -> EngineResult<()> {
                     .total_cmp(&b.site.origin.distance(spawn))
             });
             let mut found = Vec::new();
-            for b in near.iter().take(60) {
+            for b in near.iter().take(400) {
                 let Some(l) = b.site.layout() else { continue };
                 let items = b.site.furniture_of(&l);
                 let club = b
@@ -4699,6 +4701,18 @@ fn main() -> EngineResult<()> {
                         && h.combat.is_none_or(|c| c.target.is_none()) =>
                     {
                         (hw_client::crimeview::idle_act(h.id.0, frame.time), false)
+                    }
+                    // Officers and bystanders on their feet make a call, take
+                    // a coffee, talk: never statues.
+                    None if matches!(
+                        h.kind,
+                        hw_net::EntityKind::Officer | hw_net::EntityKind::Bystander
+                    ) && d.clip == "idle"
+                        && !bystander
+                        && carry.is_none()
+                        && h.combat.is_none_or(|c| c.target.is_none()) =>
+                    {
+                        (hw_client::crimeview::watch_act(h.id.0, frame.time), false)
                     }
                     None if trick.is_some() => trick.expect("a trick"),
                     // The one being mugged cowers until it is over.

@@ -9,7 +9,7 @@
 
 use super::furnish::{Item, ItemKind};
 use super::solid::{pieces, Part};
-use super::{Layout, LinkKind, SpaceKind};
+use super::{Flight, Layout, LinkKind, SpaceKind};
 use crate::urban::footprint::Footprint;
 use glam::{DVec2, DVec3};
 use hw_core::{Act, Seed};
@@ -42,6 +42,10 @@ pub struct Stand {
     /// Where one comes into the room and leaves it, if a straight clear
     /// walk leads from there.
     pub door: Option<DVec3>,
+    /// On an upper floor, where the way in climbs a stair first: the path
+    /// from the stair's foot to the doorway's far side (in order; the rest
+    /// None), each leg straight and inside one room or on a flight.
+    pub climb: [Option<DVec3>; CLIMB],
     /// Up to two walks to something else in the room, each straight and
     /// clear from [`Self::via`].
     pub trips: [Option<Trip>; 2],
@@ -71,6 +75,8 @@ const CLEAR: f64 = 0.4;
 /// The longest short walk (m), and the longest from a doorway.
 pub const TRIP_MAX: f64 = 9.0;
 pub const DOOR_MAX: f64 = 16.0;
+/// The most points of a climb (three flights and their landings).
+pub const CLIMB: usize = 8;
 /// The sitter's hips stand this far back of the middle of a seat.
 const SEAT_BACK: f64 = 0.04;
 /// The hips' joint is this far above the cushion (m).
@@ -189,6 +195,8 @@ struct Floor {
     doors: Vec<DVec2>,
     /// Which doorways one can come in by.
     entries: Vec<DVec2>,
+    /// For each entry: the opening on the wall line, and the space beyond.
+    beyond: Vec<(DVec2, Option<usize>)>,
 }
 
 impl Floor {
@@ -273,7 +281,7 @@ pub fn standing(l: &Layout, items: &[Item], club: Option<usize>) -> Vec<Stand> {
         let doors: Vec<DVec2> = links().map(|k| k.at).collect();
         let c = s.rect.center();
         // Where a doorway lets in: just inside, on the room's side.
-        let entries: Vec<DVec2> = links()
+        let (entries, beyond): (Vec<DVec2>, Vec<(DVec2, Option<usize>)>) = links()
             .filter(|k| {
                 matches!(
                     k.kind,
@@ -286,16 +294,18 @@ pub fn standing(l: &Layout, items: &[Item], club: Option<usize>) -> Vec<Stand> {
                 } else {
                     DVec2::new((c.x - k.at.x).signum(), 0.0)
                 };
-                k.at + inward * 0.9
+                let other = if k.a == i { k.b } else { Some(k.a) };
+                (k.at + inward * 0.9, (k.at, other))
             })
-            .filter(|p| s.rect.contains_point(*p))
-            .collect();
+            .filter(|(p, _)| s.rect.contains_point(*p))
+            .unzip();
         let inner = s.rect.inset(OFF_WALL);
         let floor = Floor {
             rect: s.rect.inset(0.3),
             things,
             doors,
             entries,
+            beyond,
         };
         let room = seed.child(i as u64);
         let mine: Vec<usize> = (0..items.len()).filter(|&k| items[k].space == i).collect();
@@ -337,6 +347,7 @@ pub fn standing(l: &Layout, items: &[Item], club: Option<usize>) -> Vec<Stand> {
                         act: seat.act,
                         via: DVec3::new(seat.at.x, y, seat.at.y),
                         door: None,
+                        climb: [None; CLIMB],
                         trips: [None, None],
                         pair: None,
                         hip: seat.hip,
@@ -350,6 +361,7 @@ pub fn standing(l: &Layout, items: &[Item], club: Option<usize>) -> Vec<Stand> {
                     act: seat.act,
                     via: DVec3::new(via.x, y, via.y),
                     door: None,
+                    climb: [None; CLIMB],
                     trips: [None, None],
                     pair: None,
                     hip: seat.hip,
@@ -367,6 +379,7 @@ pub fn standing(l: &Layout, items: &[Item], club: Option<usize>) -> Vec<Stand> {
                         act,
                         via: DVec3::new(p.x, y, p.y),
                         door: None,
+                        climb: [None; CLIMB],
                         trips: [None, None],
                         pair: None,
                         hip: 0.0,
@@ -441,6 +454,7 @@ pub fn standing(l: &Layout, items: &[Item], club: Option<usize>) -> Vec<Stand> {
                             act: Act::Dance,
                             via: DVec3::new(p.x, y, p.y),
                             door: None,
+                            climb: [None; CLIMB],
                             trips: [None, None],
                             pair: None,
                             hip: 0.0,
@@ -507,6 +521,7 @@ pub fn standing(l: &Layout, items: &[Item], club: Option<usize>) -> Vec<Stand> {
                                         act: Act::Talk,
                                         via: DVec3::new(a.x, y, a.y),
                                         door: None,
+                                        climb: [None; CLIMB],
                                         trips: [None, None],
                                         pair: Some(key),
                                         hip: 0.0,
@@ -525,6 +540,7 @@ pub fn standing(l: &Layout, items: &[Item], club: Option<usize>) -> Vec<Stand> {
                             act,
                             via: DVec3::new(p.x, y, p.y),
                             door: None,
+                            climb: [None; CLIMB],
                             trips: [None, None],
                             pair: None,
                             hip: 0.0,
@@ -602,18 +618,132 @@ pub fn standing(l: &Layout, items: &[Item], club: Option<usize>) -> Vec<Stand> {
             }
             st.trips = chosen;
             // The way in: the nearest doorway with a clear straight walk.
-            st.door = floor
+            let mut ways: Vec<(f64, usize)> = floor
                 .entries
                 .iter()
-                .map(|d| (d.distance(via), *d))
+                .enumerate()
+                .map(|(k, d)| (d.distance(via), k))
                 .filter(|(d, _)| *d <= DOOR_MAX && *d > 1.0)
-                .filter(|(_, d)| floor.walk_clear(*d, via, &[]))
-                .min_by(|a, b| a.0.total_cmp(&b.0))
-                .map(|(_, d)| DVec3::new(d.x, y, d.y));
+                .filter(|(_, k)| floor.walk_clear(floor.entries[*k], via, &[]))
+                .collect();
+            ways.sort_by(|a, b| a.0.total_cmp(&b.0));
+            // Upstairs, in from a stair if any doorway leads to the step-off
+            // of one (the nearest such), else by the nearest doorway.
+            let climbing = ways.iter().find_map(|(_, k)| {
+                let (wall, other) = floor.beyond[*k];
+                climb_to(l, other?, y, wall).map(|c| (*k, c))
+            });
+            if let Some((k, c)) = climbing {
+                st.climb = c;
+                st.door = Some(DVec3::new(floor.entries[k].x, y, floor.entries[k].y));
+            } else {
+                st.door = ways
+                    .first()
+                    .map(|(_, k)| DVec3::new(floor.entries[*k].x, y, floor.entries[*k].y));
+            }
         }
         out.extend(places);
     }
     out
+}
+
+/// The path up a stair to its step-off at height `y`, in the space `host`
+/// (the room's neighbour beyond `wall`, the opening): from the foot of
+/// the stair, flight after flight over their landings, to the opening.
+/// Straight flights only; None unless every leg lies in one room or on a
+/// flight, so nobody climbs through a wall or a step.
+fn climb_to(l: &Layout, host: usize, y: f64, wall: DVec2) -> Option<[Option<DVec3>; CLIMB]> {
+    let sp = l.spaces.get(host)?;
+    let room = sp.rect.inset(-0.05);
+    if !room.contains_point(wall) {
+        return None;
+    }
+    let plan = |f: &Flight| -> Option<(DVec3, DVec3)> {
+        match *f {
+            Flight::Straight {
+                from, dir, risers, ..
+            } => {
+                let foot = DVec3::new(from.x, from.y, from.z) - DVec3::new(dir.x, 0.0, dir.y) * 0.3;
+                let run = Flight::run(risers) + 0.5;
+                let top = DVec3::new(from.x + dir.x * run, f.y1(), from.z + dir.y * run);
+                Some((foot, top))
+            }
+            _ => None,
+        }
+    };
+    for st in l.stairs.iter().filter(|st| st.host == host) {
+        let low = st
+            .flights
+            .iter()
+            .map(|f| f.y0())
+            .fold(f64::INFINITY, f64::min);
+        for last in st.flights.iter().filter(|f| (f.y1() - y).abs() < 0.2) {
+            // Back from the top flight to the bottom.
+            let mut chain = vec![last];
+            while chain.last().expect("a flight").y0() > low + 0.2 && chain.len() < 4 {
+                let cur = chain.last().expect("a flight");
+                let Some((foot, _)) = plan(cur) else { break };
+                let prev = st.flights.iter().find(|g| {
+                    (g.y1() - cur.y0()).abs() < 0.2
+                        && plan(g).is_some_and(|(_, t)| {
+                            st.landings.iter().any(|ld| {
+                                (ld.y - cur.y0()).abs() < 0.2 && {
+                                    let r = ld.rect.inset(-0.3);
+                                    r.contains_point(DVec2::new(t.x, t.z))
+                                        && r.contains_point(DVec2::new(foot.x, foot.z))
+                                }
+                            })
+                        })
+                });
+                match prev {
+                    Some(g) => chain.push(g),
+                    None => break,
+                }
+            }
+            if chain.last().expect("a flight").y0() > low + 0.2 {
+                continue;
+            }
+            chain.reverse();
+            let mut path: Vec<DVec3> = Vec::new();
+            let mut ok = true;
+            for f in &chain {
+                match plan(f) {
+                    Some((foot, top)) => {
+                        path.push(foot);
+                        path.push(top);
+                    }
+                    None => ok = false,
+                }
+            }
+            let Some((_, top)) = plan(last) else { continue };
+            if !ok || path.len() + 1 > CLIMB {
+                continue;
+            }
+            // From the step-off to the opening: inside the host, clear of
+            // every flight at another height.
+            let (a, b) = (DVec2::new(top.x, top.z), wall);
+            if !room.contains_point(a) {
+                continue;
+            }
+            let n = ((a.distance(b) / 0.25).ceil() as usize).max(1);
+            let blocked = (0..=n).any(|k| {
+                let p = a.lerp(b, k as f64 / n as f64);
+                st.flights
+                    .iter()
+                    .any(|g| g.height_at(p).is_some_and(|h| (h - y).abs() > 0.35))
+            });
+            if blocked {
+                continue;
+            }
+            path.push(DVec3::new(wall.x, y, wall.y));
+            let mut out = [None; CLIMB];
+            for (k, p) in path.into_iter().enumerate() {
+                out[k] = Some(p);
+            }
+            return Some(out);
+        }
+    }
+    None
 }
 
 fn slot_key(n: usize) -> u64 {
@@ -738,6 +868,60 @@ mod tests {
         for a in [Act::Type, Act::Browse, Act::Talk] {
             assert!(seen.contains(&a), "no {a:?} in any building: {seen:?}");
         }
+    }
+
+    /// Upstairs, people climb a real stair to their floor: the path starts
+    /// at a stair's foot below, rises with its flights and steps off to the
+    /// doorway, and the last stretch crosses no wall, column or rail.
+    #[test]
+    fn climbs_follow_stairs() {
+        let mut climbs = 0;
+        for k in 0..12u64 {
+            let (l, _, stands) = all(k);
+            let solid = pieces(&l);
+            for st in &stands {
+                let pts: Vec<DVec3> = st.climb.iter().flatten().copied().collect();
+                if pts.is_empty() {
+                    continue;
+                }
+                climbs += 1;
+                assert!(st.door.is_some(), "a climb leads to a doorway");
+                assert!(pts.len() >= 3, "{pts:?}");
+                assert!(pts[0].y < st.at.y - 0.4, "starts below: {pts:?}");
+                let (a, b) = (pts[pts.len() - 2], pts[pts.len() - 1]);
+                assert!((a.y - st.at.y).abs() < 0.3 && (b.y - st.at.y).abs() < 0.3);
+                let (a2, b2) = (DVec2::new(a.x, a.z), DVec2::new(b.x, b.z));
+                let n = (a2.distance(b2) / 0.2).ceil().max(1.0) as usize;
+                for j in 0..=n {
+                    let q = a2.lerp(b2, j as f64 / n as f64);
+                    if q.distance(b2) < 0.7 {
+                        continue;
+                    }
+                    for part in &solid {
+                        if !matches!(
+                            part.part,
+                            Part::Wall
+                                | Part::Outer
+                                | Part::Glass
+                                | Part::Column
+                                | Part::Shaft
+                                | Part::Rail
+                        ) {
+                            continue;
+                        }
+                        let (y0, y1) = part.shape.span();
+                        let tall = y1 > st.at.y + 0.15 && y0 < st.at.y + 1.9;
+                        assert!(
+                            !tall || part.shape.distance(q) >= 0.2,
+                            "seed {k}: the step-off crosses a {:?} at {q:?}",
+                            part.part
+                        );
+                    }
+                }
+            }
+        }
+        assert!(climbs > 0, "nobody climbs a stair in any building");
+        eprintln!("climbs: {climbs}");
     }
 
     /// The walks are straight and clear: a trip's ends are open floor and

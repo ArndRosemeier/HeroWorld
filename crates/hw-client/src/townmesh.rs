@@ -556,6 +556,7 @@ fn make_cell(job: CellJob) -> CellMeshes {
                                 act: st.act,
                                 via: to_city(st.via),
                                 door: st.door.map(to_city),
+                                climb: st.climb.map(|p| p.map(to_city)),
                                 trips: st.trips.map(|t| {
                                     t.map(|t| hw_sim::citizens::PlaceTrip {
                                         at: to_city(t.at),
