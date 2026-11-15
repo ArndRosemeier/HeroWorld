@@ -557,6 +557,13 @@ fn make_cell(job: CellJob) -> CellMeshes {
                                 via: to_city(st.via),
                                 door: st.door.map(to_city),
                                 climb: st.climb.map(|p| p.map(to_city)),
+                                ride: st.ride.map(|mut r| {
+                                    // The car's heights in the town's frame.
+                                    for y in r.stops.iter_mut().take(r.n) {
+                                        *y = to_city(DVec3::new(0.0, *y, 0.0)).y;
+                                    }
+                                    r
+                                }),
                                 trips: st.trips.map(|t| {
                                     t.map(|t| hw_sim::citizens::PlaceTrip {
                                         at: to_city(t.at),

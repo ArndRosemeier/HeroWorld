@@ -46,57 +46,96 @@ pub struct LiftAt {
     pub open: Option<(usize, f64)>,
 }
 
-impl LiftRun {
-    /// The stops in the order of one round: up to the top and back down.
-    fn round(&self) -> Vec<usize> {
-        let n = self.stops.len();
-        let mut v: Vec<usize> = (0..n).collect();
-        v.extend((1..n.saturating_sub(1)).rev());
-        v
-    }
+/// The stops in the order of one round: up to the top and back down.
+fn round_of(n: usize) -> Vec<usize> {
+    let mut v: Vec<usize> = (0..n).collect();
+    v.extend((1..n.saturating_sub(1)).rev());
+    v
+}
 
-    /// Where the car is `now` seconds into the game.
-    pub fn at(&self, now: f64) -> LiftAt {
-        let round = self.round();
-        if round.len() < 2 {
+/// Where a car with these `stops` and `phase` is `now` seconds into the
+/// game.
+pub fn car_at(stops: &[f64], phase: f64, now: f64) -> LiftAt {
+    let round = round_of(stops.len());
+    if round.len() < 2 {
+        return LiftAt {
+            y: stops.first().copied().unwrap_or(0.0),
+            open: Some((0, 1.0)),
+        };
+    }
+    let ride = |a: usize, b: usize| (stops[a] - stops[b]).abs() / SPEED;
+    let legs: Vec<(usize, usize, f64)> = (0..round.len())
+        .map(|i| {
+            let (a, b) = (round[i], round[(i + 1) % round.len()]);
+            (a, b, ride(a, b))
+        })
+        .collect();
+    let total: f64 = legs.iter().map(|l| WAIT + l.2).sum();
+    let mut t = (now + phase).rem_euclid(total);
+    for (a, b, ride) in legs {
+        if t < WAIT {
+            let open = (t / DOORS).min((WAIT - t) / DOORS).clamp(0.0, 1.0);
             return LiftAt {
-                y: self.stops.first().copied().unwrap_or(0.0),
-                open: Some((0, 1.0)),
+                y: stops[a],
+                open: Some((a, open)),
             };
         }
-        let ride = |a: usize, b: usize| (self.stops[a] - self.stops[b]).abs() / SPEED;
-        let legs: Vec<(usize, usize, f64)> = (0..round.len())
-            .map(|i| {
-                let (a, b) = (round[i], round[(i + 1) % round.len()]);
-                (a, b, ride(a, b))
-            })
-            .collect();
-        let total: f64 = legs.iter().map(|l| WAIT + l.2).sum();
-        let mut t = (now + self.phase).rem_euclid(total);
-        for (a, b, ride) in legs {
-            if t < WAIT {
-                let open = (t / DOORS).min((WAIT - t) / DOORS).clamp(0.0, 1.0);
-                return LiftAt {
-                    y: self.stops[a],
-                    open: Some((a, open)),
-                };
-            }
-            t -= WAIT;
-            if t < ride {
-                // Ease out of one floor and into the next.
-                let u = t / ride;
-                let s = u * u * (3.0 - 2.0 * u);
-                return LiftAt {
-                    y: self.stops[a] + (self.stops[b] - self.stops[a]) * s,
-                    open: None,
-                };
-            }
-            t -= ride;
+        t -= WAIT;
+        if t < ride {
+            // Ease out of one floor and into the next.
+            let u = t / ride;
+            let s = u * u * (3.0 - 2.0 * u);
+            return LiftAt {
+                y: stops[a] + (stops[b] - stops[a]) * s,
+                open: None,
+            };
         }
-        LiftAt {
-            y: self.stops[round[0]],
-            open: Some((round[0], 0.0)),
+        t -= ride;
+    }
+    LiftAt {
+        y: stops[round[0]],
+        open: Some((round[0], 0.0)),
+    }
+}
+
+/// The first time at or after `after` when the car arrives at `stop` (its
+/// wait there begins), and how long the ride into it took. None if the
+/// car never stops there.
+pub fn next_arrival(stops: &[f64], phase: f64, stop: usize, after: f64) -> Option<(f64, f64)> {
+    let round = round_of(stops.len());
+    if round.len() < 2 || stop >= stops.len() {
+        return None;
+    }
+    let n = round.len();
+    let ride = |a: usize, b: usize| (stops[a] - stops[b]).abs() / SPEED;
+    let total: f64 = (0..n)
+        .map(|i| WAIT + ride(round[i], round[(i + 1) % n]))
+        .sum();
+    // Offsets (in a round) of each wait's start, and the ride before it.
+    let mut starts = Vec::new();
+    let mut at = 0.0;
+    for i in 0..n {
+        if round[i] == stop {
+            starts.push((at, ride(round[(i + n - 1) % n], round[i])));
         }
+        at += WAIT + ride(round[i], round[(i + 1) % n]);
+    }
+    // Times are `now + phase` modulo `total`.
+    let base = ((after + phase) / total).floor();
+    (0..3)
+        .flat_map(|k| {
+            starts
+                .iter()
+                .map(move |(o, r)| (o + (base + k as f64) * total - phase, *r))
+        })
+        .filter(|(t, _)| *t >= after)
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+}
+
+impl LiftRun {
+    /// Where the car is `now` seconds into the game.
+    pub fn at(&self, now: f64) -> LiftAt {
+        car_at(&self.stops, self.phase, now)
     }
 
     /// The same lift standing somewhere: its plan moved into the frame of
@@ -210,6 +249,27 @@ pub fn runs(l: &Layout) -> Vec<LiftRun> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A car arrives where `next_arrival` says: riding just before, the
+    /// doors opening just after, never earlier than asked.
+    #[test]
+    fn arrivals_match_the_timetable() {
+        let stops = [0.0, 4.0, 8.5, 12.0];
+        for phase in [0.0, 11.0, 22.0] {
+            for stop in 0..4 {
+                for k in 0..40 {
+                    let after = 3.7 + k as f64 * 31.3;
+                    let (t, ride) = next_arrival(&stops, phase, stop, after).expect("it stops");
+                    assert!(t >= after && t < after + 400.0, "{t} {after}");
+                    assert!(ride > 0.0);
+                    let during = car_at(&stops, phase, t + 0.5);
+                    assert_eq!(during.open.map(|o| o.0), Some(stop), "{t}");
+                    assert!(car_at(&stops, phase, t - 0.05).open.is_none(), "{t}");
+                }
+            }
+        }
+    }
+
     use crate::layout::office::plan;
     use hw_core::Seed;
 

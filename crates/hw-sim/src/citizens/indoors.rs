@@ -60,6 +60,10 @@ pub struct Place {
     /// Upstairs: the stair climbed on the way in, from its foot to the
     /// doorway's far side (the rest None), before [`Self::door`].
     pub climb: [Option<DVec3>; hw_gen::layout::people::CLIMB],
+    /// Instead of a stair: in by a lift, its car at the first point of
+    /// `climb` and its door at the second (see
+    /// `hw_gen::layout::people::Ride`).
+    pub ride: Option<hw_gen::layout::people::Ride>,
     pub trips: [Option<PlaceTrip>; 2],
     /// Talking neighbours share a key and come and go together.
     pub pair: Option<u32>,
@@ -87,6 +91,7 @@ impl Place {
             via: at,
             door: None,
             climb: [None; hw_gen::layout::people::CLIMB],
+            ride: None,
             trips: [None, None],
             pair: None,
             hip: 0.0,
@@ -187,7 +192,10 @@ pub fn indoors_at(
     );
     let who = if home { own } else { v };
     let look = (who.child("look").0 % LOOKS as u64) as u32;
-    let (pos, facing, speed, act) = visit_at(place, gv, v, lt);
+    let (pos, facing, speed, act) = match (place.ride, place.door) {
+        (Some(r), Some(_)) => by_lift(place, &r, gv, v, time, lt)?,
+        _ => visit_at(place, gv, v, lt, STAY),
+    };
     Some(Indoor {
         citizen: Citizen {
             id,
@@ -198,6 +206,57 @@ pub fn indoors_at(
         },
         act,
     })
+}
+
+/// A visit that comes and goes by lift: the person is in the car as it
+/// rides up to their floor, steps out when its doors open, stays, comes
+/// back to the door when the car next arrives, steps in and is carried
+/// off. The car's whole timetable is the game clock's (see
+/// `hw_gen::layout::lifts`), so it is the very car anyone sees; None while
+/// they are not there. `lt` is the time in the slot, which starts at
+/// `time - lt`.
+fn by_lift(
+    place: &Place,
+    r: &hw_gen::layout::people::Ride,
+    gv: Seed,
+    v: Seed,
+    time: f64,
+    lt: f64,
+) -> Option<(DVec3, DVec2, f64, Option<Act>)> {
+    use hw_gen::layout::lifts::{car_at, next_arrival, CAR_LIP, DOORS, WAIT};
+    let stops = &r.stops[..r.n];
+    let s0 = time - lt;
+    let (arr, pre) = next_arrival(stops, r.phase, r.stop, s0 + 120.0)?;
+    let (back, _) = next_arrival(stops, r.phase, r.stop, s0 + STAY - 420.0)?;
+    let car = place.climb[0]?;
+    let door_at = place.climb[1]?;
+    let heading =
+        |from: DVec3, to: DVec3| DVec2::new(to.x - from.x, to.z - from.z).normalize_or_zero();
+    let face_door = heading(car, door_at);
+    let in_car = |t: f64| {
+        let y = car_at(stops, r.phase, t).y + CAR_LIP;
+        DVec3::new(car.x, y, car.z)
+    };
+    // In the car on the way up, and while its doors open.
+    let leaves_car = arr + DOORS;
+    if time < arr - pre {
+        return None;
+    }
+    if time < leaves_car {
+        return Some((in_car(time), face_door, 0.0, Some(Act::Read)));
+    }
+    // From the door of the car on: the usual visit, which ends back at
+    // the car as it comes again.
+    let stay = back + DOORS * 0.5 - leaves_car;
+    let x = time - leaves_car;
+    if x < stay {
+        return Some(visit_at(place, gv, v, x, stay));
+    }
+    // Stepping in, then off.
+    if time < back + WAIT + 2.0 {
+        return Some((in_car(time), face_door, 0.0, Some(Act::Read)));
+    }
+    None
 }
 
 /// The way in as a polyline: up the stair if there is one, through the
@@ -260,7 +319,13 @@ fn heading_to(dir: DVec2, keep: DVec2) -> DVec2 {
 
 /// Where someone is `lt` seconds into a visit, facing which way, how fast
 /// they walk, and what they do.
-fn visit_at(place: &Place, gv: Seed, v: Seed, lt: f64) -> (DVec3, DVec2, f64, Option<Act>) {
+fn visit_at(
+    place: &Place,
+    gv: Seed,
+    v: Seed,
+    lt: f64,
+    stay: f64,
+) -> (DVec3, DVec2, f64, Option<Act>) {
     let (at, via) = (place.here(), place.via);
     let seat = place.act.seated();
     // In by the door (up a stair first, upstairs) and out again.
@@ -274,12 +339,12 @@ fn visit_at(place: &Place, gv: Seed, v: Seed, lt: f64) -> (DVec3, DVec2, f64, Op
         }
         // Rising, then out.
         let rise = if seat { SETTLE } else { 0.0 };
-        if lt >= STAY - w - rise {
-            if lt < STAY - w {
-                let f = (lt - (STAY - w - rise)) / rise;
+        if lt >= stay - w - rise {
+            if lt < stay - w {
+                let f = (lt - (stay - w - rise)) / rise;
                 return (at.lerp(via, f), place.facing, 0.0, None);
             }
-            let (p, dir) = path.at(path.len - (lt - (STAY - w)) * WALK);
+            let (p, dir) = path.at(path.len - (lt - (stay - w)) * WALK);
             return (p, heading_to(-dir, place.facing), WALK, None);
         }
     }
@@ -324,12 +389,29 @@ fn visit_at(place: &Place, gv: Seed, v: Seed, lt: f64) -> (DVec3, DVec2, f64, Op
     (at, place.facing, 0.0, Some(place.act))
 }
 
+fn forced_act() -> Option<Act> {
+    static FORCE: std::sync::OnceLock<Option<Act>> = std::sync::OnceLock::new();
+    *FORCE.get_or_init(|| {
+        let want = std::env::var("HW_ACT_FORCE").ok()?;
+        Act::ALL.into_iter().find(|a| format!("{a:?}") == want)
+    })
+}
+
 /// The legs of one cycle at `place`, `len` seconds in all.
 fn cycle(place: &Place, cv: Seed, len: f64) -> Vec<Leg> {
     let (at, via) = (place.here(), place.via);
     let seat = place.act.seated();
-    let a1 = place.act.variant(cv.child("first").0);
-    let a2 = place.act.variant(cv.child("second").0);
+    let (mut a1, mut a2) = (
+        place.act.variant(cv.child("first").0),
+        place.act.variant(cv.child("second").0),
+    );
+    // (`HW_ACT_FORCE=<Act>`, for looking at one act's pose: everyone standing
+    // does it, wherever they are.)
+    if let Some(a) = forced_act() {
+        if !place.act.seated() && !a.seated() {
+            (a1, a2) = (a, a);
+        }
+    }
     let hold = |dur: f64, act: Act| Leg {
         dur,
         from: at,
@@ -428,6 +510,7 @@ mod tests {
             via: DVec3::new(10.0, 0.0, 9.2),
             door: Some(DVec3::new(10.0, 0.0, 0.0)),
             climb: [None; hw_gen::layout::people::CLIMB],
+            ride: None,
             trips: [
                 Some(PlaceTrip {
                     at: DVec3::new(14.0, 0.0, 9.2),
@@ -450,6 +533,7 @@ mod tests {
             via: DVec3::new(3.0, 0.0, 3.0),
             door: Some(DVec3::new(0.0, 0.0, 3.0)),
             climb: [None; hw_gen::layout::people::CLIMB],
+            ride: None,
             trips: [
                 Some(PlaceTrip {
                     at: DVec3::new(3.0, 0.0, 8.0),
@@ -506,6 +590,63 @@ mod tests {
             }
         }
         assert!(found > 0);
+    }
+
+    /// By lift: nobody before the car rides up, in the car as it arrives
+    /// (at the car's own height), out at its door, and back in the car
+    /// when it comes again.
+    #[test]
+    fn people_come_and_go_by_lift() {
+        use hw_gen::layout::lifts::{car_at, next_arrival, WAIT};
+        let mut stops = [0.0; hw_gen::layout::people::RIDE_STOPS];
+        stops[..4].copy_from_slice(&[0.0, 4.0, 8.0, 12.0]);
+        let ride = hw_gen::layout::people::Ride {
+            stops,
+            n: 4,
+            phase: 11.0,
+            stop: 2,
+        };
+        let mut p = walker();
+        p.at = DVec3::new(0.0, 8.0, 3.0);
+        p.via = p.at;
+        p.door = Some(DVec3::new(0.0, 8.0, 8.0));
+        p.climb = [None; hw_gen::layout::people::CLIMB];
+        p.climb[0] = Some(DVec3::new(10.0, 8.0, 8.0));
+        p.climb[1] = Some(DVec3::new(8.0, 8.0, 8.0));
+        p.ride = Some(ride);
+        p.trips = [None, None];
+        let c = citizens();
+        c.set_hour(11.0);
+        let mut seen = 0;
+        for n in 0..40 {
+            let t0 = 1000.0 + n as f64 * 977.0;
+            let mut prev: Option<DVec3> = None;
+            let mut appeared = false;
+            let mut t = t0;
+            while t < t0 + STAY * 1.2 {
+                let here = c.indoors(3, 1, n, &p, t).map(|i| i.citizen.pos);
+                if let (Some(a), Some(b)) = (prev, here) {
+                    assert!(a.distance(b) < 3.0, "jump {a:?} -> {b:?} at {t}");
+                }
+                if let Some(h) = here {
+                    // In the car: at the car's own height and place.
+                    if h.x == 10.0 && h.z == 8.0 {
+                        let want = car_at(&stops[..4], 11.0, t).y + 0.05;
+                        assert!((h.y - want).abs() < 1e-6, "{h:?} at {t}");
+                        appeared = true;
+                    }
+                }
+                prev = here;
+                t += 0.5;
+            }
+            if appeared {
+                seen += 1;
+            }
+            // Whoever is in the car when it is at the stop with its doors open.
+            let (arr, _) = next_arrival(&stops[..4], 11.0, 2, t0).expect("stops");
+            let _ = (arr, WAIT);
+        }
+        assert!(seen > 0, "nobody rode");
     }
 
     /// Someone indoors always does something: across a whole workday and

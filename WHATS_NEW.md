@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.328 (2026-11-15)
+
+- People ride the real lifts: upstairs, someone steps out of a car when its doors open, and later steps back in when it returns and is carried off. You can see them standing in the car as it rises. Curved stairs (spirals, horseshoes) are climbed too, not only straight flights.
+
 ## 0.327 (2026-11-15)
 
 - Even more people do something. Those waiting at bus stops read, make calls, take a drink or chat. Police officers, onlookers and rescued people make a call, have a coffee or talk. Gang members killing time no longer just stand.
