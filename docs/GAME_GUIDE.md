@@ -166,6 +166,20 @@ for a hero standing on something and not rising, so a jump or fall meets walls a
 The fall pose shows only after 0.15 s off the ground (`heroview::AIR_GRACE`),
 a jump at once.
 
+**Stairs up to street doors** (0.331, `hw_gen::stoop`): a building's ground floor stands at its
+highest corner's ground (+0.1 m), on a plinth, so on a slope its street doors can be well above
+the pavement. Every door to the outside that is more than 0.25 m (`stoop::MIN_DROP`) over the
+ground in front of it gets a **stoop**: a stone landing 1.6 m deep at the door (the door's width
+and 0.7 m each side), and a flight of 0.17 m treads, 0.32 m deep and 1.6 m wide, running **along
+the facade** from the landing's end down to the pavement, towards the side where the ground
+meets it sooner. The flight never goes past its own building's front (the neighbour's landing is
+there): a tall drop turns back on a platform after 20 treads and returns in a second lane beside
+the first, and so on, up to five lanes. A railing 1 m high (the look's frame colour) runs round
+the landing's open end and along the flights' outer edges. Landing, treads, platforms and railing
+are solid and drawn from the same boxes (`Stoop::blocks`, `client/stoopview.rs`); colliders look
+`stoop::REACH` (12 m) beyond their building for them. `Stoop::path` is the way from the landing
+down to the foot, for walkers.
+
 **The power tray** (`hw-client/src/tray.rs`): twenty slots at the bottom of the screen, 1 to 0
 and Alt+1 to Alt+0 (the Alt row shows above the number row once it holds anything, or while
 something is dragged). A power you buy takes its usual key if that is free (Strike 1, Bolt 2,

@@ -116,11 +116,18 @@ struct Collider {
     base: f64,
     /// Bottom of the plinth under a building on a slope.
     plinth: Option<f64>,
+    /// The town's ground, for the stoops at its street doors (a landing
+    /// and a flight where a door stands high over the pavement).
+    ground: Option<Terrain>,
+    stoop: OnceLock<Arc<[Solid]>>,
     lo: DVec2,
     hi: DVec2,
     /// How far `lo` and `hi` lie outside the ground corners, so a roof
     /// that overhangs the site is found.
     margin: f64,
+    /// How far `lo` and `hi` lie outside the ground corners in all
+    /// (`margin` and the reach of the stairs up to its doors).
+    ext: f64,
     solids: OnceLock<Arc<[Solid]>>,
     /// A damaged building's solids instead of the plan's (see
     /// [`crate::destruction`]).
@@ -178,14 +185,24 @@ impl Collider {
         let margin = site
             .as_ref()
             .map_or(0.0, |s| hw_gen::roofsolid::overhang(&s.look()));
+        // The stairs up to a high door reach out along the facade
+        // (`hw_gen::stoop`) further than a roof.
+        let ext = if site.is_some() {
+            margin.max(hw_gen::stoop::REACH)
+        } else {
+            margin
+        };
         Self {
             plan: OnceLock::new(),
             site,
             base,
             plinth: None,
-            lo: lo - DVec2::splat(margin),
-            hi: hi + DVec2::splat(margin),
+            ground: None,
+            stoop: OnceLock::new(),
+            lo: lo - DVec2::splat(ext),
+            hi: hi + DVec2::splat(ext),
             margin,
+            ext,
             solids: OnceLock::new(),
             damage: RwLock::new(None),
             version: AtomicU64::new(0),
@@ -256,6 +273,37 @@ impl Collider {
         })
     }
 
+    /// The stairs up to its street doors: landings, treads and railings.
+    fn stoop_solids(&self) -> &Arc<[Solid]> {
+        self.stoop.get_or_init(|| {
+            let (Some(w), Some(p)) = (&self.ground, self.plan()) else {
+                return Vec::new().into();
+            };
+            let site = &p.site;
+            hw_gen::stoop::stoops(p, self.base, &|q| (w.0)(q))
+                .iter()
+                .flat_map(|s| s.blocks())
+                .map(|b| Solid {
+                    origin: site.origin,
+                    along: site.along,
+                    inward: site.inward,
+                    min: b.rect.min,
+                    max: b.rect.max,
+                    y0: b.y0,
+                    y1: b.y1,
+                })
+                .collect()
+        })
+    }
+
+    /// What stays of a building whatever happens to it: its plinth and the
+    /// stoops at its doors.
+    fn base_solids(&self) -> Vec<Solid> {
+        let mut out: Vec<Solid> = self.plinth_solid().into_iter().collect();
+        out.extend(self.stoop_solids().iter().cloned());
+        out
+    }
+
     fn plan(&self) -> Option<&Arc<BuildingPlan>> {
         self.plan
             .get_or_init(|| {
@@ -270,7 +318,7 @@ impl Collider {
         self.solids.get_or_init(|| match self.plan() {
             Some(p) => {
                 let mut out = building_solids(p, self.base);
-                out.extend(self.plinth_solid());
+                out.extend(self.base_solids());
                 out.into()
             }
             None => Vec::new().into(),
@@ -462,6 +510,12 @@ fn tile_of(p: DVec2) -> (i64, i64) {
 }
 
 impl TownSolids {
+    /// The town's ground height, for the stoops at its doors.
+    fn ground_fn(&self) -> Terrain {
+        let w = self.world.clone();
+        Terrain(Arc::new(move |p| w.ground(p)))
+    }
+
     /// The tile at `k`, loading it if needed.
     fn tile(&self, k: (i64, i64)) -> Arc<Tile> {
         let t = self.tick.fetch_add(1, Ordering::Relaxed);
@@ -518,7 +572,9 @@ impl TownSolids {
             for (id, b) in q.buildings_with_ids() {
                 let corners = b.site.corners();
                 let (a, z) = (lo_of(&corners), hi_of(&corners));
-                let m = DVec2::splat(hw_gen::roofsolid::overhang(&b.site.look()));
+                let m = DVec2::splat(
+                    hw_gen::roofsolid::overhang(&b.site.look()).max(hw_gen::stoop::REACH),
+                );
                 if !inside(a - m, z + m) {
                     continue;
                 }
@@ -527,6 +583,7 @@ impl TownSolids {
                     self.collider(id.0, || {
                         let mut c = Collider::new(Some(b.site.clone()), b.base, a, z);
                         c.plinth = (b.base - b.low > 0.05).then_some(b.low - 1.0);
+                        c.ground = Some(self.ground_fn());
                         c
                     }),
                 ));
@@ -1032,6 +1089,14 @@ impl Obstacles {
         self.near_colliders(p, r)
             .into_iter()
             .filter(|(_, c)| c.site.is_some() || c.plan.get().is_some_and(|p| p.is_some()))
+            // (Its box and roof: not the reach of its stairs.)
+            .filter(|(_, c)| {
+                let k = c.ext - c.margin;
+                p.x >= c.lo.x + k - r
+                    && p.x <= c.hi.x - k + r
+                    && p.y >= c.lo.y + k - r
+                    && p.y <= c.hi.y - k + r
+            })
             .map(|(i, _)| i)
             .collect()
     }
@@ -1040,7 +1105,7 @@ impl Obstacles {
     /// making its plan.
     pub fn building_bounds(&self, i: ColliderId) -> Option<(DVec2, DVec2)> {
         self.find(i)
-            .map(|c| (c.lo + DVec2::splat(c.margin), c.hi - DVec2::splat(c.margin)))
+            .map(|c| (c.lo + DVec2::splat(c.ext), c.hi - DVec2::splat(c.ext)))
     }
 
     /// A fixed collider by id.
@@ -1079,6 +1144,7 @@ impl Obstacles {
             hi_of(&corners),
         );
         c.plinth = (b.base - b.low > 0.05).then_some(b.low - 1.0);
+        c.ground = Some(town.ground_fn());
         Some(Found::Town(town.collider(i, || c)))
     }
 
@@ -1088,7 +1154,7 @@ impl Obstacles {
         let c = self.find(i);
         let d = solids.map(|mut s| {
             if let Some(c) = &c {
-                s.extend(c.plinth_solid());
+                s.extend(c.base_solids());
             }
             Damaged { solids: s.into() }
         });
@@ -2390,6 +2456,130 @@ mod tests {
         };
         let top = walk_east(&o, &mut b, 90);
         assert!(b.pos.x < 0.0 && top < 0.01, "climbed 1.3 m: {:?}", b.pos);
+    }
+
+    /// Every street door can be reached on foot from the street: where it
+    /// stands high over the pavement, up the stairs along the facade
+    /// (`hw_gen::stoop`); where it does not, straight in.
+    #[test]
+    fn every_street_door_can_be_reached_on_foot_from_the_street() {
+        use hw_core::Seed;
+        use hw_gen::urban::world::TownWorld;
+        use hw_gen::urban::TownParams;
+        let w = Arc::new(TownWorld::generate(
+            Seed(1),
+            TownParams::sample(Seed(1), 20_000.0),
+        ));
+        let ground = w.clone();
+        let o = Obstacles::from_town(&w, Terrain(Arc::new(move |p| ground.ground(p))));
+        let (mut tried, mut stairs, mut worst) = (0, 0, 0.0f64);
+        let mut failures: Vec<String> = Vec::new();
+        for (id, b) in w.everything().buildings.into_iter().step_by(3).take(400) {
+            let s = &b.site;
+            let plan = BuildingPlan::generate(s);
+            let to_world = |p: DVec2| s.origin + s.along * p.x + s.inward * p.y;
+            let list = hw_gen::stoop::stoops(&plan, b.base, &|q| w.ground(q));
+            let Some(floor) = plan.floors.first() else {
+                continue;
+            };
+            let mid = floor.outline.center();
+            let doors: Vec<(usize, &hw_gen::building::Door)> = floor
+                .doors
+                .iter()
+                .enumerate()
+                .filter(|(_, d)| d.b.is_none())
+                .collect();
+            if doors.is_empty() {
+                continue;
+            }
+            o.prefetch(&[DVec3::new(s.origin.x, b.base, s.origin.y)], 80.0);
+            for (i, d) in doors {
+                // A closed door opens for people who walk up to it.
+                o.set_door(id.0, hw_gen::doors::door_key(0, i), true);
+                let out = if d.along_x {
+                    if d.at.y < mid.y {
+                        -DVec2::Y
+                    } else {
+                        DVec2::Y
+                    }
+                } else if d.at.x < mid.x {
+                    -DVec2::X
+                } else {
+                    DVec2::X
+                };
+                // From the pavement in front, or from the foot of the flight.
+                let (start, mut path) = match list.iter().find(|st| st.at == d.at) {
+                    Some(st) => {
+                        stairs += 1;
+                        // Up the way the stairs lead, then to the door.
+                        let mut up: Vec<DVec2> = st.path.iter().rev().copied().collect();
+                        let start = up.remove(0);
+                        up.push(st.at + out * 0.8);
+                        (start, up)
+                    }
+                    None => (d.at + out * 2.6, vec![d.at + out * 0.8]),
+                };
+                // And in through the doorway.
+                path.push(d.at - out * 1.2);
+                let p0 = to_world(start);
+                let mut body = Body {
+                    pos: DVec3::new(p0.x, w.ground(p0), p0.y),
+                    grounded: true,
+                    ..Body::default()
+                };
+                if o.solid_at(body.pos + DVec3::Y) {
+                    continue;
+                }
+                tried += 1;
+                for wp in &path {
+                    let to = to_world(*wp);
+                    for _ in 0..400 {
+                        let dv = to - DVec2::new(body.pos.x, body.pos.z);
+                        if dv.length() < 0.2 {
+                            break;
+                        }
+                        let v = dv.normalize() * 4.0;
+                        let fall = if body.grounded {
+                            0.0
+                        } else {
+                            body.vel.y - 9.8 / 30.0
+                        };
+                        body.vel = DVec3::new(v.x, fall, v.y);
+                        o.move_body(&mut body, 1.0 / 30.0);
+                    }
+                }
+                let goal = to_world(d.at - out * 1.2);
+                let miss = DVec2::new(body.pos.x, body.pos.z).distance(goal);
+                let height = (body.pos.y - b.base).abs();
+                worst = worst.max(miss);
+                if miss > 0.6 || height > 0.5 {
+                    let loc = DVec2::new(body.pos.x, body.pos.z) - s.origin;
+                    let st = list.iter().find(|st| st.at == d.at);
+                    failures.push(format!(
+                        "building at {:?}: stopped {miss:.1} m short at {:.2} m (floor {:.2}, ground {:.2}); at local ({:.1}, {:.1}), door {:?} size {:?}, out {out:?}, stoop {:?}, treads {}, size {:?}",
+                        s.origin,
+                        body.pos.y,
+                        b.base,
+                        w.ground(to_world(d.at + out)),
+                        loc.dot(s.along),
+                        loc.dot(s.inward),
+                        d.at,
+                        d.size,
+                        st.map(|x| x.down),
+                        st.map_or(0, |x| x.treads.len()),
+                        s.size
+                    ));
+                }
+            }
+        }
+        eprintln!("{tried} doors tried, {stairs} with stairs, worst miss {worst:.2} m");
+        assert!(tried > 60, "{tried} doors");
+        assert!(
+            failures.is_empty(),
+            "{} doors unreachable: {:?}",
+            failures.len(),
+            &failures[..failures.len().min(8)]
+        );
     }
 
     /// Stepping up a ledge must not make a facade a ladder. From every side

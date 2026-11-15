@@ -9,6 +9,7 @@ pub mod geom;
 pub mod layout;
 pub mod planet;
 pub mod roofsolid;
+pub mod stoop;
 pub mod style;
 pub mod urban;
 pub mod water;

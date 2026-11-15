@@ -608,6 +608,14 @@ fn make_cell(job: CellJob) -> CellMeshes {
                 doors.panes.extend(p);
             }
         }
+        // Stairs up to a street door that stands high over the pavement,
+        // in the cells drawn in full detail.
+        if blocked {
+            let ground = |p: DVec2| world.ground(p);
+            for m in &mut blocks[block_of(centre(wb))] {
+                crate::stoopview::draw(m, &plan, wb.base, &ground);
+            }
+        }
         if wb.base - wb.low > 0.05 {
             // The plinth is the building's own base stone.
             let plinth = |m: &mut MeshBuilder| {

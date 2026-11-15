@@ -88,6 +88,7 @@ pub mod skyline;
 pub mod soundscape;
 pub mod speech;
 pub mod startflight;
+pub mod stoopview;
 pub mod storyview;
 pub mod streetgear;
 pub mod streetlines;
