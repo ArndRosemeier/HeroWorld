@@ -150,7 +150,7 @@ From `settings::CONTROLS` (shown in the game under the menu button → Controls)
 | J | Case file: open cases (pick which one the radio follows), the Doctor's dossier, the cabinet of closed cases |
 | T | Police visor on or off (a new call switches it on) |
 | N | Minimap on or off |
-| Menu button, "Arrange the screen" | Drag the minimap, compass, power tray, radio and police monitor; drag a corner to resize (0.5x to 2.5x); Enter or the tick ends, the red arrow resets. Saved in `ui_layout.json` beside the profile. Chat, powers and police windows are draggable and remembered |
+| Menu button, "Arrange the screen" | Drag the minimap, compass, power tray, radio and police monitor; drag a corner to resize (0.5x to 2.5x); a magnifier slider sets the minimap's zoom (x0.5 to x4, default x1, scales its reach); Enter or the tick ends, the red arrow resets. Saved in `ui_layout.json` beside the profile. Chat, powers and police windows are draggable and remembered |
 | O | Free camera |
 | Enter or / | Chat: type a line, Enter says it (in a speech bubble over your head and in the chat window), Escape cancels |
 | K | Knock nearby townspeople over (a ragdoll test, still in the game) |

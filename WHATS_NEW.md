@@ -3,6 +3,10 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.330 (2026-11-15)
+
+- You can zoom the minimap. While you arrange the screen (menu button, "Arrange the screen"), a magnifier slider at the top sets how much ground the minimap shows, from half to four times as close. It is saved with your layout, and the red arrow puts it back.
+
 ## 0.329 (2026-11-15)
 
 - Quitting the game now ends it for good at once, so the start.bat window no longer sits there busy afterwards.

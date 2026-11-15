@@ -31,6 +31,10 @@ use std::sync::Mutex;
 /// Smallest and largest size of a piece, against its default.
 pub const MIN_SCALE: f32 = 0.5;
 pub const MAX_SCALE: f32 = 2.5;
+/// How far the minimap's map can be zoomed (1 = the default reach; higher
+/// shows less ground, larger).
+pub const MIN_MAP_ZOOM: f32 = 0.5;
+pub const MAX_MAP_ZOOM: f32 = 4.0;
 /// How much of a piece must stay on screen (points).
 const KEEP: f32 = 44.0;
 
@@ -89,13 +93,27 @@ struct Seen {
     spot: Spot,
 }
 
-#[derive(Default)]
 struct State {
     loaded: bool,
     editing: bool,
     items: BTreeMap<String, Item>,
     windows: BTreeMap<String, Spot>,
     seen: BTreeMap<String, Seen>,
+    /// The minimap's zoom factor (1 = default).
+    map_zoom: f32,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        State {
+            loaded: false,
+            editing: false,
+            items: BTreeMap::new(),
+            windows: BTreeMap::new(),
+            seen: BTreeMap::new(),
+            map_zoom: 1.0,
+        }
+    }
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
@@ -104,6 +122,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     items: BTreeMap::new(),
     windows: BTreeMap::new(),
     seen: BTreeMap::new(),
+    map_zoom: 1.0,
 });
 
 fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
@@ -143,6 +162,9 @@ fn parse(text: &str, s: &mut State) {
             };
             s.items.insert(k.clone(), item);
         }
+    }
+    if let Some(z) = num(&v, "minimap_zoom") {
+        s.map_zoom = z.clamp(MIN_MAP_ZOOM, MAX_MAP_ZOOM);
     }
     if let Some(ws) = v.get("windows").and_then(Value::as_object) {
         for (k, w) in ws {
@@ -202,7 +224,10 @@ fn to_text(s: &State) -> String {
             (k.clone(), o)
         })
         .collect();
-    serde_json::to_string_pretty(&json!({"items": items, "windows": windows})).unwrap_or_default()
+    serde_json::to_string_pretty(
+        &json!({"items": items, "windows": windows, "minimap_zoom": s.map_zoom}),
+    )
+    .unwrap_or_default()
 }
 
 /// Writes the layout (a few hundred bytes, only when something was set down
@@ -238,10 +263,21 @@ pub fn reset(ctx: &egui::Context) {
         s.items.clear();
         s.windows.clear();
         s.seen.clear();
+        s.map_zoom = 1.0;
         save(s);
     });
     // Windows forget where they were dragged to (and take their default).
     ctx.memory_mut(|m| m.reset_areas());
+}
+
+/// The minimap's zoom factor (1 = default; 2 shows half the ground, twice
+/// as large). Set while arranging the screen, saved with the layout.
+pub fn minimap_zoom() -> f32 {
+    with(|s| s.map_zoom)
+}
+
+fn set_minimap_zoom(z: f32) {
+    with(|s| s.map_zoom = z.clamp(MIN_MAP_ZOOM, MAX_MAP_ZOOM));
 }
 
 /// The saved setting of a HUD piece (the default when never touched).
@@ -446,6 +482,28 @@ pub fn edit_bar(ctx: &egui::Context) {
                             egui::Stroke::new(2.0_f32, uikit::GOLD),
                         );
                     }
+                    // The minimap's zoom: a magnifier and a slider.
+                    zoom_glyph(ui);
+                    let mut z = minimap_zoom();
+                    let r = ui
+                        .add(
+                            egui::Slider::new(&mut z, MIN_MAP_ZOOM..=MAX_MAP_ZOOM)
+                                .logarithmic(true)
+                                .show_value(false)
+                                .fixed_decimals(2),
+                        )
+                        .on_hover_text("Minimap zoom");
+                    ui.label(
+                        egui::RichText::new(format!("x{z:.1}"))
+                            .color(uikit::CREAM)
+                            .size(14.0),
+                    );
+                    if r.changed() {
+                        set_minimap_zoom(z);
+                    }
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        with(|s| save(s));
+                    }
                     reset_all = icon_button(ui, Glyph::Reset, "Put everything back where it was");
                     done = icon_button(ui, Glyph::Check, "Done");
                 });
@@ -458,6 +516,17 @@ pub fn edit_bar(ctx: &egui::Context) {
         set_editing(false);
         with(|s| save(s));
     }
+}
+
+/// A little magnifying glass: what the slider next to it zooms.
+fn zoom_glyph(ui: &mut egui::Ui) {
+    let (r, resp) = ui.allocate_exact_size(egui::vec2(26.0, 26.0), Sense::hover());
+    let p = ui.painter();
+    let c = r.center() + egui::vec2(-2.0, -2.0);
+    let st = egui::Stroke::new(2.4_f32, uikit::GOLD);
+    p.circle_stroke(c, 7.0, st);
+    p.line_segment([c + egui::vec2(5.0, 5.0), c + egui::vec2(11.0, 11.0)], st);
+    resp.on_hover_text("Minimap zoom");
 }
 
 #[derive(Clone, Copy)]
@@ -790,11 +859,13 @@ mod tests {
                 size: None,
             },
         );
+        s.map_zoom = 2.5;
         let text = to_text(&s);
         let mut back = State::default();
         parse(&text, &mut back);
         assert_eq!(back.items, s.items);
         assert_eq!(back.windows, s.windows);
+        assert_eq!(back.map_zoom, 2.5);
         // Garbage must not stop the game: nothing is read, nothing panics.
         let mut none = State::default();
         parse("{ not json", &mut none);
@@ -805,6 +876,9 @@ mod tests {
         assert_eq!(none.items["a"].scale, MAX_SCALE);
         assert_eq!(none.items["a"].dx, 2.0);
         assert!(none.windows.is_empty());
+        assert_eq!(none.map_zoom, 1.0, "no zoom saved means the default");
+        parse(r#"{"minimap_zoom": 99.0}"#, &mut none);
+        assert_eq!(none.map_zoom, MAX_MAP_ZOOM);
     }
 
     /// The same window placed on a bigger screen, as `window_free` would.

@@ -214,7 +214,10 @@ impl Minimap {
         if toggle {
             self.shown = !self.shown;
         }
-        let want = (WALK_REACH + height.max(0.0) * 1.6).min(MAX_REACH);
+        // The player's zoom factor (set while arranging the screen) divides
+        // the ground shown: 2 shows half as far, twice as large.
+        let zoom = crate::layout::minimap_zoom().clamp(0.1, 10.0) as f64;
+        let want = (WALK_REACH + height.max(0.0) * 1.6).min(MAX_REACH) / zoom;
         self.reach += (want - self.reach) * 0.08;
         self.stream(at, self.reach);
         if self.shown || crate::layout::editing() {
