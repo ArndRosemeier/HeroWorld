@@ -786,6 +786,10 @@ pub fn first_fight_way(solids: &Obstacles, (mid, dir): (DVec2, DVec2)) -> (DVec2
     (mid, way)
 }
 
+/// A square of the town made in the background: the square, its traffic
+/// and its streets as people walk them.
+type AreaMade = (Arc<Area>, traffic::Traffic, Arc<streets::Streets>);
+
 pub struct Sim {
     pub world: World,
     pub seed: Seed,
@@ -849,9 +853,9 @@ pub struct Sim {
     /// (it follows the heroes, see [`Sim::follow_heroes`]).
     pub area: Option<Arc<Area>>,
     /// The next square, being made in the background.
-    area_job: Option<std::sync::mpsc::Receiver<(Arc<Area>, traffic::Traffic)>>,
+    area_job: Option<std::sync::mpsc::Receiver<AreaMade>>,
     /// The next square, made, waiting for the taxis to land.
-    area_ready: Option<(Arc<Area>, traffic::Traffic)>,
+    area_ready: Option<AreaMade>,
     /// Has the square moved from the one every machine starts with?
     area_moved: bool,
     /// The rocket port's launches (see [`rocket`]).
@@ -1045,8 +1049,8 @@ impl Sim {
             }
         }
         if self.area_ready.is_some() && !self.taxis.busy() {
-            if let Some((next, traffic)) = self.area_ready.take() {
-                self.set_area(next, traffic);
+            if let Some((next, traffic, walks)) = self.area_ready.take() {
+                self.set_area_with(next, traffic, walks);
             }
             return;
         }
@@ -1069,13 +1073,27 @@ impl Sim {
         std::thread::spawn(move || {
             let next = Arc::new(Area::around(world, centre, half));
             let traffic = traffic::Traffic::new(next.clone());
-            let _ = tx.send((next, traffic));
+            // The streets as people walk them (cases: a courier's way, a
+            // getaway car's), made here so no tick waits for them.
+            let walks = Arc::new(streets::Streets::on_foot(next.roads.iter()));
+            let _ = tx.send((next, traffic, walks));
         });
         self.area_job = Some(rx);
     }
 
-    /// Swaps in another square of the town now.
-    pub fn set_area(&mut self, area: Arc<Area>, mut traffic: traffic::Traffic) {
+    /// Swaps in another square of the town now (its walking streets made
+    /// on the spot: tests; the game makes them with the square).
+    pub fn set_area(&mut self, area: Arc<Area>, traffic: traffic::Traffic) {
+        let walks = Arc::new(streets::Streets::on_foot(area.roads.iter()));
+        self.set_area_with(area, traffic, walks);
+    }
+
+    fn set_area_with(
+        &mut self,
+        area: Arc<Area>,
+        mut traffic: traffic::Traffic,
+        walks: Arc<streets::Streets>,
+    ) {
         traffic.reset_at(self.tick as f64 * DT);
         let centre = (area.lo + area.hi) * 0.5;
         self.wrecks.set_traffic(traffic, centre);
@@ -1084,7 +1102,7 @@ impl Sim {
         self.incidents.set_town(area.clone());
         self.world.resource_mut::<combat::Fights>().area = Some(combat::Skyline(area.clone()));
         self.crimes.set_area(area.clone());
-        self.missions.set_area(area.clone());
+        self.missions.set_area(area.clone(), walks);
         self.area = Some(area);
         self.area_moved = true;
     }
@@ -1484,12 +1502,24 @@ impl Sim {
                 .set_emboldened(self.missions.emboldened.iter().map(|e| e.0).collect());
         }
         self.raise_crime_alarms();
+        if self.tick.is_multiple_of(TICK_HZ as u64) {
+            // A getaway car standing in the road holds it as a police
+            // cruiser does; a heist frightens the street as a robbery does.
+            for at in self.missions.cars_standing() {
+                self.alarms
+                    .raise_or_refresh(alarms::AlarmKind::Police, at, self.tick, TICK_HZ);
+            }
+            for at in self.missions.heists() {
+                self.alarms
+                    .raise_or_refresh(alarms::AlarmKind::Robbery, at, self.tick, TICK_HZ);
+            }
+        }
         self.lap("srv story+missions us", &mut t);
         let solids = self.solids();
         taxi::step(&mut self.world, &mut self.taxis, &solids, self.tick, DT);
         // A hideout case closed: the police come for the gang.
         for c in std::mem::take(&mut self.missions.police_calls) {
-            self.call_police_to(c.door, c.out, c.cars, Some(c.visit));
+            self.call_police_to(c.door, c.out, c.cars, c.visit);
         }
         let heroes_at: Vec<DVec3> = self
             .world

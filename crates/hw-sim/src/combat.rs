@@ -222,6 +222,9 @@ pub enum EnemyKind {
     /// A gang's safe with the thing a hideout case is after locked in it
     /// (see [`crate::missions`]): it stands there and is broken open.
     Safe,
+    /// A gang's flying getaway car (see [`crate::missions::getaway`]): the
+    /// case flies it, heroes bring it down. It never fights back.
+    Getaway,
 }
 
 /// The Doctor's Aether storm: how long he charges it (the telegraph: get
@@ -325,6 +328,18 @@ pub fn enemy_spec(k: EnemyKind) -> EnemySpec {
             speed: 0.0,
             aggro: 0.0,
             karma: 10.0,
+        },
+        EnemyKind::Getaway => EnemySpec {
+            name: "Getaway car",
+            rank: "Flying",
+            health: 260.0,
+            damage: 0.0,
+            attack_every: 1.0,
+            windup: 0.0,
+            reach: 0.0,
+            speed: 0.0,
+            aggro: 0.0,
+            karma: 14.0,
         },
         EnemyKind::WeakPoint => EnemySpec {
             name: "Weak point",
@@ -534,6 +549,7 @@ impl EnemyKind {
                 | EnemyKind::Colossus
                 | EnemyKind::WeakPoint
                 | EnemyKind::Safe
+                | EnemyKind::Getaway
                 | EnemyKind::Doctor
                 | EnemyKind::Orderly
         )
@@ -550,6 +566,7 @@ impl EnemyKind {
             EnemyKind::Colossus => EntityKind::Colossus,
             EnemyKind::WeakPoint => EntityKind::WeakPoint,
             EnemyKind::Safe => EntityKind::Safe,
+            EnemyKind::Getaway => EntityKind::Getaway,
             EnemyKind::Greaser => EntityKind::Greaser,
             EnemyKind::Gunsel => EntityKind::Gunsel,
             EnemyKind::Delver => EntityKind::Delver,
@@ -614,7 +631,7 @@ impl EnemyKind {
     pub fn carried_off(self) -> bool {
         !matches!(
             self,
-            EnemyKind::Colossus | EnemyKind::WeakPoint | EnemyKind::Safe
+            EnemyKind::Colossus | EnemyKind::WeakPoint | EnemyKind::Safe | EnemyKind::Getaway
         )
     }
 
@@ -627,6 +644,7 @@ impl EnemyKind {
             EntityKind::Colossus => Some(EnemyKind::Colossus),
             EntityKind::WeakPoint => Some(EnemyKind::WeakPoint),
             EntityKind::Safe => Some(EnemyKind::Safe),
+            EntityKind::Getaway => Some(EnemyKind::Getaway),
             EntityKind::Greaser => Some(EnemyKind::Greaser),
             EntityKind::Gunsel => Some(EnemyKind::Gunsel),
             EntityKind::Delver => Some(EnemyKind::Delver),
@@ -1100,6 +1118,9 @@ pub struct Enemy {
     /// Until then it is walking to something it means to smash, so it does
     /// not stroll about its place instead (a vandal's errand).
     pub errand_until: u64,
+    /// Going about its business: it notices nobody and walks to its
+    /// `home` (a courier on his way; see [`crate::missions`]).
+    pub calm: bool,
     /// The tick it last acted. A villain that waits its turn (see
     /// [`enemies_act`]) walks the ticks it missed in one go, so it moves at
     /// the same speed however often it acts.
@@ -1379,6 +1400,9 @@ pub struct Fights {
     pub city: Vec<(DVec3, f32, f32)>,
     /// The streets the colossus walks (none on a bare test ground).
     pub streets: Option<std::sync::Arc<crate::streets::Streets>>,
+    /// Every street of the square round the heroes, as a graph (a getaway
+    /// car's way; set by [`crate::missions`]).
+    pub walks: Option<std::sync::Arc<crate::streets::Streets>>,
     /// The route maps of the buildings with game-scale interiors:
     /// villains find their way through rooms and up stairs by them.
     pub floors: Option<std::sync::Arc<crate::floornav::Floors>>,
@@ -1504,6 +1528,7 @@ impl Default for Fights {
             paths: BTreeMap::new(),
             city: Vec::new(),
             streets: None,
+            walks: None,
             floors: None,
             routes: BTreeMap::new(),
             rescue_points: Vec::new(),
@@ -1870,7 +1895,10 @@ pub(crate) fn spawn_enemy(
     // Some carry an augment (a boss always): tougher by its strength, and
     // it drops for every hero who helps beat them. Parts of a machine
     // carry nothing.
-    if !matches!(kind, EnemyKind::WeakPoint | EnemyKind::Safe) {
+    if !matches!(
+        kind,
+        EnemyKind::WeakPoint | EnemyKind::Safe | EnemyKind::Getaway
+    ) {
         let mut dice = crate::augments::Dice::for_drop(tick, id.0, spot as u32);
         if let Some(a) = crate::augments::carry(rank_of(kind), level, &mut dice) {
             fighter.carried = Some(a);
@@ -1881,7 +1909,7 @@ pub(crate) fn spawn_enemy(
     // The colossus and its parts take a team: tougher for more heroes.
     if matches!(
         kind,
-        EnemyKind::Colossus | EnemyKind::WeakPoint | EnemyKind::Safe
+        EnemyKind::Colossus | EnemyKind::WeakPoint | EnemyKind::Safe | EnemyKind::Getaway
     ) {
         let k = 1.0 + 0.6 * heroes.saturating_sub(1) as f32;
         fighter.max_health *= k;
@@ -1917,6 +1945,7 @@ pub(crate) fn spawn_enemy(
             leaving: false,
             flee_until: 0,
             errand_until: 0,
+            calm: false,
             last_think: tick.saturating_sub(1),
         },
         LastChange(tick),
@@ -2107,7 +2136,10 @@ pub(crate) fn step(world: &mut World, tick: u64) {
                     || a.f.status == Status::Carried
                     || matches!(
                         e.kind,
-                        EnemyKind::Colossus | EnemyKind::WeakPoint | EnemyKind::Safe
+                        EnemyKind::Colossus
+                            | EnemyKind::WeakPoint
+                            | EnemyKind::Safe
+                            | EnemyKind::Getaway
                     ),
             })
         })
@@ -4764,7 +4796,10 @@ fn pay_out(actors: &[Actor], out: &mut Out) {
             });
             // Parts of a machine are not people of the faction (and carry
             // nothing to drop).
-            if !matches!(en.kind, EnemyKind::WeakPoint | EnemyKind::Safe) {
+            if !matches!(
+                en.kind,
+                EnemyKind::WeakPoint | EnemyKind::Safe | EnemyKind::Getaway
+            ) {
                 if !h.npc && v.f.carried.is_some() {
                     out.drops.push(Drop {
                         hero: h.id,
@@ -4954,7 +4989,7 @@ fn enemies_act(
         // Machines that are not people-sized move in `robots`.
         if matches!(
             en.kind,
-            EnemyKind::Colossus | EnemyKind::WeakPoint | EnemyKind::Safe
+            EnemyKind::Colossus | EnemyKind::WeakPoint | EnemyKind::Safe | EnemyKind::Getaway
         ) {
             continue;
         }
@@ -5025,7 +5060,7 @@ fn enemies_act(
                     .filter(|&(j, d)| d < CHARM_REACH && in_sight(solids, me, actors[j].chest()))
                     .min_by(|x, y| x.1.total_cmp(&y.1).then(x.0.cmp(&y.0)))
                     .map(|(j, _)| j);
-            } else if foe.is_none() {
+            } else if foe.is_none() && !en.calm {
                 let me = actors[i].chest();
                 let mut noticed: Vec<(usize, f64)> = heroes
                     .iter()
@@ -5081,7 +5116,7 @@ fn enemies_act(
                     fx.push(event(tick, FxKind::Warn, actors[i].id, hero_id, me));
                 }
                 // Breaking off: nobody to fight until it is where it runs to.
-                if tick < en.flee_until && !charmed {
+                if (tick < en.flee_until || en.calm) && !charmed {
                     foe = None;
                 }
                 if let Some(j) = foe.filter(|&j| !charmed && !actors[j].f.charmed(tick)) {
@@ -5699,7 +5734,7 @@ fn regenerate(actors: &mut [Actor], tick: u64) {
         let machine = a.enemy.is_some_and(|e| {
             matches!(
                 e.kind,
-                EnemyKind::Colossus | EnemyKind::WeakPoint | EnemyKind::Safe
+                EnemyKind::Colossus | EnemyKind::WeakPoint | EnemyKind::Safe | EnemyKind::Getaway
             )
         });
         let (h, e) = if a.enemy.is_some() {

@@ -972,8 +972,10 @@ who were there; a guest further along keeps their own place.
 
 ### Cases (`hw-sim/src/missions/`, `hw-client/src/{missionview,police}.rs`)
 
-**Gang hideouts** are the one kind of case for now (the street, plaza, tunnel, Deeps and
-chain cases are parked in the code, not offered). They are **found on the police computer**, not
+Cases come in **five shapes** (0.332): **gang hideouts** to bust, and four that play out in
+the open: a **heist in progress**, a **getaway by air**, **hostages on a roof** and a **courier to
+tail** (see "The other shapes" below; the street, plaza, tunnel, Deeps and chain cases are parked
+in the code, not offered). All are **found on the police computer**, not
 at Atomic Annie (she keeps the hall's steps and no longer hands anything out):
 
 - **The police computer**: a cheesy monitor with antennae in the HUD (top right, under the
@@ -986,9 +988,11 @@ at Atomic Annie (she keeps the hall's steps and no longer hands anything out):
   sack; counterfeit ring: banknotes; smuggling den: crate; stolen prototype: ray gun; art
   theft: framed painting; protection racket: ledger), its title and the hideout's name ("Old
   hotel on Juniper Street"), the **job** with an icon (**arrest the boss**: handcuffs, **find
-  the thing**: magnifier), the **gang** (a coloured dot and its short name), the gangsters'
+  the thing**: magnifier, **stop the heist**: a sack with an arrow, **catch the car**: a finned
+  car with speed lines, **free the hostages**: a bound figure, **tail the courier**: an eye), the **gang** (a coloured dot and its short name), the gangsters'
   **level** (the team's level plus 0-2; green when easy, gold on par, orange and red when tough)
-  the hideout's **size** (one, two or three little houses lit: DEN, HIDEOUT, FORTRESS)
+  the hideout's **size** (one, two or three little houses lit: DEN, HIDEOUT, FORTRESS; the
+  other shapes say IN PROGRESS, IN THE AIR, ROOFTOP or ON FOOT there)
   the **minutes** it stays on the board (red from 3 down), a pulsing **HOT TIP** flag,
   and the **distance** from the hero. **TAKE** opens the case (FULL when 3 are open, ON IT when
   taken). The radio's heading and compass then follow it.
@@ -1390,6 +1394,69 @@ between them) is designed but not built; the town stands in endless streamed gro
   at golden hour. `HW_HOUR` sets another hour: at night lamps light the streets, a third of
   the windows glow, the Spire bathes its plaza in cyan, and two moons hang in the sky.
   There is no day/night cycle yet.
+
+
+#### The other shapes (0.332; `missions/{getaway,rooflift,tail}.rs`, `board.rs` `SHAPES`)
+
+Each crime on the board rolls a shape from the world's seed and its number: **hideout bust 36 %,
+heist 20 %, rooftop hostages 16 %, tail 16 %, getaway 12 %**. A shape that finds no place in the
+streets round the heroes (no shop front, no flat roof, no walkable way) falls back to the hideout
+bust. A case can now be **lost** (stage `LOST`): the radio says so, nothing is paid, and the
+streets near it are rough for 10 minutes as for a crime nobody took.
+
+- **Heist in progress** (`CaseKind::Heist` at a shop block's street door, "the jeweller's on
+  Juniper Street"). It **does not wait**: from the moment it is taken the gang is gone after
+  **120 s plus 1 s per 7 m** of the way there (the clock is on the radio and the visor). When a
+  hero comes within 90 m the gang stands: **guards at the door**, and a **getaway car** (the
+  street's hover car in the gangs' black and blood red, 260 health at the team's level) comes
+  down at the nearest free ground by the door, found like a police cruiser's landing. Then
+  **lookouts** come with it and **two bagmen** carry **8 sacks** from the door to the car,
+  a sack each trip, 2 s at each end (a gauge with a sack shows how many are aboard; bagmen fight
+  nobody while they haul). With the **8th sack aboard** everyone still standing runs for the car
+  and climbs in (8 s at most), and it **takes off**: the heist has become a getaway. Stopping
+  it: beat the bagmen (nobody else carries), beat everyone, or **wreck the car at the kerb**
+  (it is a target like any other; a wreck takes nobody anywhere). The case closes when every
+  group is beaten or cuffed and the car is not in the air; whoever still stands gives up, a
+  Sky Patrol cruiser comes, and the shop's owner steps out to say thanks.
+- **Getaway by air** (`CaseKind::Chase`, opened over a street, or grown from a heist). The car
+  flies **6.5 m over the streets** of the square round the heroes (every street, side streets
+  too: `Streets::on_foot`), turning at junctions by its own dice, at **12 m/s with a hero within
+  35 m, 10 m/s otherwise, 8 m/s with nobody within 110 m** (a hero runs 7, sprints 13-17, flies
+  22). It climbs over whatever stands in its way and never flies into anything. It is hit like
+  any villain; each **quarter of its health lost** makes it **sputter for 3 s** (down to 2.4 m
+  and 3 m/s, smoking more each time). Out of health it glides down and lies in the street, a
+  solid wreck, and its **crew of 3 (plus those who boarded)** gets out to fight: beat them and
+  the case closes. It is **lost** when the car has flown **210 s** (the clock shows it), or when
+  no hero has been within 250 m of it for 30 s. A chase taken from the board has the same
+  arrival deadline as a heist. The wreck stays until no hero is within sight.
+- **Hostages on a roof** (`CaseKind::Hostages` at `Place::Rooftop`: a flat roof of a 2 to
+  6 storey block at least 15 m a side, without a taxi pad). Two crews and the hostages stand
+  on the roof as built. Beat a hostage's guards and hold E 2 s to untie them, as indoors. There
+  are no stairs for them: as soon as **one crew is beaten**, a **Sky Patrol cruiser** flies in
+  and lands on the roof (a clear, level place for its whole box, away from everyone, found when
+  the gang stands; a roof without one has none, and people walk off as from any open place).
+  Everyone untied waits for it, walks round it to its open canopy and climbs in; with the last
+  aboard (or 45 s after the case closes) it shuts its canopy and climbs away. The cruiser is
+  solid while it stands.
+- **Tail the courier** (`CaseKind::Tail`, then the hideout as a second step). A courier of the
+  gang stands at a street corner **140 to 260 m** from the hideout and, when a hero comes within
+  90 m, **walks there along the pavements** (his way is found with the case: every street with a
+  pavement, bridges included, never across a river). He walks at a villain's stroll, and every
+  **9 to 16 s he stops and looks about for 2.5 s**. A hero **in his sight** makes him
+  suspicious: nothing beyond **26 m** (42 m while he looks about), from 0.06 a second at the
+  edge to 0.30 a second near, 0.6 a second within 9 m; out of sight, or **7 m or more above him**
+  (roofs, flight: nobody looks up), it wears off at 0.05 a second. The radio and the visor show
+  it as a gauge with an eye. **Full, or hit, he shouts and runs** for 25 s, away from the hero:
+  beat him and he talks (the case goes on to the hideout as usual); 90 m behind him while he
+  runs and he is gone, and the case is lost. With every hero **more than 75 m** behind while he
+  walks, the trail goes cold: **20 s** (counted down on the radio) and it is lost. If he reaches
+  the door **unseen** he goes in, and the hideout **expects nobody: no lookouts at its door**.
+- **On screen**: the case's mark in the visor, the compass and the radio follow the car or the
+  courier itself while it is in sight (`ToClient::Case.mark`), with a **gauge** under the goal
+  (`casegauge.rs`): sacks aboard, the courier's suspicion, and a clock where one runs. The
+  getaway car's canopy stands open at the kerb, it leans into its turns, and it smokes more
+  with every quarter of health gone (`getawayview.rs`). Screenshots: `HW_CASE=heist|chase|
+  rooftop|tail`, `HW_VIEW=getaway` for the car close up.
 
 ### The airfield and its liner (`hw-gen/src/urban/mast.rs`, `hw-client/src/mastview.rs`)
 
@@ -2150,7 +2217,7 @@ run, or put them in a `.bat`.
 | `HW_VISOR=1` | The police visor stays down; `HW_VISOR=0.4` freezes it part way in (screenshots). |
 | `HW_POLICE=s` | s seconds in, a Sky Patrol cruiser is called to where the hero stands and sets down at once (screenshots; frame 360 has the officers out); `HW_VIEW=police` looks at it (`HW_POLICE_CAM="side,up,ahead"`, `HW_POLICE_AT=officer` for the first officer). |
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
-| `HW_CASE=<job>[@<place>]` | Cases open at once, the hero at the first (a little way off in the open; at the way down underground); with `HW_VIEW=hero`. Jobs `takeover`, `evidence`, `hostages`, `crew`; places `building` (default, one to a building), `street`, `plaza`, `tunnel`, `station`, `grotto`, `ruin`, `lair`. Comma-separated for several (`hostages,crew@street`); `chain` is a whole case as Annie plans it. |
+| `HW_CASE=<job>[@<place>]` | Cases open at once, the hero at the first (a little way off in the open; at the way down underground); with `HW_VIEW=hero`. Jobs `takeover`, `evidence`, `hostages`, `crew`; places `building` (default, one to a building), `street`, `plaza`, `tunnel`, `station`, `grotto`, `ruin`, `lair`. Comma-separated for several (`hostages,crew@street`); `chain` is a whole case as Annie plans it; `heist`, `chase`, `rooftop` and `tail` open the first crime of that shape as the board deals it (the hero a little way off, on the roof's edge, or behind the courier). `HW_VIEW=getaway` looks at the getaway car close up (`HW_GETAWAY_CAM="side,up,ahead"`). |
 | `HW_CASEFILE=case\|doctor\|closed` | The case file open on that tab (screenshots). |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
 | `HW_COLOSSUS_RAMPAGE=1` | The colossus smashes its way through town even with no hero near (screenshots). |

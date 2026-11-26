@@ -533,7 +533,7 @@ fn project_shields(actors: &mut [Actor], tick: u64) {
         };
         if matches!(
             en.kind,
-            EnemyKind::WeakPoint | EnemyKind::Colossus | EnemyKind::Safe
+            EnemyKind::WeakPoint | EnemyKind::Colossus | EnemyKind::Safe | EnemyKind::Getaway
         ) || !a.f.fighting()
         {
             continue;

@@ -35,6 +35,7 @@ mod running;
 pub mod sites;
 
 pub use plan::{Plan, Step};
+pub use running::{getaway, rooflift, tail};
 pub use running::{safe_front, safe_middle, safe_solid, Running};
 pub use sites::{Place, Places, Site};
 
@@ -135,6 +136,10 @@ pub const GO: u8 = 1;
 pub const INSIDE: u8 = 2;
 /// Sent once, as a case ends.
 pub const CLOSED: u8 = 3;
+/// Sent once, as a case is lost: the gang got away (a getaway car flew
+/// too long or was let out of sight, nobody came to a heist in time, a
+/// bagman being tailed gave the heroes the slip).
+pub const LOST: u8 = 4;
 /// Cases open at once, at most (and never two at one place).
 pub const OPEN_LIMIT: usize = 3;
 /// Under the ground the gang stands once a hero is this near (m, in a
@@ -162,14 +167,24 @@ pub enum CaseKind {
     Hostages,
     /// Beat the crew standing there (a lead: they talk).
     Crew,
+    /// A heist in progress: stop the gang before the loot is in its flying
+    /// car, or bring the car down ([`getaway`]).
+    Heist,
+    /// A getaway car in the air: bring it down, beat its crew ([`getaway`]).
+    Chase,
+    /// Follow a bagman unseen to the hideout (a lead).
+    Tail,
 }
 
 impl CaseKind {
-    pub const ALL: [CaseKind; 4] = [
+    pub const ALL: [CaseKind; 7] = [
         CaseKind::Takeover,
         CaseKind::Evidence,
         CaseKind::Hostages,
         CaseKind::Crew,
+        CaseKind::Heist,
+        CaseKind::Chase,
+        CaseKind::Tail,
     ];
 
     pub fn code(self) -> u8 {
@@ -188,6 +203,9 @@ impl CaseKind {
     pub fn fits(self, place: Place) -> bool {
         match self {
             CaseKind::Crew => place != Place::Building,
+            CaseKind::Heist => place == Place::Shopfront,
+            CaseKind::Chase => place == Place::Road,
+            CaseKind::Tail => place == Place::Street,
             _ => true,
         }
     }
@@ -304,6 +322,15 @@ pub struct Missions {
     pub emboldened: Vec<(glam::DVec2, u64)>,
     /// Safes of closed cases, standing until nobody is near.
     left: Vec<running::Safe>,
+    /// Getaway cars brought down, likewise.
+    left_cars: Vec<getaway::Car>,
+    /// Cruisers still taking a closed case's hostages off its roof.
+    left_lifts: Vec<running::rooflift::Lift>,
+    /// The plan of each crime on the board (made once: finding its place
+    /// takes a moment), against no gang yet.
+    planned: BTreeMap<u16, Plan>,
+    /// Cases lost so far (the gang got away).
+    pub lost_cases: u16,
     /// Doors the police are called to (and the way each looks out), for
     /// the server to take: a hideout case just closed there.
     pub police_calls: Vec<running::PoliceCall>,
@@ -332,6 +359,10 @@ impl Default for Missions {
             lost: String::new(),
             emboldened: Vec::new(),
             left: Vec::new(),
+            left_cars: Vec::new(),
+            left_lifts: Vec::new(),
+            planned: BTreeMap::new(),
+            lost_cases: 0,
             police_calls: Vec::new(),
             now: 0,
             last_sent: BTreeMap::new(),
@@ -400,6 +431,7 @@ impl Missions {
             .map(|c| glam::DVec2::new(c.x, c.z))
             .chain(std::iter::once(world.spawn_line().0))
             .collect();
+        let walks = Arc::new(crate::streets::Streets::on_foot(area.roads.iter()));
         Missions {
             places: Some(Arc::new(Places {
                 town: Some(world.clone()),
@@ -409,6 +441,7 @@ impl Missions {
                 names,
                 hideouts,
                 keep_clear,
+                walks: Some(walks),
             })),
             seed,
             ..Default::default()
@@ -434,11 +467,12 @@ impl Missions {
     /// The square with people and traffic moved (it follows the heroes
     /// across a big city): street cases go to its streets from now on, and
     /// the old square is let go.
-    pub fn set_area(&mut self, area: Arc<Area>) {
+    pub fn set_area(&mut self, area: Arc<Area>, walks: Arc<crate::streets::Streets>) {
         if let Some(p) = &mut self.places {
             if p.area.is_some() {
                 let mut next = Places::clone(p);
                 next.area = Some(area);
+                next.walks = Some(walks);
                 *p = Arc::new(next);
             }
         }
@@ -483,11 +517,22 @@ impl Missions {
         Some(self.force_steps(world, gang, vec![Step { job: kind, site }]))
     }
 
+    /// Opens a one-step case of `kind` at `site` now (tests and
+    /// screenshots). Its number.
+    pub fn force_site(
+        &mut self,
+        world: &mut World,
+        kind: CaseKind,
+        site: Site,
+        gang: usize,
+    ) -> u16 {
+        self.force_steps(world, gang, vec![Step { job: kind, site }])
+    }
+
     /// Opens crime `number` of the board now, past the board's window and
     /// the limit (tests and screenshots). Its number.
     pub fn force_crime(&mut self, world: &mut World, number: u16) -> Option<u16> {
         let places = self.places.clone()?;
-        let c = board::crime(&places, self.seed, number)?;
         let team = world.resource::<Fights>().team_level;
         let plan = plan::crime_plan(
             &places,
@@ -495,11 +540,12 @@ impl Missions {
             number,
             board::gang_for(self.seed, number, team),
         )?;
-        while let Some(k) = self
-            .cases
-            .iter()
-            .position(|r| r.number == number || r.site().building == Some(c.building))
-        {
+        while let Some(k) = self.cases.iter().position(|r| {
+            r.number == number
+                || r.steps()
+                    .iter()
+                    .any(|a| plan.steps.iter().any(|b| a.site.clashes(&b.site)))
+        }) {
             let mut r = self.cases.remove(k);
             r.leave(world);
             self.dropped(r.number);
@@ -507,6 +553,22 @@ impl Missions {
         self.opened = self.opened.max(number);
         self.insert(Running::new(number, plan, 0, places.floors.clone()));
         Some(number)
+    }
+
+    /// Opens the first crime the board would deal whose first step is a
+    /// `job` (a heist, a chase, hostages on a roof, a tail), as the board
+    /// plans it (tests and screenshots). Its number.
+    pub fn force_shape(&mut self, world: &mut World, job: CaseKind) -> Option<u16> {
+        let places = self.places.clone()?;
+        let team = world.resource::<Fights>().team_level;
+        let n = (1..600u16).find(|&n| {
+            plan::crime_plan(&places, self.seed, n, board::gang_for(self.seed, n, team))
+                .is_some_and(|p| {
+                    p.steps[0].job == job
+                        && (job != CaseKind::Hostages || p.steps[0].site.building.is_none())
+                })
+        })?;
+        self.force_crime(world, n)
     }
 
     /// Plans a whole case for `gang` right here and opens it (tests and
@@ -596,21 +658,20 @@ impl Missions {
             if !on_board || self.cases.len() >= self.limit {
                 continue;
             }
-            let Some(c) = board::crime(&places, self.seed, number) else {
-                continue;
-            };
-            if self
-                .cases
-                .iter()
-                .any(|r| r.number == number || r.site().building == Some(c.building))
-            {
-                continue;
-            }
             let team = world.resource::<Fights>().team_level;
             let gang = board::gang_for(self.seed, number, team);
-            let Some(plan) = plan::crime_plan(&places, self.seed, number, gang) else {
+            let Some(mut plan) = self.plan_of(&places, number) else {
                 continue;
             };
+            plan.gang = gang;
+            if self.cases.iter().any(|r| {
+                r.number == number
+                    || r.steps()[r.step..]
+                        .iter()
+                        .any(|a| plan.steps.iter().any(|b| a.site.clashes(&b.site)))
+            }) {
+                continue;
+            }
             self.opened = self.opened.max(number);
             self.insert(Running::new(number, plan, 0, places.floors.clone()));
         }
@@ -630,12 +691,12 @@ impl Missions {
             .partition(|s| tick < s.until || open.contains(&s.number));
         self.slots = stay;
         for s in gone {
-            let Some(c) = board::crime(&places, self.seed, s.number) else {
+            let Some(plan) = self.plan_of(&places, s.number) else {
                 continue;
             };
-            let site = sites::building_site(&places, c.building);
+            let site = &plan.steps[0].site;
             self.missed = self.missed.wrapping_add(1);
-            self.lost = places.names.get(c.building).cloned().unwrap_or_default();
+            self.lost = site.name.trim_start_matches("the ").to_string();
             self.emboldened.push((
                 glam::DVec2::new(site.at.x, site.at.z),
                 tick + ticks(board::EMBOLDENED_SECONDS),
@@ -649,7 +710,7 @@ impl Missions {
             };
             self.issued = number;
             // A crime already open (from the host's file) is not offered.
-            if open.contains(&number) {
+            if open.contains(&number) || self.plan_of(&places, number).is_none() {
                 continue;
             }
             self.slots.push(Slot {
@@ -657,6 +718,20 @@ impl Missions {
                 until: tick + ticks(board::life(self.seed, number, c.hot)),
             });
         }
+        // Plans of crimes no longer on the board or open are let go.
+        let slots = &self.slots;
+        self.planned
+            .retain(|n, _| slots.iter().any(|s| s.number == *n) || open.contains(n));
+    }
+
+    /// The plan of crime `number` (against no gang yet), made once.
+    fn plan_of(&mut self, places: &Places, number: u16) -> Option<Plan> {
+        if let Some(p) = self.planned.get(&number) {
+            return Some(p.clone());
+        }
+        let p = plan::crime_plan(places, self.seed, number, 0)?;
+        self.planned.insert(number, p.clone());
+        Some(p)
     }
 
     /// A case in the list, in the order of its number.
@@ -687,11 +762,12 @@ impl Missions {
             .filter_map(|slot| {
                 let number = slot.number;
                 let c = board::crime(places, self.seed, number)?;
+                let plan = self.planned.get(&number)?;
                 let case = self.cases.iter().find(|r| r.number == number);
                 let gang =
                     case.map_or_else(|| board::gang_for(self.seed, number, team), |r| r.gang);
-                let site = sites::building_site(places, c.building);
-                let name = places.names.get(c.building).cloned().unwrap_or_default();
+                let site = &plan.steps[0].site;
+                let name = site.name.trim_start_matches("the ");
                 let mut chars = name.chars();
                 let name = chars
                     .next()
@@ -700,10 +776,10 @@ impl Missions {
                 Some(hw_net::BoardCrime {
                     number,
                     crime: c.kind.code(),
-                    job: c.job.code(),
+                    job: plan.steps[0].job.code(),
                     gang: gang as u8,
                     level: team.saturating_add(c.extra),
-                    size: c.size,
+                    size: plan.size,
                     hot: c.hot,
                     // Whole minutes left, rounded up (a taken one stays).
                     minutes: if case.is_some() {
@@ -715,10 +791,11 @@ impl Missions {
                     at: site.at.as_vec3().to_array(),
                     name,
                     taken: case.is_some()
-                        || self
-                            .cases
-                            .iter()
-                            .any(|r| r.site().building == Some(c.building)),
+                        || self.cases.iter().any(|r| {
+                            r.steps()[r.step..]
+                                .iter()
+                                .any(|a| plan.steps.iter().any(|b| a.site.clashes(&b.site)))
+                        }),
                 })
             })
             .collect();
@@ -750,7 +827,27 @@ impl Missions {
         for r in &mut self.cases {
             r.search(world, tick, &heroes);
         }
+        for c in &mut self.left_cars {
+            c.fly(world, tick, &heroes);
+        }
+        if !self.left_lifts.is_empty() {
+            let area = self.places.as_ref().and_then(|p| p.area.clone());
+            let mut lifts = std::mem::take(&mut self.left_lifts);
+            lifts.retain_mut(|l| !l.step(world, area.as_deref(), tick));
+            self.left_lifts = lifts;
+        }
         if tick.is_multiple_of(crate::TICK_HZ as u64) {
+            // The streets a getaway car flies: every street of the square.
+            let walks = self.places.as_ref().and_then(|p| p.walks.clone());
+            let mut f = world.resource_mut::<Fights>();
+            let same = match (&f.walks, &walks) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                f.walks = walks;
+            }
             // Safes of closed cases go once nobody is there to see it.
             let (stay, go): (Vec<_>, Vec<_>) = std::mem::take(&mut self.left)
                 .into_iter()
@@ -759,20 +856,33 @@ impl Missions {
             for s in go {
                 s.remove(world);
             }
+            let (stay, go): (Vec<_>, Vec<_>) = std::mem::take(&mut self.left_cars)
+                .into_iter()
+                .partition(|c| heroes.iter().any(|h| h.at.distance(c.pos) < SAFE_GONE));
+            self.left_cars = stay;
+            for c in go {
+                c.remove(world);
+            }
             self.keep_book(world);
+            let area = self.places.as_ref().and_then(|p| p.area.clone());
             let mut done = Vec::new();
             for (k, r) in self.cases.iter_mut().enumerate() {
-                match r.settle(world, tick, &heroes) {
+                match r.settle(world, tick, &heroes, area.as_deref()) {
                     running::Settled::Working => {}
                     running::Settled::Lead(at) => {
                         reward(world, &heroes, at, LEAD_SHARE, false);
                     }
-                    running::Settled::Done => done.push(k),
+                    running::Settled::Done => done.push((k, true)),
+                    running::Settled::Lost => done.push((k, false)),
                 }
             }
-            for k in done.into_iter().rev() {
+            for (k, won) in done.into_iter().rev() {
                 let r = self.cases.remove(k);
-                self.close(world, &heroes, r);
+                if won {
+                    self.close(world, &heroes, r);
+                } else {
+                    self.lose(world, tick, r);
+                }
             }
         }
         self.tell(world);
@@ -786,6 +896,42 @@ impl Missions {
             .flat_map(|r| r.safes())
             .chain(self.left.iter())
             .map(|s| s.solid())
+            .chain(
+                self.cases
+                    .iter()
+                    .filter_map(|r| r.car())
+                    .chain(self.left_cars.iter())
+                    .filter(|c| c.stands())
+                    .map(|c| c.solid()),
+            )
+            .chain(
+                self.cases
+                    .iter()
+                    .filter_map(|r| r.lift())
+                    .chain(self.left_lifts.iter())
+                    .filter_map(|l| l.solid(self.now)),
+            )
+            .collect()
+    }
+
+    /// Where a getaway car stands in the road (at a heist's kerb, or
+    /// brought down): cars keep off it.
+    pub fn cars_standing(&self) -> Vec<DVec3> {
+        self.cases
+            .iter()
+            .filter_map(|r| r.car())
+            .chain(self.left_cars.iter())
+            .filter(|c| c.stands())
+            .map(|c| c.pos)
+            .collect()
+    }
+
+    /// Where a heist is on (its shop's door): the street takes fright.
+    pub fn heists(&self) -> Vec<DVec3> {
+        self.cases
+            .iter()
+            .filter(|r| r.stage == INSIDE && r.job() == CaseKind::Heist)
+            .map(|r| r.site().at)
             .collect()
     }
 
@@ -898,9 +1044,14 @@ impl Missions {
             })
             .collect();
         world.resource_mut::<Fights>().drops.extend(finds);
+        self.left_lifts.extend(r.take_lift(self.now));
         if r.is_hideout() {
             let (safes, police) = r.wrap_up(world, self.now);
             self.left.extend(safes);
+            self.police_calls.extend(police);
+        } else if r.in_the_street() {
+            let (car, police) = r.wrap_up_street(world, self.now);
+            self.left_cars.extend(car);
             self.police_calls.extend(police);
         } else {
             r.leave(world);
@@ -911,6 +1062,26 @@ impl Missions {
         if let ToClient::Case { stage, .. } = &mut news {
             *stage = CLOSED;
         }
+        self.last_sent.remove(&r.number);
+        self.news.push(news);
+    }
+
+    /// A case is lost: the gang got away with it. Nothing is paid, and the
+    /// streets round there are rough for a while, as after a crime nobody
+    /// took.
+    fn lose(&mut self, world: &mut World, tick: u64, mut r: Running) {
+        let at = r.site().at;
+        let mut news = r.news(world);
+        if let ToClient::Case { stage, .. } = &mut news {
+            *stage = LOST;
+        }
+        r.leave(world);
+        self.slots.retain(|s| s.number != r.number);
+        self.lost_cases = self.lost_cases.wrapping_add(1);
+        self.emboldened.push((
+            glam::DVec2::new(at.x, at.z),
+            tick + (board::EMBOLDENED_SECONDS * crate::TICK_HZ as f64) as u64,
+        ));
         self.last_sent.remove(&r.number);
         self.news.push(news);
     }
@@ -934,6 +1105,9 @@ impl Missions {
                 level: 0,
                 size: 0,
                 alarms: 0,
+                mark: 0,
+                gauge: 0,
+                left: 0,
             });
         }
     }

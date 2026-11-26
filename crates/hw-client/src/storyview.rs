@@ -258,7 +258,12 @@ pub fn mark(s: State) -> StoryMark {
         ),
         _ => (format!("You are the {TITLE}"), None),
     };
-    StoryMark { heading, goal, at }
+    StoryMark {
+        heading,
+        goal,
+        at,
+        gauge: None,
+    }
 }
 
 /// What the radio says going from `before` to `now`.

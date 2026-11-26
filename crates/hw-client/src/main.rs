@@ -637,6 +637,7 @@ fn main() -> EngineResult<()> {
     let mut robots = RobotView::new();
     let mut safes = hw_client::safeview::SafeView::default();
     let mut police_view = hw_client::policeview::PoliceView::default();
+    let mut getaways = hw_client::getawayview::GetawayView::default();
     let mut safe_shown = false;
     let mut radio = hw_client::radioview::Radio::default();
     // The police visor: marks the radio's calls in front of the hero's eyes.
@@ -4820,6 +4821,9 @@ fn main() -> EngineResult<()> {
             // The hideouts' safes, and where they stand for the things in them.
             safes.update(world, &heroes)?;
             police_view.update(world, &heroes, frame.dt)?;
+            getaways.update(world, &heroes, frame.dt)?;
+            // A case after something that moves points at it where it is.
+            cases.follow(&heroes);
             cases.safes = heroes
                 .iter()
                 .filter(|e| e.kind == hw_net::EntityKind::Safe)
@@ -4837,6 +4841,30 @@ fn main() -> EngineResult<()> {
                     let side = Vec3::new(ahead.z, 0.0, -ahead.x);
                     let p = at + ahead * 4.2 + side * 1.8 + Vec3::Y * 2.0;
                     let d = at + Vec3::Y * 1.2 - p;
+                    let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
+                        .atan()
+                        .to_degrees();
+                    fly = FlyCamera::new((p.x, p.y, p.z), d.x.atan2(d.z).to_degrees(), pitch);
+                }
+            }
+            // `HW_VIEW=getaway` (with `HW_CASE=heist` or `chase`): the gang's
+            // getaway car from in front of its nose, wherever it is
+            // (`HW_GETAWAY_CAM="side,up,ahead"` in metres moves the camera).
+            if view == "getaway" {
+                if let Some((at, yaw)) = getaways.first(&heroes) {
+                    let cam: Vec<f32> = std::env::var("HW_GETAWAY_CAM")
+                        .ok()
+                        .map(|v| v.split(',').filter_map(|k| k.trim().parse().ok()).collect())
+                        .unwrap_or_default();
+                    let (side_m, up_m, ahead_m) = (
+                        cam.first().copied().unwrap_or(2.6),
+                        cam.get(1).copied().unwrap_or(1.7),
+                        cam.get(2).copied().unwrap_or(4.4),
+                    );
+                    let ahead = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+                    let side = Vec3::new(ahead.z, 0.0, -ahead.x);
+                    let p = at + ahead * ahead_m + side * side_m + Vec3::Y * up_m;
+                    let d = at + Vec3::Y * 0.95 - p;
                     let pitch = (d.y / glam::Vec2::new(d.x, d.z).length())
                         .atan()
                         .to_degrees();
@@ -5355,6 +5383,7 @@ fn main() -> EngineResult<()> {
                     movers.extend(story.statue_solids(&generated.world));
                     movers.extend(hw_client::safeview::solids(&heroes));
                     movers.extend(hw_sim::police::solids_of(&heroes));
+                    movers.extend(hw_sim::missions::getaway::solids_of(&heroes));
                     if let Some(l) = extras.lifts.as_ref() {
                         movers.extend(l.lifts().solids_near(&[me], 25.0, game_time));
                     }

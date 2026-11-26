@@ -3,6 +3,16 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.332 (2026-11-26)
+
+- The police computer has four new kinds of case besides gang hideouts. Each has its own symbol on Crime-o-Vision.
+- Heist in progress: a gang is cleaning out a shop and loading a flying getaway car, sack by sack. Stop the bagmen, beat the gang or wreck the car at the kerb before the eighth sack is aboard. It does not wait for you: a clock runs from the moment you take it.
+- Getaway by air: once loaded, the car takes off and flies low along the streets. Chase it and bring it down. Every good hit makes it sputter, sink and smoke. Its crew climbs out of the wreck to fight. After three and a half minutes in the air it is gone.
+- Hostages on a roof: beat the guards and untie the people. A Sky Patrol cruiser lands on the roof, they climb in and it flies them off.
+- Tail the courier: follow a gang's courier to the hideout without being seen. He stops and looks about now and then. Stay well back, or up on the roofs where nobody looks. If he sees you he runs: catch him, or the case is lost. If he gets there unseen, nobody is watching the hideout's door.
+- The radio and the visor show a gauge for these cases: sacks aboard, how suspicious the courier is, and the time left. Their mark follows the car or the courier.
+- A case can now be lost. The streets near it are rough for a while afterwards.
+
 ## 0.331 (2026-11-15)
 
 - Doors that stood far above the pavement can be reached now. Every street door that is higher than a kerb gets a stone landing and a flight of stairs along the front of the building, down to the ground, with a railing. A very tall drop turns back on a platform and comes down in a second flight beside the first. The stairs are solid and you walk them like any others.

@@ -2877,6 +2877,8 @@ pub fn villain_under(
                 EntityKind::Sentry => (1.1, 3.2, 0.0),
                 // Its body is at its door: the door and the box behind it.
                 EntityKind::Safe => (0.75, 1.5, 0.0),
+                // The hull, hanging over the street.
+                EntityKind::Getaway => (1.7, 1.5, 0.4),
                 _ => (0.6, 2.1, 0.0),
             };
             let p = pos(e);

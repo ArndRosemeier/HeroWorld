@@ -60,6 +60,8 @@ pub struct MissionMark {
     pub at: Vec3,
     /// The one the radio and the map follow.
     pub tracked: bool,
+    /// Loot going aboard, a courier's suspicion, a clock.
+    pub gauge: Option<crate::casegauge::Gauge>,
 }
 
 /// The visor's state: how far it has materialised and why it is wanted.
@@ -550,6 +552,13 @@ fn mission_mark(
                 egui::Color32::from_rgba_unmultiplied(235, 250, 248, fade(240.0)),
                 fade(190.0),
             );
+            if let Some(g) = &m.gauge {
+                let r = egui::Rect::from_center_size(
+                    at + egui::vec2(0.0, w + 52.0),
+                    crate::casegauge::SIZE,
+                );
+                crate::casegauge::draw(p, r, g, fade(255.0) as f32 / 255.0, time);
+            }
         }
         None => {
             let dir = off_screen_dir(view_proj, m.at);

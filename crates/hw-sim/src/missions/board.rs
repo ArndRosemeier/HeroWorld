@@ -1,4 +1,6 @@
-//! The police computer's crimes (Crime-o-Vision): gang hideouts to bust.
+//! The police computer's crimes (Crime-o-Vision): gang hideouts to bust,
+//! heists in progress, getaway cars to bring down, hostages on a roof and
+//! bagmen to tail ([`Shape`]).
 //!
 //! Crime number `n` of a world is a pure function of the world's seed and
 //! `n` ([`crime`]): which hideout (the town's hideouts in a seeded order),
@@ -95,11 +97,41 @@ impl CrimeKind {
     }
 }
 
+/// What kind of case a crime makes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Shape {
+    /// A gang's hideout to bust: arrest the boss, or find the thing.
+    #[default]
+    Bust,
+    /// A heist in progress at a shop: stop them before the loot is in
+    /// their flying car, or chase it.
+    Heist,
+    /// A getaway car in the air: bring it down before it is away.
+    Getaway,
+    /// Hostages held up on a roof.
+    Rooftop,
+    /// A bagman to follow unseen to the hideout nobody knows, then the
+    /// hideout.
+    Tail,
+}
+
+/// How often each shape comes up (weights), in a town with streets.
+pub const SHAPES: [(Shape, f64); 5] = [
+    (Shape::Bust, 0.36),
+    (Shape::Heist, 0.2),
+    (Shape::Getaway, 0.12),
+    (Shape::Rooftop, 0.16),
+    (Shape::Tail, 0.16),
+];
+
 /// Crime number `n`, planned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Crime {
     pub number: u16,
     pub kind: CrimeKind,
+    /// What kind of case it makes (a town without streets round the
+    /// heroes has hideouts only).
+    pub shape: Shape,
     pub job: CaseKind,
     /// Levels the gangsters stand over the team (0 to 2).
     pub extra: u8,
@@ -136,9 +168,18 @@ pub fn crime(places: &Places, seed: u64, number: u16) -> Option<Crime> {
         .rev()
         .find(|&s| s == 0 || spare >= super::rooms_of(s) - 1)
         .unwrap_or(0);
+    // Its own dice, so a hideout's crime stays what it was.
+    let shape = if places.area.is_some() {
+        let mut dice = Seed(seed).child("shape").child(number as u64).rng();
+        let w: Vec<f64> = SHAPES.iter().map(|s| s.1).collect();
+        SHAPES[dice.weighted(&w)].0
+    } else {
+        Shape::Bust
+    };
     Some(Crime {
         number,
         kind,
+        shape,
         job,
         extra,
         size: (rng.index(3) as u8).min(fits),

@@ -395,6 +395,8 @@ pub struct StoryMark {
     pub heading: String,
     pub goal: String,
     pub at: Option<Vec3>,
+    /// Loot going aboard, a courier's suspicion, a clock.
+    pub gauge: Option<crate::casegauge::Gauge>,
 }
 
 /// The story's colour on the radio, the compass and the map.
@@ -1850,6 +1852,12 @@ impl Radio {
                                 .size(15.0)
                                 .strong(),
                         );
+                        if let Some(g) = &st.gauge {
+                            let (r, _) = ui
+                                .allocate_exact_size(crate::casegauge::SIZE, egui::Sense::hover());
+                            let t = ui.input(|i| i.time) as f32;
+                            crate::casegauge::draw(ui.painter(), r, g, 1.0, t);
+                        }
                         ui.separator();
                     }
                     if let Some((text, _)) = &self.flash {

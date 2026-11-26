@@ -477,6 +477,13 @@ fn run(mut host: Host, me: PlayerId, rx: Receiver<Cmd>, tx: Sender<Published>) {
                             .flatten();
                         if let Some(m) = middle {
                             m
+                        } else if site.place == crate::missions::Place::Rooftop {
+                            // On the roof, at its edge.
+                            site.around.last().copied().unwrap_or(site.at) + glam::DVec3::Y * 1.5
+                        } else if r.job() == crate::missions::CaseKind::Tail {
+                            // Behind the courier, well back.
+                            let f = site.facing * -34.0;
+                            site.at + glam::DVec3::new(f.x, 0.5, f.y)
                         } else if site.building.is_none() && !site.place.underground() {
                             let f = site.facing * 22.0;
                             site.at + glam::DVec3::new(f.x, 0.5, f.y)
@@ -566,6 +573,17 @@ fn force_case(sim: &mut crate::Sim, token: &str, i: usize) -> Option<u16> {
     }
     if token == "chain" {
         return sim.missions.force_plan(&mut sim.world, gang);
+    }
+    // The shapes the police board deals besides hideouts, as it plans them.
+    let shape = match token {
+        "heist" => Some(CaseKind::Heist),
+        "chase" => Some(CaseKind::Chase),
+        "rooftop" => Some(CaseKind::Hostages),
+        "tail" => Some(CaseKind::Tail),
+        _ => None,
+    };
+    if let Some(job) = shape {
+        return sim.missions.force_shape(&mut sim.world, job);
     }
     let (job, place) = token.split_once('@').unwrap_or((token, "building"));
     let job = match job {

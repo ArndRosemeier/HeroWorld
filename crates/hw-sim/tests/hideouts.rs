@@ -56,6 +56,7 @@ fn the_board_lists_hideouts_and_a_taken_crime_fills_the_building() {
         .expect("a board");
     assert_eq!(board_msg.len(), board::BOARD);
     let mut jobs = std::collections::BTreeSet::new();
+    let mut busts = 0;
     for c in 1..=30u16 {
         let crime = board::crime(&places, seed.0, c).unwrap();
         jobs.insert(crime.job.code());
@@ -68,6 +69,14 @@ fn the_board_lists_hideouts_and_a_taken_crime_fills_the_building() {
             sim.missions.cases.clear();
             continue;
         };
+        // Not every crime is a hideout to bust (heists, getaways, roofs
+        // and tails have their own tests: `mission_shapes_town`).
+        if r.site().building.is_none() {
+            assert_ne!(crime.shape, board::Shape::Bust);
+            sim.missions.cases.clear();
+            continue;
+        }
+        busts += 1;
         let at = r.site().at;
         let before = sim.enemies().len();
         println!(
@@ -91,4 +100,5 @@ fn the_board_lists_hideouts_and_a_taken_crime_fills_the_building() {
         sim.missions.cases.clear();
     }
     assert_eq!(jobs.len(), 2, "both jobs turn up");
+    assert!(busts >= 3, "{busts} hideouts to bust among 30 crimes");
 }

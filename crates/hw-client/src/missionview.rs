@@ -19,6 +19,7 @@ use hw_sim::missions::board::CrimeKind;
 use hw_sim::missions::Place;
 use hw_sim::missions::{
     CaseKind, CLOSED, CLUES, CLUE_REACH, DONE, GANGS, GO, GUARDED, HOSTAGES, IDLE, INSIDE, LOCKED,
+    LOST,
 };
 
 /// Who speaks on the wrist radio.
@@ -73,9 +74,34 @@ pub struct State {
     /// its gang has raised.
     pub size: u8,
     pub alarms: u8,
+    /// The thing to follow (a getaway car in the air, a courier): its
+    /// entity, or 0.
+    pub mark: u32,
+    /// A heist's loot aboard the car, or how suspicious a courier is (0-1).
+    pub gauge: f32,
+    /// Seconds left (to get there, to catch the car, to pick up a cold
+    /// trail), or 0 for no clock.
+    pub left: u16,
 }
 
 impl State {
+    /// A getaway car is in the air: catch it.
+    pub fn chasing(&self) -> bool {
+        self.stage == INSIDE
+            && self.mark != 0
+            && matches!(self.kind, CaseKind::Heist | CaseKind::Chase)
+    }
+
+    /// A courier is being followed; `Some(true)` once he has seen his tail.
+    pub fn tailing(&self) -> Option<bool> {
+        (self.stage == INSIDE && self.kind == CaseKind::Tail).then_some(self.gauge >= 0.99)
+    }
+
+    /// The clock as "1:25", if one runs.
+    pub fn clock(&self) -> Option<String> {
+        (self.left > 0).then(|| format!("{}:{:02}", self.left / 60, self.left % 60))
+    }
+
     /// The thing is taken and must be got out of the building.
     pub fn carrying(&self) -> bool {
         self.stage == INSIDE
@@ -371,6 +397,9 @@ impl MissionView {
                 level,
                 size,
                 alarms,
+                mark,
+                gauge,
+                left,
             } => {
                 let steps: Vec<StepView> = steps
                     .iter()
@@ -402,8 +431,11 @@ impl MissionView {
                     level: *level,
                     size: *size,
                     alarms: *alarms,
+                    mark: *mark,
+                    gauge: *gauge as f32 / 255.0,
+                    left: *left,
                 };
-                let before = if matches!(next.stage, CLOSED | IDLE) {
+                let before = if matches!(next.stage, CLOSED | IDLE | LOST) {
                     self.cases.remove(number)
                 } else {
                     self.cases.insert(*number, next.clone())
@@ -441,11 +473,23 @@ impl MissionView {
                     goal: m.goal,
                     at: m.at?,
                     tracked: self.tracked == Some(s.number),
+                    gauge: m.gauge,
                 })
             })
             .collect();
         marks.sort_by_key(|m| (!m.tracked, m.number));
         marks
+    }
+
+    /// Cases that follow something that moves (a getaway car, a courier)
+    /// point at it wherever it is in sight, not at where the server last
+    /// said it was.
+    pub fn follow(&mut self, all: &[hw_net::EntityState]) {
+        for s in self.cases.values_mut().filter(|s| s.mark != 0) {
+            if let Some(e) = all.iter().find(|e| e.id.0 == s.mark) {
+                s.at = Vec3::new(e.pos[0] as f32, e.pos[1] as f32, e.pos[2] as f32);
+            }
+        }
     }
 
     /// Follow case `number` on the radio, the compass and the map.
@@ -803,6 +847,18 @@ fn goal(s: &State) -> String {
         String::new()
     };
     match s.kind {
+        CaseKind::Heist | CaseKind::Chase if s.chasing() => {
+            "After the getaway car: bring it down!".to_string()
+        }
+        CaseKind::Heist if s.gauge < 0.999 => format!(
+            "Stop the heist: {} of {} sacks aboard{groups}",
+            (s.gauge * hw_sim::missions::getaway::TRIPS as f32).round() as u32,
+            hw_sim::missions::getaway::TRIPS
+        ),
+        CaseKind::Heist | CaseKind::Chase => format!("Round up the crew{groups}"),
+        CaseKind::Tail if s.gauge >= 0.99 => "He's seen you: catch him!".to_string(),
+        CaseKind::Tail if s.left > 0 => "You're losing him: close up!".to_string(),
+        CaseKind::Tail => "Follow the courier, unseen: stay back, or up high".to_string(),
         _ if s.carrying() => format!("Get out with {}!", s.crime.thing()),
         CaseKind::Takeover if s.boss == 3 => {
             format!("{} is making a run for it: after them!", boss_name(s.gang))
@@ -846,6 +902,28 @@ fn lower_the(name: String) -> String {
     }
 }
 
+/// What a case runs against, if anything: the loot going aboard, the
+/// courier's suspicion, the clock.
+pub fn gauge(s: &State) -> Option<crate::casegauge::Gauge> {
+    use crate::casegauge::{Gauge, GaugeKind};
+    let clock = s.clock();
+    let kind = match (s.stage, s.kind) {
+        (INSIDE, CaseKind::Heist) if !s.chasing() && s.gauge < 0.999 => GaugeKind::Loot,
+        (INSIDE, CaseKind::Tail) => GaugeKind::Suspicion,
+        _ if clock.is_some() => GaugeKind::Clock,
+        _ => return None,
+    };
+    Some(Gauge {
+        kind,
+        level: if kind == GaugeKind::Clock {
+            0.0
+        } else {
+            s.gauge
+        },
+        clock,
+    })
+}
+
 /// The case on the radio: its heading, the goal, and where to go.
 pub fn mark(s: &State) -> Option<StoryMark> {
     let here = s.here()?;
@@ -861,6 +939,7 @@ pub fn mark(s: &State) -> Option<StoryMark> {
     );
     let goal = match s.stage {
         GO if here.place.underground() => format!("Go down to {}", here.name),
+        GO if s.left > 0 => format!("Hurry to {}: they won't wait", here.name),
         GO => format!("Go to {}", here.name),
         INSIDE => goal(s),
         _ => return None,
@@ -869,6 +948,7 @@ pub fn mark(s: &State) -> Option<StoryMark> {
         heading,
         goal,
         at: Some(s.at),
+        gauge: gauge(s),
     })
 }
 
@@ -878,6 +958,29 @@ fn brief(gang: &str, step: &StepView, last: bool, crime: CrimeKind) -> Vec<Strin
     let gang_cap = crate::casefile::capitalised(gang);
     let building = step.place == Place::Building;
     match step.job {
+        CaseKind::Heist => vec![
+            format!(
+                "{}: {gang} are cleaning out {} right now, and loading a getaway car.",
+                crime.title(),
+                step.name
+            ),
+            "Stop them before the last sack is aboard, or wreck that car at the kerb.".to_string(),
+        ],
+        CaseKind::Chase => vec![
+            format!("{gang_cap} are making off in a flying car {at}!"),
+            "Catch it and bring it down before it gets clear. Hurt, it sputters and sinks."
+                .to_string(),
+        ],
+        CaseKind::Tail => vec![
+            format!("A courier of {gang} is on his way from {} to their hideout.", step.name),
+            "Follow him, but don't let him see you: stay well back, or up on the roofs. He'll lead us to the door."
+                .to_string(),
+        ],
+        CaseKind::Hostages if step.place == Place::Rooftop => vec![
+            format!("{gang_cap} are holding people {at}."),
+            "Beat their guards, then untie them. Sky Patrol will fly them off the roof."
+                .to_string(),
+        ],
         CaseKind::Crew => vec![
             format!("A crew of {gang} hangs about {at}."),
             "Shake them down and they'll talk.".to_string(),
@@ -957,6 +1060,25 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
             }));
             return out;
         }
+        LOST => {
+            let was = before.map_or(now.kind, |b| b.kind);
+            out.push(say(match was {
+                CaseKind::Tail => {
+                    "We've lost him, and the trail with him. That one's gone cold.".to_string()
+                }
+                _ if before.is_some_and(|b| b.stage == GO) => {
+                    format!("Too late: {gang} are gone from {place}, loot and all.")
+                }
+                _ => format!(
+                    "They're clear away, loot and all. {} got this one.",
+                    crate::casefile::capitalised(gang)
+                ),
+            }));
+            out.push(say(
+                "Can't win them all. There's more on the police computer.".to_string(),
+            ));
+            return out;
+        }
         IDLE => return out,
         _ => {}
     }
@@ -978,6 +1100,11 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
         // A lead done: it points to the next place.
         let was = &b.kind;
         out.push(say(match was {
+            CaseKind::Tail if b.gauge < 0.99 => format!(
+                "He never saw you, and walked right in: {}. Nobody's watching the door.",
+                here.name
+            ),
+            CaseKind::Tail => format!("He talked! Their hideout is {}.", here.name),
             CaseKind::Crew => format!("They talked! The trail leads {}.", here.at_place()),
             _ => format!("That's what we needed. It points {}.", here.at_place()),
         }));
@@ -990,6 +1117,28 @@ pub fn lines(before: Option<&State>, now: &State, open: usize) -> Vec<Line> {
         return out;
     }
     match (b.stage, now.stage) {
+        (GO, INSIDE) if now.kind == CaseKind::Heist => out.push(say(
+            "There they are, hauling it out to the car. Bagmen, lookouts, guards at the door: your pick!"
+                .to_string(),
+        )),
+        (GO, INSIDE) if now.kind == CaseKind::Chase => out.push(say(
+            "That's the car, right over the street. Don't let it out of your sight!".to_string(),
+        )),
+        (GO, INSIDE) if now.kind == CaseKind::Tail => out.push(say(
+            "That's our man. Easy now: he stops and looks about every so often.".to_string(),
+        )),
+        (INSIDE, INSIDE) if now.chasing() && !b.chasing() => out.push(say(
+            "They're aboard and off the ground! After that car: hit it and it sputters."
+                .to_string(),
+        )),
+        (INSIDE, INSIDE) if b.chasing() && !now.chasing() => out.push(say(
+            "It's down! Round up the crew before they get their wits back.".to_string(),
+        )),
+        (INSIDE, INSIDE) if now.tailing() == Some(true) && b.tailing() == Some(false) => {
+            out.push(say(
+                "He's made you! Run him down before he gets clear.".to_string(),
+            ))
+        }
         (GO, INSIDE) if now.in_building() => out.push(say(format!(
             "That's {place}. Lookouts at the door, a crew in each room: take a room down fast, or it calls the next."
         ))),
@@ -1049,6 +1198,9 @@ mod tests {
     fn st(stage: u8, kind: CaseKind, number: u16, found: usize) -> State {
         State {
             number,
+            mark: 0,
+            gauge: 0.0,
+            left: 0,
             stage,
             kind,
             gang: 2,
@@ -1174,6 +1326,9 @@ mod tests {
     fn case_msg(number: u16, stage: u8) -> ToClient {
         ToClient::Case {
             number,
+            mark: 0,
+            gauge: 0,
+            left: 0,
             stage,
             gang: 1,
             step: 0,

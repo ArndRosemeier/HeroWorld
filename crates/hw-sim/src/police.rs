@@ -461,6 +461,48 @@ pub fn find_landing(
         .find_map(|(c, fwd)| try_landing(solids, &s, c, fwd, &[]).ok())
 }
 
+/// Looking for where a flying car lands by a door, a couple of places a
+/// tick like the police's own calls do (for a gang's getaway car: see
+/// [`crate::missions::getaway`]).
+#[derive(Clone)]
+pub(crate) struct LandingSearch {
+    s: Search,
+    k: usize,
+}
+
+impl std::fmt::Debug for LandingSearch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "LandingSearch({} of {})", self.k, self.s.places.len())
+    }
+}
+
+impl LandingSearch {
+    pub(crate) fn new(town: Option<&Area>, solids: &Obstacles, door: DVec3, out: DVec2) -> Self {
+        LandingSearch {
+            s: search(town, solids, door, out.normalize_or(DVec2::X)),
+            k: 0,
+        }
+    }
+
+    /// Looks at the next places: `None` while it goes on, else the place
+    /// found (or that there is none).
+    pub(crate) fn step(&mut self, solids: &Obstacles) -> Option<Option<Landing>> {
+        if self.s.posts.len() < 2 {
+            return Some(None);
+        }
+        for _ in 0..PER_TICK {
+            let Some((c, fwd)) = candidate(&self.s, self.k) else {
+                return Some(None);
+            };
+            self.k += 1;
+            if let Ok(l) = try_landing(solids, &self.s, c, fwd, &[]) {
+                return Some(Some(l));
+            }
+        }
+        None
+    }
+}
+
 /// Why each place a cruiser might land at for a call to `door` will not
 /// do, counted (for tests and tools; "no posts" when nobody could stand
 /// by the door at all).
@@ -1291,4 +1333,120 @@ fn leave(p: &mut Patrol, town: Option<&Area>, pos: DVec3, tick: u64, wait: f64) 
     ];
     p.since = tick;
     p.stage = Stage::Leaving;
+}
+
+/// A cruiser somebody else sends (a case fetching people off a roof): it
+/// flies in above the roofs, sinks onto `pad`, stands there with its
+/// canopy open for as long as it is wanted, and climbs away.
+#[derive(Clone, Debug)]
+pub(crate) struct Pickup {
+    car: Entity,
+    pub(crate) pad: DVec3,
+    pub(crate) yaw: f64,
+    legs: Vec<Leg>,
+    since: u64,
+    leaving: bool,
+}
+
+impl Pickup {
+    /// Sets out for `pad` (its skids' feet there), nose towards `yaw`.
+    pub(crate) fn come(
+        world: &mut World,
+        town: Option<&Area>,
+        tick: u64,
+        pad: DVec3,
+        yaw: f64,
+    ) -> Self {
+        let fwd = DVec3::new(det::sin(yaw), 0.0, det::cos(yaw));
+        let far = pad - fwd * FROM;
+        let high = above_roofs(town, far, pad).max(pad.y + 12.0);
+        let from = DVec3::new(far.x, high + 30.0, far.z);
+        let over = DVec3::new(pad.x, high, pad.z);
+        Pickup {
+            car: spawn_cruiser(world, tick, from, yaw),
+            pad,
+            yaw,
+            legs: vec![leg(from, over, CRUISE), leg(over, pad, SINK)],
+            since: tick,
+            leaving: false,
+        }
+    }
+
+    fn done_at(&self) -> u64 {
+        self.since + ticks(self.legs.iter().map(|l| l.secs).sum())
+    }
+
+    /// The tick it stands on its pad from (meaningless once it leaves).
+    pub(crate) fn lands_at(&self) -> u64 {
+        self.done_at()
+    }
+
+    /// Standing on its pad, canopy open.
+    pub(crate) fn stands(&self, tick: u64) -> bool {
+        !self.leaving && tick >= self.done_at()
+    }
+
+    pub(crate) fn leaving(&self) -> bool {
+        self.leaving
+    }
+
+    /// Canopy down (`wait` seconds) and away.
+    pub(crate) fn leave(&mut self, town: Option<&Area>, tick: u64, wait: f64) {
+        if self.leaving {
+            return;
+        }
+        let fwd = DVec3::new(det::sin(self.yaw), 0.0, det::cos(self.yaw));
+        let far = self.pad + fwd * FROM;
+        let high = above_roofs(town, self.pad, far).max(self.pad.y + 12.0);
+        let over = DVec3::new(self.pad.x, high, self.pad.z);
+        // From where it is now, if it had not landed yet.
+        let t = (tick.saturating_sub(self.since)) as f64 * DT;
+        let now = fly(&self.legs, t).0;
+        self.legs = vec![
+            hold(now, wait),
+            leg(now, over, SINK),
+            leg(over, DVec3::new(far.x, high + 30.0, far.z), CRUISE),
+        ];
+        self.since = tick;
+        self.leaving = true;
+    }
+
+    /// Every tick. True once it has flown off and is gone.
+    pub(crate) fn step(&mut self, world: &mut World, tick: u64) -> bool {
+        let t = (tick.saturating_sub(self.since)) as f64 * DT;
+        if self.leaving && tick >= self.done_at() {
+            world.despawn(self.car);
+            return true;
+        }
+        let (pos, vel) = fly(&self.legs, t);
+        let open = self.stands(tick);
+        if let Some(mut m) = world.get_mut::<Motion>(self.car) {
+            m.set_if_neq(Motion(crate::collision::Body {
+                pos,
+                vel,
+                grounded: open,
+            }));
+        }
+        false
+    }
+
+    /// Its box while it stands (what is drawn is what collides).
+    pub(crate) fn solid(&self, tick: u64) -> Option<Solid> {
+        let t = (tick.saturating_sub(self.since)) as f64 * DT;
+        (fly(&self.legs, t).1.length() < STANDING).then(|| cruiser_solid(self.pad, self.yaw))
+    }
+
+    /// Where someone climbs in: beside the canopy.
+    pub(crate) fn door(&self) -> DVec3 {
+        let fwd = DVec2::new(det::sin(self.yaw), det::cos(self.yaw));
+        let side = DVec2::new(fwd.y, -fwd.x);
+        let q = DVec2::new(self.pad.x, self.pad.z)
+            + fwd * (CRUISER_MID + 0.3)
+            + side * (CRUISER_HALF.x + 0.55);
+        DVec3::new(q.x, self.pad.y, q.y)
+    }
+
+    pub(crate) fn remove(self, world: &mut World) {
+        world.despawn(self.car);
+    }
 }

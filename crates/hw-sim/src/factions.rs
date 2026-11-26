@@ -124,7 +124,7 @@ pub fn of_enemy(kind: EnemyKind) -> Faction {
         | EnemyKind::WeakPoint
         | EnemyKind::Doctor => Faction::Lab,
         // A safe is nobody's (beating it is never a deed).
-        EnemyKind::Safe => Faction::Lab,
+        EnemyKind::Safe | EnemyKind::Getaway => Faction::Lab,
         EnemyKind::Bulwark | EnemyKind::Grenadier | EnemyKind::Orderly => Faction::Lab,
         EnemyKind::Greaser => Faction::Jackets,
         EnemyKind::Gunsel => Faction::Syndicate,

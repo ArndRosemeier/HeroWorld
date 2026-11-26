@@ -366,6 +366,10 @@ pub enum EntityKind {
     PoliceCar,
     /// A police officer (their look rides on `mount`).
     Officer,
+    /// A gang's flying getaway car (see `hw_sim::missions`): a target
+    /// like a villain. `grounded` says its canopy is open (standing at the
+    /// kerb, or brought down).
+    Getaway,
 }
 
 impl EntityKind {
@@ -404,6 +408,7 @@ impl EntityKind {
             EntityKind::Safe => 29,
             EntityKind::PoliceCar => 30,
             EntityKind::Officer => 31,
+            EntityKind::Getaway => 33,
         }
     }
 
@@ -442,6 +447,7 @@ impl EntityKind {
             29 => Ok(EntityKind::Safe),
             30 => Ok(EntityKind::PoliceCar),
             31 => Ok(EntityKind::Officer),
+            33 => Ok(EntityKind::Getaway),
             _ => Err(WireError),
         }
     }
@@ -474,6 +480,7 @@ impl EntityKind {
                 | EntityKind::Grabber
                 | EntityKind::Overlord
                 | EntityKind::Safe
+                | EntityKind::Getaway
         )
     }
 
@@ -511,7 +518,11 @@ impl EntityKind {
     pub fn is_robot(self) -> bool {
         matches!(
             self,
-            EntityKind::Sentry | EntityKind::Colossus | EntityKind::WeakPoint | EntityKind::Safe
+            EntityKind::Sentry
+                | EntityKind::Colossus
+                | EntityKind::WeakPoint
+                | EntityKind::Safe
+                | EntityKind::Getaway
         )
     }
 }
@@ -1910,6 +1921,15 @@ pub enum ToClient {
         /// broken off and runs.
         size: u8,
         alarms: u8,
+        /// The entity to go after (a getaway car, a suspect being
+        /// tailed), or 0: the mark follows it instead of `at`.
+        mark: u32,
+        /// A gauge the step fills (0-255): the loot loaded at a heist, a
+        /// tailed suspect's suspicion.
+        gauge: u8,
+        /// Seconds left before it is too late (a getaway car gets away),
+        /// or 0 for none.
+        left: u16,
     },
     /// The police computer's list of crimes (Crime-o-Vision), newest
     /// first; sent when it changes.
@@ -2110,6 +2130,9 @@ impl ToClient {
                     + 13 * clues.len().min(MAX_CLUES)
                     + 1
                     + 4
+                    + 4
+                    + 1
+                    + 2
             }
             ToClient::CaseBoard { crimes, lost, .. } => {
                 2 + 1
@@ -2361,6 +2384,9 @@ impl ToClient {
                 level,
                 size,
                 alarms,
+                mark,
+                gauge,
+                left,
             } => {
                 w.u8(24).u16(*number).u8(*stage).u8(*gang).u8(*step);
                 let n = steps.len().min(MAX_CASE_STEPS);
@@ -2385,6 +2411,7 @@ impl ToClient {
                     w.u8(*state);
                 }
                 w.u8(*held).u8(*crime).u8(*level).u8(*size).u8(*alarms);
+                w.u32(*mark).u8(*gauge).u16(*left);
             }
             ToClient::CaseBoard {
                 crimes,
@@ -2687,6 +2714,9 @@ impl ToClient {
                     level: r.u8()?,
                     size: r.u8()?,
                     alarms: r.u8()?,
+                    mark: r.u32()?,
+                    gauge: r.u8()?,
+                    left: r.u16()?,
                 }
             }
             25 => {
@@ -3628,6 +3658,9 @@ mod tests {
                         level: 7,
                         size: 1,
                         alarms: 3,
+                        mark: 70_000,
+                        gauge: 200,
+                        left: 95,
                     },
                 ),
                 (

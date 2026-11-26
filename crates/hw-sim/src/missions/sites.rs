@@ -47,10 +47,16 @@ pub enum Place {
     Ruin,
     /// The Doctor's own lab.
     Lair,
+    /// A flat roof over the streets.
+    Rooftop,
+    /// The pavement in front of a shop's door.
+    Shopfront,
+    /// The air over a main road (a getaway car's way).
+    Road,
 }
 
 impl Place {
-    pub const ALL: [Place; 8] = [
+    pub const ALL: [Place; 11] = [
         Place::Building,
         Place::Street,
         Place::Plaza,
@@ -59,6 +65,9 @@ impl Place {
         Place::Grotto,
         Place::Ruin,
         Place::Lair,
+        Place::Rooftop,
+        Place::Shopfront,
+        Place::Road,
     ];
 
     pub fn code(self) -> u8 {
@@ -75,9 +84,10 @@ impl Place {
     /// What goes before its name: on a street, in a tunnel, at a plaza.
     pub fn preposition(self) -> &'static str {
         match self {
-            Place::Street => "on",
+            Place::Street | Place::Rooftop => "on",
+            Place::Road => "over",
             Place::Tunnel | Place::Grotto | Place::Ruin | Place::Lair => "in",
-            Place::Building | Place::Plaza | Place::Station => "at",
+            Place::Building | Place::Plaza | Place::Station | Place::Shopfront => "at",
         }
     }
 
@@ -138,12 +148,56 @@ pub struct Places {
     /// No case on the street this near these (Hero Hall, where heroes
     /// appear).
     pub keep_clear: Vec<DVec2>,
+    /// The streets of `area` as people walk them (a courier's way to a
+    /// hideout, a getaway car's way out), made with the area.
+    pub walks: Option<Arc<crate::streets::Streets>>,
 }
 
 /// Open-air cases keep this far from [`Places::keep_clear`] (m).
 pub const KEEP_CLEAR: f64 = 180.0;
 
 impl Places {
+    /// The way on foot from `from` to `to` by the pavements of the
+    /// streets round the heroes: points on open pavement, each on ground
+    /// that goes on from the last (never down a bank or off a bridge).
+    pub fn walk(&self, from: DVec3, to: DVec3) -> Option<Vec<DVec3>> {
+        let area = self.area.as_ref()?;
+        let walks = self.walks.as_ref()?;
+        let (a, b) = (DVec2::new(from.x, from.z), DVec2::new(to.x, to.z));
+        let route = walks.pavement_route(a, b)?;
+        let mut way: Vec<DVec3> = Vec::new();
+        let mut last = from;
+        for p in route {
+            if p.distance(a) < 8.0 || p.distance(b) < 8.0 || !area.contains(p) {
+                continue;
+            }
+            let at = DVec3::new(p.x, area.ground(p), p.y);
+            let run = DVec2::new(at.x - last.x, at.z - last.z).length().max(1.0);
+            // Steeper than stairs: not the pavement (a bank, a quay).
+            if (at.y - last.y).abs() > run * 0.7 + 0.5 {
+                continue;
+            }
+            last = at;
+            way.push(at);
+        }
+        // The streets must come near both ends, and not go the long way round.
+        let ends = [(way.first(), from), (way.last(), to)];
+        if ends
+            .iter()
+            .any(|(p, e)| p.is_none_or(|p| p.distance(*e) > 60.0))
+        {
+            return None;
+        }
+        let along: f64 = std::iter::once(from)
+            .chain(way.iter().copied())
+            .chain(std::iter::once(to))
+            .collect::<Vec<_>>()
+            .windows(2)
+            .map(|w| w[0].distance(w[1]))
+            .sum();
+        (along < a.distance(b) * 2.2 + 80.0).then_some(way)
+    }
+
     fn clear(&self, p: DVec2) -> bool {
         self.keep_clear.iter().all(|k| k.distance(p) > KEEP_CLEAR)
     }
@@ -191,6 +245,18 @@ pub const SOURCES: &[Source] = &[
     Source {
         place: Place::Lair,
         find: lair,
+    },
+    Source {
+        place: Place::Rooftop,
+        find: rooftop,
+    },
+    Source {
+        place: Place::Shopfront,
+        find: shopfront,
+    },
+    Source {
+        place: Place::Road,
+        find: road,
     },
 ];
 
@@ -598,4 +664,214 @@ fn lair(places: &Places, _rng: &mut Rng) -> Option<Site> {
         around,
         building: None,
     })
+}
+
+/// What a building is called from the street, by what it is used for.
+fn building_noun(site: &hw_gen::building::BuildingSite) -> &'static str {
+    use hw_gen::building::BuildingUse::*;
+    match site.usage {
+        Offices => "office tower",
+        ShopsAndOffices => "shop block",
+        Apartments => "apartment house",
+        House => "house",
+        Works => "works",
+        Pavilion => "pavilion",
+        Lab => "laboratory",
+        Tenement => "tenement",
+    }
+}
+
+/// A roof's own reach in from its edges for where people stand (m).
+const ROOF_INSET: f64 = 3.5;
+
+/// A flat roof two to six floors up, wide enough to fight on. The points
+/// are on the roof as the plan has it; the case puts them on what is
+/// really there ([`Site::place`] says it is a roof).
+fn rooftop(places: &Places, rng: &mut Rng) -> Option<Site> {
+    let area = places.area.as_ref()?;
+    if area.buildings.is_empty() {
+        return None;
+    }
+    for _ in 0..40 {
+        let b = &area.buildings[rng.index(area.buildings.len())];
+        let s = &b.site;
+        if !(2..=6).contains(&s.floors) || s.size.min_element() < 15.0 {
+            continue;
+        }
+        let look = s.look();
+        if look.roof != hw_gen::style::Roof::Flat || look.taxi_pad || s.is_hideout() {
+            continue;
+        }
+        let mid = s.origin + (s.along * s.size.x + s.inward * s.size.y) * 0.5;
+        if !places.clear(mid) || !area.contains(mid) {
+            continue;
+        }
+        let y = b.base + s.height();
+        let half = s.size * 0.5 - DVec2::splat(ROOF_INSET);
+        let on = |fx: f64, fz: f64| {
+            let p = mid + s.along * (half.x * fx) + s.inward * (half.y * fz);
+            DVec3::new(p.x, y, p.y)
+        };
+        return Some(Site {
+            place: Place::Rooftop,
+            name: format!(
+                "the roof of the {} on {}",
+                building_noun(s),
+                street_near(area, s.origin)
+            ),
+            at: on(0.0, 0.0),
+            facing: -s.inward,
+            way_down: None,
+            around: vec![
+                on(0.0, -0.8),
+                on(-0.8, 0.6),
+                on(0.8, 0.6),
+                on(0.8, -0.6),
+                on(-0.8, -0.6),
+                on(0.0, 0.8),
+            ],
+            building: None,
+        });
+    }
+    None
+}
+
+/// What a shop worth a heist is (by its seed).
+const SHOPS: [&str; 6] = [
+    "jeweller's",
+    "savings bank",
+    "furrier's",
+    "pawnbroker's",
+    "department store",
+    "payroll office",
+];
+
+/// The pavement in front of a shop block's street door (not a hideout's).
+fn shopfront(places: &Places, rng: &mut Rng) -> Option<Site> {
+    let area = places.area.as_ref()?;
+    if area.buildings.is_empty() {
+        return None;
+    }
+    for _ in 0..40 {
+        let b = &area.buildings[rng.index(area.buildings.len())];
+        let s = &b.site;
+        if s.usage != hw_gen::building::BuildingUse::ShopsAndOffices || s.is_hideout() {
+            continue;
+        }
+        let front = s.origin + s.along * s.size.x * 0.5 - s.inward * 2.0;
+        if !places.clear(front) || !area.contains(front) {
+            continue;
+        }
+        if area
+            .town
+            .dystopia
+            .as_ref()
+            .is_some_and(|d| d.contains(front))
+        {
+            continue;
+        }
+        return Some(Site {
+            place: Place::Shopfront,
+            name: format!(
+                "the {} on {}",
+                SHOPS[s.seed.child("shop").rng().index(SHOPS.len())],
+                street_near(area, s.origin)
+            ),
+            at: DVec3::new(front.x, area.ground(front), front.y),
+            facing: -s.inward,
+            way_down: None,
+            around: Vec::new(),
+            building: None,
+        });
+    }
+    None
+}
+
+/// A stretch of a main road near the start: where a getaway car is seen.
+fn road(places: &Places, rng: &mut Rng) -> Option<Site> {
+    let area = places.area.as_ref()?;
+    let roads: Vec<_> = area
+        .roads
+        .iter()
+        .filter(|r| r.main && r.pts.len() >= 2 && (r.half + r.pavement) * 2.0 >= 11.0)
+        .collect();
+    if roads.is_empty() {
+        return None;
+    }
+    for _ in 0..16 {
+        let r = roads[rng.index(roads.len())];
+        let i = rng.index(r.pts.len() - 1);
+        let (a, b) = (r.pts[i], r.pts[i + 1]);
+        let at = a.lerp(b, rng.range(0.2, 0.8));
+        if !places.clear(at) || !area.contains(at) {
+            continue;
+        }
+        return Some(Site {
+            place: Place::Road,
+            name: street_name(r.pts[0]),
+            at: DVec3::new(at.x, area.ground(at), at.y),
+            facing: (b - a).normalize_or(DVec2::X),
+            way_down: None,
+            around: Vec::new(),
+            building: None,
+        });
+    }
+    None
+}
+
+/// How far from the hideout a bagman to tail sets out (m).
+pub const TAIL_FROM: (f64, f64) = (140.0, 260.0);
+
+/// Where a bagman sets out for the hideout at `hideout`: the pavement of
+/// a street a few blocks from it.
+pub fn tail_start(places: &Places, hideout: &Site, rng: &mut Rng) -> Option<Site> {
+    let area = places.area.as_ref()?;
+    let h = DVec2::new(hideout.at.x, hideout.at.z);
+    // To the hideout's front door.
+    let door = hideout.building.map_or(hideout.at, |k| {
+        let b = &places.floors.buildings[k];
+        b.to_town(b.graph.front())
+    });
+    let roads: Vec<_> = area
+        .roads
+        .iter()
+        .filter(|r| r.pts.len() >= 2 && r.pavement >= 1.0)
+        .collect();
+    if roads.is_empty() {
+        return None;
+    }
+    for _ in 0..24 {
+        let r = roads[rng.index(roads.len())];
+        let i = rng.index(r.pts.len() - 1);
+        let (a, b) = (r.pts[i], r.pts[i + 1]);
+        let len = a.distance(b);
+        if len < 12.0 {
+            continue;
+        }
+        let d = (b - a) / len;
+        let side = if rng.chance(0.5) { d.perp() } else { -d.perp() };
+        let at = a.lerp(b, rng.range(0.25, 0.75)) + side * (r.half + r.pavement * 0.5);
+        let far = at.distance(h);
+        if far < TAIL_FROM.0 || far > TAIL_FROM.1 || !places.clear(at) || !area.contains(at) {
+            continue;
+        }
+        let from = DVec3::new(at.x, area.ground(at), at.y);
+        // His way there, by the pavements: without one, not from here.
+        let Some(way) = places.walk(from, door) else {
+            continue;
+        };
+        return Some(Site {
+            place: Place::Street,
+            name: street_name(r.pts[0]),
+            at: from,
+            facing: way
+                .first()
+                .map_or(h - at, |p| DVec2::new(p.x, p.z) - at)
+                .normalize_or(DVec2::X),
+            way_down: None,
+            around: way,
+            building: None,
+        });
+    }
+    None
 }

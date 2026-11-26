@@ -10,6 +10,13 @@ use glam::DVec2;
 use hw_gen::layout::SpaceKind;
 use hw_net::CaseStep;
 
+#[path = "getaway.rs"]
+pub mod getaway;
+#[path = "rooflift.rs"]
+pub mod rooflift;
+#[path = "tail.rs"]
+pub mod tail;
+
 /// A room (or a patch of open ground) the gang holds: its fight spot.
 #[derive(Clone, Debug)]
 struct Room {
@@ -28,7 +35,8 @@ pub struct PoliceCall {
     pub door: DVec3,
     pub out: DVec2,
     pub cars: usize,
-    pub visit: crate::police::Visit,
+    /// What their officers look at inside (none: they guard the door).
+    pub visit: Option<crate::police::Visit>,
 }
 
 /// How many cruisers come to a closed hideout whose gang held `rooms`
@@ -129,6 +137,8 @@ pub(crate) enum Settled {
     Lead(DVec3),
     /// The last step done: the case is closed.
     Done,
+    /// The gang got away: the case is lost.
+    Lost,
 }
 
 /// A case being worked.
@@ -168,6 +178,21 @@ pub struct Running {
     /// A hero is down near an underground place (the radio stops leading
     /// to the way down).
     below: bool,
+    /// A heist's or a chase's car and how far it is ([`getaway`]).
+    getaway: Option<getaway::Job>,
+    /// A heist's bagmen; the crew out of a getaway car brought down.
+    crew: Option<Room>,
+    /// A hero must be at the place by this tick, or the gang is gone (a
+    /// heist in progress, a getaway).
+    deadline: Option<u64>,
+    /// A courier being followed ([`tail`]).
+    tail: Option<tail::Job>,
+    /// The last step was a tail nobody noticed: this place expects nobody.
+    unexpected: bool,
+    /// On a roof: where a cruiser can stand to take hostages off.
+    pad: Option<(DVec3, f64)>,
+    /// The cruiser that came for them ([`rooflift`]).
+    lift: Option<rooflift::Lift>,
 }
 
 /// Is `a` near `b`: on the flat, and under the ground also in a straight
@@ -198,6 +223,13 @@ impl Running {
             held: 0.0,
             away_since: None,
             below: false,
+            getaway: None,
+            crew: None,
+            deadline: None,
+            tail: None,
+            unexpected: false,
+            pad: None,
+            lift: None,
         }
     }
 
@@ -208,7 +240,7 @@ impl Running {
     /// What closing it pays: a share of the next level's karma, by the
     /// hideout's size and its gang's level (other cases: the old share).
     pub fn share(&self) -> f64 {
-        if self.is_hideout() {
+        if self.plan.variant == 0 {
             share_of(self.plan.size, self.plan.extra)
                 * if self.plan.hot {
                     1.0 + board::HOT_BONUS
@@ -227,6 +259,11 @@ impl Running {
     /// The step it is at.
     pub fn current(&self) -> &Step {
         &self.plan.steps[self.step.min(self.plan.steps.len() - 1)]
+    }
+
+    /// Which of its steps it is at (0 the first).
+    pub fn step_index(&self) -> usize {
+        self.step
     }
 
     pub fn site(&self) -> &Site {
@@ -293,6 +330,8 @@ impl Running {
             return way_in;
         }
         match self.job() {
+            CaseKind::Heist | CaseKind::Chase => self.car().map_or(way_in, |c| c.pos),
+            CaseKind::Tail => self.tail.as_ref().map_or(way_in, |j| j.at),
             // Out with it: back to the way in.
             CaseKind::Evidence if self.carrier.is_some() => self.way_in.unwrap_or(way_in),
             CaseKind::Evidence | CaseKind::Hostages => self
@@ -319,9 +358,19 @@ impl Running {
 
     /// Once a second: the gang stands when a hero comes near, leaves when
     /// they are long gone; a step done moves the case on.
-    pub(crate) fn settle(&mut self, world: &mut World, tick: u64, heroes: &[Seen]) -> Settled {
+    pub(crate) fn settle(
+        &mut self,
+        world: &mut World,
+        tick: u64,
+        heroes: &[Seen],
+        town: Option<&hw_gen::urban::area::Area>,
+    ) -> Settled {
         self.now = tick;
-        let at = self.site().at;
+        // A car in the air is where the case is.
+        let at = match self.car() {
+            Some(c) if self.stage == INSIDE => c.pos,
+            _ => self.site().at,
+        };
         // Down there: below the street, not over it.
         self.below = self.site().place.underground()
             && heroes
@@ -330,16 +379,37 @@ impl Running {
         match self.stage {
             GO => {
                 if self.woken(heroes) {
-                    self.take(world, tick, heroes.len());
+                    self.take(world, tick, heroes.len(), town);
                     self.stage = INSIDE;
                     self.away_since = None;
+                    self.deadline = None;
+                } else if self.hurries() {
+                    // In progress: it does not wait for ever.
+                    let far = heroes
+                        .iter()
+                        .map(|h| flat(h.at, at))
+                        .fold(f64::MAX, f64::min);
+                    let by = *self.deadline.get_or_insert_with(|| {
+                        let secs = getaway::ARRIVE_SECONDS + far / getaway::ARRIVE_SPEED;
+                        tick + (secs * TICK_HZ as f64) as u64
+                    });
+                    if tick >= by {
+                        return Settled::Lost;
+                    }
                 }
                 Settled::Working
             }
             INSIDE => {
+                if self.getaway_escaped(tick) || self.tail_lost() {
+                    return Settled::Lost;
+                }
                 if heroes.iter().all(|h| flat(h.at, at) > AWAY) {
                     let since = *self.away_since.get_or_insert(tick);
                     if tick >= since + (AWAY_SECONDS * TICK_HZ as f64) as u64 {
+                        // A car in the air nobody follows is away.
+                        if self.getaway_flying() || self.tail.is_some() {
+                            return Settled::Lost;
+                        }
                         // Gone too long: the gang slips away, and stands
                         // there fresh when a hero comes back.
                         self.leave(world);
@@ -350,6 +420,17 @@ impl Running {
                 self.away_since = None;
                 self.raise_alarms(world, tick, heroes);
                 self.boss_breaks_off(world, tick, heroes);
+                self.getaway_second(world, tick, heroes);
+                self.tail_second(world, tick, heroes);
+                if self.tail_lost() {
+                    return Settled::Lost;
+                }
+                // A roof's first crew beaten: the cruiser sets out.
+                if let (Some(pad), None) = (self.pad, &self.lift) {
+                    if self.rooms.iter().any(|r| subdued(world, r.spot)) {
+                        self.lift = Some(rooflift::Lift::come(world, town, tick, pad));
+                    }
+                }
                 if !self.step_done(world, heroes) {
                     return Settled::Working;
                 }
@@ -357,7 +438,12 @@ impl Running {
                     return Settled::Done;
                 }
                 // A lead: what it turned up points to the next place.
+                let unseen = self
+                    .tail
+                    .as_ref()
+                    .is_some_and(|j| j.walk == tail::Walk::Arrived);
                 self.leave(world);
+                self.unexpected = unseen;
                 self.step += 1;
                 self.stage = GO;
                 Settled::Lead(at)
@@ -377,6 +463,8 @@ impl Running {
             CaseKind::Crew => {
                 !self.rooms.is_empty() && self.rooms.iter().all(|r| subdued(world, r.spot))
             }
+            CaseKind::Heist | CaseKind::Chase => self.getaway_done(world),
+            CaseKind::Tail => self.tail_done(world),
             CaseKind::Evidence | CaseKind::Hostages => {
                 if self.clues.is_empty() {
                     all_beaten
@@ -397,6 +485,45 @@ impl Running {
             Some(_) => 1,
         };
         let held = ((self.held / self.hold_seconds()).clamp(0.0, 1.0) * 255.0) as u8 & !15;
+        // A car in the air is followed by its entity: where it is goes
+        // out only now and then, for those too far to see it.
+        let mut at = self.objective();
+        let flying = self.car().filter(|c| !c.stands());
+        if flying.is_some() {
+            at = (at / 25.0).round() * 25.0;
+        }
+        let left = match (self.stage, self.deadline, self.car()) {
+            (INSIDE, _, None) if self.tail.is_some() => self.trail_left(self.now),
+            (GO, Some(by), _) => Some(by.saturating_sub(self.now) as f64 * DT),
+            (INSIDE, _, Some(c)) => c.seconds_left(self.now),
+            _ => None,
+        };
+        // In steps of five seconds until the last half minute.
+        let left = left.map_or(0, |s| {
+            let s = s.ceil().clamp(1.0, 60_000.0) as u16;
+            if s > 30 {
+                s.div_ceil(5) * 5
+            } else {
+                s
+            }
+        });
+        let gauge = match self.job() {
+            CaseKind::Heist => (self.loot_loaded() * 255 / getaway::TRIPS).min(255) as u8,
+            // In sixteenths: news only when it has moved a bit.
+            CaseKind::Tail => self.tail.as_ref().map_or(0, |j| {
+                ((j.suspicion.clamp(0.0, 1.0) * 16.0).round() * 15.9375) as u8
+            }),
+            _ => 0,
+        };
+        let followed = self
+            .tail
+            .as_ref()
+            .filter(|j| self.stage == INSIDE && j.id.0 != 0)
+            .map(|j| j.id.0);
+        if followed.is_some() {
+            // He is followed by eye; the radio only says roughly where.
+            at = (at / 10.0).round() * 10.0;
+        }
         ToClient::Case {
             number: self.number,
             stage: self.stage,
@@ -413,7 +540,10 @@ impl Running {
                     name: s.site.name.clone(),
                 })
                 .collect(),
-            at: self.objective().as_vec3().to_array(),
+            at: at.as_vec3().to_array(),
+            mark: flying.map(|c| c.id.0).or(followed).unwrap_or(0),
+            gauge,
+            left,
             cleared,
             groups,
             boss,
@@ -432,10 +562,19 @@ impl Running {
     }
 
     /// The gang stands at the step's place.
-    fn take(&mut self, world: &mut World, tick: u64, heroes: usize) {
-        match self.site().building {
-            Some(k) => self.take_rooms(world, tick, heroes, k),
-            None => self.take_open(world, tick, heroes),
+    fn take(
+        &mut self,
+        world: &mut World,
+        tick: u64,
+        heroes: usize,
+        town: Option<&hw_gen::urban::area::Area>,
+    ) {
+        match (self.job(), self.site().building) {
+            (CaseKind::Heist, _) => self.take_heist(world, tick, heroes, town),
+            (CaseKind::Chase, _) => self.take_chase(world, tick, heroes),
+            (CaseKind::Tail, _) => self.take_tail(world, tick, heroes),
+            (_, Some(k)) => self.take_rooms(world, tick, heroes, k),
+            (_, None) => self.take_open(world, tick, heroes),
         }
         self.held = 0.0;
     }
@@ -586,8 +725,18 @@ impl Running {
         let gang = GANGS[self.gang];
         let solids = world.resource::<crate::Solids>().0.clone();
         let extra = heroes.saturating_sub(1) as u32;
+        // A roof is as high as it was built, not as its plan says.
+        let roof = site.place == Place::Rooftop;
+        let on_roof = |p: DVec3| {
+            if !roof {
+                return Some(p);
+            }
+            let y = solids.floor_under(DVec2::new(p.x, p.z), p.y + 3.0);
+            (y > p.y - 2.0).then_some(DVec3::new(p.x, y, p.z))
+        };
         let mut spots: Vec<DVec3> = std::iter::once(site.at)
             .chain(site.around.iter().copied())
+            .filter_map(on_roof)
             .filter_map(|p| open_near(&solids, p))
             .collect();
         spots.dedup_by(|a, b| a.distance(*b) < 3.0);
@@ -598,7 +747,7 @@ impl Running {
         let side_groups = match job {
             CaseKind::Takeover => 2,
             CaseKind::Crew | CaseKind::Hostages => 1,
-            CaseKind::Evidence => 0,
+            _ => 0,
         };
         let main = match job {
             CaseKind::Takeover => {
@@ -666,6 +815,20 @@ impl Running {
                 safe: None,
             });
         }
+        self.pad = None;
+        if roof && job == CaseKind::Hostages {
+            let used: Vec<DVec3> = self
+                .rooms
+                .iter()
+                .map(|r| r.at)
+                .chain(self.clues.iter().map(|c| c.at))
+                .collect();
+            let top = Site {
+                at: middle,
+                ..site.clone()
+            };
+            self.pad = rooflift::pad(&solids, &top, &used);
+        }
     }
 
     /// In building `k`: a group in each of [`ROOMS`] rooms over the
@@ -724,10 +887,13 @@ impl Running {
         let door = b.to_town(b.graph.front());
         // Lookouts at the way in.
         self.way_in = open_near(&solids, door).or(Some(door));
-        self.door = open_near(&solids, door).map(|at| {
-            let out = DVec2::new(at.x - b.pos.x, at.z - b.pos.y).normalize_or(DVec2::X);
-            self.group(world, tick, heroes, at, out, DOOR_SIZE, None, false)
-        });
+        // Nobody watches the door of a place a courier just led someone to.
+        self.door = open_near(&solids, door)
+            .filter(|_| !self.unexpected)
+            .map(|at| {
+                let out = DVec2::new(at.x - b.pos.x, at.z - b.pos.y).normalize_or(DVec2::X);
+                self.group(world, tick, heroes, at, out, DOOR_SIZE, None, false)
+            });
         let mut placed: Vec<(Room, (SpaceKind, hw_gen::geom::Rect, f64))> = Vec::new();
         for r in &chosen {
             if placed.len() >= want_rooms {
@@ -833,8 +999,18 @@ impl Running {
             .chain(self.boss.iter())
             .chain(self.door.iter())
             .chain(self.cutoff.iter())
+            .chain(self.crew.iter())
             .map(|r| r.spot)
             .collect();
+        if let Some(car) = self.getaway.take().and_then(|j| j.car) {
+            car.remove(world);
+        }
+        self.crew = None;
+        self.tail = None;
+        self.pad = None;
+        if let Some(l) = self.lift.take() {
+            l.remove(world);
+        }
         let mut gone: Vec<(NetId, Entity)> = world
             .query::<(Entity, &Net, &combat::Enemy)>()
             .iter(world)
@@ -882,7 +1058,82 @@ impl Running {
 
     /// A hideout case closed: is this one (a crime from the board)?
     pub fn is_hideout(&self) -> bool {
-        self.plan.variant == 0 && self.plan.steps.len() == 1 && self.site().building.is_some()
+        self.plan.variant == 0 && self.site().building.is_some()
+    }
+
+    /// A heist or a chase: it ends in the street, by a car.
+    pub fn in_the_street(&self) -> bool {
+        matches!(self.job(), CaseKind::Heist | CaseKind::Chase)
+    }
+
+    /// Does this step not wait for the heroes (it is in progress)?
+    fn hurries(&self) -> bool {
+        matches!(self.job(), CaseKind::Heist | CaseKind::Chase)
+    }
+
+    /// The ending of a heist or a chase: whoever still stands gives up,
+    /// the car (a wreck, or never flown) stays where it is until nobody is
+    /// near, the police come, and at a heist the shop's owner comes out to
+    /// say thanks.
+    pub(crate) fn wrap_up_street(
+        &mut self,
+        world: &mut World,
+        tick: u64,
+    ) -> (Option<getaway::Car>, Option<PoliceCall>) {
+        let spots: Vec<usize> = self.groups_mut().map(|r| r.spot).collect();
+        for (en, mut f) in world
+            .query::<(&combat::Enemy, &mut Fighter)>()
+            .iter_mut(world)
+        {
+            if spots.contains(&en.spot) && f.fighting() {
+                f.health = 0.0;
+                f.status = hw_net::Status::Down;
+                f.until = tick;
+                f.target = None;
+            }
+        }
+        let job = self.getaway.take();
+        let heist = self.job() == CaseKind::Heist;
+        let car = job.and_then(|j| j.car);
+        let site = self.site().clone();
+        let solids = world.resource::<crate::Solids>().0.clone();
+        // The police come to the shop's door, or to the wreck.
+        let (door, out) = match (&car, heist) {
+            (_, true) | (None, _) => (
+                self.way_in.unwrap_or(site.at),
+                site.facing.normalize_or(DVec2::X),
+            ),
+            (Some(c), false) => {
+                let side = c.beside(1.0, 2.0);
+                (
+                    side,
+                    DVec2::new(side.x - c.pos.x, side.z - c.pos.z).normalize_or(DVec2::X),
+                )
+            }
+        };
+        if heist {
+            let out3 = DVec3::new(out.x, 0.0, out.y);
+            if let Some(p) = open_near(&solids, door + out3 * 1.5) {
+                let id = HOSTAGE_IDS | ((self.number as u32 & 0xffff) << 4) | OWNER;
+                crate::incidents::spawn_bystander(world, tick, id, p, out, None);
+                crate::incidents::release_bystanders(world, tick, id);
+            }
+        }
+        self.rooms.clear();
+        self.boss = None;
+        self.door = None;
+        self.cutoff = None;
+        self.crew = None;
+        self.clues.clear();
+        (
+            car,
+            Some(PoliceCall {
+                door,
+                out,
+                cars: 1,
+                visit: None,
+            }),
+        )
     }
 
     /// The ending of a hideout case: whoever of the gang still stands gives
@@ -931,10 +1182,10 @@ impl Running {
                 door: at,
                 out: if out.dot(b.dir) > 0.5 { b.dir } else { out },
                 cars: cruisers_for(self.rooms.len(), roll),
-                visit: crate::police::Visit {
+                visit: Some(crate::police::Visit {
                     floors: self.floors.clone(),
                     scenes,
-                },
+                }),
             });
             let solids = world.resource::<crate::Solids>().0.clone();
             let stand = (2..7).find_map(|m| {
@@ -959,9 +1210,16 @@ impl Running {
     /// Heroes holding the help key at a clue, or by a hostage whose
     /// guards are beaten.
     pub(crate) fn search(&mut self, world: &mut World, tick: u64, heroes: &[Seen]) {
+        if let Some(mut l) = self.lift.take() {
+            // It was called by this case and nobody is left to fetch.
+            if !l.step(world, None, tick) {
+                self.lift = Some(l);
+            }
+        }
         if self.stage != INSIDE {
             return;
         }
+        self.getaway_tick(world, tick, heroes);
         self.open_safes(world, tick, heroes);
         let states: Vec<u8> = (0..self.clues.len())
             .map(|k| self.state(world, k))
@@ -1038,6 +1296,19 @@ impl Running {
         else {
             return;
         };
+        if let Some(l) = self.lift.as_mut() {
+            let (way, from_tick) = l.board(e, from);
+            let mut ent = world.entity_mut(e);
+            if let Some(mut b) = ent.get_mut::<crate::incidents::Bystander>() {
+                b.thanking_until = b.thanking_until.max(from_tick);
+                // Not gone before they are aboard.
+                if let Some((d, until)) = b.leaving {
+                    b.leaving = Some((d, until.max(from_tick + 60 * TICK_HZ as u64)));
+                }
+            }
+            ent.insert(crate::incidents::WayOut(way));
+            return;
+        }
         let way = match site.building {
             Some(k) => {
                 let b = &floors.buildings[k];
@@ -1074,7 +1345,12 @@ impl Running {
 
     /// Groups beaten, of the groups held (the boss's not counted).
     fn cleared(&self, world: &mut World) -> (u8, u8) {
-        let all = || self.door.iter().chain(self.rooms.iter());
+        let all = || {
+            self.door
+                .iter()
+                .chain(self.rooms.iter())
+                .chain(self.crew.iter())
+        };
         let n = all().filter(|r| beaten(world, r.spot)).count();
         (n as u8, all().count() as u8)
     }
@@ -1085,6 +1361,7 @@ impl Running {
             .iter_mut()
             .chain(self.rooms.iter_mut())
             .chain(self.cutoff.iter_mut())
+            .chain(self.crew.iter_mut())
             .chain(self.boss.iter_mut())
     }
 
@@ -1313,7 +1590,7 @@ fn set_on(world: &mut World, spots: &[usize], foe: NetId) {
 
 /// Open floor near `p` where a group can stand: `p` itself, or the
 /// nearest such place within a few metres, on the floor at its height.
-fn open_near(solids: &crate::collision::Obstacles, p: DVec3) -> Option<DVec3> {
+pub(super) fn open_near(solids: &crate::collision::Obstacles, p: DVec3) -> Option<DVec3> {
     let c = DVec2::new(p.x, p.z);
     for r in [0.0, 1.5, 3.0, 4.5, 6.0] {
         let n = if r == 0.0 { 1 } else { 8 };
@@ -1357,7 +1634,7 @@ fn walk_out(
 }
 
 /// Is a room's group all down (cuffed, or carried off by the drone) or gone?
-fn subdued(world: &mut World, spot: usize) -> bool {
+pub(super) fn subdued(world: &mut World, spot: usize) -> bool {
     beaten(world, spot)
         || (world
             .resource::<Fights>()

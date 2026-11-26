@@ -15,7 +15,7 @@ use crate::storyview::StoryView;
 use egui::epaint::TextShape;
 use egui::{pos2, vec2, Align2, Color32, FontFamily, FontId, Pos2, Rect, Stroke};
 use engine::ui::egui;
-use hw_sim::missions::{CaseKind, CONTACT_NAME, DONE, GANGS, GO, GUARDED};
+use hw_sim::missions::{CaseKind, CONTACT_NAME, DONE, GANGS, GO, GUARDED, INSIDE};
 use hw_sim::story::{CHAPTERS, LOCKED};
 
 /// Seconds the file stays up when a case opens or closes on its own.
@@ -531,6 +531,38 @@ fn case_sheet(
                 s.groups.max(1)
             ));
         }
+        CaseKind::Heist | CaseKind::Chase => {
+            let trips = hw_sim::missions::getaway::TRIPS;
+            if s.kind == CaseKind::Heist {
+                let aboard = (s.gauge * trips as f32).round() as u32;
+                pen.line(&format!(
+                    "{} Loot in their car: {aboard} of {trips} sacks",
+                    ticked(false)
+                ));
+            }
+            pen.line(&format!(
+                "{} Getaway car: {}",
+                ticked(s.stage == INSIDE && !s.chasing() && s.gauge >= 0.999),
+                if s.chasing() {
+                    "IN THE AIR - bring it down"
+                } else if s.kind == CaseKind::Heist && s.gauge < 0.999 {
+                    "at the kerb"
+                } else {
+                    "down"
+                }
+            ));
+        }
+        CaseKind::Tail => {
+            pen.line(&format!(
+                "{} The courier: {}",
+                ticked(false),
+                match s.tailing() {
+                    Some(true) => "HE HAS SEEN YOU - catch him",
+                    Some(false) => "on his way, none the wiser",
+                    None => "about to set off",
+                }
+            ));
+        }
         CaseKind::Evidence | CaseKind::Hostages => {
             let hostage = s.kind == CaseKind::Hostages;
             let n = if s.clues.is_empty() { 3 } else { s.clues.len() };
@@ -594,6 +626,9 @@ fn closed_sheet_for(pen: &mut Pen, sheet: Rect, f: &Filed, type_font: &dyn Fn(f3
         CaseKind::Evidence => "[X] All three clues found".to_string(),
         CaseKind::Hostages => "[X] Everyone out safe".to_string(),
         CaseKind::Crew => "[X] The crew shaken down".to_string(),
+        CaseKind::Heist => "[X] The heist stopped, the crew in cuffs".to_string(),
+        CaseKind::Chase => "[X] The getaway car brought down".to_string(),
+        CaseKind::Tail => "[X] The courier followed home".to_string(),
     });
     pen.line("[X] Karma paid out to the heroes on the scene");
     let card = Rect::from_min_size(
@@ -678,6 +713,9 @@ fn nature(kind: CaseKind) -> &'static str {
         CaseKind::Evidence => "Evidence wanted",
         CaseKind::Hostages => "Hostages held",
         CaseKind::Crew => "A crew to shake down",
+        CaseKind::Heist => "Heist in progress",
+        CaseKind::Chase => "Getaway by air",
+        CaseKind::Tail => "A courier to tail",
     }
 }
 
@@ -688,6 +726,9 @@ fn step_words(kind: CaseKind) -> &'static str {
         CaseKind::Evidence => "- search for clues",
         CaseKind::Hostages => "- free the hostages",
         CaseKind::Crew => "- shake down a crew",
+        CaseKind::Heist => "- stop the heist",
+        CaseKind::Chase => "- bring the car down",
+        CaseKind::Tail => "- tail the courier",
     }
 }
 
@@ -1157,6 +1198,19 @@ fn briefing(kind: CaseKind, f: &GangFlavour, at: &str, building: bool) -> String
         (CaseKind::Crew, _) => {
             format!("A crew of theirs hangs about {at}. Shake them down: beaten, they talk.")
         }
+        (CaseKind::Heist, _) => format!(
+            "They are cleaning the place out {at}, sack by sack into a flying car at the kerb. \
+             Stop the bagmen or wreck the car before the last sack is aboard: once it is, they \
+             all pile in and take off."
+        ),
+        (CaseKind::Chase, _) => format!(
+            "They are away in a flying car, last seen {at}. It keeps to the streets, low. \
+             Catch it and bring it down: every good hit makes it sputter and sink."
+        ),
+        (CaseKind::Tail, _) => format!(
+            "A courier of theirs walks from {at} to the hideout. Follow without being seen: he \
+             looks about now and then. Stay well back or keep to the roofs, and do not lose him."
+        ),
     };
     format!("{} {job}", f.known)
 }

@@ -45,19 +45,47 @@ pub struct Plan {
     pub hot: bool,
 }
 
-/// The case for crime `number` against `gang`: one step in its hideout.
+/// The case for crime `number` against `gang`: one step in its hideout,
+/// or what its shape asks ([`super::board::Shape`]): a heist at a shop
+/// front, a getaway over a main road, hostages on a roof, a bagman to
+/// tail and then the hideout. A shape the town has no place for is a
+/// hideout to bust.
 pub fn crime_plan(places: &Places, seed: u64, number: u16, gang: usize) -> Option<Plan> {
+    use super::board::Shape;
     let c = super::board::crime(places, seed, number)?;
+    let mut rng = Seed(seed).child("crime site").child(number as u64).rng();
+    let hideout = sites::building_site(places, c.building);
+    let mut find = |place: Place| (0..4).find_map(|_| sites::find(places, place, &mut rng));
+    let one = |job: CaseKind, site: Site| vec![Step { job, site }];
+    let made: Option<(Vec<Step>, u8)> = match c.shape {
+        Shape::Bust => None,
+        Shape::Heist => find(Place::Shopfront).map(|s| (one(CaseKind::Heist, s), 1)),
+        Shape::Getaway => find(Place::Road).map(|s| (one(CaseKind::Chase, s), 0)),
+        Shape::Rooftop => find(Place::Rooftop).map(|s| (one(CaseKind::Hostages, s), 1)),
+        Shape::Tail => sites::tail_start(places, &hideout, &mut rng).map(|s| {
+            (
+                vec![
+                    Step {
+                        job: CaseKind::Tail,
+                        site: s,
+                    },
+                    Step {
+                        job: c.job,
+                        site: hideout.clone(),
+                    },
+                ],
+                c.size,
+            )
+        }),
+    };
+    let (steps, size) = made.unwrap_or_else(|| (one(c.job, hideout), c.size));
     Some(Plan {
         gang: gang.min(GANGS.len() - 1),
         variant: 0,
-        steps: vec![Step {
-            job: c.job,
-            site: sites::building_site(places, c.building),
-        }],
+        steps,
         crime: c.kind,
         extra: c.extra,
-        size: c.size,
+        size,
         hot: c.hot,
     })
 }

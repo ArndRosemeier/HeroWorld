@@ -8,7 +8,7 @@
 //! way).
 
 use glam::DVec2;
-use hw_gen::urban::world::TownWorld;
+use hw_gen::urban::world::{TownWorld, WorldRoad};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 
@@ -31,6 +31,8 @@ fn key(p: DVec2) -> Key {
 #[derive(Debug, Default)]
 pub struct Streets {
     nodes: Vec<DVec2>,
+    /// From each node's road middle to the middle of its pavement (m).
+    kerb: Vec<f64>,
     links: Vec<Vec<u32>>,
     cells: BTreeMap<Key, Vec<u32>>,
 }
@@ -38,18 +40,33 @@ pub struct Streets {
 impl Streets {
     /// The main roads of `world` at least `width` across.
     pub fn new(world: &TownWorld, width: f64) -> Self {
+        Self::of(world.main_roads.iter(), width, false)
+    }
+
+    /// Every one of `roads` with a pavement to walk on: the graph people
+    /// on foot go by. A side street that ends at a wide road's kerb joins
+    /// that road.
+    pub fn on_foot<'a>(roads: impl Iterator<Item = &'a WorldRoad>) -> Self {
+        Self::of(roads.filter(|r| r.pavement >= 1.0), 0.0, true)
+    }
+
+    /// Those of `roads` at least `width` across; `wide` joins roads whose
+    /// nodes are within reach of each other's kerbs, not only their middles.
+    fn of<'a>(roads: impl Iterator<Item = &'a WorldRoad>, width: f64, wide: bool) -> Self {
         let mut s = Streets::default();
         // The road each node lies on.
         let mut road_of: Vec<u32> = Vec::new();
-        for r in world.main_roads.iter() {
+        for r in roads {
             if (r.half + r.pavement) * 2.0 < width || r.pts.len() < 2 {
                 continue;
             }
             let mut last: Option<u32> = None;
             let mut prev = r.pts[0];
+            let kerb = r.half + r.pavement * 0.5;
             let add = |s: &mut Streets, p: DVec2, last: &mut Option<u32>| {
                 let n = s.nodes.len() as u32;
                 s.nodes.push(p);
+                s.kerb.push(kerb);
                 s.links.push(Vec::new());
                 s.cells.entry(key(p)).or_default().push(n);
                 if let Some(l) = *last {
@@ -73,7 +90,8 @@ impl Streets {
         for i in 0..s.nodes.len() {
             let p = s.nodes[i];
             let mut best: BTreeMap<u32, (f64, u32)> = BTreeMap::new();
-            for j in s.near(p, JOIN) {
+            let reach = JOIN + if wide { s.kerb[i] + 2.0 } else { 0.0 };
+            for j in s.near(p, reach) {
                 let (ri, rj) = (road_of[i], road_of[j as usize]);
                 if ri == rj {
                     continue;
@@ -146,9 +164,33 @@ impl Streets {
         self.nodes[n as usize]
     }
 
+    /// The nodes linked to node `n` (along its road, and across at a
+    /// crossing), in the order they were linked.
+    pub fn links(&self, n: u32) -> &[u32] {
+        &self.links[n as usize]
+    }
+
     /// Number of nodes.
     pub fn len(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// The way on foot from `from` to `to` along the streets: points on
+    /// the pavement to the right of the way, a few to each stretch. None
+    /// if the streets do not join them.
+    pub fn pavement_route(&self, from: DVec2, to: DVec2) -> Option<Vec<DVec2>> {
+        let mid = self.route(from, to)?;
+        let mut out = Vec::new();
+        for i in (0..mid.len()).step_by(2) {
+            let (a, b) = (mid[i.saturating_sub(1)], mid[(i + 1).min(mid.len() - 1)]);
+            let d = (b - a).normalize_or_zero();
+            if d == DVec2::ZERO {
+                continue;
+            }
+            let kerb = self.nearest(mid[i]).map_or(0.0, |n| self.kerb[n as usize]);
+            out.push(mid[i] + DVec2::new(-d.y, d.x) * -kerb);
+        }
+        Some(out)
     }
 
     /// The street points from the node nearest `from` to the one nearest

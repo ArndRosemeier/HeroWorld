@@ -457,6 +457,10 @@ fn row(
         Align2::LEFT_CENTER,
         match c.job {
             CaseKind::Evidence => "FIND THE THING",
+            CaseKind::Heist => "STOP THE HEIST",
+            CaseKind::Chase => "CATCH THE CAR",
+            CaseKind::Hostages => "FREE THE HOSTAGES",
+            CaseKind::Tail => "TAIL THE COURIER",
             _ => "ARREST THE BOSS",
         },
         FontId::monospace(12.0),
@@ -518,7 +522,13 @@ fn row(
     p.text(
         pos2(lc.x + 10.0, r.top() + 45.0),
         Align2::LEFT_CENTER,
-        ["DEN", "HIDEOUT", "FORTRESS"][(c.size as usize).min(2)],
+        match c.job {
+            CaseKind::Heist => "IN PROGRESS",
+            CaseKind::Chase => "IN THE AIR",
+            CaseKind::Hostages => "ROOFTOP",
+            CaseKind::Tail => "ON FOOT",
+            _ => ["DEN", "HIDEOUT", "FORTRESS"][(c.size as usize).min(2)],
+        },
         FontId::monospace(10.0),
         a(with_alpha(AETHER, 0.9)),
     );
@@ -1020,6 +1030,98 @@ fn job_icon(p: &egui::Painter, job: CaseKind, c: Pos2, r: f32, alpha: f32) {
                 [c + vec2(r * 0.35, r * 0.35), c + vec2(r, r)],
                 Stroke::new(3.0_f32, a(GOLD)),
             );
+        }
+        CaseKind::Heist => {
+            // A sack, tied, with an arrow out of it: loot on the move.
+            p.circle_filled(c + vec2(-r * 0.2, r * 0.25), r * 0.7, a(GOLD));
+            p.add(Shape::convex_polygon(
+                vec![
+                    c + vec2(-r * 0.55, -r * 0.75),
+                    c + vec2(r * 0.15, -r * 0.75),
+                    c + vec2(-r * 0.05, -r * 0.3),
+                    c + vec2(-r * 0.35, -r * 0.3),
+                ],
+                a(GOLD),
+                Stroke::NONE,
+            ));
+            p.line_segment(
+                [c + vec2(r * 0.45, r * 0.25), c + vec2(r * 1.15, r * 0.25)],
+                Stroke::new(2.2_f32, a(HERO_RED)),
+            );
+            for s in [-1.0_f32, 1.0] {
+                p.line_segment(
+                    [
+                        c + vec2(r * 1.15, r * 0.25),
+                        c + vec2(r * 0.8, r * 0.25 + s * r * 0.35),
+                    ],
+                    Stroke::new(2.2_f32, a(HERO_RED)),
+                );
+            }
+        }
+        CaseKind::Chase => {
+            // A finned flying car, nose up, speed lines behind.
+            let hull = vec![
+                c + vec2(-r * 1.0, r * 0.25),
+                c + vec2(-r * 0.9, -r * 0.55),
+                c + vec2(-r * 0.55, -r * 0.05),
+                c + vec2(r * 0.6, -r * 0.2),
+                c + vec2(r * 1.1, r * 0.2),
+                c + vec2(r * 0.6, r * 0.45),
+                c + vec2(-r * 0.7, r * 0.45),
+            ];
+            p.add(Shape::convex_polygon(hull, a(GOLD), Stroke::NONE));
+            p.circle_filled(c + vec2(r * 0.1, -r * 0.25), r * 0.38, a(GLASS));
+            for k in 0..2 {
+                let y = r * (0.75 + 0.3 * k as f32);
+                p.line_segment(
+                    [
+                        c + vec2(-r * 1.1, y),
+                        c + vec2(-r * 0.1 + r * 0.4 * k as f32, y),
+                    ],
+                    Stroke::new(1.6_f32, a(HERO_RED)),
+                );
+            }
+        }
+        CaseKind::Hostages => {
+            // A figure, bound: head, shoulders, two turns of rope.
+            p.circle_filled(c + vec2(0.0, -r * 0.6), r * 0.36, a(GOLD));
+            p.add(Shape::convex_polygon(
+                vec![
+                    c + vec2(-r * 0.6, r * 0.95),
+                    c + vec2(-r * 0.5, -r * 0.1),
+                    c + vec2(r * 0.5, -r * 0.1),
+                    c + vec2(r * 0.6, r * 0.95),
+                ],
+                a(GOLD),
+                Stroke::NONE,
+            ));
+            for y in [0.25_f32, 0.6] {
+                p.line_segment(
+                    [
+                        c + vec2(-r * 0.75, r * y),
+                        c + vec2(r * 0.75, r * (y - 0.12)),
+                    ],
+                    Stroke::new(2.0_f32, a(HERO_RED)),
+                );
+            }
+        }
+        CaseKind::Tail => {
+            // An eye: someone is being watched.
+            let lid = |s: f32| -> Vec<Pos2> {
+                (0..=10)
+                    .map(|k| {
+                        let u = k as f32 / 10.0;
+                        c + vec2(
+                            (u * 2.0 - 1.0) * r * 1.15,
+                            s * r * 0.62 * (std::f32::consts::PI * u).sin(),
+                        )
+                    })
+                    .collect()
+            };
+            p.add(Shape::line(lid(-1.0), Stroke::new(2.0_f32, a(GOLD))));
+            p.add(Shape::line(lid(1.0), Stroke::new(2.0_f32, a(GOLD))));
+            p.circle_filled(c, r * 0.4, a(GOLD));
+            p.circle_filled(c, r * 0.16, a(DEEP));
         }
         _ => {
             // Handcuffs: two rings and a link.
