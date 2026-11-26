@@ -123,6 +123,9 @@ pub struct StreetView {
     music_near: bool,
     /// What was said this frame: for the floating words and the chat.
     pub said: Vec<Said>,
+    /// What the Daily Comet printed about our hero last, as a newsboy
+    /// shouts it (see `fameview`).
+    pub headline: Option<String>,
     /// The gangs' street crime, from the same street life.
     pub crime: CrimeView,
 }
@@ -148,6 +151,7 @@ impl StreetView {
             music: BTreeMap::new(),
             music_near: false,
             said: Vec::new(),
+            headline: None,
         }
     }
 
@@ -631,7 +635,13 @@ impl StreetView {
             let wait = 9.0 + (Seed(show.seed()).child(talk.count).0 % 6) as f64;
             talk.next = time + wait;
             let shout = matches!(show.act, Act::Newsboy | Act::Prophet);
-            if let Some(t) = pick(lines(show.act, Moment::Own), talk.count) {
+            // A newsboy shouts today's headline about our hero every
+            // other time.
+            let news = self
+                .headline
+                .as_deref()
+                .filter(|_| show.act == Act::Newsboy && talk.count % 2 == 1);
+            if let Some(t) = news.or(pick(lines(show.act, Moment::Own), talk.count)) {
                 say(
                     &mut self.said,
                     t,

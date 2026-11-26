@@ -9,6 +9,7 @@ use glam::DVec2;
 use hw_core::Act;
 use hw_sim::alarms::Alarms;
 use hw_sim::citizens::{Citizen, Citizens, Indoor};
+use hw_sim::fame::{self, Fame, Greeting};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Citizens are shown within this distance of the camera...
@@ -21,6 +22,50 @@ const RUN: f64 = 2.6;
 /// Full characters (the rest are drawn instanced).
 const NEAR_M: f32 = 22.0;
 const NEAR_MAX: usize = 20;
+
+/// The looks a hero's fans go about in (see [`CrowdView::add_fan_look`])
+/// are numbered from here, clear of the citizens' and the mole folk's.
+pub const FAN_LOOK: u32 = 1000;
+
+/// What townsfolk do for a hero they know, as crowd poses.
+pub const FAME_POSES: [&str; 5] = ["wave", "clap", "cheer", "autograph", "thanks"];
+
+/// A hero in the street, as the townsfolk see them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Star {
+    /// The hero's number (their entity's).
+    pub id: u32,
+    /// Feet, in the town's frame.
+    pub at: glam::DVec3,
+    /// How fast they move (m/s).
+    pub speed: f64,
+    pub fame: Fame,
+}
+
+/// Someone who stopped for a hero.
+#[derive(Clone, Copy, Debug)]
+struct Admirer {
+    star: u32,
+    how: Greeting,
+    /// When they go on their way (the town's clock).
+    until: f64,
+    /// Their book is signed: they cheer.
+    signed: bool,
+}
+
+/// Something an admirer did this frame, for the words over their head.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Greeted {
+    pub citizen: u64,
+    pub star: u32,
+    /// Where the citizen stands.
+    pub at: glam::DVec3,
+    pub how: Greeting,
+    /// One of the hero's fans, in the colours.
+    pub fan: bool,
+    /// Their book was just signed (the greeting is the thanks).
+    pub signed: bool,
+}
 
 /// A citizen on screen: the agent it is, in the crowd of the look it had
 /// when it was added. The crowd is kept with the agent, so the agent is
@@ -53,6 +98,17 @@ pub struct CrowdView {
     placed: Vec<glam::DVec3>,
     /// People indoors to show next update (see [`Self::set_indoor`]).
     indoor: Vec<Indoor>,
+    /// The heroes about, and how well the town knows them.
+    stars: Vec<Star>,
+    /// Our own hero's fame, and the town's seed: who is a fan.
+    fans: (hw_core::Seed, Fame),
+    /// Citizens who stopped for a hero, and when each may stop again.
+    admirers: BTreeMap<u64, Admirer>,
+    met: BTreeMap<u64, f64>,
+    /// Where each admirer stands.
+    admired_at: BTreeMap<u64, glam::DVec3>,
+    /// Who stopped, cheered or got their book signed this frame.
+    pub greeted: Vec<Greeted>,
 }
 
 impl Default for CrowdView {
@@ -74,7 +130,106 @@ impl CrowdView {
             refresh: 0.0,
             placed: Vec::new(),
             indoor: Vec::new(),
+            stars: Vec::new(),
+            fans: (hw_core::Seed(0), Fame::Nobody),
+            admirers: BTreeMap::new(),
+            met: BTreeMap::new(),
+            admired_at: BTreeMap::new(),
+            greeted: Vec::new(),
         }
+    }
+
+    /// The heroes in the street this frame, and our own hero's fame in
+    /// the town of `seed` (who goes about in their colours).
+    pub fn set_stars(&mut self, stars: Vec<Star>, seed: hw_core::Seed, mine: Fame) {
+        self.stars = stars;
+        self.fans = (seed, mine);
+    }
+
+    /// The one waiting with an autograph book for hero `star`, if any:
+    /// who, and where they stand.
+    pub fn autograph_seeker(&self, world: &World, star: u32) -> Option<(u64, Vec3)> {
+        self.admirers
+            .iter()
+            .find(|(_, a)| a.star == star && a.how == Greeting::Autograph && !a.signed)
+            .and_then(|(id, _)| {
+                let s = self.shown.get(id)?;
+                let p = world.crowd_agent_place(s.crowd, s.agent).ok()?;
+                Some((*id, p.position))
+            })
+    }
+
+    /// Hero `star` signed `citizen`'s book: they cheer a moment longer.
+    pub fn signed(&mut self, citizen: u64, time: f64) {
+        if let Some(a) = self.admirers.get_mut(&citizen) {
+            if !a.signed {
+                a.signed = true;
+                a.until = time + 3.5;
+                if let Some(at) = self.admired_at.get(&citizen).copied() {
+                    self.greeted.push(Greeted {
+                        citizen,
+                        star: a.star,
+                        at,
+                        how: a.how,
+                        fan: false,
+                        signed: true,
+                    });
+                }
+            }
+        }
+    }
+
+    /// How many people have stopped for a hero right now.
+    pub fn admirers(&self) -> usize {
+        self.admirers.len()
+    }
+
+    /// A fan look of our hero is built: it becomes a crowd like the
+    /// citizens' (look number [`FAN_LOOK`] + `k`). Returns whether a crowd
+    /// was made.
+    pub fn add_fan_look(&mut self, world: &mut World, k: u8, built: &Built) -> EngineResult<bool> {
+        self.add_look(world, FAN_LOOK + k as u32, built)
+    }
+
+    /// The fans' crowds go (our hero changed their looks, or another hero
+    /// is played): the fans on screen leave them first, so no agent
+    /// outlives its crowd, and come back as the townsfolk they are until
+    /// the new looks are built. Only this view holds agents of fan crowds.
+    pub fn drop_fan_looks(&mut self, world: &mut World) {
+        let fans: Vec<u64> = self
+            .shown
+            .iter()
+            .filter(|(_, s)| s.look >= FAN_LOOK)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in fans {
+            if let Some(s) = self.shown.remove(&id) {
+                world.remove_crowd_agent(s.crowd, s.agent);
+            }
+            self.down.remove(&id);
+        }
+        let looks: Vec<u32> = self.crowds.range(FAN_LOOK..).map(|(l, _)| *l).collect();
+        for look in looks {
+            if let Some(c) = self.crowds.remove(&look) {
+                world.remove_crowd(c);
+            }
+            self.sits.remove(&look);
+        }
+    }
+
+    /// The fan look citizen `id` goes about in, if they are a fan of our
+    /// hero and that look is built.
+    fn fan_look(&self, id: u64) -> Option<u32> {
+        let (seed, mine) = self.fans;
+        if mine.fans() <= 0.0 || !fame::is_fan(seed, id, mine) {
+            return None;
+        }
+        let looks: Vec<u32> = self.crowds.range(FAN_LOOK..).map(|(l, _)| *l).collect();
+        if looks.is_empty() {
+            return None;
+        }
+        let k = seed.child("fan look").child(id).0 % looks.len() as u64;
+        Some(looks[k as usize])
     }
 
     /// The citizen shown nearest `eye`, where they stand (for the
@@ -126,6 +281,15 @@ impl CrowdView {
         Some(hand.w_axis.truncate())
     }
 
+    /// Where bone `bone` of citizen `id` is, while they are drawn as a
+    /// full character.
+    pub fn bone_of(&self, world: &World, id: u64, bone: &str) -> Option<Vec3> {
+        let s = self.shown.get(&id)?;
+        let body = world.crowd_agent_character(s.crowd, s.agent)?;
+        let m = world.bone_transform(body, bone).ok()?;
+        Some(m.w_axis.truncate())
+    }
+
     /// How many citizens shown this frame stand within `r` of `p` (the
     /// soundscape's crowd).
     pub fn within(&self, p: Vec3, r: f64) -> usize {
@@ -138,6 +302,10 @@ impl CrowdView {
 
     /// Takes everyone off the streets (another town comes).
     pub fn clear(&mut self, world: &mut World) {
+        self.admirers.clear();
+        self.admired_at.clear();
+        self.met.clear();
+        self.greeted.clear();
         self.placed.clear();
         for (_, s) in std::mem::take(&mut self.shown) {
             world.remove_crowd_agent(s.crowd, s.agent);
@@ -158,7 +326,7 @@ impl CrowdView {
             return Ok(false);
         }
         let profile = CrowdProfile::new("idle", built.walk.clone())
-            .walk_speed(crate::people::WALK_MPS)
+            .walk_speed(crate::people::WALK_MPS * built.stride)
             .near(NEAR_M, NEAR_MAX / 4)
             .far(SHOW_RADIUS as f32)
             .shadows_within(70.0)
@@ -167,7 +335,9 @@ impl CrowdView {
             .poses(
                 [crate::riderview::DRIVE, crate::riderview::RIDE]
                     .into_iter()
-                    .chain(crate::people::indoor_poses()),
+                    .chain(crate::people::indoor_poses())
+                    // Stopping for a hero they know (see `hw_sim::fame`).
+                    .chain(FAME_POSES),
             );
         let id = world.add_crowd(built.model.clone(), profile)?;
         self.crowds.insert(look, id);
@@ -238,11 +408,28 @@ impl CrowdView {
             let Some((mut c, mut act)): Option<(Citizen, Option<Act>)> = found else {
                 continue;
             };
+            let outdoors = !inside.contains_key(&id);
+            // A fan of our hero wears the colours wherever they go (the
+            // mole people keep their own looks).
+            if outdoors && c.look < hw_sim::citizens::LOOKS {
+                if let Some(look) = self.fan_look(id) {
+                    c.look = look;
+                }
+            }
+            let mut pose = None;
             if !self.down.contains_key(&id) {
                 if let Some(r) = self.react(citizens, alarms, &c, time - delay, dt) {
                     c = r;
                     // Running from trouble, or staring at it.
                     act = None;
+                    self.admirers.remove(&id);
+                } else if outdoors {
+                    // A hero they know: they stop, turn and wave.
+                    if let Some((r, p)) = self.admire(citizens, &c, time, dt) {
+                        c = r;
+                        act = None;
+                        pose = Some(p);
+                    }
                 }
             }
             if !self.crowds.contains_key(&c.look) {
@@ -258,8 +445,13 @@ impl CrowdView {
                 }
                 continue;
             }
-            self.put(world, &c, act)?;
+            let pose = pose.or(act.map(crate::people::pose_of));
+            self.put_posed(world, &c, pose)?;
         }
+        self.admirers.retain(|id, _| seen.contains(id));
+        self.admired_at
+            .retain(|id, _| self.admirers.contains_key(id));
+        self.met.retain(|_, until| *until > time);
         let gone: Vec<u64> = self
             .shown
             .keys()
@@ -280,13 +472,23 @@ impl CrowdView {
     /// new visitor every visit, see `Citizens::indoors`): they leave the
     /// old look's crowd and join the new one's, so an agent is never used
     /// with a crowd that does not hold it.
+    #[cfg(test)]
     fn put(&mut self, world: &mut World, c: &Citizen, act: Option<Act>) -> EngineResult<()> {
+        self.put_posed(world, c, act.map(crate::people::pose_of))
+    }
+
+    /// [`Self::put`], held in `pose` (a clip of the crowd's poses).
+    fn put_posed(
+        &mut self,
+        world: &mut World,
+        c: &Citizen,
+        pose: Option<&'static str>,
+    ) -> EngineResult<()> {
         let Some(&crowd) = self.crowds.get(&c.look) else {
             return Ok(());
         };
         let yaw = c.facing.x.atan2(c.facing.y).to_degrees() as f32;
         let place = Place::new(c.pos.x as f32, c.pos.y as f32, c.pos.z as f32).with_yaw_deg(yaw);
-        let pose = act.map(crate::people::pose_of);
         if let Some(s) = self.shown.get_mut(&c.id) {
             if s.look == c.look {
                 if s.pose != pose {
@@ -371,6 +573,109 @@ impl CrowdView {
         })
     }
 
+    /// A hero the townsfolk know is near citizen `c` (see `hw_sim::fame`):
+    /// some stop, turn to the hero and wave, clap or cheer, a few hold out
+    /// an autograph book. Their clock waits meanwhile (they go on where
+    /// they were). Returns the citizen as they stand and the pose they
+    /// hold; `None` for someone who walks on. Nobody stops in the road.
+    fn admire(
+        &mut self,
+        citizens: &Citizens,
+        c: &Citizen,
+        time: f64,
+        dt: f64,
+    ) -> Option<(Citizen, &'static str)> {
+        let p = DVec2::new(c.pos.x, c.pos.z);
+        let flat = |s: &Star| DVec2::new(s.at.x, s.at.z);
+        if let Some(a) = self.admirers.get(&c.id).copied() {
+            let star = self.stars.iter().find(|s| s.id == a.star).copied();
+            let stays = star.filter(|s| {
+                time < a.until && flat(s).distance(p) < fame::LOSE && (s.at.y - c.pos.y).abs() < 4.0
+            });
+            let Some(star) = stays else {
+                self.admirers.remove(&c.id);
+                self.met.insert(c.id, time + fame::AGAIN);
+                return None;
+            };
+            *self.delay.entry(c.id).or_insert(0.0) += dt;
+            self.admired_at.insert(c.id, c.pos);
+            let pose = match a.how {
+                Greeting::Autograph if a.signed => "cheer",
+                Greeting::Autograph => "autograph",
+                Greeting::Wave => "wave",
+                Greeting::Clap => "clap",
+                Greeting::Cheer => "cheer",
+            };
+            let facing = (flat(&star) - p).normalize_or(c.facing);
+            return Some((
+                Citizen {
+                    facing,
+                    speed: 0.0,
+                    ..*c
+                },
+                pose,
+            ));
+        }
+        if self.stars.is_empty() || self.met.contains_key(&c.id) {
+            return None;
+        }
+        let star = self
+            .stars
+            .iter()
+            .filter(|s| {
+                s.fame > Fame::Nobody && s.speed < fame::TOO_FAST && (s.at.y - c.pos.y).abs() < 2.5
+            })
+            .map(|s| (flat(s).distance(p), *s))
+            .filter(|(d, _)| *d < fame::NOTICE)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, s)| s)?;
+        // Nobody stops in the road.
+        if citizens.on_carriageway(p, 0.3) {
+            return None;
+        }
+        let (seed, mine) = self.fans;
+        let seed = seed.child(star.id as u64);
+        let meeting = (time / fame::AGAIN) as u64;
+        let Some(mut how) = fame::greeting(seed, c.id, meeting, star.fame) else {
+            // Not this time: they look again at the next meeting.
+            self.met.insert(c.id, time + 30.0);
+            return None;
+        };
+        // One autograph hunter at a time per hero.
+        let hunted = self
+            .admirers
+            .values()
+            .any(|a| a.star == star.id && a.how == Greeting::Autograph);
+        if how == Greeting::Autograph && hunted {
+            how = Greeting::Clap;
+        }
+        let until = time
+            + match how {
+                Greeting::Autograph => fame::AUTOGRAPH_WAIT,
+                _ => fame::stay(seed, c.id, meeting),
+            };
+        self.admirers.insert(
+            c.id,
+            Admirer {
+                star: star.id,
+                how,
+                until,
+                signed: false,
+            },
+        );
+        self.admired_at.insert(c.id, c.pos);
+        self.greeted.push(Greeted {
+            citizen: c.id,
+            star: star.id,
+            at: c.pos,
+            how,
+            fan: fame::is_fan(self.fans.0, c.id, mine),
+            signed: false,
+        });
+        // From the next frame on they stand and wave.
+        None
+    }
+
     /// Knocks over every full-character citizen within `radius` of
     /// `center`, thrown away from it. Returns how many fell.
     pub fn knock_down(&mut self, world: &mut World, center: Vec3, radius: f32) -> usize {
@@ -444,6 +749,7 @@ mod tests {
             ]
             .into_iter()
             .chain(crate::people::indoor_poses())
+            .chain(FAME_POSES)
             .map(clip)
             .collect(),
             bind_local: vec![(Vec3::ZERO, Quat::IDENTITY, Vec3::ONE)],
@@ -454,6 +760,7 @@ mod tests {
             model: Arc::new(model),
             walk: "walk".into(),
             sits: true,
+            stride: 1.0,
         }
     }
 

@@ -148,6 +148,7 @@ From `settings::CONTROLS` (shown in the game under the menu button → Controls)
 | G | Hail a flying taxi (G again hops out mid-air) |
 | M | Town map (drag to move, wheel to zoom) with the radio's calls |
 | J | Case file: open cases (pick which one the radio follows), the Doctor's dossier, the cabinet of closed cases |
+| I | Press cuttings: your fame and the front pages about you (see "Fame") |
 | T | Police visor on or off (a new call switches it on) |
 | N | Minimap on or off |
 | Menu button, "Arrange the screen" | Drag the minimap, compass, power tray, radio and police monitor; drag a corner to resize (0.5x to 2.5x); a magnifier slider sets the minimap's zoom (x0.5 to x4, default x1, scales its reach); Enter or the tick ends, the red arrow resets. Saved in `ui_layout.json` beside the profile. Chat, powers and police windows are draggable and remembered |
@@ -1928,6 +1929,43 @@ own clips (threaten, shove, grab, laugh, count, spray, smash, lookout, lounge; s
 and what they hold (handbag, cash, envelope, spray can; swag sacks and crates for raiders
 making off) is drawn in the hand.
 
+### Fame (`hw-sim/src/fame.rs`, `hw-client/src/{fameview,headlines,paper}.rs`)
+
+A new hero is a nobody: nobody looks twice. Fame follows the hero's **level** (all the karma
+they ever earned is what the town has seen them do), as long as the **townsfolk** are at
+least Friendly towards them; a hero the town dislikes gets no cheers whatever their level.
+Nothing is sent over the network for it: other players' fame is told from their level, the
+town's own heroes count as local heroes, and Herobots as nobody.
+
+| Fame | From level | Passers-by who stop | Fans in your colours | Ask for an autograph |
+| --- | --- | --- | --- | --- |
+| Unknown | 1 | none | none | none |
+| Talk of the street | 3 | 12 % (a wave) | none | none |
+| Local hero | 6 | 30 % (wave, clap) | 3 % of the town | none |
+| The town's favourite | 10 | 50 % (wave, clap, cheer) | 7 % | 20 % of those who stop |
+| Living legend | 15 | 75 % | 12 % | 30 % |
+
+- **Stopping for you.** People on foot within 9 m of a hero who is on the ground and slower
+  than 7.5 m/s turn to them and wave, clap or cheer for 3 to 6.5 s, then walk on (they keep
+  the time they lost, so their day goes on as planned). Nobody stops on a carriageway or
+  during an alarm, and the same person not again for 4 minutes. Some call out; from Local
+  hero on they know your name.
+- **Fans.** A share of the townsfolk (always the same people) dress in your colours: a top
+  in your costume's main colour, a short cape in the second, your emblem on the chest. Half
+  of the fan looks are children (the adult body with child proportions), who wear a domino
+  mask too. Fans always stop for you. Change your costume and the fans follow.
+- **Autographs.** Someone holding out a little book (a pencil badge floats over them) waits
+  up to 14 s. Stand still within 2 m and your hero signs it (2.4 s, the badge fills); they
+  thank you and go.
+- **The Daily Comet.** Deeds make front pages: an incident you helped end, a street crime
+  stopped, a case closed, a chapter of the Doctor's story, and every step up in fame. The
+  page spins in, stays 5.5 s and leaves (it waits while you fight). Until you are a local
+  hero the paper writes of "a masked stranger"; from then on it prints your name. Newsboys
+  cry the latest headline.
+- **Press cuttings (`I`).** Your fame (four stars, the level the next step opens at) and the
+  last 24 front pages, kept in the hero's file on this PC.
+- The **statue** in Hero Hall's plaza is the Doctor's story's reward, not a fame step.
+
 ### Traffic (`hw-sim/src/traffic.rs`)
 
 - **Cars** (finned two-tone cruisers, bubble cars, ground-hugging hover cars) drive lane
@@ -2219,6 +2257,7 @@ run, or put them in a `.bat`.
 | `HW_CARRY=1` | With `HW_INCIDENT=fire\|crash`: start with the hurt one in your arms. |
 | `HW_CASE=<job>[@<place>]` | Cases open at once, the hero at the first (a little way off in the open; at the way down underground); with `HW_VIEW=hero`. Jobs `takeover`, `evidence`, `hostages`, `crew`; places `building` (default, one to a building), `street`, `plaza`, `tunnel`, `station`, `grotto`, `ruin`, `lair`. Comma-separated for several (`hostages,crew@street`); `chain` is a whole case as Annie plans it; `heist`, `chase`, `rooftop` and `tail` open the first crime of that shape as the board deals it (the hero a little way off, on the roof's edge, or behind the courier). `HW_VIEW=getaway` looks at the getaway car close up (`HW_GETAWAY_CAM="side,up,ahead"`). |
 | `HW_CASEFILE=case\|doctor\|closed` | The case file open on that tab (screenshots). |
+| `HW_SCRAPBOOK=1`, `HW_HEADLINE=1` | The press cuttings open at start; a front page printed at start (screenshots). |
 | `HW_COLOSSUS_BREAK=n` | Break the colossus's first n weak points (2 kneels it). |
 | `HW_COLOSSUS_RAMPAGE=1` | The colossus smashes its way through town even with no hero near (screenshots). |
 | `HW_VIEW=fight` | Places a test group of minions near the spawn (the game starts without one). |

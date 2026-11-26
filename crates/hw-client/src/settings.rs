@@ -228,6 +228,7 @@ pub const CONTROLS: &[(&str, &str)] = &[
     ("H", "Call the medical drone when you are down"),
     ("G", "Hail a flying taxi (G again hops out)"),
     ("M", "Town map (the wrist radio's incidents)"),
+    ("I", "Press cuttings: your fame and front pages"),
     ("N", "Minimap on or off"),
     ("O", "Free camera"),
     (

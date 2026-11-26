@@ -515,6 +515,20 @@ impl Citizens {
         Some(self.at(id, p, dir, 0.0, look))
     }
 
+    /// Whether `p` lies on a street's carriageway (between its kerbs, with
+    /// `margin` metres to spare): somewhere nobody stops for a chat.
+    pub fn on_carriageway(&self, p: DVec2, margin: f64) -> bool {
+        let c = cell_of(p);
+        (-1..=1)
+            .flat_map(|dx| (-1..=1).map(move |dz| (c.0 + dx, c.1 + dz)))
+            .filter_map(|k| self.grid.get(&k))
+            .flatten()
+            .any(|r| {
+                let half = self.world.roads[*r as usize].half;
+                self.walks[*r as usize].nearest(p).1 < half + margin
+            })
+    }
+
     /// What someone who is standing still (`c`, at `time`) does: not just
     /// standing there. Molehaven's people go on with their trade or their
     /// talk; anyone else waiting on the street (for the lights, a friend)

@@ -181,7 +181,14 @@ pub enum Who {
     /// A night club guest dressed for the evening, one of
     /// [`hw_sim::streetlife::GUEST_LOOKS`].
     Guest(u8),
+    /// One of a hero's fans (see `fameview`): a townsperson, or a child,
+    /// in the colours of the hero with these looks (their key), wearing a
+    /// home-made cape and the hero's emblem. One of [`FAN_LOOKS`].
+    Fan(u64, u8),
 }
+
+/// Looks a hero's fans come in: even ones are children.
+pub const FAN_LOOKS: u8 = 4;
 
 /// Looks per kind of villain.
 pub const VILLAIN_LOOKS: u32 = 3;
@@ -316,6 +323,9 @@ pub struct Built {
     pub walk: String,
     /// A citizen who fits in a car seat (see `riderview::fits_seats`).
     pub sits: bool,
+    /// How long its stride is next to a grown-up's (1; a child's is
+    /// shorter, so its walk clip covers less ground a loop).
+    pub stride: f32,
 }
 
 /// One character to build.
@@ -503,6 +513,16 @@ impl People {
             who: Who::Statue(key),
             seed: 0,
             config: Some(config),
+            preview: false,
+        });
+    }
+
+    /// Asks for fan `k` of the hero with these looks (`key`).
+    pub fn request_fan(&self, key: u64, k: u8, hero: CharacterConfig) {
+        let _ = self.jobs.send(Job {
+            who: Who::Fan(key, k),
+            seed: 0,
+            config: Some(hero),
             preview: false,
         });
     }
@@ -1388,6 +1408,140 @@ pub fn guest(builder: &CharacterBuilder, k: u8, seed: u32) -> actors_generator::
     c
 }
 
+/// How long a stride is at `youth` next to a grown-up's: Actors scales a
+/// child's whole body (0.56 at youth 1), and the legs a little more.
+pub fn stride_of(youth: f64) -> f32 {
+    (1.0 - 0.5 * youth.clamp(0.0, 1.0)) as f32
+}
+
+/// The two colours a hero is known by, as hex: the suit's (the first
+/// coloured piece that covers the chest or the legs, else any coloured
+/// piece, else the cape) and a second one that differs from it (the cape,
+/// the emblem, another piece, else gold).
+pub fn hero_colours(hero: &CharacterConfig) -> (String, String) {
+    let kit = &hero.costume;
+    let body = [
+        "suit",
+        "tights",
+        "top",
+        "turtleneck",
+        "coat",
+        "dress",
+        "gown",
+    ];
+    let pieces: Vec<&String> = hero
+        .outfit
+        .iter()
+        .filter_map(|g| hero.garment_colors.get(g).map(|c| (g, c)))
+        .filter(|(g, _)| body.iter().any(|b| g.contains(b)))
+        .map(|(_, c)| c)
+        .chain(hero.garment_colors.values())
+        .collect();
+    let caped = kit.cape != "none";
+    let main = pieces
+        .first()
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| kit.cape_color.clone());
+    let differs = |c: &&String| !c.eq_ignore_ascii_case(&main);
+    let second = [&kit.cape_color]
+        .into_iter()
+        .filter(|_| caped)
+        .chain(
+            [&kit.emblem_color]
+                .into_iter()
+                .filter(|_| kit.emblem != "none"),
+        )
+        .chain(pieces.iter().copied())
+        .find(differs)
+        .cloned()
+        .unwrap_or_else(|| "#f2c230".into());
+    (main, second)
+}
+
+/// One of a hero's fans: a townsperson of the era with a top in the
+/// hero's colour, a home-made cape in the hero's second colour and the
+/// hero's own emblem on the chest. Even `k` are children (Actors' youth:
+/// the grown-up body with a child's proportions), who also wear a mask.
+pub fn fan(
+    builder: &CharacterBuilder,
+    k: u8,
+    seed: u32,
+    hero: &CharacterConfig,
+) -> actors_generator::CharacterConfig {
+    let catalog = builder.catalog();
+    let mut c = golden_age(catalog, seed, false);
+    let mut rng = hw_core::Seed(seed as u64).child("fan").rng();
+    let has = |id: &str| catalog.garments.iter().any(|g| g.id == id);
+    let (main, second) = hero_colours(hero);
+    let kid = k.is_multiple_of(2);
+    let girl = k % 4 >= 2;
+    c.body.gender = if girl { 0.0 } else { 1.0 };
+    c.beard = "none".into();
+    if kid {
+        // About nine to eleven years old.
+        c.youth = rng.range(0.42, 0.52);
+        c.body.age_years = 20.0;
+        c.body.muscle = 0.35;
+        c.body.weight = rng.range(0.35, 0.5);
+    } else {
+        c.body.age_years = rng.range(19.0, 30.0);
+    }
+    let list: &[&str] = match (girl, kid) {
+        (false, true) => &["polo", "cargo-pants", "leather-shoes", "newsboy-cap"],
+        (false, false) => &["longsleeve", "wool-pants", "leather-shoes"],
+        (true, true) => &["longsleeve", "skirt", "socks", "ballet-flats"],
+        (true, false) => &["polo", "skirt", "stockings", "t-bar-shoes"],
+    };
+    let o: Vec<String> = list
+        .iter()
+        .filter(|g| has(g))
+        .map(|g| g.to_string())
+        .collect();
+    if o.len() + 1 >= list.len() {
+        c.outfit = o;
+    }
+    c.garment_colors.clear();
+    for (g, hex) in [
+        ("polo", main.as_str()),
+        ("longsleeve", main.as_str()),
+        ("newsboy-cap", second.as_str()),
+        ("skirt", second.as_str()),
+        ("socks", "#f2efe6"),
+    ] {
+        if c.outfit.iter().any(|x| x == g) {
+            c.garment_colors.insert(g.to_string(), hex.to_string());
+        }
+    }
+    // The cape (an old curtain, a tablecloth) and the hero's emblem.
+    let kit = &hero.costume;
+    let mut look = actors_generator::CostumeLook {
+        cape: "short".into(),
+        cape_color: second.clone(),
+        lining_color: main.clone(),
+        ..Default::default()
+    };
+    if kit.emblem != "none" {
+        look.emblem = kit.emblem.clone();
+        look.symbol = kit.symbol.clone();
+        look.emblem_size = kit.emblem_size;
+        look.emblem_color = kit.emblem_color.clone();
+        look.symbol_color = kit.symbol_color.clone();
+        look.rim_color = kit.rim_color.clone();
+    } else {
+        look.emblem = "circle".into();
+        look.symbol = "star".into();
+        look.emblem_color = second.clone();
+        look.symbol_color = main.clone();
+        look.rim_color = main.clone();
+    }
+    if kid {
+        look.mask = "domino".into();
+        look.mask_color = second;
+    }
+    c.costume = look;
+    c
+}
+
 pub fn villain(
     builder: &CharacterBuilder,
     kind: VillainKind,
@@ -1973,6 +2127,7 @@ pub fn build_sharing(
         Who::Officer(k) => (false, 9_600 + *k as u32),
         Who::Street(act, k) => (false, name_seed(&format!("street {act:?} {k}"))),
         Who::Guest(k) => (false, name_seed(&format!("club guest {k}"))),
+        Who::Fan(key, k) => (false, name_seed(&format!("fan {k}")) ^ *key as u32),
     };
     let mut allowed = allow(hero);
     if matches!(who, Who::Sidekick(_) | Who::Herobot(_)) {
@@ -1999,6 +2154,7 @@ pub fn build_sharing(
         (Who::Officer(k), _) => officer(builder, *k),
         (Who::Street(act, k), _) => street(builder, *act, *k, rseed),
         (Who::Guest(k), _) => guest(builder, *k, rseed),
+        (Who::Fan(_, k), Some(hero)) => fan(builder, *k, rseed, hero),
         (Who::Citizen(look), _) if *look >= hw_sim::citizens::LOOKS => {
             mole_person(builder, *look - hw_sim::citizens::LOOKS)
         }
@@ -2012,7 +2168,7 @@ pub fn build_sharing(
         }
         Who::Villain(..) => VILLAIN_CLIPS,
         Who::Sidekick(_) => SIDEKICK_CLIPS,
-        Who::Citizen(_) | Who::Medic | Who::Officer(_) => CITIZEN_CLIPS,
+        Who::Citizen(_) | Who::Medic | Who::Officer(_) | Who::Fan(..) => CITIZEN_CLIPS,
         Who::Street(..) | Who::Guest(_) => STREET_CLIPS,
     };
     let options = BuildOptions {
@@ -2037,6 +2193,8 @@ pub fn build_sharing(
         poses::add_visor_tap_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         // Carrying someone hurt to the ambulance.
         poses::add_carry_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+        // Signing an autograph book (see `fameview`).
+        poses::add_sign_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::swing_cape(&mut c);
     }
     if matches!(who, Who::Sidekick(_)) {
@@ -2048,7 +2206,8 @@ pub fn build_sharing(
         // Street crime: threats, snatches, tags, smashing (see `crimeview`).
         poses::add_menace_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
-    if matches!(who, Who::Citizen(_)) {
+    let townsperson = matches!(who, Who::Citizen(_) | Who::Fan(..));
+    if townsperson {
         poses::add_hands_up_clip(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         // A crime's victim (see `crimeview`).
         poses::add_victim_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
@@ -2059,14 +2218,18 @@ pub fn build_sharing(
         // The street acts and their audiences (see `streetview`).
         poses::add_street_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
-    if matches!(who, Who::Citizen(_)) {
+    if townsperson {
         // Townsfolk only watch the acts, and do what people do indoors.
         poses::add_audience_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
         poses::add_indoor_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
-    if matches!(who, Who::Citizen(_) | Who::Medic) {
+    if matches!(who, Who::Citizen(_) | Who::Medic | Who::Fan(..)) {
         // Trapped, hurt and carried at rescues (see `radioview`).
         poses::add_rescue_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
+    }
+    if townsperson {
+        // Cheering a hero they know, holding out an autograph book.
+        poses::add_fan_clips(&mut c.model).map_err(|e| format!("{who:?}: {e}"))?;
     }
     if !hero {
         // Citizens and villains are seen from a few metres at the nearest,
@@ -2104,6 +2267,7 @@ pub fn build_sharing(
         model: Arc::new(c.model),
         walk: walk.into(),
         sits,
+        stride: stride_of(config.youth),
     })
 }
 

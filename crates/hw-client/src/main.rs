@@ -407,6 +407,11 @@ fn save_cabinet(cabinet: &[hw_client::missionview::Filed]) {
     Profile::update(|p| p.cabinet = cabinet.to_vec());
 }
 
+/// Keeps the hero's press cuttings in the profile on this PC.
+fn save_cuttings(cuttings: &[hw_client::headlines::Edition]) {
+    Profile::update(|p| p.cuttings = cuttings.to_vec());
+}
+
 /// Keeps the power tray in the profile on this PC.
 fn save_tray(tray: &hw_client::tray::Tray) {
     Profile::update(|p| p.tray = tray.clone());
@@ -650,6 +655,17 @@ fn main() -> EngineResult<()> {
     // The cabinet of closed cases lives in the profile on this PC.
     cases.filed = profile.cabinet.clone();
     let mut cabinet_saved = cases.filed.clone();
+    // Fame: the townsfolk who stop for our hero, the fans in their colours
+    // and the paper. The press cuttings live in the hero's file.
+    let mut fame = hw_client::fameview::FameView::default();
+    fame.load(profile.cuttings.clone());
+    let mut cuttings_saved = fame.cuttings.clone();
+    // `HW_SCRAPBOOK=1` opens the press cuttings at start, `HW_HEADLINE=1`
+    // prints a front page (screenshots).
+    fame.scrapbook.open = std::env::var_os("HW_SCRAPBOOK").is_some();
+    let demo_headline = std::env::var_os("HW_HEADLINE").is_some();
+    // Where our hero stood last frame (the news comes before the heroes).
+    let mut fame_hero: Option<Vec3> = None;
     let mut case_file = hw_client::casefile::CaseFile::default();
     // `HW_CASEFILE=case|doctor|closed`: the case file open on that tab
     // (screenshots).
@@ -2625,6 +2641,7 @@ fn main() -> EngineResult<()> {
                     cases.clear(world);
                     riders.clear(world, &crowd);
                     bus_folk.clear(world, &crowd);
+                    fame.clear(world, &mut crowd);
                     crowd.clear(world);
                     sweepers.clear(world);
                     critters.clear(world);
@@ -2750,6 +2767,8 @@ fn main() -> EngineResult<()> {
                     powers.tray = t.profile.tray.clone();
                     cases.filed = t.profile.cabinet.clone();
                     cabinet_saved = cases.filed.clone();
+                    fame.load(t.profile.cuttings.clone());
+                    cuttings_saved = fame.cuttings.clone();
                 }
                 match choice {
                     Some(Choice::Continue) => {
@@ -2786,6 +2805,8 @@ fn main() -> EngineResult<()> {
                         powers.tray = t.profile.tray.clone();
                         cases.filed = t.profile.cabinet.clone();
                         cabinet_saved = cases.filed.clone();
+                        fame.load(t.profile.cuttings.clone());
+                        cuttings_saved = fame.cuttings.clone();
                         hero_file = None;
                         my_sheet = hw_sim::progress::starter();
                         if want_world(mine, Waiting::Single).is_some() {
@@ -2899,6 +2920,54 @@ fn main() -> EngineResult<()> {
                 session.room_code(),
                 open_at.as_deref(),
             );
+            // `HW_FAME_DEMO=<seconds>` (screenshots): the hero starts where
+            // the most townsfolk walk past at that time of the town's clock,
+            // looking their way.
+            if let (true, Some(t)) = (
+                frame.first,
+                std::env::var("HW_FAME_DEMO")
+                    .ok()
+                    .and_then(|v| v.parse::<f64>().ok()),
+            ) {
+                let folk = citizens.near(DVec2::new(spawn.x, spawn.y), 500.0, t, 4000);
+                let flat = |c: &hw_sim::citizens::Citizen| DVec2::new(c.pos.x, c.pos.z);
+                let best = folk
+                    .iter()
+                    .filter(|c| {
+                        c.speed > 0.1
+                            && c.look < hw_sim::citizens::LOOKS
+                            && !citizens.on_carriageway(flat(c), 0.5)
+                    })
+                    .max_by_key(|c| {
+                        folk.iter()
+                            .filter(|o| flat(o).distance(flat(c)) < 7.0)
+                            .map(|o| {
+                                // Fans count for more: the shot is for them.
+                                let fan = hw_sim::fame::is_fan(
+                                    Seed(world_seed),
+                                    o.id,
+                                    hw_sim::fame::Fame::Legend,
+                                );
+                                1 + 10 * fan as usize
+                            })
+                            .sum::<usize>()
+                    });
+                if let Some(c) = best {
+                    // `HW_FAME_AHEAD` (m in front of them, default 3) and
+                    // `HW_FAME_TURN` (camera, degrees) frame the shot.
+                    let num = |k: &str, d: f64| {
+                        std::env::var(k)
+                            .ok()
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(d)
+                    };
+                    let ahead = num("HW_FAME_AHEAD", 3.0);
+                    let at = c.pos + DVec3::new(c.facing.x, 0.0, c.facing.y) * ahead;
+                    start_at = Some(at + DVec3::Y * 0.3);
+                    hero_cam.yaw = (-c.facing.x).atan2(-c.facing.y).to_degrees() as f32
+                        + num("HW_FAME_TURN", 0.0) as f32;
+                }
+            }
             if let Some(p) = start_at.take() {
                 session.teleport(p);
                 if let Some(yaw) = std::env::var("HW_YAW").ok().and_then(|y| y.parse().ok()) {
@@ -2942,6 +3011,9 @@ fn main() -> EngineResult<()> {
                     }
                     save_tray(&powers.tray);
                     save_cabinet(&cases.filed);
+                    if !demo_headline {
+                        save_cuttings(&fame.cuttings);
+                    }
                     hw_client::heroslots::exit_watchdog();
                     world.request_exit();
                 }
@@ -2956,6 +3028,9 @@ fn main() -> EngineResult<()> {
                     }
                     save_tray(&powers.tray);
                     save_cabinet(&cases.filed);
+                    if !demo_headline {
+                        save_cuttings(&fame.cuttings);
+                    }
                     hw_client::hitch::event("back to the title screen");
                     hw_client::heroslots::exit_watchdog();
                     RESTART_AT_TITLE.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -3859,6 +3934,10 @@ fn main() -> EngineResult<()> {
             // Damage: broken buildings, repairs, impacts.
             let joined = session.joined();
             let mut news = session.take_news();
+            // Deeds worth a headline (nothing is taken from the news).
+            for m in &news {
+                fame.hear(m, fame_hero);
+            }
             // The host's word on a swap of augments goes to the bag.
             news.retain(|m| {
                 let hw_net::ToClient::Swap(swap) = m else {
@@ -3886,6 +3965,7 @@ fn main() -> EngineResult<()> {
                         traffic_view.clear(world);
                         riders.clear(world, &crowd);
                         bus_folk.clear(world, &crowd);
+                        fame.clear(world, &mut crowd);
                         crowd.clear(world);
                         sweepers.clear(world);
                         critters.clear(world);
@@ -4220,6 +4300,20 @@ fn main() -> EngineResult<()> {
                 let all_now = frame.first || shooting;
                 let mut crowds = 0;
                 for b in done {
+                    // A fan in our hero's colours: a crowd of its own, if
+                    // the hero still looks as they did when it was asked for.
+                    if let Who::Fan(key, k) = b.who {
+                        if fame.fan_key() != Some(key) {
+                            continue;
+                        }
+                        if crowds > 0 && !all_now {
+                            held.push(b);
+                            continue;
+                        }
+                        crowds += 1;
+                        crowd.add_fan_look(world, k, &b)?;
+                        continue;
+                    }
                     if let Who::Citizen(look) = b.who {
                         if crowds > 0 && !all_now {
                             held.push(b);
@@ -4476,6 +4570,14 @@ fn main() -> EngineResult<()> {
                         d.yaw = anim.yaw();
                     }
                 }
+                // Signing an autograph book, our hero turns to its owner.
+                let fame_sign = (mine == Some(h.id) && h.grounded && slow && action.is_none())
+                    .then(|| fame.signing(feet))
+                    .flatten();
+                if let Some(y) = fame_sign {
+                    anim.turn_to(y, 4.0, frame.dt);
+                    d.yaw = anim.yaw();
+                }
                 // A sidekick standing by turns, unhurried, to its hero, and
                 // now and then does a little trick.
                 let mut trick = None;
@@ -4718,6 +4820,10 @@ fn main() -> EngineResult<()> {
                     None if trick.is_some() => trick.expect("a trick"),
                     // The one being mugged cowers until it is over.
                     None if bystander && d.clip == "idle" => ("hands up", false),
+                    // Signing an autograph book.
+                    None if mine == Some(h.id) && fame_sign.is_some() && d.clip == "idle" => {
+                        ("sign", false)
+                    }
                     // A level up: a fist to the sky, standing or hovering.
                     None if mine == Some(h.id)
                         && frame.time < power_pose_until
@@ -4775,6 +4881,7 @@ fn main() -> EngineResult<()> {
                         || (matches!(
                             clip,
                             "power pose"
+                                | "sign"
                                 | "visor tap"
                                 | "visor tap walk"
                                 | "wave"
@@ -5147,6 +5254,12 @@ fn main() -> EngineResult<()> {
                 indoor.extend(folk);
             }
             crowd.set_indoor(indoor);
+            // The heroes the townsfolk may stop for.
+            crowd.set_stars(
+                fame.stars(&heroes, mine),
+                Seed(world_seed),
+                fame.fame.unwrap_or(hw_sim::fame::Fame::Nobody),
+            );
             // The traffic drives on and its cars are placed on a worker,
             // while the citizens go to Engine here; the join below is the
             // only meeting point (the borrows keep the two apart).
@@ -5202,6 +5315,44 @@ fn main() -> EngineResult<()> {
                 crowd_done?;
                 plan
             };
+            // Fame, after the crowd moved: fans' looks, the autograph book,
+            // what those who stopped say, the paper.
+            {
+                let me = mine.and_then(|id| {
+                    let h = heroes.iter().find(|h| h.id == id)?;
+                    Some((
+                        id,
+                        Vec3::new(h.pos[0] as f32, h.pos[1] as f32, h.pos[2] as f32),
+                        Vec3::from_array(h.vel).length(),
+                    ))
+                });
+                fame_hero = me.map(|m| m.1);
+                fame.update(
+                    world,
+                    &mut crowd,
+                    actors.as_ref(),
+                    my_look.as_ref(),
+                    &my_sheet,
+                    &name,
+                    &generated.area,
+                    me,
+                    game_time,
+                )?;
+                if demo_headline && frame.first {
+                    fame.demo_headline(&name);
+                }
+                // The newsboys cry the latest edition.
+                street.headline = fame.latest.as_ref().map(hw_client::headlines::cry);
+                // New cuttings go to the hero's file: on this thread, like
+                // the cabinet's saves, so the two never race over the profile.
+                if fame.cuttings != cuttings_saved {
+                    cuttings_saved = fame.cuttings.clone();
+                    // (The screenshots' sample pages are not the hero's.)
+                    if !demo_headline {
+                        save_cuttings(&cuttings_saved);
+                    }
+                }
+            }
             // Street performers, odd folk and the night club round the camera.
             // (`HW_STREETLIFE=0` turns it off, to measure without it.)
             if std::env::var("HW_STREETLIFE").map_or(true, |v| v != "0") {
@@ -5836,6 +5987,11 @@ fn main() -> EngineResult<()> {
                         fight.bubble(&s);
                         chat.hear(&s, hero_at);
                     }
+                    // What admirers and fans call out.
+                    for s in fame.said.drain(..) {
+                        fight.bubble(&s);
+                        chat.hear(&s, hero_at);
+                    }
                     // Thanks from the people at rescues.
                     for s in radio.said.drain(..) {
                         fight.bubble(&s);
@@ -5978,6 +6134,25 @@ fn main() -> EngineResult<()> {
                     fighting,
                 );
                 if !town_map.open && std::mem::take(&mut town_map.relock) {
+                    world.set_pointer_lock(true);
+                }
+                // The press cuttings (I): our hero's fame and front pages.
+                if frame.input.pressed(Key::I) && !on_ui_keys(frame) {
+                    fame.scrapbook.toggle();
+                }
+                if fame.scrapbook.open && world.pointer_lock() {
+                    world.set_pointer_lock(false);
+                    fame.scrapbook.relock = true;
+                }
+                fame.hud(
+                    frame.ui.ctx(),
+                    view_proj,
+                    &my_sheet,
+                    game_time,
+                    frame.dt,
+                    me_state.is_some_and(|m| m.combat.is_some_and(|c| c.target.is_some())),
+                );
+                if !fame.scrapbook.open && std::mem::take(&mut fame.scrapbook.relock) {
                     world.set_pointer_lock(true);
                 }
                 // The case file (J): it comes up on its own when a case

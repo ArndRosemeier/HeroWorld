@@ -69,6 +69,8 @@ pub struct Profile {
     pub tray: Tray,
     /// Closed cases for the case file's cabinet, oldest first.
     pub cabinet: Vec<Filed>,
+    /// The hero's press cuttings, oldest first (see `fameview`).
+    pub cuttings: Vec<crate::headlines::Edition>,
 }
 
 impl Default for Profile {
@@ -98,6 +100,7 @@ impl Default for Profile {
             look: None,
             tray: Tray::default(),
             cabinet: Vec::new(),
+            cuttings: Vec::new(),
         }
     }
 }
@@ -287,6 +290,8 @@ impl Profile {
                 let keep = a.len().saturating_sub(CABINET_KEEP);
                 a[keep..].iter().filter_map(Filed::from_json).collect()
             }),
+            // Cuttings came with the hero slots: the old file has none.
+            cuttings: Vec::new(),
         }
     }
 
@@ -321,6 +326,7 @@ impl Profile {
             hero: self.hero.clone(),
             tray: self.tray.clone(),
             cabinet: self.cabinet.clone(),
+            cuttings: self.cuttings.clone(),
             created: self.created,
             last_played: self.last_played,
         }
@@ -333,6 +339,7 @@ impl Profile {
         self.hero = f.hero.clone();
         self.tray = f.tray.clone();
         self.cabinet = f.cabinet.clone();
+        self.cuttings = f.cuttings.clone();
         self.created = f.created;
         self.last_played = f.last_played;
     }
@@ -347,6 +354,7 @@ impl Profile {
         self.hero = None;
         self.tray = d.tray;
         self.cabinet = Vec::new();
+        self.cuttings = Vec::new();
         self.created = 0;
         self.last_played = 0;
     }
@@ -692,6 +700,13 @@ mod tests {
                 gang: 1,
                 building: "Daily Comet building".into(),
             }],
+            cuttings: vec![crate::headlines::Edition {
+                kicker: "EXTRA!".into(),
+                head: "NOVA FOILS HOLD-UP".into(),
+                sub: "The till is safe.".into(),
+                picture: crate::headlines::Picture::Bag,
+                number: 4,
+            }],
         };
         // The settings file holds the settings; the hero lives in a slot file.
         let settings_only = Profile {
@@ -701,6 +716,7 @@ mod tests {
             look: None,
             tray: Tray::default(),
             cabinet: Vec::new(),
+            cuttings: Vec::new(),
             created: 0,
             last_played: 0,
             ..p.clone()

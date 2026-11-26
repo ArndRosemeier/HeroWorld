@@ -1363,6 +1363,98 @@ pub fn add_audience_clips(model: &mut AnimatedModel) -> Result<(), String> {
     Ok(())
 }
 
+/// What townsfolk do when a hero they know comes by (see `fameview`):
+/// "cheer" (both arms thrown up, bouncing on the toes) and "autograph" (a
+/// little book held out in the left hand, the right waving a pencil over
+/// it, up on the toes to be seen). They wave and clap with the clips they
+/// have already.
+pub fn add_fan_clips(model: &mut AnimatedModel) -> Result<(), String> {
+    use std::f32::consts::TAU;
+    let cheer = make_clip(model, "cheer", 1.0, |t| {
+        // Two bounces a loop; the fists pump up as the heels leave the
+        // ground.
+        let k = (t * TAU * 2.0).sin();
+        let up = 0.5 + 0.5 * k;
+        Pose {
+            aims: vec![
+                aim("upperarm_l", "lowerarm_l", 0.5 - 0.1 * up, 0.85, 0.12),
+                aim("lowerarm_l", "hand_l", 0.22 - 0.12 * up, 1.0, 0.05),
+                aim("upperarm_r", "lowerarm_r", -0.5 + 0.1 * up, 0.85, 0.12),
+                aim("lowerarm_r", "hand_r", -0.22 + 0.12 * up, 1.0, 0.05),
+            ],
+            turns: vec![
+                ("spine_03", Vec3::X, -0.08 - 0.03 * up),
+                ("head", Vec3::X, -0.16),
+            ],
+            lift: 0.035 * up,
+            seated: false,
+            lean: 1.0,
+            lay: None,
+        }
+    })?;
+    let autograph = make_clip(model, "autograph", 1.6, |t| {
+        // The pencil wags; the book is pushed out a little, hopefully.
+        let w = (t * TAU * 2.0).sin();
+        let push = 0.5 + 0.5 * (t * TAU).sin();
+        Pose {
+            aims: vec![
+                // The book, held out flat at the chest.
+                aim("upperarm_l", "lowerarm_l", 0.22, -0.5, 0.75 + 0.1 * push),
+                aim("lowerarm_l", "hand_l", -0.12, 0.28, 1.0),
+                // The pencil, up by the shoulder.
+                aim("upperarm_r", "lowerarm_r", -0.4, -0.45, 0.6),
+                aim("lowerarm_r", "hand_r", -0.05 + 0.14 * w, 0.95, 0.3),
+            ],
+            turns: vec![
+                ("spine_03", Vec3::X, 0.05),
+                ("head", Vec3::X, -0.14),
+                ("head", Vec3::Z, 0.06 * w),
+            ],
+            lift: 0.02 * push,
+            seated: false,
+            lean: 1.0,
+            lay: None,
+        }
+    })?;
+    let names = ["cheer", "autograph"];
+    model.clips.retain(|c| !names.contains(&c.name.as_str()));
+    model.clips.extend([cheer, autograph]);
+    Ok(())
+}
+
+/// A hero's "sign": someone's autograph book in the left hand, the right
+/// writing a name across it with a flourish, eyes on the page.
+pub fn add_sign_clip(model: &mut AnimatedModel) -> Result<(), String> {
+    use std::f32::consts::TAU;
+    let sign = make_clip(model, "sign", 1.2, |t| {
+        // The hand runs along the line and loops: three strokes a second.
+        let x = (t * TAU * 3.0).sin();
+        let y = (t * TAU * 6.0).cos();
+        Pose {
+            aims: vec![
+                aim("upperarm_l", "lowerarm_l", 0.2, -0.8, 0.42),
+                aim("lowerarm_l", "hand_l", -0.42, 0.3, 0.86),
+                aim("upperarm_r", "lowerarm_r", -0.28, -0.75, 0.5),
+                aim(
+                    "lowerarm_r",
+                    "hand_r",
+                    0.36 + 0.07 * x,
+                    0.34 + 0.03 * y,
+                    0.86,
+                ),
+            ],
+            turns: vec![("head", Vec3::X, 0.3), ("spine_03", Vec3::X, 0.05)],
+            lift: 0.0,
+            seated: false,
+            lean: 1.0,
+            lay: None,
+        }
+    })?;
+    model.clips.retain(|c| c.name != "sign");
+    model.clips.push(sign);
+    Ok(())
+}
+
 /// The street acts' clips (see `hw_sim::streetlife`), for the performers:
 /// "preach" (on the soapbox, a finger stabbing at the sky), "theremin"
 /// (hands hovering by the aerials, the right one trembling the vibrato),

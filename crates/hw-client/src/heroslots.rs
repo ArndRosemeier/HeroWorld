@@ -18,6 +18,7 @@
 //!   A file that does not parse falls back to its `.bak`, and one that is
 //!   broken either way is set aside as `.corrupt`, never overwritten.
 
+use crate::headlines::{Edition, SCRAPBOOK_KEEP};
 use crate::missionview::{Filed, CABINET_KEEP};
 use crate::profile::{sheet_from_json, sheet_to_json};
 use crate::tray::Tray;
@@ -49,6 +50,9 @@ pub struct HeroFile {
     pub tray: Tray,
     /// Closed cases, oldest first.
     pub cabinet: Vec<Filed>,
+    /// What the Daily Comet printed about the hero, oldest first (see
+    /// `fameview`).
+    pub cuttings: Vec<Edition>,
     /// Unix seconds: made, and last taken into a game (0: never).
     pub created: u64,
     pub last_played: u64,
@@ -65,6 +69,7 @@ impl HeroFile {
             "hero": self.hero.as_ref().map(sheet_to_json),
             "tray": self.tray.to_json(),
             "cabinet": self.cabinet.iter().map(Filed::to_json).collect::<Vec<_>>(),
+            "cuttings": self.cuttings.iter().map(Edition::to_json).collect::<Vec<_>>(),
         })
     }
 
@@ -83,6 +88,7 @@ impl HeroFile {
                 let keep = a.len().saturating_sub(CABINET_KEEP);
                 a[keep..].iter().filter_map(Filed::from_json).collect()
             }),
+            cuttings: cuttings_from_json(&v["cuttings"]),
             created: v["created"].as_u64().unwrap_or(0),
             last_played: v["last_played"].as_u64().unwrap_or(0),
         })
@@ -375,6 +381,14 @@ pub fn hard_exit(code: i32) -> ! {
     std::process::exit(code)
 }
 
+/// Press cuttings from a hero file: the newest [`SCRAPBOOK_KEEP`].
+pub fn cuttings_from_json(v: &Value) -> Vec<Edition> {
+    v.as_array().map_or_else(Vec::new, |a| {
+        let keep = a.len().saturating_sub(SCRAPBOOK_KEEP);
+        a[keep..].iter().filter_map(Edition::from_json).collect()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,6 +412,7 @@ mod tests {
             hero: Some(sheet),
             tray: Tray::default(),
             cabinet: Vec::new(),
+            cuttings: Vec::new(),
             created: 1000,
             last_played: 2000,
         }

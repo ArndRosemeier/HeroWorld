@@ -19,6 +19,7 @@ pub mod deepspots;
 pub mod destruction;
 pub mod doors;
 pub mod factions;
+pub mod fame;
 pub mod floornav;
 pub mod gates;
 pub mod herobot;

@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.333 (2026-11-26)
+
+- Fame you can see. A new hero is a nobody, but from level 3 the street starts to talk: people who walk past stop, turn to you and wave. From level 6 they clap and know your name, from level 10 they cheer, and a living legend (level 15) turns the whole pavement round. It only happens while the townsfolk think well of you.
+- Fans in your colours. Once you are a local hero, some of the townsfolk, children among them, go about in a top in your costume's colour, a little cape and your emblem. Change your costume and they follow.
+- Autographs. The town's favourites are asked to sign a little book (a pencil mark floats over whoever holds one out). Stand still beside them for a moment and your hero signs it.
+- The Daily Comet. What you do makes the front page: a hold-up foiled, a fire put out, a case closed, a chapter of the Doctor's story, every step up in fame. The page spins onto the screen, and newsboys cry the headline. Until the town knows you it writes of "a masked stranger".
+- Press cuttings (key I): your fame in stars, when the next step comes, and the last 24 front pages about you. They are kept with your hero.
+
 ## 0.332 (2026-11-26)
 
 - The police computer has four new kinds of case besides gang hideouts. Each has its own symbol on Crime-o-Vision.
