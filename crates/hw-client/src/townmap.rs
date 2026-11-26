@@ -59,6 +59,9 @@ pub struct TownMap {
     pub relock: bool,
     /// Not yet centred on the hero since it opened.
     to_centre: bool,
+    /// The sights' marks and the explorer's tally (`exploreview.rs`).
+    pub marks: Vec<crate::exploreview::MapMark>,
+    pub tally: Option<crate::exploreview::Tally>,
 }
 
 impl TownMap {
@@ -107,6 +110,8 @@ impl TownMap {
             made,
             relock: false,
             to_centre: true,
+            marks: Vec::new(),
+            tally: None,
         }
     }
 
@@ -219,8 +224,13 @@ impl TownMap {
             return;
         }
         // Zoomed out at most to the whole town with room round it.
-        let max_mpp =
-            (town_span(town) * 1.4 / rect.width().min(rect.height()) as f64).max(MIN_MPP * 8.0);
+        // (and out to the farthest sight marked beyond it).
+        let far = self
+            .marks
+            .iter()
+            .map(|m| m.at.abs().max_element() * 2.0)
+            .fold(town_span(town), f64::max);
+        let max_mpp = (far * 1.4 / rect.width().min(rect.height()) as f64).max(MIN_MPP * 8.0);
         self.mpp = self.mpp.clamp(MIN_MPP, max_mpp);
         let ppp = ctx.pixels_per_point();
         egui::Area::new(egui::Id::new("town map"))
@@ -349,6 +359,35 @@ impl TownMap {
                 egui::Color32::from_rgb(40, 40, 50),
             ));
         }
+        // The sights: course starts, springs and rings found, hints.
+        let time = painter.ctx().input(|i| i.time) as f32;
+        for m in &self.marks {
+            let p = to_screen(m.at);
+            if !rect.expand(40.0).contains(p) {
+                continue;
+            }
+            crate::exploreview::draw_mark(&painter, p, 9.0, m.kind, time, 1.0);
+            if m.medal > 0 {
+                crate::exploreview::medal_disc(
+                    &painter,
+                    p + egui::vec2(10.0, -8.0),
+                    5.0,
+                    m.medal,
+                    true,
+                    1.0,
+                );
+            }
+            if !m.name.is_empty() {
+                names.push((p, 11.0, m.name.clone(), egui::Color32::from_rgb(20, 60, 90)));
+            }
+        }
+        if self
+            .marks
+            .iter()
+            .any(|m| m.kind == crate::exploreview::MarkKind::Hint)
+        {
+            painter.ctx().request_repaint();
+        }
         // Molehaven's gate: the mole's face, and the town's name.
         if let Some(g) = town.underground().entrances.iter().find(|e| e.molehaven) {
             let p = to_screen(g.pos);
@@ -431,6 +470,16 @@ impl TownMap {
             &text,
             ink.color,
         );
+        // What the hero has found, bottom right.
+        if let Some(t) = &self.tally {
+            crate::exploreview::draw_tally(
+                &painter,
+                painter.ctx(),
+                rect.right_bottom() + egui::vec2(-396.0, -10.0),
+                t,
+                time,
+            );
+        }
         painter.rect_stroke(
             rect,
             8.0,

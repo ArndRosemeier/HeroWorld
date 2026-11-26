@@ -120,6 +120,17 @@ pub static FIGHT_CLIPS: &[(&str, &[u8])] = clips![
     "robot",
 ];
 
+/// The clips of finds and courses (`exploreview.rs` plays them).
+pub static EXPLORE_CLIPS: &[(&str, &[u8])] = clips![
+    "sight_wisp",
+    "sight_spring",
+    "sight_stones",
+    "sight_gate",
+    "fanfare",
+    "whoosh",
+    "teleport",
+];
+
 /// Seconds a decoded clip is kept after it was last wanted.
 const KEEP_S: f64 = 60.0;
 

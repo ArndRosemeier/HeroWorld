@@ -115,3 +115,16 @@ ones that fit a 1950s town (no modern horns or engines):
 - `scream_crowd_1`
 - `crowd_gasp`
 - `door_open`, `door_shut` (doors, 0.146): Seed Audio `bytedance-seed/seed-audio-1-0`. Open: "The sound of a solid wooden front door opening: a brass latch clicks, then a short soft hinge creak, close up, indoors, no voices" (0-2.3 s). Shut: "The sound of a heavy wooden door swinging shut: a firm solid thud and the latch clicking into place, close up, no voices" (0.35-1.9 s). Mono, loudness -18 LUFS. Raw takes: project files `heroworld/sounds/doors/`.
+
+## The sights (2026-11-26)
+
+For wisps, springs, waystones and course gates (`exploreview.rs`). Same model, two takes
+each; nobody listened to these before they went in: the louder take was kept. Raw takes:
+project files `heroworld/sounds/raw/explore/`. Trimmed, mono, levelled to -20 LUFS.
+
+| File | Kind | Prompt |
+| --- | --- | --- |
+| `sight_wisp.ogg` | shot | The sound of a tiny magical sparkle being collected, one short bright glassy twinkle with a soft shimmering tail, no voice |
+| `sight_spring.ogg` | shot | The sound of a magical healing spring, a soft bubbling splash of water with a warm shimmering glass-harmonica swell rising and fading, no voice (first 5 s) |
+| `sight_stones.ogg` | shot | The sound of ancient standing stones singing, a deep resonant humming choir-like drone of stone with slow glassy overtones swelling and fading over four seconds, no words |
+| `sight_gate.ogg` | shot | The sound of flying fast through a ring of light, a quick airy whoosh with a bright electric ping, short, no voice |

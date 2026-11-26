@@ -80,6 +80,8 @@ pub struct Minimap {
     showing: Option<Paint>,
     /// The reach shown (m), eased towards the wanted one.
     reach: f64,
+    /// The sights' marks (`exploreview.rs`).
+    pub marks: Vec<crate::exploreview::MapMark>,
 }
 
 /// One picture of the map: the tiles it is painted from, where it is
@@ -142,6 +144,7 @@ impl Minimap {
             .expect("minimap painter thread");
         Self {
             shown: std::env::var("HW_MINIMAP").map_or(true, |v| v != "0"),
+            marks: Vec::new(),
             tiles: BTreeMap::new(),
             asked: BTreeSet::new(),
             ask,
@@ -373,6 +376,16 @@ impl Minimap {
                     4.5,
                     egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(40, 40, 50)),
                 );
+            }
+        }
+        // The sights: starts, springs and rings found show when near;
+        // what the waystones sang of stays on the rim, to be followed.
+        let time = ctx.input(|i| i.time) as f32;
+        for m in &self.marks {
+            let (p, inside) = to_screen(m.at);
+            if inside || m.kind == crate::exploreview::MarkKind::Hint {
+                let r = if inside { 6.0 } else { 4.5 };
+                crate::exploreview::draw_mark(&painter, p, r, m.kind, time, 1.0);
             }
         }
         // Molehaven's gate, kept on the rim when it is off the map, so the

@@ -1428,6 +1428,8 @@ impl FightView {
                         self.say(&text);
                     }
                 }
+                // Finds and runs: `exploreview` shows them.
+                FxKind::Sight | FxKind::Course => {}
                 FxKind::Drop => {
                     // An augment for our hero: it flies over, with a
                     // chime that is deeper and fuller the better it is.

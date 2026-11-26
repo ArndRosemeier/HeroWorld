@@ -3,6 +3,14 @@
 Newest first. Every build pushed to `main` adds 0.001 to the version (in
 `VERSION`) and a few lines here, in plain words for players.
 
+## 0.334 (2026-11-26)
+
+- Reasons to explore. The world now hides things worth going out for, the same for everyone on the same world:
+- Wisps: small lights over roofs, on top of landmarks, on cliffs and bluffs out in the country and in grottos deep down. Touch one to gather it for karma. Every tenth brings a rare augment, the very last a relic.
+- Aether springs: glowing pools on pale stone terraces with crystals, a few kilometres out. The first dip gives a lot of karma and an augment (the far springs give relics), and the water always fills your health and energy.
+- Waystone rings: old standing stones with glowing signs. Step on the altar and they sing: for five minutes your maps show the nearest things you have not found yet.
+- Flight races and rooftop runs: fly through the gold ring (or run through the gold hoop on a roof, no flying) to start, follow the bright gates to the chequered one. Bronze, silver and gold times pay karma the first time, gold an augment, and your best time is kept.
+- The town map (M) shows the course starts with your medals, the springs and rings you have found, and a tally of everything bottom right. It zooms out far enough to see them all.
 ## 0.333 (2026-11-26)
 
 - Fame you can see. A new hero is a nobody, but from level 3 the street starts to talk: people who walk past stop, turn to you and wave. From level 6 they clap and know your name, from level 10 they cheer, and a living legend (level 15) turns the whole pavement round. It only happens while the townsfolk think well of you.

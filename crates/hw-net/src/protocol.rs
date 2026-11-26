@@ -733,7 +733,8 @@ pub struct Sheet {
     /// Loose augments, found and not set yet.
     pub bag: Vec<Augment>,
     /// What the hero has found exploring (see `hw_sim::explore`).
-    pub finds: FindBook,
+    /// (Boxed: a sheet rides in messages, which stay small.)
+    pub finds: Box<FindBook>,
 }
 
 /// What a hero has found in one world: wisps gathered, springs and
@@ -1117,7 +1118,7 @@ impl Sheet {
         for _ in 0..n {
             bag.push(Augment::read(r)?);
         }
-        let finds = FindBook::read(r)?;
+        let finds = Box::new(FindBook::read(r)?);
         Ok(Self {
             lifetime,
             karma,
@@ -3592,13 +3593,13 @@ mod tests {
                 percent: 30,
                 grade: 2,
             }],
-            finds: FindBook {
+            finds: Box::new(FindBook {
                 world: 0x1234_5678_9abc_def0,
                 wisps: vec![0b1010_0001, 0, 0xff],
                 springs: 0b101,
                 stones: 2,
                 bests: vec![(0, 1405), (3, 388)],
-            },
+            }),
         }
     }
 

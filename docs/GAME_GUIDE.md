@@ -246,6 +246,8 @@ level) and to **unspent karma** (which buys powers). Spending never lowers your 
   bonus on top, as Guardian karma ("Careful work!", `incidents::CAREFUL_COST`).
 - **Rescues:** Guardian karma for each person got out, double for handing the hurt one
   to the ambulance.
+- **Finding things:** wisps, Aether springs, waystone rings and course medals pay a share
+  of your level (section 8, "Reasons to explore").
 - **Reviving a teammate** pays no karma.
 
 ### Elements (`hw-sim/src/powers.rs`, `combat::element`)
@@ -1790,6 +1792,45 @@ footprints; the deepest take a minute to walk). The factions place people at
 
 ---
 
+### Reasons to explore: the sights (`hw-gen/src/urban/sights.rs`, `hw-sim/src/explore.rs`, `hw-client/src/{exploremesh,exploreview}.rs`)
+
+Things to find, planned from the world seed (same seed, same sights; on a seed-1 planet
+city of 60 000: 8 springs, 4 rings, 240 wisps, 5 courses). A hero's finds are in their
+sheet (`Sheet.finds`, a `FindBook`) with the world they belong to; a hero who moves to
+another world starts a new book there at the first find.
+
+- **Wisps** (up to 240): small lights that hang over roofs (cyan), on top of landmarks
+  (gold), on rims and bluffs in the country (green) and in grottos and ruins deep down
+  (violet). Come within 3.2 m to gather one: karma worth 3% of your level, a **rare
+  augment with every tenth**, a relic for the last. They are drawn within 900 m and swell
+  with distance, so one twinkles across a valley.
+- **Aether springs** (up to 12, 3-8 km out): travertine terraces with a glowing pool and
+  crystals, in a clearing. Standing in the pool the first time gives 25% of a level and an
+  augment (near springs rare, far ones a relic, those between either); the water always
+  refills health and energy (at most every 2 s).
+- **Waystone rings** (up to 6): seven standing stones with glowing glyphs round an altar.
+  Standing on the altar the first time gives 30% of a level, a relic when every ring is
+  found. Each time, the stones sing (every 6 s while you stand there) and the up to six
+  nearest unfound things within 2.6 km show as beating stars on the maps for 5 minutes
+  (springs and rings count as nearer than wisps).
+- **Flight courses** (rings of 8 m radius along the great roads; on a planet one arc out
+  over the mesas) and **rooftop courses** (hoops of 3.2 m over roofs, a shaft of light
+  down to each roof; flying ends the run). A run starts when you come through the gold
+  start gate, the gates come in order (the next one is bright), and ends at the chequered
+  one. Times for gold, silver and bronze come from the length: 19, 14.5 and 10 m/s in the
+  air, 11.5, 8.5 and 5.5 m/s over the roofs, plus 0.35 s a gate. A medal won for the first
+  time pays 8%, 10% and 14% of a level (bronze, silver, gold; a gold run pays all three)
+  and gold a rare augment. A run is over after three times the bronze time or 700 m from
+  the next gate. Your best time is kept.
+- Up to 8 courses, 20 gates each. Small towns have one flight course; a second comes at
+  about 10 000 people and rooftop courses from about 20 000 (they need a run of roofs). Springs and stones are solid (terraces, crystals,
+  stones, altar); the woods leave a clearing of 13 m round them.
+
+On screen: a card for each find (with the count), a panel for a run (clock, gates as
+beads, the three medal times, your best), and on the town map (M) the course starts with
+your medal, the springs and rings you have found, and bottom right the tally: wisps,
+springs, rings, medals. The map zooms out as far as the farthest thing marked.
+
 ## 9. Living streets
 
 ### People (`hw-sim/src/citizens.rs`)
@@ -2272,7 +2313,7 @@ run, or put them in a `.bat`.
 | `HW_POP=n` | Town population (default: the profile's city, 40 000 at first; 3 000+ gets a villain quarter). |
 | `HW_HOUR=h` | Hour of day, 0–24 (22 for night). |
 | `HW_SKYLINE=0` | No distant skyline past the built cells (to compare). |
-| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `menace`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `mountains`, `woods`, `falls`, `cascade`, `headwater`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `homes`, `tubemarket`, `workshop`, `shrine`, `burrow`, `exit` (a tube exit from inside), `exitstreet` (its pavilion), `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `wibbet`, `drakelet`, `driftbell` (the nearest animal of that kind), `act` (a street act: `HW_ACT=prophet|theremin|statue|juggler|spotter|newsboy|stargazer|dancers|club`, `HW_ACT_FAR=1` wider), `powers`, `origin`, `title`. |
+| `HW_VIEW=...` | Start the camera at a sight: `street`, `sky`, `inside`, `cutaway`, `river`, `quay`, `park`, `lawn`, `props`, `pad`, `timber`, `plinth`, `spire`, `lighthouse`, `tesla`, `tesladome`, `teslayard`, `menace`, `drill`, `drillbore`, `mast`, `mastapron`, `terminal`, `liner`, `rocket`, `rocketpad`, `rocketarm`, `rocketboard`, `atomplant`, `atomgate`, `atomtower`, `works`, `worksline`, `worksdock`, `workshall`, `hall`, `townheroes`, `villain` (with `HW_VILLAIN=delver|buccaneer|gunner|captain|legionary|praetorian`), `airship`, `quarter`, `edge`, `graffiti`, `rooftop`, `hangout`, `traffic`, `skylanes`, `signals`, `wrecked`, `riders` (beside the nearest car's driver; `HW_RIDER=cruiser|bubble|hover|taxi`), `lift`, `tunnel`, `molehaven`, `far`, `mountains`, `woods`, `falls`, `cascade`, `headwater`, `market`, `tube`, `station`, `tubeline`, `kiosk`, `lab`, `ruin`, `grotto`, `homes`, `tubemarket`, `workshop`, `shrine`, `burrow`, `exit` (a tube exit from inside), `exitstreet` (its pavilion), `incident`, `mugging`, `robbery`, `rampage`, `breakout`, `fire`, `crash`, `medic`, `signal`, `map`, `colossus`, `colossus_close`, `sentry`, `alpha`, `citizen`, `wibbet`, `drakelet`, `driftbell` (the nearest animal of that kind), `act` (a street act: `HW_ACT=prophet|theremin|statue|juggler|spotter|newsboy|stargazer|dancers|club`, `HW_ACT_FAR=1` wider), `powers`, `origin`, `title`, the sights `spring`, `springclose`, `stones`, `stonesclose`, `wisp`, `race`, `ringclose`, `roofrun`, `hoopclose` (`HW_SIGHT=n` picks which; `HW_RUN=n` shows course n's run under way). |
 | `HW_TAXI=n` | Hail a taxi to stand n at once (`HW_TAXI_SECS` delays it). |
 | `HW_WALK=1` | The hero walks on its own. |
 | `HW_CUT_LEVEL=n` | Cut buildings open at floor n. |

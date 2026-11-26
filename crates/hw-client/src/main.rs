@@ -1345,6 +1345,14 @@ fn main() -> EngineResult<()> {
             let pitch = ((look_y - eye) / d.length()).atan().to_degrees() as f32;
             FlyCamera::new((p.x as f32, eye as f32, p.y as f32), yaw, pitch)
         }
+        "spring" | "springclose" | "stones" | "stonesclose" | "wisp" | "race" | "ringclose"
+        | "roofrun" | "hoopclose" => {
+            // The sights (see `exploreview::view`; HW_SIGHT picks which one).
+            match hw_client::exploreview::view(&generated.world, &view) {
+                Some((e, yaw, pitch)) => FlyCamera::new((e.x, e.y, e.z), yaw, pitch),
+                None => FlyCamera::new((spawn.x as f32, 40.0, spawn.y as f32), 0.0, -20.0),
+            }
+        }
         "works" | "worksline" | "worksdock" | "workshall" => {
             // The robot works: the yard, the welders, the tank, the hall.
             match hw_client::worksview::view(&generated.world, &view, spawn) {
@@ -4911,6 +4919,19 @@ fn main() -> EngineResult<()> {
             }
             fight.muzzles = robots.muzzles(world);
             fight.on_fx(world, &events, now, mine, &hero_entities, &heroes);
+            // The sights: wisps, springs, waystones and the courses' gates.
+            hw_client::hitch::mark("sights");
+            if let Some(x) = extras.explore.as_mut() {
+                x.on_fx(world, &events, mine, &my_sheet.finds);
+                x.update(
+                    world,
+                    world.camera().eye(),
+                    session.my_position(&heroes).map(|p| p.as_vec3()),
+                    &my_sheet.finds,
+                    frame.time as f64,
+                    frame.dt,
+                )?;
+            }
             // Rescue bubbles take the rescue's own people; those set down
             // in the street walk off.
             for (key, at, hurt) in std::mem::take(&mut fight.bubbled) {
@@ -6101,6 +6122,13 @@ fn main() -> EngineResult<()> {
                 let at2 = DVec2::new(centre.x as f64, centre.z as f64);
                 let eye2 = DVec2::new(eye.x as f64, eye.z as f64);
                 let height = (eye.y as f64 - generated.world.ground(eye2)).max(0.0) as f32;
+                if let Some(x) = extras.explore.as_mut() {
+                    x.ui(frame.ui.ctx(), &my_sheet.finds);
+                    let marks = x.marks(&my_sheet.finds);
+                    town_map.tally = x.tally(&my_sheet.finds);
+                    minimap.marks.clone_from(&marks);
+                    town_map.marks = marks;
+                }
                 minimap.update(
                     frame.ui.ctx(),
                     &generated.world,

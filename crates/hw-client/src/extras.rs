@@ -77,6 +77,8 @@ pub struct TownExtras {
     pub weather: Option<crate::weatherview::WeatherView>,
     pub grass: Option<GrassView>,
     pub waterfront: Option<crate::waterfrontview::WaterfrontView>,
+    /// The sights: springs, waystones, wisps and the courses' gates.
+    pub explore: Option<crate::exploreview::ExploreView>,
 }
 
 impl TownExtras {
@@ -115,6 +117,9 @@ impl TownExtras {
         }
         if let Some(mut m) = self.mast.take() {
             m.clear(world);
+        }
+        if let Some(mut e) = self.explore.take() {
+            e.clear(world);
         }
         if let Some(mut h) = self.harbour.take() {
             h.clear(world);
@@ -442,6 +447,10 @@ fn assemble(
         drill: Some(crate::drillview::DrillView::new(town)),
         dystopia: Some(crate::dystopiaview::DystopiaView::new(town)),
         mast: Some(crate::mastview::MastView::new(town)),
+        explore: Some(crate::exploreview::ExploreView::new(
+            town,
+            crate::exploreview::world_key(town.seed, town.town.params.population),
+        )),
         harbour: Some(crate::harbourview::HarbourView::new(town)),
         rocket: Some(crate::rocketview::RocketView::new(town)),
         atom: Some(crate::atomview::AtomView::new(town)),

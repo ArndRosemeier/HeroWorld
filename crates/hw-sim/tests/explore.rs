@@ -36,7 +36,7 @@ fn put(sim: &mut Sim, hero: NetId, at: DVec3) {
 }
 
 fn finds(sim: &mut Sim) -> FindBook {
-    sim.sheet(ME).expect("a sheet").finds
+    *sim.sheet(ME).expect("a sheet").finds
 }
 
 #[test]
@@ -311,7 +311,7 @@ fn finds_from_another_world_make_way_for_this_one() {
     let (mut sim, hero) = world();
     let sights = sim.explore.sights().expect("planned").clone();
     let mut sheet = hero_sheet(5, &[]);
-    sheet.finds = FindBook {
+    *sheet.finds = FindBook {
         world: 99,
         wisps: vec![0xff, 0xff],
         springs: 3,
@@ -321,7 +321,7 @@ fn finds_from_another_world_make_way_for_this_one() {
     sim.set_sheet(ME, sheet.clone());
     // Kept as long as nothing is found here.
     sim.step();
-    assert_eq!(finds(&mut sim), sheet.finds);
+    assert_eq!(finds(&mut sim), *sheet.finds);
     put(&mut sim, hero, sights.wisps[2].at - DVec3::Y);
     sim.step();
     let b = finds(&mut sim);

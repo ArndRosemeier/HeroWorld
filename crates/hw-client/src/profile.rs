@@ -494,6 +494,8 @@ pub(crate) fn sheet_to_json(s: &Sheet) -> Value {
             "augment": augment_to_json(a.augment),
         })).collect::<Vec<_>>(),
         "bag": s.bag.iter().map(|a| augment_to_json(*a)).collect::<Vec<_>>(),
+        // What the hero found exploring, in the world it was found in.
+        "finds": finds_to_json(&s.finds),
         // Where the hero's portals lead, in the world it was marked in
         // (a string: JSON numbers lose bits past 2^53).
         "portal_home": s.gate_home.map(|g| json!({
@@ -571,6 +573,49 @@ fn gate_home_from_json(v: &Value) -> Option<hw_net::GateHome> {
     })
 }
 
+fn finds_to_json(f: &hw_net::FindBook) -> Value {
+    json!({
+        "world": f.world.to_string(),
+        "wisps": f.wisps,
+        "springs": f.springs,
+        "stones": f.stones,
+        "bests": f.bests.iter().map(|(c, t)| json!([c, t])).collect::<Vec<_>>(),
+    })
+}
+
+/// A hero's finds from their file; an empty book for a file without any
+/// (heroes from before there was anything to find) or with junk.
+fn finds_from_json(v: &Value) -> hw_net::FindBook {
+    let bytes = |x: &Value| -> Vec<u8> {
+        x.as_array().map_or_else(Vec::new, |a| {
+            a.iter()
+                .take(hw_net::protocol::MAX_WISP_BYTES)
+                .map(|b| b.as_u64().unwrap_or(0).min(255) as u8)
+                .collect()
+        })
+    };
+    hw_net::FindBook {
+        world: v["world"]
+            .as_str()
+            .and_then(|w| w.parse().ok())
+            .unwrap_or(0),
+        wisps: bytes(&v["wisps"]),
+        springs: v["springs"].as_u64().unwrap_or(0).min(u16::MAX as u64) as u16,
+        stones: v["stones"].as_u64().unwrap_or(0).min(255) as u8,
+        bests: v["bests"].as_array().map_or_else(Vec::new, |a| {
+            a.iter()
+                .take(hw_net::protocol::MAX_BESTS)
+                .filter_map(|b| {
+                    Some((
+                        b.get(0)?.as_u64()?.min(255) as u8,
+                        b.get(1)?.as_u64()?.min(u16::MAX as u64) as u16,
+                    ))
+                })
+                .collect()
+        }),
+    }
+}
+
 pub(crate) fn sheet_from_json(v: &Value) -> Option<Sheet> {
     let o = v.as_object()?;
     let num = |k: &str| {
@@ -631,6 +676,7 @@ pub(crate) fn sheet_from_json(v: &Value) -> Option<Sheet> {
             .and_then(|a| a.as_array())
             .map(|list| list.iter().filter_map(augment_from_json).collect())
             .unwrap_or_default(),
+        finds: Box::new(finds_from_json(&v["finds"])),
     };
     if num("version") < 2 {
         // Before the power trees: every power back, nothing picked.

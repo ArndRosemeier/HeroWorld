@@ -31,6 +31,8 @@ pub mod doorview;
 pub mod drillview;
 pub mod dystopiaview;
 pub mod edgeview;
+pub mod exploremesh;
+pub mod exploreview;
 pub mod extras;
 pub mod facades;
 pub mod factionview;

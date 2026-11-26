@@ -18,7 +18,7 @@ pub use seed::{Rng, Seed};
 
 /// Version of the world-generation rules. Bump it when a change would make an
 /// existing seed produce a different world, so saves can tell.
-pub const WORLD_VERSION: u32 = 72;
+pub const WORLD_VERSION: u32 = 73;
 
 /// The game's version, from `VERSION` at the repository root: it starts at
 /// 0.001 and grows by 0.001 with every build pushed to `main`.
