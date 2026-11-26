@@ -346,6 +346,14 @@ impl Greenery {
         for h in &t.holes {
             c = c.min(h.distance(p, h.apron));
         }
+        // No grass grows through a spring's terraces or a ring's altar.
+        let sights = w.wild_sights();
+        for s in &sights.springs {
+            c = c.min(s.pos.distance(p) - super::sights::TERRACES[0].0 - 0.3);
+        }
+        for s in &sights.stones {
+            c = c.min(s.pos.distance(p) - super::sights::ALTAR.0 - 0.3);
+        }
         (road, c.min(w.ground(p) - SAND_TOP))
     }
 
@@ -636,6 +644,8 @@ impl Greenery {
         // Stairs down out in the country (ways up from the tube) keep their
         // hole and apron clear: no trunk stands on a step.
         let holes = w.street_holes(lo - DVec2::splat(8.0), hi + DVec2::splat(8.0));
+        // The springs and the waystones stand in clearings.
+        let sights = w.wild_sights().clone();
         let (i0, i1) = (
             (lo.x / WOOD_STEP).floor() as i64,
             (hi.x / WOOD_STEP).ceil() as i64,
@@ -652,6 +662,9 @@ impl Greenery {
                     (j as f64 + rng.range(0.1, 0.9)) * WOOD_STEP,
                 );
                 if p.x < lo.x || p.x >= hi.x || p.y < lo.y || p.y >= hi.y {
+                    continue;
+                }
+                if sights.clearing(p) {
                     continue;
                 }
                 let wood = noise.fbm(p.x * 0.004, p.y * 0.004, 4);

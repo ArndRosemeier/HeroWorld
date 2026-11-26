@@ -732,6 +732,135 @@ pub struct Sheet {
     pub augments: Vec<SetAugment>,
     /// Loose augments, found and not set yet.
     pub bag: Vec<Augment>,
+    /// What the hero has found exploring (see `hw_sim::explore`).
+    pub finds: FindBook,
+}
+
+/// What a hero has found in one world: wisps gathered, springs and
+/// waystones visited, best times on the courses. The numbers are the
+/// world's own (`hw_gen::urban::sights`); finds in another world start a
+/// new book.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FindBook {
+    pub world: u64,
+    /// A bit per wisp gathered.
+    pub wisps: Vec<u8>,
+    /// A bit per spring and per ring of waystones found.
+    pub springs: u16,
+    pub stones: u8,
+    /// Best times: (course, tenths of a second).
+    pub bests: Vec<(u8, u16)>,
+}
+
+/// Most bytes of wisp bits, and most best times, a book carries.
+pub const MAX_WISP_BYTES: usize = 30;
+pub const MAX_BESTS: usize = 8;
+
+impl FindBook {
+    pub fn has_wisp(&self, i: usize) -> bool {
+        self.wisps
+            .get(i / 8)
+            .is_some_and(|b| b & (1 << (i % 8)) != 0)
+    }
+
+    /// Notes wisp `i` as gathered; false if it was already (or is no
+    /// number a book holds).
+    pub fn take_wisp(&mut self, i: usize) -> bool {
+        if i / 8 >= MAX_WISP_BYTES || self.has_wisp(i) {
+            return false;
+        }
+        if self.wisps.len() <= i / 8 {
+            self.wisps.resize(i / 8 + 1, 0);
+        }
+        self.wisps[i / 8] |= 1 << (i % 8);
+        true
+    }
+
+    pub fn wisp_count(&self) -> usize {
+        self.wisps.iter().map(|b| b.count_ones() as usize).sum()
+    }
+
+    pub fn has_spring(&self, i: usize) -> bool {
+        i < 16 && self.springs & (1 << i) != 0
+    }
+
+    pub fn has_stones(&self, i: usize) -> bool {
+        i < 8 && self.stones & (1 << i) != 0
+    }
+
+    /// The best time on `course`, in tenths of a second.
+    pub fn best(&self, course: u8) -> Option<u16> {
+        self.bests.iter().find(|b| b.0 == course).map(|b| b.1)
+    }
+
+    /// Notes a run's time; true if it is the hero's best there.
+    pub fn note_time(&mut self, course: u8, tenths: u16) -> bool {
+        if let Some(b) = self.bests.iter_mut().find(|b| b.0 == course) {
+            let better = tenths < b.1;
+            if better {
+                b.1 = tenths;
+            }
+            return better;
+        }
+        if self.bests.len() >= MAX_BESTS {
+            return false;
+        }
+        self.bests.push((course, tenths));
+        true
+    }
+
+    fn wire_size(&self) -> usize {
+        8 + 1
+            + self.wisps.len().min(MAX_WISP_BYTES)
+            + 2
+            + 1
+            + 1
+            + 3 * self.bests.len().min(MAX_BESTS)
+    }
+
+    fn write(&self, w: &mut Writer) {
+        w.u64(self.world);
+        let n = self.wisps.len().min(MAX_WISP_BYTES);
+        w.u8(n as u8);
+        for b in &self.wisps[..n] {
+            w.u8(*b);
+        }
+        w.u16(self.springs).u8(self.stones);
+        let n = self.bests.len().min(MAX_BESTS);
+        w.u8(n as u8);
+        for (c, t) in &self.bests[..n] {
+            w.u8(*c).u16(*t);
+        }
+    }
+
+    fn read(r: &mut Reader) -> Result<Self, WireError> {
+        let world = r.u64()?;
+        let n = r.u8()? as usize;
+        if n > MAX_WISP_BYTES {
+            return Err(WireError);
+        }
+        let mut wisps = Vec::with_capacity(n);
+        for _ in 0..n {
+            wisps.push(r.u8()?);
+        }
+        let springs = r.u16()?;
+        let stones = r.u8()?;
+        let n = r.u8()? as usize;
+        if n > MAX_BESTS {
+            return Err(WireError);
+        }
+        let mut bests = Vec::with_capacity(n);
+        for _ in 0..n {
+            bests.push((r.u8()?, r.u16()?));
+        }
+        Ok(Self {
+            world,
+            wisps,
+            springs,
+            stones,
+            bests,
+        })
+    }
 }
 
 /// Cases kept in a hero file: how many were handed out and closed, and
@@ -858,6 +987,7 @@ impl Sheet {
             + 5 * self.augments.len().min(MAX_SET_AUGMENTS)
             + 1
             + 3 * self.bag.len().min(MAX_BAG)
+            + self.finds.wire_size()
     }
 
     pub fn write(&self, w: &mut Writer) {
@@ -902,6 +1032,7 @@ impl Sheet {
         for a in &self.bag[..n] {
             a.write(w);
         }
+        self.finds.write(w);
     }
 
     pub fn read(r: &mut Reader) -> Result<Self, WireError> {
@@ -986,6 +1117,7 @@ impl Sheet {
         for _ in 0..n {
             bag.push(Augment::read(r)?);
         }
+        let finds = FindBook::read(r)?;
         Ok(Self {
             lifetime,
             karma,
@@ -999,6 +1131,7 @@ impl Sheet {
             cases,
             augments,
             bag,
+            finds,
         })
     }
 
@@ -1496,6 +1629,36 @@ pub enum FxKind {
     /// had it, or the hero for a find): `theme` is its effect, `amount`
     /// its percent, and its grade in the high byte (`grade << 8`).
     Drop,
+    /// Hero `to` found something exploring, at `at`: `theme` says what
+    /// (a [`sight`] constant) and `amount` which one (its number in the
+    /// world's sights). `knock`: for the first time (else a visit again).
+    Sight,
+    /// Hero `to`'s run on a course: `theme` is the course, `element` what
+    /// happened (a [`course`] constant). At a start and at each gate
+    /// `amount` is the gate now passed; at the finish it is the time in
+    /// tenths of a second, `knock` says it is the hero's best, and
+    /// `defeat` that it earned a medal not held before.
+    Course,
+}
+
+/// What a hero found ([`FxKind::Sight`]).
+pub mod sight {
+    pub const WISP: u8 = 0;
+    pub const SPRING: u8 = 1;
+    pub const STONES: u8 = 2;
+}
+
+/// What happened on a course ([`FxKind::Course`]).
+pub mod course {
+    /// Through the first gate: the clock runs.
+    pub const START: u8 = 0;
+    /// Through the next gate.
+    pub const GATE: u8 = 1;
+    /// Through the last gate.
+    pub const FINISH: u8 = 2;
+    /// The run is off: too far from the course, too long, or flying on a
+    /// rooftop course.
+    pub const OFF: u8 = 3;
 }
 
 /// What a villain carries off ([`FxKind::Loot`]).
@@ -1608,6 +1771,8 @@ impl FxKind {
             FxKind::GateShut => 69,
             FxKind::GateCross => 70,
             FxKind::Drop => 71,
+            FxKind::Sight => 80,
+            FxKind::Course => 81,
         }
     }
 
@@ -1684,6 +1849,8 @@ impl FxKind {
             69 => FxKind::GateShut,
             70 => FxKind::GateCross,
             71 => FxKind::Drop,
+            80 => FxKind::Sight,
+            81 => FxKind::Course,
             _ => return Err(WireError),
         })
     }
@@ -3425,7 +3592,26 @@ mod tests {
                 percent: 30,
                 grade: 2,
             }],
+            finds: FindBook {
+                world: 0x1234_5678_9abc_def0,
+                wisps: vec![0b1010_0001, 0, 0xff],
+                springs: 0b101,
+                stones: 2,
+                bests: vec![(0, 1405), (3, 388)],
+            },
         }
+    }
+
+    #[test]
+    fn a_find_book_keeps_what_was_found() {
+        let mut b = FindBook::default();
+        assert!(b.take_wisp(17) && !b.take_wisp(17));
+        assert!(b.has_wisp(17) && !b.has_wisp(16));
+        assert!(!b.take_wisp(MAX_WISP_BYTES * 8), "past what a book holds");
+        assert_eq!(b.wisp_count(), 1);
+        assert!(b.note_time(2, 500) && !b.note_time(2, 600) && b.note_time(2, 450));
+        assert_eq!(b.best(2), Some(450));
+        assert_eq!(b.best(1), None);
     }
 
     #[test]

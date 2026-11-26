@@ -883,6 +883,21 @@ impl Obstacles {
             }
             out.add_all(parts.iter().flat_map(solids_of).collect());
         }
+        // The Aether springs and the waystones out in the country: their
+        // terraces, crystals, stones and altars, from the same numbers
+        // they are drawn from.
+        let sights = world.wild_sights();
+        for s in &sights.springs {
+            out.add_all(s.footprints().iter().flat_map(solids_of).collect());
+        }
+        for s in &sights.stones {
+            out.add_all(
+                s.footprints(|p| world.ground(p))
+                    .iter()
+                    .flat_map(solids_of)
+                    .collect(),
+            );
+        }
         // The harbour: its decks are raised ground; cranes, the tower, the
         // light, bollards and the ships that never leave are solid, in
         // cells so a body tests only what is near it. (Its sheds are

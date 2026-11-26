@@ -18,6 +18,7 @@ pub mod crimes;
 pub mod deepspots;
 pub mod destruction;
 pub mod doors;
+pub mod explore;
 pub mod factions;
 pub mod fame;
 pub mod floornav;
@@ -868,6 +869,9 @@ pub struct Sim {
     pub airships: airships::Airships,
     /// Doors people walked through, and news of doors opening and shutting.
     pub doors: doors::Doors,
+    /// Heroes finding the world's sights: wisps, springs, waystones and
+    /// courses (see [`explore`]).
+    pub explore: explore::Explore,
 }
 
 /// An augment traded in gave `karma` at the normal rate: adds what the
@@ -897,6 +901,7 @@ impl Sim {
         let mut sim = Self::with_solids(seed, town.obstacles.clone());
         sim.set_spawn(town.world.spawn_line());
         sim.town_population = town.population();
+        sim.explore = explore::Explore::new(town.world.clone(), sim.world_key());
         sim.deep = deepspots::DeepSpots::new(town.world.clone());
         sim.airships = airships::Airships::with_raids(&town.world);
         sim.street = props::PropDamage::new(town.world.clone()).with_solids(town.obstacles.clone());
@@ -1264,6 +1269,7 @@ impl Sim {
             lifts: lifts::Lifts::default(),
             airships: airships::Airships::default(),
             doors: doors::Doors::default(),
+            explore: explore::Explore::default(),
         }
     }
 
@@ -1608,6 +1614,7 @@ impl Sim {
         self.lap("srv traffic us", &mut t);
         self.walk_through_doors();
         self.keep_gate_homes();
+        self.explore.step(&mut self.world, self.tick);
         self.pay_karma();
         self.sync_levels();
         self.clear_rubble();

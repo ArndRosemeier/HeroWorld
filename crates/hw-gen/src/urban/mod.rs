@@ -50,6 +50,7 @@ mod roadgrid;
 pub mod roads;
 pub mod robotworks;
 pub mod sewer;
+pub mod sights;
 pub mod spiral;
 pub mod streets;
 pub mod surface;

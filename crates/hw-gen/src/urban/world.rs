@@ -181,6 +181,11 @@ pub struct TownWorld {
     underground: OnceLock<Underground>,
     /// Units being planned in the background (see [`Self::prefetch`]).
     pending: Mutex<std::collections::BTreeSet<Unit>>,
+    /// What there is to find (see [`super::sights`]): the springs and
+    /// waystones, planned from the ground on first use, and everything,
+    /// planned on a worker.
+    pub(super) wild_sights: OnceLock<Arc<super::sights::WildSights>>,
+    pub(super) sights: OnceLock<Arc<super::sights::Sights>>,
 }
 
 /// Side streets planned for one look from afar (see [`TownWorld::skyline`]).
@@ -302,6 +307,8 @@ impl TownWorld {
             surfaces: Cache::new(KEEP_SURFACE_TILES),
             underground: OnceLock::new(),
             pending: Mutex::new(Default::default()),
+            wild_sights: OnceLock::new(),
+            sights: OnceLock::new(),
         };
         cancel.check()?;
         cancel.stage("Laying the main roads", 0.08, 0.09);
